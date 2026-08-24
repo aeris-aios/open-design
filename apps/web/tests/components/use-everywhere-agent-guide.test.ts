@@ -6,7 +6,7 @@ import { GUIDE_SECTIONS } from '../../src/components/use-everywhere/sections';
 describe('buildAgentGuideMarkdown', () => {
   it('emits a top-level header and the setup checklist by default', () => {
     const md = buildAgentGuideMarkdown();
-    expect(md).toMatch(/^# Open Design — agent setup guide/);
+    expect(md).toMatch(/^# OpenDesign — agent setup guide/);
     expect(md).toContain('## Setup checklist');
     expect(md).toContain('http://127.0.0.1:7456/api/health');
     expect(md).toContain('http://127.0.0.1:7456/api/mcp/install-info');
@@ -42,18 +42,29 @@ describe('buildAgentGuideMarkdown', () => {
     expect(md).toContain('```yaml');
   });
 
+  it('documents the current project create plus run start CLI flow', () => {
+    const md = buildAgentGuideMarkdown();
+    expect(md).toContain('od project create');
+    expect(md).toContain('od run start');
+    expect(md).toContain('--conversation "$CONVERSATION_ID"');
+    expect(md).toContain('[form answers - discovery]');
+    expect(md).toContain('od files list "$PROJECT_ID"');
+    expect(md).not.toContain('od run \\\n  --plugin');
+    expect(md).not.toContain("--prompt 'A 10-slide investor pitch");
+  });
+
   it('surfaces version and CLI hints in the checklist when supplied', () => {
     const md = buildAgentGuideMarkdown({
       versionHint: '0.42.0',
       cliHint: '/usr/local/bin/od',
     });
-    expect(md).toContain('Reported Open Design version: `0.42.0`');
+    expect(md).toContain('Reported OpenDesign version: `0.42.0`');
     expect(md).toContain('The user reported `od` at: `/usr/local/bin/od`');
   });
 
   it('omits hint sentences when the corresponding option is not provided', () => {
     const md = buildAgentGuideMarkdown();
-    expect(md).not.toContain('Reported Open Design version');
+    expect(md).not.toContain('Reported OpenDesign version');
     expect(md).not.toContain('The user reported `od` at');
   });
 
@@ -62,5 +73,52 @@ describe('buildAgentGuideMarkdown', () => {
     expect(md).toContain('## Reference URLs');
     expect(md).toContain('- Daemon: `http://example.test:5555`');
     expect(md).toContain('- MCP install info: `http://example.test:5555/api/mcp/install-info`');
+  });
+
+  it('uses daemon install-info for the MCP config instead of assuming od is on PATH', () => {
+    const md = buildAgentGuideMarkdown({
+      daemonUrl: 'http://127.0.0.1:7456',
+      mcpInstallInfo: {
+        command: 'C:\\Program Files\\Open Design\\Open Design.exe',
+        args: [
+          'C:\\Program Files\\Open Design\\resources\\app\\apps\\daemon\\dist\\cli.js',
+          'mcp',
+        ],
+        env: {
+          ELECTRON_RUN_AS_NODE: '1',
+          OD_DATA_DIR: 'C:\\Users\\Ada\\AppData\\Roaming\\Open Design',
+        },
+      },
+    });
+
+    expect(md).toContain('"command": "C:\\\\Program Files\\\\Open Design\\\\Open Design.exe"');
+    expect(md).toContain(
+      '"C:\\\\Program Files\\\\Open Design\\\\resources\\\\app\\\\apps\\\\daemon\\\\dist\\\\cli.js"',
+    );
+    expect(md).toContain('"ELECTRON_RUN_AS_NODE": "1"');
+    expect(md).toContain('"OD_DATA_DIR": "C:\\\\Users\\\\Ada\\\\AppData\\\\Roaming\\\\Open Design"');
+    expect(md).not.toContain('"command": "od"');
+  });
+
+  it('does not rewrite CLI snippets with POSIX env prefixes for Windows packaged installs', () => {
+    const md = buildAgentGuideMarkdown({
+      daemonUrl: 'http://127.0.0.1:7456',
+      mcpInstallInfo: {
+        command: 'C:\\Program Files\\Open Design\\Open Design.exe',
+        args: [
+          'C:\\Program Files\\Open Design\\resources\\app\\apps\\daemon\\dist\\cli.js',
+          'mcp',
+        ],
+        env: {
+          ELECTRON_RUN_AS_NODE: '1',
+          OD_DATA_DIR: 'C:\\Users\\Ada\\AppData\\Roaming\\Open Design',
+        },
+      },
+    });
+
+    expect(md).toContain('"command": "C:\\\\Program Files\\\\Open Design\\\\Open Design.exe"');
+    expect(md).toContain('"ELECTRON_RUN_AS_NODE": "1"');
+    expect(md).toContain('od skills list --json');
+    expect(md).not.toMatch(/^\s*ELECTRON_RUN_AS_NODE=1\s+OD_DATA_DIR=/m);
   });
 });

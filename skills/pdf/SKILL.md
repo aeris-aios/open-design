@@ -11,7 +11,7 @@ triggers:
 od:
   mode: prototype
   category: documents
-  upstream: "https://github.com/anthropics/skills/tree/main/pdf"
+  upstream: "https://github.com/anthropics/skills/tree/main/skills/pdf"
 ---
 
 # pdf
@@ -24,19 +24,19 @@ Extract text, create PDFs, and handle forms. Useful for press releases, branded 
 
 ## Source
 
-- Upstream: https://github.com/anthropics/skills/tree/main/pdf
+- Upstream: https://github.com/anthropics/skills/tree/main/skills/pdf
 - Category: `documents`
 
 ## How to use
 
-This catalogue entry advertises the skill in Open Design so the agent
+This catalogue entry advertises the skill in OpenDesign so the agent
 discovers it during planning. To run the full upstream workflow with
 its original assets, scripts, and references, install the upstream
 bundle into your active agent's skills directory:
 
 ```bash
 # Inspect the upstream README for exact paths
-open https://github.com/anthropics/skills/tree/main/pdf
+open https://github.com/anthropics/skills/tree/main/skills/pdf
 ```
 
 Then ask the agent to invoke this skill by name (`pdf`) or with

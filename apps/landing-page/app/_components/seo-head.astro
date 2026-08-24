@@ -16,11 +16,21 @@
  */
 
 import { ogDefaultImage } from '../image-assets';
+import { clampDescription } from '../_lib/clamp-description';
+import {
+  LANDING_LOCALES,
+  alternateLinksForPath,
+  getLocaleDefinition,
+  localeFromPath,
+  stripLocaleFromPath,
+} from '../i18n';
+import FaviconLinks from './favicon-links.astro';
+import ResourceHints from './resource-hints.astro';
 
 export interface SeoHeadProps {
   /** 'website' for landing/list pages, 'article' for blog posts. */
   kind: 'website' | 'article';
-  /** For article: raw post title (component appends " — Open Design"). For website: the full title string. */
+  /** For article: raw post title (component appends " — OpenDesign"). For website: the full title string. */
   title: string;
   /** Meta description, 150–160 chars recommended. */
   description: string;
@@ -33,8 +43,25 @@ export interface SeoHeadProps {
   dateModified?: Date;
   /** Required for kind: 'article'. e.g. "Guides". */
   category?: string;
-  /** Defaults to "Open Design". */
+  /** Defaults to "OpenDesign". */
   author?: string;
+  /** Set when this page has no generated per-locale variants. */
+  localeCanonicalOnly?: boolean;
+  /**
+   * Drop the hreflang cluster because this page's locale variants are served
+   * with `noindex`. Deliberately NOT `localeCanonicalOnly`: the variants do
+   * exist here and stay reachable through the language switcher, they just
+   * must not be advertised to search engines, since hreflang may not point at
+   * noindexed URLs.
+   */
+  noindexedLocaleVariants?: boolean;
+  /**
+   * Keep this single page out of the search index. Independent of the
+   * site-wide staging flag below: staging emits `noindex, nofollow` for the
+   * whole mirror, whereas a page opting in here emits `noindex, follow` so
+   * crawlers still traverse its outbound links.
+   */
+  noindex?: boolean;
   /**
    * Optional Google Search Console verification token. When set, renders
    * `<meta name="google-site-verification" content="...">`. Only needed on
@@ -46,13 +73,45 @@ export interface SeoHeadProps {
 
 const props = Astro.props as SeoHeadProps;
 
-const SITE_NAME = 'Open Design';
+// Staging / PR-preview builds set OD_LANDING_NOINDEX=1 so the mirror at
+// staging.open-design.ai (exposed via certificate-transparency logs) is kept
+// out of the search index. We emit `noindex` rather than a robots.txt
+// `Disallow` so crawlers can still fetch the page and read both this tag and
+// the canonical (which points at the production origin). Production builds
+// leave the flag unset and stay fully indexable.
+//
+// `__OD_LANDING_NOINDEX__` is a compile-time constant injected by
+// `vite.define` in astro.config.ts — `.astro` frontmatter is transformed by
+// Vite and cannot read process.env directly.
+const stagingNoindex = __OD_LANDING_NOINDEX__;
+const noindex = stagingNoindex || props.noindex === true;
+// Staging hides the whole mirror, so nothing there is worth crawling onward.
+// A page-level opt-out is the opposite case: the page itself shouldn't rank,
+// but its outbound links should still pass equity, hence `follow`.
+const robotsContent = stagingNoindex ? 'noindex, nofollow' : 'noindex, follow';
+
+const SITE_NAME = 'OpenDesign';
 const TAGLINE = 'Design with the agent already on your laptop.';
 const isArticle = props.kind === 'article';
+const locale = localeFromPath(props.pathname);
+const localeDef = getLocaleDefinition(locale);
+const basePath = stripLocaleFromPath(props.pathname).pathname;
+const altEntries = alternateLinksForPath(props.pathname);
+const alternateLinks = props.localeCanonicalOnly || props.noindexedLocaleVariants
+  ? []
+  : altEntries.map((entry) => ({
+      ...entry,
+      href: new URL(entry.hrefPath, Astro.site).toString(),
+    }));
+const xDefaultHref = new URL(altEntries[0]!.hrefPath, Astro.site).toString();
 
 const canonical = new URL(props.pathname, Astro.site).toString();
 const image = props.image ?? new URL(ogDefaultImage, Astro.site).toString();
 const rssUrl = new URL('/blog/rss.xml', Astro.site).toString();
+
+// Clamp the meta/OG/Twitter description to a search-friendly length. See
+// `clampDescription` for the rationale; source strings stay untouched.
+const metaDescription = clampDescription(props.description);
 
 const fullTitle = isArticle ? `${props.title} — ${SITE_NAME}` : props.title;
 const ogTitle = props.title;
@@ -72,6 +131,7 @@ const articleJsonLd =
         '@type': 'Article',
         headline: props.title,
         description: props.description,
+        inLanguage: localeDef.htmlLang,
         image: [image],
         datePublished: isoPublished,
         dateModified: isoModified,
@@ -98,24 +158,27 @@ const articleJsonLd =
     : null;
 
 const websiteJsonLd =
-  props.kind === 'website' && props.pathname === '/'
+  props.kind === 'website' && basePath === '/'
     ? {
         '@context': 'https://schema.org',
         '@type': 'WebSite',
         name: SITE_NAME,
         alternateName: TAGLINE,
         url: Astro.site?.toString() ?? 'https://open-design.ai/',
+        inLanguage: localeDef.htmlLang,
+        availableLanguage: LANDING_LOCALES.map((entry) => entry.htmlLang),
       }
     : null;
 
 const blogJsonLd =
-  props.kind === 'website' && props.pathname === '/blog/'
+  props.kind === 'website' && basePath === '/blog/'
     ? {
         '@context': 'https://schema.org',
         '@type': 'Blog',
-        name: 'Open Design — Blog',
+        name: props.title,
         description: props.description,
         url: canonical,
+        inLanguage: localeDef.htmlLang,
         publisher: {
           '@type': 'Organization',
           name: SITE_NAME,
@@ -126,10 +189,20 @@ const blogJsonLd =
 ---
 
 <title>{fullTitle}</title>
-<meta name='description' content={props.description} />
+<meta name='description' content={metaDescription} />
 <meta name='theme-color' content='#efe7d2' />
+{noindex && <meta name='robots' content={robotsContent} />}
 <link rel='canonical' href={canonical} />
-<link rel='alternate' type='application/rss+xml' title='Open Design Blog' href={rssUrl} />
+{alternateLinks.map((entry) => (
+  <link rel='alternate' hreflang={entry.hreflang} href={entry.href} />
+))}
+{/* hreflang must not advertise noindexed URLs — a page that opts into a
+    robots noindex drops its x-default pointer too (on `noindex: true` posts
+    the English target itself is noindexed). */}
+{props.noindex !== true && <link rel='alternate' hreflang='x-default' href={xDefaultHref} />}
+<link rel='alternate' type='application/rss+xml' title='OpenDesign Blog' href={rssUrl} />
+<FaviconLinks />
+<ResourceHints />
 
 {props.googleSiteVerification && (
   <meta name='google-site-verification' content={props.googleSiteVerification} />
@@ -138,10 +211,13 @@ const blogJsonLd =
 <meta property='og:type' content={props.kind === 'article' ? 'article' : 'website'} />
 <meta property='og:site_name' content={SITE_NAME} />
 <meta property='og:title' content={ogTitle} />
-<meta property='og:description' content={props.description} />
+<meta property='og:description' content={metaDescription} />
 <meta property='og:url' content={canonical} />
 <meta property='og:image' content={image} />
-<meta property='og:locale' content='en_US' />
+<meta property='og:locale' content={localeDef.ogLocale} />
+{!props.localeCanonicalOnly && LANDING_LOCALES.filter((entry) => entry.code !== locale).map((entry) => (
+  <meta property='og:locale:alternate' content={entry.ogLocale} />
+))}
 
 {props.kind === 'article' && (
   <>
@@ -154,15 +230,15 @@ const blogJsonLd =
 
 <meta name='twitter:card' content='summary_large_image' />
 <meta name='twitter:title' content={ogTitle} />
-<meta name='twitter:description' content={props.description} />
+<meta name='twitter:description' content={metaDescription} />
 <meta name='twitter:image' content={image} />
 
 {articleJsonLd && (
-  <script type='application/ld+json' set:html={JSON.stringify(articleJsonLd)} />
+  <script is:inline type='application/ld+json' set:html={JSON.stringify(articleJsonLd)} />
 )}
 {websiteJsonLd && (
-  <script type='application/ld+json' set:html={JSON.stringify(websiteJsonLd)} />
+  <script is:inline type='application/ld+json' set:html={JSON.stringify(websiteJsonLd)} />
 )}
 {blogJsonLd && (
-  <script type='application/ld+json' set:html={JSON.stringify(blogJsonLd)} />
+  <script is:inline type='application/ld+json' set:html={JSON.stringify(blogJsonLd)} />
 )}

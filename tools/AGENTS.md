@@ -9,12 +9,16 @@ Follow the root `AGENTS.md` first. This file only records module-level boundarie
 - `pnpm tools-dev run web` runs foreground daemon + web for the Playwright webServer flow.
 - `pnpm tools-dev inspect desktop ...` inspects the desktop runtime through sidecar IPC.
 - `tools/pack` provides `@open-design/tools-pack` and the `tools-pack` bin. The active slice is packaged artifact build/install/start/stop/logs/uninstall/cleanup/list/reset plus beta release artifact preparation for mac and Windows lanes, plus a Linux AppImage lane with optional containerized builds.
-- `tools/pr` provides `@open-design/tools-pr` and the `tools-pr` bin. It is the maintainer PR-duty control plane: a thin `gh` wrapper that encodes this repo's review-lane derivation, forbidden-surface flags, per-lane checklists, and validation-command suggestions. It must not perform side effects (approve / request changes / merge / close / push); those stay in explicit `gh` calls the maintainer runs.
 - `tools/serve` provides `@open-design/tools-serve` and the `tools-serve` bin. It owns local fixture services such as `tools-serve start updater`.
+- `tools/release` provides `@open-design/tools-release` and the `tools-release` bin. It owns release metadata, storage publishing, release reports, and notification-facing file/data contracts; artifact build, cache, installer, payload, and smoke work stays in `tools/pack`.
+
+## Retired tools
+
+- `tools/pr` / `@open-design/tools-pr` / `pnpm tools-pr` has been retired from this repository. Maintainer PR-duty workflows now live outside the product workspace in `PerishCode/duty`; do not restore an OpenDesign-local PR-duty tool without a new explicit maintainer decision.
 
 ## Packaging scope
 
-- Keep `tools-pack` focused on packaging/runtime control and release artifact preparation. Runtime updater product integration remains a later phase.
+- Keep `tools-pack` focused on packaging/runtime control, release artifact preparation, and the packaged-updater acceptance harness. The updater product surface and launcher handoff live in `apps/desktop` and `apps/packaged`; do not duplicate that application logic in the tool.
 - Pack-specific Electron builder resources belong under `tools/pack/resources/`; do not reference app/docs/download assets directly from pack logic.
 - Namespace controls packaged data/log/runtime/cache paths. Ports are transient transport details and must not participate in path decisions.
 - There is no root `pnpm build` aggregate. Use package-scoped builds for source packages and `pnpm tools-pack ...` for packaged artifact build/install/release flows.
@@ -33,10 +37,11 @@ pnpm --filter @open-design/tools-dev typecheck
 pnpm --filter @open-design/tools-dev build
 pnpm --filter @open-design/tools-pack typecheck
 pnpm --filter @open-design/tools-pack build
-pnpm --filter @open-design/tools-pr typecheck
-pnpm --filter @open-design/tools-pr build
 pnpm --filter @open-design/tools-serve typecheck
 pnpm --filter @open-design/tools-serve build
+pnpm --filter @open-design/tools-release typecheck
+pnpm --filter @open-design/tools-release build
+pnpm --filter @open-design/tools-release test
 pnpm tools-dev status --json
 pnpm tools-dev logs --json
 pnpm tools-dev check
@@ -53,9 +58,5 @@ pnpm tools-pack linux install --headless
 pnpm tools-pack linux start --headless
 pnpm tools-pack linux stop --headless
 pnpm tools-pack linux build --containerized
-pnpm tools-pr list
-pnpm tools-pr list --bucket=merge-ready,approved-blocked
-pnpm tools-pr view <num>
-pnpm tools-pr view <num> --json
 pnpm tools-serve start updater
 ```

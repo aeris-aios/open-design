@@ -3,6 +3,7 @@
 // and accidentally bypasses the snapshot writer (spec §8.2.1).
 export * from './atoms.js';
 export * from './apply.js';
+export * from './local-source.js';
 export {
   validatePluginFolder,
   flattenValidationDiagnostics,
@@ -85,6 +86,7 @@ export * from './atoms/rewrite-plan.js';
 export * from './atoms/token-map.js';
 export * from './bundled.js';
 export * from './connector-gate.js';
+export * from './connector-probe.js';
 export * from './export.js';
 export * from './doctor.js';
 export * from './installer.js';
@@ -99,5 +101,6 @@ export * from './scaffold.js';
 export * from './gc.js';
 export * from './resolve-snapshot.js';
 export * from './snapshots.js';
+export * from './skill-candidates.js';
 export * from './trust.js';
 export * from './until.js';

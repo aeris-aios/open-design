@@ -15,12 +15,13 @@ import {
   linuxUserHome,
   pathExists,
 } from '../lib/linux-helpers.js';
+import { resolvePackagedSmokeNamespace } from '@/vitest/suite';
 
 const execFileAsync = promisify(execFile);
 const e2eRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const workspaceRoot = dirname(e2eRoot);
 const toolsPackDir = resolveFromWorkspace(process.env.OD_PACKAGED_E2E_TOOLS_PACK_DIR ?? '.tmp/tools-pack');
-const namespace = process.env.OD_PACKAGED_E2E_NAMESPACE ?? 'ci-pr-linux';
+const namespace = resolvePackagedSmokeNamespace('linux');
 const toolsPackBin = join(workspaceRoot, 'tools', 'pack', 'bin', 'tools-pack.mjs');
 const screenshotPath = resolveFromWorkspace(
   process.env.OD_PACKAGED_E2E_SCREENSHOT_PATH ?? join(toolsPackDir, 'screenshots', `${namespace}.png`),
@@ -166,7 +167,7 @@ linuxHeadlessDescribe('packaged linux headless runtime smoke', () => {
         throw new Error('expected desktop log entry');
       }
       expectPathInside(desktopLog.logPath, join(runtimeNamespaceRoot, 'logs', 'desktop'));
-      expect(desktopLog.lines.join('\n')).toContain('Open Design is running');
+      expect(desktopLog.lines.join('\n')).toContain('OpenDesign is running');
 
       const stop = await runToolsPackJson<LinuxStopResult>('stop', ['--headless']);
       started = false;

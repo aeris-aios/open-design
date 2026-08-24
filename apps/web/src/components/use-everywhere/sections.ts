@@ -1,4 +1,4 @@
-// Content fixtures for the "Use Open Design everywhere" guide modal.
+// Content fixtures for the "Use OpenDesign everywhere" guide modal.
 //
 // Kept as a plain data module (no React imports) so the same source
 // feeds both the modal UI and the agent-handoff markdown blob in
@@ -40,9 +40,9 @@ export const GUIDE_SECTIONS: GuideSection[] = [
   {
     id: 'overview',
     tabLabel: 'Overview',
-    heading: 'Open Design works wherever your agent works',
+    heading: 'OpenDesign works wherever your agent works',
     intro:
-      'Open Design is more than a window — it is a local privileged daemon ' +
+      'OpenDesign is more than a window — it is a local privileged daemon ' +
       "(`od`) plus a Skills + Design-Systems + Atoms registry. Once it's " +
       'running on your machine, any code agent (Claude Code, Codex, Cursor, ' +
       'OpenCode/openclaw, Hermes, your own script) can drive generations, ' +
@@ -50,9 +50,9 @@ export const GUIDE_SECTIONS: GuideSection[] = [
       'interchangeable surfaces.',
     bullets: [
       'CLI — `od <command>` for headless scripts, CI, and shell automation.',
-      'MCP server — wires Open Design as a Model Context Protocol server so any MCP-capable agent can list skills, run scenarios, and read artifacts.',
+      'MCP server — wires OpenDesign as a Model Context Protocol server so any MCP-capable agent can list skills, run scenarios, and read artifacts.',
       'HTTP API — `http://127.0.0.1:7456/api/*` REST + SSE endpoints; the same surface the web UI uses.',
-      'Skills — drop-in `SKILL.md` packs (Claude-compatible) that any agent already on your PATH can invoke without Open Design at all.',
+      'Skills — drop-in `SKILL.md` packs (Claude-compatible) that any agent already on your PATH can invoke without OpenDesign at all.',
       'Standard artifacts — seed real HTML projects from Skills, bundled default plugins, and community plugin examples before the daemon starts.',
     ],
     snippets: [
@@ -72,7 +72,7 @@ export const GUIDE_SECTIONS: GuideSection[] = [
         body:
           'pnpm seed:test-projects --offline --data-dir ./.od \\\n' +
           '  --decks 2 --webs 2 --default-plugins 3 --community-plugins 3\n' +
-          '# Then start Open Design in the shell you normally use for dev:\n' +
+          '# Then start OpenDesign in the shell you normally use for dev:\n' +
           'pnpm tools-dev',
       },
     ],
@@ -83,7 +83,7 @@ export const GUIDE_SECTIONS: GuideSection[] = [
   {
     id: 'cli',
     tabLabel: 'CLI · od',
-    heading: 'Drive Open Design from any shell',
+    heading: 'Drive OpenDesign from any shell',
     intro:
       'The `od` bin ships with the daemon and is the same binary used by ' +
       'Claude Code / Codex when they run a generation. Most subcommands are ' +
@@ -92,7 +92,7 @@ export const GUIDE_SECTIONS: GuideSection[] = [
     bullets: [
       '`od` (no args) — boots the daemon and opens the web UI.',
       '`od media generate ...` — produce image / video / audio bytes through the unified media protocol.',
-      '`od run ...` — start a project run from a prompt + skill.',
+      '`od project create` + `od run start` — create a project, send a message, and stream the run.',
       '`od plugin install <source>` / `od plugin apply <id>` — install and apply community plugins.',
       '`od skills list` / `od design-systems list` — inspect what is available locally.',
       '`od status` / `od doctor` — verify daemon health and detect agent CLIs on your PATH.',
@@ -110,13 +110,62 @@ export const GUIDE_SECTIONS: GuideSection[] = [
           '  --output ./out/hero.png',
       },
       {
-        label: 'Run a scenario plugin headlessly and stream events as JSON lines',
+        label: 'Use the CLI from a source checkout',
         language: 'bash',
         body:
-          'od run \\\n' +
+          'corepack enable\n' +
+          'pnpm install\n' +
+          'pnpm --filter @open-design/daemon build\n' +
+          '\n' +
+          'export OD_NODE_BIN="${OD_NODE_BIN:-/opt/homebrew/opt/node@24/bin/node}"\n' +
+          'export OD_BIN="$PWD/apps/daemon/dist/cli.js"\n' +
+          '"$OD_NODE_BIN" "$OD_BIN" daemon start --headless --serve-web --port 7456',
+      },
+      {
+        label: 'Run a design project headlessly and stream events',
+        language: 'bash',
+        body:
+          'DAEMON_URL=${DAEMON_URL:-http://127.0.0.1:7456}\n' +
+          'PROJECT_JSON=$(od project create \\\n' +
+          '  --name "Investor pitch" \\\n' +
+          '  --skill frontend-design \\\n' +
+          '  --design-system clean \\\n' +
+          '  --json \\\n' +
+          '  --daemon-url "$DAEMON_URL")\n' +
+          'PROJECT_ID=$(jq -r \'.project.id\' <<<"$PROJECT_JSON")\n' +
+          'CONVERSATION_ID=$(jq -r \'.conversationId\' <<<"$PROJECT_JSON")\n' +
+          '\n' +
+          'od run start \\\n' +
+          '  --project "$PROJECT_ID" \\\n' +
+          '  --conversation "$CONVERSATION_ID" \\\n' +
           '  --plugin od-new-generation \\\n' +
-          "  --prompt 'A 10-slide investor pitch for a SaaS for design teams' \\\n" +
-          '  --json --follow',
+          '  --agent codex \\\n' +
+          "  --message 'A 10-slide investor pitch for a SaaS for design teams' \\\n" +
+          '  --daemon-url "$DAEMON_URL" \\\n' +
+          '  --follow',
+      },
+      {
+        label: 'Answer a discovery question form from the CLI',
+        language: 'bash',
+        body:
+          'od run start \\\n' +
+          '  --project "$PROJECT_ID" \\\n' +
+          '  --conversation "$CONVERSATION_ID" \\\n' +
+          '  --agent codex \\\n' +
+          '  --message "[form answers - discovery]\n' +
+          '- Audience: Seed-stage investors\n' +
+          '- Format: 10-slide pitch deck\n' +
+          '- Tone: Confident, concise, product-led\n' +
+          '- Constraints: Use clean visuals and include traction placeholders" \\\n' +
+          '  --daemon-url "$DAEMON_URL" \\\n' +
+          '  --follow',
+      },
+      {
+        label: 'Verify generated files after the stream completes',
+        language: 'bash',
+        body:
+          'od files list "$PROJECT_ID" --daemon-url "$DAEMON_URL" --json\n' +
+          'od files read "$PROJECT_ID" index.html --daemon-url "$DAEMON_URL" | head',
       },
       {
         label: 'Inventory locally available skills and design systems',
@@ -140,16 +189,17 @@ export const GUIDE_SECTIONS: GuideSection[] = [
     footer:
       'All subcommands accept `--daemon-url http://127.0.0.1:<port>` to ' +
       'target a specific running daemon — useful when running a sandboxed ' +
-      'second instance for tests.',
+      'second instance for tests. From a source checkout, replace `od` with ' +
+      '`"$OD_NODE_BIN" "$OD_BIN"` after exporting those variables.',
   },
   {
     id: 'mcp',
     tabLabel: 'MCP server',
-    heading: 'Expose Open Design as an MCP server to any coding agent',
+    heading: 'Expose OpenDesign as an MCP server to any coding agent',
     intro:
-      'Open Design ships with a Model Context Protocol server (`od mcp`) ' +
+      'OpenDesign ships with a Model Context Protocol server (`od mcp`) ' +
       'that lets any MCP-capable client — Cursor, Claude Code, Antigravity, ' +
-      'VS Code Copilot Chat, openclaw, hermes — discover Open Design tools ' +
+      'VS Code Copilot Chat, openclaw, hermes — discover OpenDesign tools ' +
       '(list skills, render previews, generate media, run plugins) without ' +
       'shelling out manually. The daemon publishes a ready-to-paste install ' +
       'snippet via `GET /api/mcp/install-info` for each major client.',
@@ -186,7 +236,7 @@ export const GUIDE_SECTIONS: GuideSection[] = [
       },
     ],
     footer:
-      'In the Open Design app, open Settings → Integrations to copy a ' +
+      'In the OpenDesign app, open Settings → Integrations to copy a ' +
       'client-specific install command (Cursor, Claude Code, Antigravity, ' +
       'VS Code) instead of editing JSON by hand.',
   },
@@ -243,12 +293,12 @@ export const GUIDE_SECTIONS: GuideSection[] = [
   {
     id: 'skills',
     tabLabel: 'Skills & headless',
-    heading: 'Drop-in Skills for any agent — even without Open Design running',
+    heading: 'Drop-in Skills for any agent — even without OpenDesign running',
     intro:
       'A Skill is a directory with a Claude-compatible `SKILL.md` ' +
-      '(YAML front-matter + body). Open Design extends the format with the ' +
+      '(YAML front-matter + body). OpenDesign extends the format with the ' +
       '`od:` namespace (`mode`, `preview`, `design_system`, `inputs`, …) so ' +
-      'the same artifact can be used both inside Open Design and by a vanilla ' +
+      'the same artifact can be used both inside OpenDesign and by a vanilla ' +
       'agent like Claude Code, Codex, openclaw, or hermes. Discovery follows ' +
       'a precedence chain so projects can override their own skills.',
     bullets: [
@@ -260,7 +310,7 @@ export const GUIDE_SECTIONS: GuideSection[] = [
     ],
     snippets: [
       {
-        label: 'Minimal SKILL.md (Claude-compatible front matter + Open Design extras)',
+        label: 'Minimal SKILL.md (Claude-compatible front matter + OpenDesign extras)',
         language: 'yaml',
         body:
           '---\n' +
@@ -300,7 +350,7 @@ export const GUIDE_SECTIONS: GuideSection[] = [
           'pnpm seed:test-projects --offline --data-dir ./.od \\\n' +
           '  --decks 2 --webs 2 \\\n' +
           '  --default-plugins 3 --community-plugins 3\n' +
-          '# Shell 1: start Open Design after ingesting.\n' +
+          '# Shell 1: start OpenDesign after ingesting.\n' +
           'pnpm tools-dev\n' +
           '# Shell 2: inspect the produced projects.\n' +
           'od project list --json --daemon-url http://127.0.0.1:7456',

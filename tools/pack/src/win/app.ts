@@ -1,14 +1,19 @@
 import { execFile } from "node:child_process";
-import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
 import { promisify } from "node:util";
 
 import { rebuild } from "@electron/rebuild";
 import { createCommandInvocation, createPackageManagerInvocation } from "@open-design/platform";
 
-import { hashJson, hashPath, ToolPackCache } from "../cache.js";
-import type { ToolPackConfig } from "../config.js";
+import { hashJson, hashPath, ToolPackCache } from "../cache/index.js";
+import type { ToolPackConfig } from "../config/index.js";
+import {
+  prepareNodePtyRuntime,
+  validateNodePtyRuntime,
+} from "../node-pty-runtime.js";
 import { hashPackageSourcePath } from "../package-source-hash.js";
+import { electronBuilderVersionForAppVersion } from "../versioning/index.js";
 import {
   WIN_DAEMON_PREBUNDLE_ESM_REQUIRE_BANNER,
   WIN_PREBUNDLE_ESBUILD_TARGET,
@@ -25,7 +30,8 @@ import {
   renderWinPackagedMainEntry,
   shouldInstallInternalPackageForWinPrebundle,
   shouldUseWinStandalonePrebundle,
-} from "../win-prebundle.js";
+} from "./prebundle.js";
+import { processWebSourcemaps } from "../web-sourcemaps.js";
 import { ensureWorkspaceBuildArtifacts } from "../workspace-build.js";
 import {
   ELECTRON_BUILDER_BUILD_DEPENDENCIES_FROM_SOURCE,
@@ -111,21 +117,42 @@ async function validateNativeRebuildOutput(appRoot: string): Promise<string | nu
   }
 }
 
+async function validateWinPackagedAppRuntime(appRoot: string): Promise<string | null> {
+  const nativeValidationError = await validateNativeRebuildOutput(appRoot);
+  if (nativeValidationError != null) return nativeValidationError;
+  return validateNodePtyRuntime({
+    appRoot,
+    arch: "x64",
+    platform: "win32",
+  });
+}
+
 async function buildWorkspaceArtifacts(config: ToolPackConfig): Promise<void> {
   const webNextEnvPath = join(config.workspaceRoot, "apps", "web", "next-env.d.ts");
   const previousWebNextEnv = await readFile(webNextEnvPath, "utf8").catch(() => null);
 
+  await runPnpm(config, ["--filter", "@open-design/release", "build"]);
   await runPnpm(config, ["--filter", "@open-design/contracts", "build"]);
   await runPnpm(config, ["--filter", "@open-design/registry-protocol", "build"]);
   await runPnpm(config, ["--filter", "@open-design/sidecar-proto", "build"]);
+  await runPnpm(config, ["--filter", "@open-design/launcher-proto", "build"]);
   await runPnpm(config, ["--filter", "@open-design/sidecar", "build"]);
   await runPnpm(config, ["--filter", "@open-design/platform", "build"]);
   await runPnpm(config, ["--filter", "@open-design/agui-adapter", "build"]);
   await runPnpm(config, ["--filter", "@open-design/plugin-runtime", "build"]);
+  await runPnpm(config, ["--filter", "@open-design/download", "build"]);
+  await runPnpm(config, ["--filter", "@open-design/host", "build"]);
+  await runPnpm(config, ["--filter", "@open-design/diagnostics", "build"]);
+  await runPnpm(config, ["--filter", "@open-design/dsh-runtime", "build"]);
+  await runPnpm(config, ["--filter", "@open-design/components", "build"]);
   await runPnpm(config, ["--filter", "@open-design/daemon", "build"]);
   try {
     await runPnpm(config, ["--filter", "@open-design/web", "build"], { OD_WEB_OUTPUT_MODE: config.webOutputMode });
     await runPnpm(config, ["--filter", "@open-design/web", "build:sidecar"]);
+    // Inject chunk IDs + upload browser sourcemaps to PostHog, then strip
+    // .map files before any packaging step copies the web output into the
+    // Electron resources. See `tools/pack/src/web-sourcemaps.ts`.
+    await processWebSourcemaps(config);
   } finally {
     if (previousWebNextEnv == null) await rm(webNextEnvPath, { force: true });
     else await writeFile(webNextEnvPath, previousWebNextEnv, "utf8");
@@ -134,13 +161,16 @@ async function buildWorkspaceArtifacts(config: ToolPackConfig): Promise<void> {
   await runPnpm(config, ["--filter", "@open-design/packaged", "build"]);
 }
 
-export async function ensureWinWorkspaceBuild(config: ToolPackConfig, cache: ToolPackCache): Promise<void> {
-  await ensureWorkspaceBuildArtifacts(config, cache, async () => {
+export async function ensureWinWorkspaceBuild(config: ToolPackConfig, cache: ToolPackCache): Promise<string> {
+  return ensureWorkspaceBuildArtifacts(config, cache, async () => {
     await buildWorkspaceArtifacts(config);
   });
 }
 
-export async function createWorkspaceTarballsCacheKey(config: ToolPackConfig): Promise<string> {
+export async function createWorkspaceTarballsCacheKey(
+  config: ToolPackConfig,
+  workspaceBuildKey: string,
+): Promise<string> {
   const packageHashes: Record<string, string> = {};
   for (const packageInfo of INTERNAL_PACKAGES) {
     packageHashes[packageInfo.name] = await hashPackageSourcePath(join(config.workspaceRoot, packageInfo.directory));
@@ -155,8 +185,9 @@ export async function createWorkspaceTarballsCacheKey(config: ToolPackConfig): P
     packageManager: rootPackageJson.packageManager,
     pnpmLock: await hashPath(join(config.workspaceRoot, "pnpm-lock.yaml")),
     prebundle: shouldUseWinStandalonePrebundle(config.webOutputMode),
-    schemaVersion: 6,
+    schemaVersion: 7,
     webOutputMode: config.webOutputMode,
+    workspaceBuildKey,
   });
 }
 
@@ -164,8 +195,9 @@ export async function collectWorkspaceTarballs(
   config: ToolPackConfig,
   paths: WinPaths,
   cache: ToolPackCache,
+  workspaceBuildKey: string,
 ): Promise<PackedTarballsCacheResult> {
-  const key = await createWorkspaceTarballsCacheKey(config);
+  const key = await createWorkspaceTarballsCacheKey(config, workspaceBuildKey);
   const node = {
     id: "win.workspace-tarballs",
     key,
@@ -234,7 +266,12 @@ async function writeAssembledAppEntrypoints(
   packagedVersion: string,
   options: { dependencies?: Record<string, string>; usePrebundle?: boolean } = {},
 ): Promise<void> {
+  const packageVersion = electronBuilderVersionForAppVersion(packagedVersion);
   await mkdir(paths.assembledAppRoot, { recursive: true });
+  await cp(
+    join(config.workspaceRoot, "apps", "desktop", "dist", "main", "preload.cjs"),
+    join(paths.assembledAppRoot, "preload.cjs"),
+  );
   await writeFile(
     paths.assembledPackageJsonPath,
     `${JSON.stringify(
@@ -245,7 +282,7 @@ async function writeAssembledAppEntrypoints(
         name: "open-design-packaged-app",
         private: true,
         productName: PRODUCT_NAME,
-        version: packagedVersion,
+        version: packageVersion,
       },
       null,
       2,
@@ -382,6 +419,7 @@ export async function createWinPackagedAppCacheKey(
   config: ToolPackConfig,
   tarballsKey: string,
   packedTarballs: PackedTarballInfo[],
+  runtimeDependencies: Readonly<Record<string, string>> = WIN_PREBUNDLE_RUNTIME_DEPENDENCIES,
 ): Promise<string> {
   return hashJson({
     arch: "x64",
@@ -391,7 +429,8 @@ export async function createWinPackagedAppCacheKey(
     packedTarballs,
     platform: "win32",
     prebundle: shouldUseWinStandalonePrebundle(config.webOutputMode),
-    schemaVersion: 2,
+    runtimeDependencies: shouldUseWinStandalonePrebundle(config.webOutputMode) ? runtimeDependencies : null,
+    schemaVersion: 4,
     tarballsKey,
     webOutputMode: config.webOutputMode,
   });
@@ -413,7 +452,7 @@ export async function prepareWinPackagedApp(
     key,
     outputs: ["app"],
     invalidate: async ({ entryRoot }: { entryRoot: string }) => {
-      const nativeValidationError = await validateNativeRebuildOutput(join(entryRoot, "app"));
+      const nativeValidationError = await validateWinPackagedAppRuntime(join(entryRoot, "app"));
       return nativeValidationError == null ? null : { reason: nativeValidationError };
     },
     build: async ({ entryRoot }: { entryRoot: string }): Promise<PackagedAppCacheMetadata> => {
@@ -430,8 +469,13 @@ export async function prepareWinPackagedApp(
         await buildPrebundledStandaloneRuntime(config, appPaths);
       }
       await runNpmInstall(appRoot);
+      await prepareNodePtyRuntime({
+        appRoot,
+        arch: "x64",
+        platform: "win32",
+      });
       await runElectronRebuild(config, appRoot);
-      const nativeValidationError = await validateNativeRebuildOutput(appRoot);
+      const nativeValidationError = await validateWinPackagedAppRuntime(appRoot);
       if (nativeValidationError != null) throw new Error(nativeValidationError);
       return { packagedVersion };
     },

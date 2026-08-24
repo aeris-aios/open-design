@@ -42,6 +42,7 @@ import {
   linkSnapshotToProject,
   linkSnapshotToRun,
 } from './snapshots.js';
+import { getManifestContextCraft } from './context-craft.js';
 import {
   type ConnectorProbe,
 } from './connector-gate.js';
@@ -61,11 +62,20 @@ export interface ResolveSnapshotInput {
   // Pluggable for tests; in production these are the daemon's live
   // skill / design-system catalogs (server.ts wires them).
   registry: RegistryView;
+  /** Exact already-local record selected by a record-aware caller. */
+  plugin?: InstalledPluginRecord | undefined;
   connectorProbe?: ConnectorProbe | undefined;
   // Optional active-project DS binding. Forwarded to `applyPlugin` so
   // plugins that declared `od.context.designSystem.primary: true` get
   // bound to the project's DS at apply time.
   activeProjectDesignSystem?: { id: string; title?: string } | undefined;
+  /**
+   * Run creation may only reuse a snapshot already pinned to the same
+   * project. Project creation deliberately leaves this false because it can
+   * create a fresh snapshot, while run routes set it after project authority
+   * has been established.
+   */
+  requireSnapshotProjectMatch?: boolean | undefined;
 }
 
 export interface ResolveSnapshotOk {
@@ -167,6 +177,25 @@ export function resolvePluginSnapshot(input: ResolveSnapshotInput): ResolveSnaps
         },
       };
     }
+    if (input.requireSnapshotProjectMatch) {
+      const row = input.db
+        .prepare('SELECT project_id AS projectId FROM applied_plugin_snapshots WHERE id = ?')
+        .get(fields.snapshotId) as { projectId?: unknown } | undefined;
+      if (row?.projectId !== input.projectId) {
+        return {
+          ok: false,
+          status: 404,
+          exitCode: 65,
+          body: {
+            error: {
+              code: 'snapshot-not-found',
+              message: `Applied plugin snapshot ${fields.snapshotId} not found`,
+              data: { snapshotId: fields.snapshotId },
+            },
+          },
+        };
+      }
+    }
     if (snapshot.status === 'stale') {
       return {
         ok: false,
@@ -193,7 +222,9 @@ export function resolvePluginSnapshot(input: ResolveSnapshotInput): ResolveSnaps
   }
 
   // Path 2: pluginId — run apply, persist a new snapshot.
-  const plugin = getInstalledPlugin(input.db, fields.pluginId!);
+  const plugin = input.plugin?.id === fields.pluginId
+    ? input.plugin
+    : getInstalledPlugin(input.db, fields.pluginId!);
   if (!plugin) {
     return {
       ok: false,
@@ -274,6 +305,7 @@ export function resolvePluginSnapshot(input: ResolveSnapshotInput): ResolveSnaps
     taskKind: result.appliedPlugin.taskKind,
     inputs: result.appliedPlugin.inputs,
     resolvedContext: result.appliedPlugin.resolvedContext,
+    craftRequires: result.appliedPlugin.craftRequires ?? getManifestContextCraft(plugin.manifest),
     pipeline: result.appliedPlugin.pipeline,
     genuiSurfaces: result.appliedPlugin.genuiSurfaces ?? [],
     capabilitiesGranted: merged,

@@ -16,12 +16,10 @@ import { buildSrcdoc } from '../../src/runtime/srcdoc';
 //      this, FileViewer's `liveCommentTargets` map never updates and
 //      the hint banner sticks at its instructive-default state even
 //      though there's nothing to click.
-//   2. Drop click events on unannotated elements without posting an
-//      `od:comment-target` — the click handler walks up to <html>,
-//      finds nothing tagged, and must bail. Posting a synthetic id
-//      here would change save-to-source semantics for inspect
-//      overrides (the persisted CSS keys off the same elementId), so
-//      this test pins the no-fallback contract.
+//   2. In Comment picker mode, fall back to meaningful DOM selectors
+//      for unannotated surfaces so imported or partially annotated HTML
+//      can still be reviewed. Inspect mode still needs a real annotated
+//      selector for live style persistence.
 //
 // The host-side hint switch lives in `apps/web/src/components/FileViewer.tsx`
 // (search for `inspect-empty-hint-no-targets`); these tests pin the
@@ -36,6 +34,13 @@ function extractBridgeScript(srcdoc: string): string {
     throw new Error('selection bridge script not found in srcdoc');
   }
   return match[1];
+}
+
+function extractSelectionBridgeStyle(srcdoc: string): string {
+  const match = srcdoc.match(
+    /<style data-od-selection-bridge-style>[\s\S]*?<\/style>/,
+  );
+  return match?.[0] ?? '';
 }
 
 function markVisible(win: { document: Document }, selector: string): void {
@@ -57,6 +62,40 @@ function markVisible(win: { document: Document }, selector: string): void {
   });
 }
 
+type PostedMessage = { type?: string; [key: string]: unknown };
+type ParentPostMessageSpy = {
+  mock: { calls: ReadonlyArray<ReadonlyArray<unknown>> };
+};
+
+function postedMessages(
+  parentPostMessage: ParentPostMessageSpy,
+  type: string,
+): PostedMessage[] {
+  return parentPostMessage.mock.calls
+    .map((call) => call[0])
+    .filter(
+      (message): message is PostedMessage =>
+        typeof message === 'object' &&
+        message !== null &&
+        (message as PostedMessage).type === type,
+    );
+}
+
+async function waitForPostedMessages(
+  win: Pick<Window, 'setTimeout'>,
+  parentPostMessage: ParentPostMessageSpy,
+  type: string,
+  expectedCount = 1,
+): Promise<PostedMessage[]> {
+  const deadline = Date.now() + 500;
+  let messages = postedMessages(parentPostMessage, type);
+  while (messages.length < expectedCount && Date.now() < deadline) {
+    await new Promise<void>((resolve) => win.setTimeout(resolve, 10));
+    messages = postedMessages(parentPostMessage, type);
+  }
+  return messages;
+}
+
 function setupBridgeDom(
   bodyHtml: string,
   mode: 'inspect' | 'comment',
@@ -67,14 +106,18 @@ function setupBridgeDom(
     commentBridge: mode === 'comment',
   });
   const script = extractBridgeScript(srcdoc);
+  const bridgeStyle = extractSelectionBridgeStyle(srcdoc);
 
   // Build a fresh JSDOM that mirrors the iframe runtime: `window.parent`
   // is what the bridge calls into, and we spy on its postMessage to
   // capture the messages it would emit to the host.
-  const dom = new JSDOM(`<!doctype html><html><body>${bodyHtml}</body></html>`, {
-    runScripts: 'outside-only',
-    pretendToBeVisual: true,
-  });
+  const dom = new JSDOM(
+    `<!doctype html><html><head>${bridgeStyle}</head><body>${bodyHtml}</body></html>`,
+    {
+      runScripts: 'outside-only',
+      pretendToBeVisual: true,
+    },
+  );
   const win = dom.window;
   const parentPostMessage = vi.fn();
   // jsdom defaults `window.parent` to `window` itself for top-level
@@ -157,6 +200,7 @@ describe('selection bridge — empty annotation surface (#890)', () => {
     const { win, parentPostMessage } = setupBridgeDom(
       '<main data-od-id="hero"><h1 id="title">Hero</h1></main>',
       'inspect',
+      ['[data-od-id="hero"]'],
     );
 
     await new Promise<void>((resolve) => win.setTimeout(resolve, 10));
@@ -181,6 +225,7 @@ describe('selection bridge — empty annotation surface (#890)', () => {
     const { win, parentPostMessage } = setupBridgeDom(
       '<main data-od-id="hero">Hero</main>',
       'inspect',
+      ['[data-od-id="hero"]'],
     );
 
     await new Promise<void>((resolve) => win.setTimeout(resolve, 10));
@@ -196,6 +241,42 @@ describe('selection bridge — empty annotation surface (#890)', () => {
     expect(clickMessages).toHaveLength(1);
     expect(clickMessages[0].elementId).toBe('hero');
     expect(clickMessages[0].clickedDescendant).toBeUndefined();
+  });
+
+  it('refreshes the active comment target when its text node mutates after picking it', async () => {
+    const { win, parentPostMessage } = setupBridgeDom(
+      '<main data-od-id="hero">Draft copy</main>',
+      'comment',
+      ['[data-od-id="hero"]'],
+    );
+
+    await new Promise<void>((resolve) => win.setTimeout(resolve, 10));
+    parentPostMessage.mockClear();
+
+    const target = win.document.querySelector('[data-od-id="hero"]');
+    expect(target).not.toBeNull();
+    target!.dispatchEvent(
+      new win.MouseEvent('click', { bubbles: true, cancelable: true }),
+    );
+
+    const clickMessages = parentPostMessage.mock.calls
+      .map((call) => call[0])
+      .filter((message) => message?.type === 'od:comment-target');
+    expect(clickMessages).toHaveLength(1);
+    expect(clickMessages[0].text).toBe('Draft copy');
+
+    parentPostMessage.mockClear();
+    target!.firstChild!.textContent = 'Updated copy';
+    const updateMessages = await waitForPostedMessages(
+      win,
+      parentPostMessage,
+      'od:comment-active-target-update',
+    );
+    expect(updateMessages).toHaveLength(1);
+    expect(updateMessages[0]).toMatchObject({
+      elementId: 'hero',
+      text: 'Updated copy',
+    });
   });
 
   it('does not invent fallback targets in Inspect mode for unannotated elements', async () => {
@@ -241,7 +322,7 @@ describe('selection bridge — empty annotation surface (#890)', () => {
     expect(clickMessages[0].text).toBe('Launch');
   });
 
-  it('does not use Picker DOM fallback on mixed annotated and unannotated pages', async () => {
+  it('uses Picker DOM fallback for meaningful unannotated elements on mixed pages', async () => {
     const { win, parentPostMessage } = setupBridgeDom(
       '<main><section data-od-id="hero">Hero</section><button id="cta">Launch</button></main>',
       'comment',
@@ -258,7 +339,67 @@ describe('selection bridge — empty annotation surface (#890)', () => {
     const clickMessages = parentPostMessage.mock.calls
       .map((call) => call[0])
       .filter((message) => message?.type === 'od:comment-target');
-    expect(clickMessages).toEqual([]);
+    expect(clickMessages).toHaveLength(1);
+    expect(clickMessages[0]).toMatchObject({
+      elementId: 'dom:body > main:nth-of-type(1) > button:nth-of-type(1)',
+      selector: 'body > main:nth-of-type(1) > button:nth-of-type(1)',
+      text: 'Launch',
+    });
+  });
+
+  it('uses leaf-first DOM fallback in Comment mode instead of an annotated section ancestor', async () => {
+    const { win, parentPostMessage } = setupBridgeDom(
+      '<section data-screen-label="01 Hero"><h1 id="headline"><span>ERP</span> and CRM delivery</h1><p>Subhead</p></section>',
+      'comment',
+      ['#headline'],
+    );
+
+    await new Promise<void>((resolve) => win.setTimeout(resolve, 10));
+    parentPostMessage.mockClear();
+
+    win.document.getElementById('headline')!.dispatchEvent(
+      new win.MouseEvent('click', { bubbles: true, cancelable: true }),
+    );
+
+    const clickMessages = parentPostMessage.mock.calls
+      .map((call) => call[0])
+      .filter((message) => message?.type === 'od:comment-target');
+    expect(clickMessages).toHaveLength(1);
+    expect(clickMessages[0]).toMatchObject({
+      elementId: 'dom:body > section:nth-of-type(1) > h1:nth-of-type(1)',
+      selector: 'body > section:nth-of-type(1) > h1:nth-of-type(1)',
+      label: 'h1',
+      text: 'ERP and CRM delivery',
+      position: {
+        x: 10,
+        y: 20,
+        width: 120,
+        height: 48,
+      },
+    });
+  });
+
+  it('does not broadcast the generated React root as a page-sized Comment target', async () => {
+    const { win, parentPostMessage } = setupBridgeDom(
+      '<div id="root" data-od-id="path-0"><header><a>Brand</a></header><main><h1 id="headline">Hero</h1></main><footer>Footer</footer></div>',
+      'comment',
+      ['#root', '#headline'],
+    );
+
+    await new Promise<void>((resolve) => win.setTimeout(resolve, 10));
+
+    const targetMessages = parentPostMessage.mock.calls
+      .map((call) => call[0])
+      .filter((message) => message?.type === 'od:comment-targets');
+    expect(targetMessages.length).toBeGreaterThan(0);
+    const last = targetMessages.at(-1);
+    expect(last.targets).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          elementId: 'path-0',
+        }),
+      ]),
+    );
   });
 
   it('broadcasts DOM fallback targets in comment mode so Pods can hit-test unannotated pages', async () => {
@@ -284,5 +425,150 @@ describe('selection bridge — empty annotation surface (#890)', () => {
         }),
       ]),
     );
+  });
+
+  it('applies pointer-events none to body iframes while Comment picker is active', async () => {
+    const { win } = setupBridgeDom(
+      '<article data-od-id="card"><div>Tablet edition</div><iframe id="f" src="about:blank"></iframe></article>',
+      'comment',
+      ['#f'],
+    );
+    await new Promise<void>((resolve) => win.setTimeout(resolve, 10));
+    const iframe = win.document.getElementById('f');
+    expect(iframe).not.toBeNull();
+    expect(win.getComputedStyle(iframe!).pointerEvents).toBe('none');
+  });
+
+  it('applies pointer-events none to body iframes while Inspect picker is active', async () => {
+    const { win } = setupBridgeDom(
+      '<article data-od-id="card"><iframe id="f" src="about:blank"></iframe></article>',
+      'inspect',
+      ['#f'],
+    );
+    await new Promise<void>((resolve) => win.setTimeout(resolve, 10));
+    expect(win.getComputedStyle(win.document.getElementById('f')!).pointerEvents).toBe('none');
+  });
+
+  it('restores iframe pointer events after Comment mode is disabled', async () => {
+    const { win } = setupBridgeDom(
+      '<article data-od-id="card"><iframe id="f" src="about:blank"></iframe></article>',
+      'comment',
+      ['#f'],
+    );
+    await new Promise<void>((resolve) => win.setTimeout(resolve, 10));
+    const iframe = win.document.getElementById('f')!;
+    expect(win.getComputedStyle(iframe).pointerEvents).toBe('none');
+
+    win.dispatchEvent(
+      new win.MessageEvent('message', {
+        data: { type: 'od:comment-mode', enabled: false, mode: 'picker' },
+      }),
+    );
+    expect(win.getComputedStyle(iframe).pointerEvents).toBe('auto');
+  });
+
+  it('restores the active page state captured from the URL-loaded preview', async () => {
+    const { win } = setupBridgeDom(
+      '<main id="home" data-page="home"><h1>Home</h1></main>' +
+        '<main id="profile" data-page="profile" hidden><h1>Profile</h1></main>',
+      'inspect',
+    );
+
+    win.dispatchEvent(
+      new win.MessageEvent('message', {
+        data: {
+          type: 'od:preview-runtime-state-restore',
+          state: {
+            version: 1,
+            hash: '',
+            htmlAttrs: {},
+            bodyAttrs: {},
+            entries: [
+              {
+                path: [0],
+                tag: 'main',
+                id: 'home',
+                attrs: { 'data-page': 'home', hidden: '' },
+              },
+              {
+                path: [1],
+                tag: 'main',
+                id: 'profile',
+                attrs: { 'data-page': 'profile', class: 'active' },
+              },
+            ],
+          },
+        },
+      }),
+    );
+
+    expect(win.document.getElementById('home')?.hasAttribute('hidden')).toBe(true);
+    expect(win.document.getElementById('profile')?.hasAttribute('hidden')).toBe(false);
+    expect(win.document.getElementById('profile')?.className).toBe('active');
+
+    const home = win.document.getElementById('home')!;
+    const profile = win.document.getElementById('profile')!;
+    home.dispatchEvent(new win.Event('pointerdown', { bubbles: true }));
+    home.removeAttribute('hidden');
+    home.setAttribute('data-edit-revision', 'fresh');
+    profile.setAttribute('hidden', '');
+
+    await new Promise<void>((resolve) => win.setTimeout(resolve, 120));
+    expect(home.hasAttribute('hidden')).toBe(false);
+    expect(home.getAttribute('data-edit-revision')).toBe('fresh');
+    expect(profile.hasAttribute('hidden')).toBe(true);
+  });
+
+  it('restores the current page content before manual edit activates', async () => {
+    const { win } = setupBridgeDom(
+      '<main id="app" data-page="today"><h1 data-od-source-path="path-0-0">Today page</h1></main>',
+      'inspect',
+    );
+
+    win.dispatchEvent(
+      new win.MessageEvent('message', {
+        data: {
+          type: 'od:preview-runtime-state-restore',
+          state: {
+            version: 1,
+            hash: '',
+            roots: [{
+              path: [0],
+              tag: 'main',
+              id: 'app',
+              html: '<section data-od-id="profile-screen"><h1>Profile page</h1><p>Current page content</p></section>',
+            }],
+            htmlAttrs: {},
+            bodyAttrs: {},
+            entries: [],
+          },
+        },
+      }),
+    );
+
+    expect(win.document.getElementById('app')?.getAttribute('data-page')).toBe('today');
+    expect(win.document.querySelector('[data-od-id="profile-screen"] h1')?.textContent).toBe('Profile page');
+    expect(win.document.body.textContent).toContain('Current page content');
+    expect(win.document.body.textContent).not.toContain('Today page');
+  });
+
+  it('posts od:comment-target for the annotated card when the device-frame iframe is clicked', async () => {
+    const { win, parentPostMessage } = setupBridgeDom(
+      '<article data-od-id="tablet-card" class="frame-card"><div class="meta">Tablet edition</div><iframe id="f" class="tablet-frame" title="Tablet edition" src="about:blank"></iframe></article>',
+      'comment',
+      ['#f', '.frame-card'],
+    );
+    await new Promise<void>((resolve) => win.setTimeout(resolve, 10));
+    parentPostMessage.mockClear();
+
+    win.document.getElementById('f')!.dispatchEvent(
+      new win.MouseEvent('click', { bubbles: true, cancelable: true }),
+    );
+
+    const clickMessages = parentPostMessage.mock.calls
+      .map((call) => call[0])
+      .filter((message) => message?.type === 'od:comment-target');
+    expect(clickMessages).toHaveLength(1);
+    expect(clickMessages[0].elementId).toBe('tablet-card');
   });
 });

@@ -11,7 +11,7 @@ triggers:
 od:
   mode: deck
   category: slides
-  upstream: "https://github.com/anthropics/skills/tree/main/pptx"
+  upstream: "https://github.com/anthropics/skills/tree/main/skills/pptx"
 ---
 
 # pptx
@@ -24,19 +24,19 @@ Read, generate, and adjust PowerPoint slides, layouts, and templates. Useful for
 
 ## Source
 
-- Upstream: https://github.com/anthropics/skills/tree/main/pptx
+- Upstream: https://github.com/anthropics/skills/tree/main/skills/pptx
 - Category: `slides`
 
 ## How to use
 
-This catalogue entry advertises the skill in Open Design so the agent
+This catalogue entry advertises the skill in OpenDesign so the agent
 discovers it during planning. To run the full upstream workflow with
 its original assets, scripts, and references, install the upstream
 bundle into your active agent's skills directory:
 
 ```bash
 # Inspect the upstream README for exact paths
-open https://github.com/anthropics/skills/tree/main/pptx
+open https://github.com/anthropics/skills/tree/main/skills/pptx
 ```
 
 Then ask the agent to invoke this skill by name (`pptx`) or with

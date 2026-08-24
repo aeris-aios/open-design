@@ -1,22 +1,16 @@
 // Facet derivation for the Plugins home section.
 //
-// The filter is a single-axis workflow picker. It intentionally
-// summarizes the Home hero rail's mental model instead of exposing raw
-// manifest modes or every concrete artifact kind:
+// The Home starter grid is organized around the artifact a user wants
+// to make first:
 //
-//   Import · Create · Export · Refine · Extend
+//   Slides · Prototype · Live Artifact · Image · Video · HyperFrames · Audio
 //
-// Those five lanes describe the platform loop: bring upstream sources
-// into Open Design, create new artifacts, ship downstream framework
-// handoffs, improve existing work, and extend the system with new
-// plugins. Concrete things like Slides, Prototype, React, or Figma
-// remain searchable card metadata instead of becoming duplicate tabs
-// beside their parent lane.
-//
-// Each plugin belongs to at most one lane. A second, scoped subcategory
-// row appears inside the active lane so Create can still expose the
-// accumulated Prototype / Slides / Design system / Media buckets without
-// making them peers of Create.
+// Prototype, Slides, Image, and Video have enough bundled templates to
+// deserve a second row. Those child buckets follow the Feishu prompt
+// taxonomy from the user-query analysis doc: business dashboards, app
+// prototypes, landing pages, pitch decks, training decks, brand visuals,
+// video/motion generation, and adjacent scene clusters. HyperFrames and
+// Audio stay flat because their catalog slices are intentionally small.
 //
 // Counts in each category reflect the catalog *as a whole*, not the
 // post-filter slice. We deliberately avoid recomputing counts after
@@ -24,7 +18,10 @@
 // clicks make the row visually noisy and obscure how the overall
 // catalog is shaped.
 
-import type { InstalledPluginRecord } from '@open-design/contracts';
+import { resolveLocalizedText, type InstalledPluginRecord } from '@open-design/contracts';
+import { CURATED_LIVE_ARTIFACT_PLUGIN_IDS } from './curatedPriority';
+import { localizedText } from './localization';
+import { resolveCommercialCategoryId, type CommercialCategoryId } from './categoryLabel';
 
 export type FacetAxis = 'category' | 'subcategory';
 
@@ -115,512 +112,418 @@ function byAnySlug(...slugs: string[]): (record: InstalledPluginRecord) => boole
   return (record) => hasAnySlug(record, slugs);
 }
 
-function hasAnySlugPart(record: InstalledPluginRecord, slugs: readonly string[]): boolean {
-  const haystack = [...recordSlugs(record)];
-  return slugs.some((slug) =>
-    haystack.some((value) => value === slug || value.split('-').includes(slug)),
-  );
-}
-
-function byAnySlugPart(...slugs: string[]): (record: InstalledPluginRecord) => boolean {
-  return (record) => hasAnySlugPart(record, slugs);
-}
-
-function byTaskKind(taskKind: string): (record: InstalledPluginRecord) => boolean {
-  return (record) => slugify(manifestTaskKind(record) ?? '') === taskKind;
-}
-
 function matchesAny(record: InstalledPluginRecord, tests: Array<(record: InstalledPluginRecord) => boolean>): boolean {
   return tests.some((test) => test(record));
 }
 
-const SOURCE_TESTS = [
-  byTaskKind('figma-migration'),
-  byTaskKind('code-migration'),
+const HYPERFRAMES_TESTS = [
   byAnySlug(
-    'import',
-    'source-import',
-    'from-source',
-    'migration',
-    'figma-migration',
-    'code-migration',
-    'github-import',
-    'repo-import',
+    'hyperframes',
+    'html-video',
+    'video-composition',
+    'interactive-video',
   ),
 ];
 
-const EXTEND_TESTS = [
-  byAnySlug('plugin-authoring', 'create-plugin', 'extension', 'marketplace', 'community-plugin'),
-];
-
-const GENERATE_TESTS = [
-  byTaskKind('new-generation'),
-  byAnySlug('generate', 'generation', 'new-generation', 'media-generation'),
-  byMode('deck'),
-  byMode('prototype'),
-  byMode('design-system'),
-  byMode('image'),
-  byMode('video'),
-  byMode('audio'),
-];
-
-const EXPORT_TESTS = [
-  byMode('export'),
-  byAnySlug(
-    'export',
-    'downstream',
-    'handoff',
-    'downstream-export',
-  ),
-];
-
-const EXPORT_FORMAT_TESTS = [
-  byAnySlugPart('pptx', 'ppt', 'pdf'),
-];
-
-const SHARE_TESTS = [
-  byAnySlug(
-    'share',
-    'publish',
-    'github-pr',
-    'pull-request',
-    'gist',
-    'slack',
-    'discord',
-    'notion',
-    'linear',
-    'jira',
-  ),
-];
-
-const DEPLOY_TESTS = [
-  byAnySlug(
-    'deploy',
-    'deployment',
-    'vercel',
-    'cloudflare',
-    'cloudflare-pages',
-    'netlify',
-    'github-pages',
-    'fly',
-    'fly-io',
-    'render',
-  ),
-];
-
-const REFINE_TESTS = [
-  byTaskKind('tune-collab'),
-  byAnySlug('tune-collab', 'refine', 'improve', 'critique', 'review', 'patch-edit'),
-];
-
-function isSourcePlugin(record: InstalledPluginRecord): boolean {
-  return matchesAny(record, SOURCE_TESTS);
+function isHyperFramesPlugin(record: InstalledPluginRecord): boolean {
+  return matchesAny(record, HYPERFRAMES_TESTS);
 }
 
-function isExportPlugin(record: InstalledPluginRecord): boolean {
-  const mode = slugify(manifestField(record, 'mode') ?? '');
-  return matchesAny(record, EXPORT_TESTS) || (mode === 'utility' && matchesAny(record, EXPORT_FORMAT_TESTS));
+function isVideoPlugin(record: InstalledPluginRecord): boolean {
+  return byMode('video')(record) && !isHyperFramesPlugin(record);
 }
 
-function isSharePlugin(record: InstalledPluginRecord): boolean {
-  return matchesAny(record, SHARE_TESTS);
+function isLiveArtifactPlugin(record: InstalledPluginRecord): boolean {
+  return (CURATED_LIVE_ARTIFACT_PLUGIN_IDS as readonly string[]).includes(record.id);
 }
 
-function isDeployPlugin(record: InstalledPluginRecord): boolean {
-  return matchesAny(record, DEPLOY_TESTS);
-}
-
-function isExtendPlugin(record: InstalledPluginRecord): boolean {
-  return matchesAny(record, EXTEND_TESTS);
-}
-
-function isRefinePlugin(record: InstalledPluginRecord): boolean {
-  return matchesAny(record, REFINE_TESTS) && !isExportPlugin(record);
-}
-
-function isCreatePlugin(record: InstalledPluginRecord): boolean {
-  return matchesAny(record, GENERATE_TESTS) && !isExtendPlugin(record) && !isExportPlugin(record);
-}
-
-// Curated workflow list. Keep this intentionally small: these are
-// semantic lanes, not artifact kinds or framework names.
+// Curated artifact-kind list. Keep this aligned with the Home creation
+// intents and the app's artifact product types.
 const PRIMARY_CATEGORIES: readonly CategoryDef[] = [
   {
-    slug: 'import',
-    label: 'Import',
-    starterPrompt: 'Create an Open Design plugin that imports a source into a project and normalizes it into editable artifacts.',
-    test: isSourcePlugin,
-  },
-  {
-    slug: 'create',
-    label: 'Create',
-    starterPrompt: 'Create an Open Design plugin that generates a reusable artifact from a short user brief.',
-    test: isCreatePlugin,
-  },
-  {
-    slug: 'export',
-    label: 'Export',
-    starterPrompt: 'Create an Open Design plugin that exports an accepted artifact into a downstream file or framework handoff.',
-    test: isExportPlugin,
-  },
-  {
-    slug: 'share',
-    label: 'Share',
-    starterPrompt: 'Create an Open Design plugin that packages an accepted artifact for sharing with collaborators.',
-    test: isSharePlugin,
-  },
-  {
-    slug: 'deploy',
-    label: 'Deploy',
-    starterPrompt: 'Create an Open Design plugin that deploys an accepted artifact to a hosted downstream surface.',
-    test: isDeployPlugin,
-  },
-  {
-    slug: 'refine',
-    label: 'Refine',
-    starterPrompt: 'Create an Open Design plugin that reviews, patches, and improves an existing artifact.',
-    test: isRefinePlugin,
-  },
-  {
-    slug: 'extend',
-    label: 'Extend',
-    starterPrompt: 'Create an Open Design plugin that extends the Open Design plugin catalog or authoring workflow.',
-    test: isExtendPlugin,
-  },
-];
-
-// Scoped child buckets. These are deliberately parented so the row can
-// say "Create" first, then reveal the user's accumulated concrete modes
-// only after that lane is active.
-const SUBCATEGORIES: readonly SubcategoryDef[] = [
-  {
-    parent: 'import',
-    slug: 'from-figma',
-    label: 'Figma',
-    starterPrompt: 'Create an Open Design plugin that imports a Figma file or frame URL and rebuilds it as editable Open Design artifacts.',
-    test: byTaskKind('figma-migration'),
-  },
-  {
-    parent: 'import',
-    slug: 'from-github',
-    label: 'GitHub',
-    starterPrompt: 'Create an Open Design plugin that imports a GitHub repository or path, discovers the design entrypoints, and prepares an editable workspace.',
-    test: byAnySlug('github', 'github-import', 'repo-import'),
-  },
-  {
-    parent: 'import',
-    slug: 'from-code',
-    label: 'Code / folder',
-    starterPrompt: 'Create an Open Design plugin that imports a local code folder and turns the relevant UI into an editable design artifact.',
-    test: byTaskKind('code-migration'),
-  },
-  {
-    parent: 'import',
-    slug: 'from-url',
-    label: 'URL',
-    starterPrompt: 'Create an Open Design plugin that imports a public URL, captures the page structure, and recreates it as an editable artifact.',
-    test: byAnySlug('url-import', 'website-import', 'web-import'),
-  },
-  {
-    parent: 'import',
-    slug: 'from-screenshot',
-    label: 'Screenshot',
-    starterPrompt: 'Create an Open Design plugin that imports a screenshot or image reference and reconstructs a matching editable UI.',
-    test: byAnySlug('screenshot-import', 'image-import'),
-  },
-  {
-    parent: 'import',
-    slug: 'from-pdf',
-    label: 'PDF',
-    starterPrompt: 'Create an Open Design plugin that imports a PDF and converts key pages into editable Open Design artifacts.',
-    test: byAnySlugPart('pdf'),
-  },
-  {
-    parent: 'import',
-    slug: 'from-pptx',
-    label: 'PPTX',
-    starterPrompt: 'Create an Open Design plugin that imports a PPTX deck and converts slides into editable deck artifacts.',
-    test: byAnySlugPart('pptx', 'ppt'),
-  },
-  {
-    parent: 'import',
-    slug: 'from-framer',
-    label: 'Framer',
-    starterPrompt: 'Create an Open Design plugin that imports a Framer site or project export and rebuilds it as editable components.',
-    test: byAnySlug('framer-import', 'framer'),
-  },
-  {
-    parent: 'import',
-    slug: 'from-webflow',
-    label: 'Webflow',
-    starterPrompt: 'Create an Open Design plugin that imports a Webflow site export and maps it into editable Open Design artifacts.',
-    test: byAnySlug('webflow-import', 'webflow'),
-  },
-  {
-    parent: 'create',
-    slug: 'prototype',
-    label: 'Prototype',
-    starterPrompt: 'Create an Open Design plugin that generates an interactive prototype from a product brief.',
-    test: byMode('prototype'),
-  },
-  {
-    parent: 'create',
     slug: 'deck',
     label: 'Slides',
-    starterPrompt: 'Create an Open Design plugin that generates a polished slide deck from a narrative brief.',
+    starterPrompt: 'Create an OpenDesign plugin that generates a polished slide deck from a narrative brief.',
     test: byMode('deck'),
   },
   {
-    parent: 'create',
-    slug: 'design-system',
-    label: 'Design system',
-    starterPrompt: 'Create an Open Design plugin that generates a reusable design system from brand and product constraints.',
-    test: byMode('design-system'),
+    slug: 'prototype',
+    label: 'Prototype',
+    starterPrompt: 'Create an OpenDesign plugin that generates an interactive prototype from a product brief.',
+    test: (record) => byMode('prototype')(record) && !isLiveArtifactPlugin(record),
   },
   {
-    parent: 'create',
-    slug: 'hyperframes',
-    label: 'HyperFrames',
-    starterPrompt: 'Create an Open Design plugin that generates a HyperFrames-ready motion composition.',
-    test: byAnySlug('hyperframes'),
+    slug: 'live-artifact',
+    label: 'Live Artifact',
+    starterPrompt: 'Create an OpenDesign plugin that generates a live artifact with refreshable, data-aware UI.',
+    test: isLiveArtifactPlugin,
   },
   {
-    parent: 'create',
     slug: 'image',
     label: 'Image',
-    starterPrompt: 'Create an Open Design plugin that generates image assets from structured creative direction.',
+    starterPrompt: 'Create an OpenDesign plugin that generates image assets from structured creative direction.',
     test: byMode('image'),
   },
   {
-    parent: 'create',
     slug: 'video',
     label: 'Video',
-    starterPrompt: 'Create an Open Design plugin that generates video prompts, storyboards, or render-ready motion artifacts.',
-    test: byMode('video'),
+    starterPrompt: 'Create an OpenDesign plugin that generates video prompts, storyboards, or render-ready motion artifacts.',
+    test: isVideoPlugin,
   },
   {
-    parent: 'create',
+    slug: 'hyperframes',
+    label: 'HyperFrames',
+    starterPrompt: 'Create an OpenDesign plugin that generates a HyperFrames-ready motion composition.',
+    test: isHyperFramesPlugin,
+  },
+  {
     slug: 'audio',
     label: 'Audio',
-    starterPrompt: 'Create an Open Design plugin that generates audio, voice, or sound-design assets from a brief.',
+    starterPrompt: 'Create an OpenDesign plugin that generates audio, voice, or sound-design assets from a brief.',
     test: byMode('audio'),
   },
+];
+
+// Deck scene buckets follow the commercial "品类" taxonomy (see
+// `./categoryLabel.ts` and specs/current slides-agent-commercialization-spec):
+// the SAME 15 decision scenes the per-card category chip resolves. Membership
+// is the plugin's resolved commercial category (`resolveCommercialCategoryId`),
+// not tag-slug heuristics, so a deck lands in exactly one scene and the filter
+// row reads as one taxonomy with the card tags.
+//
+// Ordered by commercial priority: the five paid MVP scenes (fundraising,
+// corporate strategy, B2B sales, product management, design craft) lead, then
+// the secondary business scenes, with the acquisition scene (life/story) last.
+const DECK_COMMERCIAL_ORDER: readonly CommercialCategoryId[] = [
+  'fundraising-pitch',
+  'corporate-strategy',
+  'b2b-sales',
+  'product-management',
+  'design-craft',
+  'marketing-gtm',
+  'data-finance',
+  'consulting',
+  'government-policy',
+  'professional-training',
+  'academic-research',
+  'ai-literacy',
+  'career',
+  'student-coursework',
+  'life',
+];
+
+// English fallbacks only — the visible chip text is resolved through the typed
+// i18n dict (`pluginsHome.commercialCategory.<id>`) by `pluginSubfacetLabel`.
+// These must match the `en` locale values so a missing key degrades gracefully.
+const DECK_COMMERCIAL_LABELS: Record<CommercialCategoryId, string> = {
+  'student-coursework': 'Student coursework',
+  'corporate-strategy': 'Corporate strategy',
+  'professional-training': 'Professional training',
+  'b2b-sales': 'B2B sales',
+  'academic-research': 'Academic research',
+  'marketing-gtm': 'Marketing & GTM',
+  'data-finance': 'Data & finance',
+  'fundraising-pitch': 'Fundraising pitch',
+  'government-policy': 'Government & policy',
+  'product-management': 'Product management',
+  consulting: 'Consulting',
+  career: 'Career',
+  'ai-literacy': 'AI literacy',
+  life: 'Life & story',
+  'design-craft': 'Design craft',
+};
+
+const DECK_SUBCATEGORIES: readonly SubcategoryDef[] = DECK_COMMERCIAL_ORDER.map((id) => ({
+  parent: 'deck',
+  slug: id,
+  label: DECK_COMMERCIAL_LABELS[id],
+  starterPrompt: `Create an OpenDesign deck plugin for the ${DECK_COMMERCIAL_LABELS[id]} scene — a decision-grade slide deck with the structure, language, and visual discipline that scene's audience expects.`,
+  test: (record) => resolveCommercialCategoryId(record) === id,
+}));
+
+// Display-order overrides for sub-category rails/catalog, keyed by parent.
+//
+// IMPORTANT: this is presentation only. `extractSubcategories()` resolves a
+// plugin's bucket via `SUBCATEGORIES.find(...)`, so the *array order* below is
+// the matching precedence and must stay stable — reordering it would re-bucket
+// overlapping-tag plugins (e.g. a `dashboard`+`design` plugin would flip from
+// Dashboards to Brand / design). To change only the order chips/cards appear
+// in — without touching which bucket a plugin lands in — list the parent's
+// slugs here in the desired display order. Any slug not listed keeps its
+// natural `SUBCATEGORIES` order behind the explicitly-ordered ones.
+const SUBCATEGORY_DISPLAY_ORDER: Record<string, readonly string[]> = {
+  prototype: [
+    'landing-marketing',
+    'brand-design',
+    'business-dashboards',
+    'app-prototypes',
+    'developer-tools',
+    'docs-reports',
+  ],
+  // Deck order is the commercial-priority order declared above.
+  deck: DECK_COMMERCIAL_ORDER,
+};
+
+function orderSubcategoriesForDisplay(parent: string, options: FacetOption[]): FacetOption[] {
+  const order = SUBCATEGORY_DISPLAY_ORDER[parent];
+  if (!order) return options;
+  const rank = (slug: string) => {
+    const index = order.indexOf(slug);
+    return index === -1 ? order.length : index;
+  };
+  // Stable sort: explicitly-ordered slugs float to the front in the configured
+  // order; everything else keeps its original relative position behind them.
+  return options
+    .map((option, index) => ({ option, index }))
+    .sort((a, b) => rank(a.option.slug) - rank(b.option.slug) || a.index - b.index)
+    .map((entry) => entry.option);
+}
+
+// Scene child buckets based on the Feishu prompt taxonomy. HyperFrames
+// and Audio intentionally have no children, so selecting them keeps the
+// section flat.
+//
+// NOTE: array order here is matching precedence (see SUBCATEGORY_DISPLAY_ORDER
+// above), NOT the on-screen order. Keep it stable.
+const SUBCATEGORIES: readonly SubcategoryDef[] = [
   {
-    parent: 'export',
-    slug: 'pptx',
-    label: 'PPTX',
-    starterPrompt: 'Create an Open Design plugin that exports an accepted deck artifact to PPTX with high visual fidelity.',
-    test: byAnySlugPart('pptx', 'ppt'),
+    parent: 'prototype',
+    slug: 'business-dashboards',
+    label: 'Dashboards',
+    starterPrompt: 'Create an OpenDesign prototype plugin for business systems, admin panels, or analytics dashboards.',
+    test: byAnySlug(
+      'dashboard',
+      'admin-panel',
+      'analytics',
+      'control-panel',
+      'team-dashboard',
+      'live-dashboard',
+      'refreshable-dashboard',
+      'ops-dashboard',
+      'github-dashboard',
+      'social-media-dashboard',
+      'data',
+      'chart',
+    ),
   },
   {
-    parent: 'export',
-    slug: 'pdf',
-    label: 'PDF',
-    starterPrompt: 'Create an Open Design plugin that exports an accepted artifact to a polished PDF package.',
-    test: byAnySlugPart('pdf'),
+    parent: 'prototype',
+    slug: 'app-prototypes',
+    label: 'Apps',
+    starterPrompt: 'Create an OpenDesign prototype plugin for multi-screen apps, onboarding, or task-productivity flows.',
+    test: byAnySlug(
+      'mobile',
+      'app',
+      'mobile-app',
+      'ios-app',
+      'android-app',
+      'phone-screen',
+      'app-ui',
+      'app-mockup',
+      'app-onboarding',
+      'onboarding',
+      'signup',
+      'task',
+      'habit-tracker',
+      'dating-app',
+    ),
   },
   {
-    parent: 'export',
-    slug: 'html',
-    label: 'HTML',
-    starterPrompt: 'Create an Open Design plugin that exports an accepted artifact to standalone HTML.',
-    test: byAnySlug('html'),
+    parent: 'prototype',
+    slug: 'landing-marketing',
+    label: 'Landing / marketing',
+    starterPrompt: 'Create an OpenDesign prototype plugin for landing pages, marketing sites, pricing pages, or campaign pages.',
+    test: byAnySlug(
+      'landing',
+      'landing-page',
+      'saas-landing',
+      'marketing-page',
+      'product-landing',
+      'pricing',
+      'pricing-page',
+      'waitlist-page',
+      'coming-soon-page',
+      'email-template',
+      'newsletter',
+      'lead-magnet',
+      'e-guide',
+      'poster',
+      'social-carousel',
+    ),
   },
   {
-    parent: 'export',
-    slug: 'zip',
-    label: 'ZIP',
-    starterPrompt: 'Create an Open Design plugin that exports an accepted artifact as a portable ZIP bundle.',
-    test: byAnySlug('zip'),
+    parent: 'prototype',
+    slug: 'developer-tools',
+    label: 'Developer tools',
+    starterPrompt: 'Create an OpenDesign prototype plugin for developer tools, engineering workflows, docs, or code collaboration.',
+    test: byAnySlug(
+      'engineering',
+      'docs',
+      'documentation',
+      'api-reference',
+      'runbook',
+      'ops-doc',
+      'sre-doc',
+      'github',
+      'linear',
+      'issue',
+    ),
   },
   {
-    parent: 'export',
-    slug: 'markdown',
-    label: 'Markdown',
-    starterPrompt: 'Create an Open Design plugin that exports an accepted artifact to Markdown with asset references.',
-    test: byAnySlug('markdown', 'md'),
+    parent: 'prototype',
+    slug: 'docs-reports',
+    label: 'Docs / reports',
+    starterPrompt: 'Create an OpenDesign prototype plugin for reports, documents, case studies, specs, invoices, or resumes.',
+    test: byAnySlug(
+      'report',
+      'financial-report',
+      'finance-report',
+      'case-report',
+      'clinical-case',
+      'case-study',
+      'guide',
+      'tutorial',
+      'pm-spec',
+      'prd',
+      'spec',
+      'invoice',
+      'resume',
+      'cv',
+    ),
   },
   {
-    parent: 'export',
-    slug: 'figma',
-    label: 'Figma',
-    starterPrompt: 'Create an Open Design plugin that exports an accepted artifact into a Figma-ready handoff package.',
-    test: byAnySlug('figma-export'),
+    parent: 'prototype',
+    slug: 'brand-design',
+    label: 'Brand / design',
+    starterPrompt: 'Create an OpenDesign prototype plugin for brand pages, visual exploration, design reviews, or mockups.',
+    test: byAnySlug(
+      'design',
+      'design-review',
+      'design-audit',
+      'critique',
+      'mockup',
+      'wireframe',
+      'visual',
+      'brand',
+    ),
+  },
+  // Deck scenes are the 15 commercial "品类" buckets (generated above), keyed by
+  // the plugin's resolved commercial category rather than tag-slug heuristics.
+  ...DECK_SUBCATEGORIES,
+  {
+    parent: 'image',
+    slug: 'ui-product-mockups',
+    label: 'UI / product mockups',
+    starterPrompt: 'Create an OpenDesign image plugin for product UI mockups, game UI, product cards, or interface showcases.',
+    test: byAnySlug(
+      'app-web-design',
+      'game-ui',
+      'ui',
+      'hud',
+      'live-artifact',
+      'app-showcase',
+      'product',
+      'mockup',
+    ),
   },
   {
-    parent: 'export',
-    slug: 'nextjs',
-    label: 'Next.js',
-    starterPrompt: 'Create an Open Design plugin that exports an accepted artifact to a Next.js App Router implementation.',
-    test: byAnySlug('next', 'nextjs'),
+    parent: 'image',
+    slug: 'brand-visuals',
+    label: 'Brand / logo',
+    starterPrompt: 'Create an OpenDesign image plugin for logos, brand visuals, typography-led posters, or visual systems.',
+    test: byAnySlug('logo', 'brand', 'typography', 'poster', 'key-art', 'cover-art'),
   },
   {
-    parent: 'export',
-    slug: 'reactjs',
-    label: 'React.js',
-    starterPrompt: 'Create an Open Design plugin that exports an accepted artifact to a React component handoff.',
-    test: byAnySlug('react', 'reactjs'),
+    parent: 'image',
+    slug: 'storyboards-motion-refs',
+    label: 'Storyboards',
+    starterPrompt: 'Create an OpenDesign image plugin for storyboards, choreography breakdowns, pose references, or motion planning sheets.',
+    test: byAnySlug('storyboard', 'dance', 'choreography', 'pose-reference', 'video-reference', 'sequence'),
   },
   {
-    parent: 'export',
-    slug: 'vuejs',
-    label: 'Vue.js',
-    starterPrompt: 'Create an Open Design plugin that exports an accepted artifact to a Vue single-file component.',
-    test: byAnySlug('vue', 'vuejs'),
+    parent: 'image',
+    slug: 'social-content',
+    label: 'Social / content',
+    starterPrompt: 'Create an OpenDesign image plugin for social posts, infographics, explainers, or content graphics.',
+    test: byAnySlug('social-media-post', 'infographic', 'explainer', 'social', 'collage'),
   },
   {
-    parent: 'export',
-    slug: 'sveltejs',
-    label: 'Svelte.js',
-    starterPrompt: 'Create an Open Design plugin that exports an accepted artifact to a Svelte component.',
-    test: byAnySlug('svelte', 'sveltejs'),
+    parent: 'image',
+    slug: 'avatar-portrait',
+    label: 'Avatar / portrait',
+    starterPrompt: 'Create an OpenDesign image plugin for avatars, portraits, identity photos, or character headshots.',
+    test: byAnySlug('profile-avatar', 'portrait', 'selfie', 'identity'),
   },
   {
-    parent: 'export',
-    slug: 'astro',
-    label: 'Astro',
-    starterPrompt: 'Create an Open Design plugin that exports an accepted artifact to an Astro component or page.',
-    test: byAnySlug('astro'),
+    parent: 'image',
+    slug: 'illustration-style',
+    label: 'Illustration / style',
+    starterPrompt: 'Create an OpenDesign image plugin for illustrations, anime, fantasy scenes, 3D renders, or style-transfer prompts.',
+    test: byAnySlug(
+      'illustration',
+      'anime',
+      'fantasy',
+      '3d-render',
+      'cinematic',
+      'crayon',
+      'style-transfer',
+      'nature',
+    ),
   },
   {
-    parent: 'export',
-    slug: 'angular',
-    label: 'Angular',
-    starterPrompt: 'Create an Open Design plugin that exports an accepted artifact to an Angular component.',
-    test: byAnySlug('angular'),
+    parent: 'video',
+    slug: 'motion-effects',
+    label: 'Motion / effects',
+    starterPrompt: 'Create an OpenDesign video plugin for motion graphics, VFX, title frames, animation, or logo/outro sequences.',
+    test: byAnySlug(
+      'motion-graphics',
+      'vfx',
+      'frame',
+      'kinetic-typography',
+      'logo',
+      'outro',
+      'title',
+      'transition',
+      'animation',
+    ),
   },
   {
-    parent: 'export',
-    slug: 'tailwind',
-    label: 'Tailwind',
-    starterPrompt: 'Create an Open Design plugin that exports an accepted artifact using Tailwind CSS classes.',
-    test: byAnySlug('tailwind', 'tailwindcss'),
+    parent: 'video',
+    slug: 'social-short-form',
+    label: 'Social / short form',
+    starterPrompt: 'Create an OpenDesign video plugin for short-form social clips, vertical video, TikTok-style captions, or dance trends.',
+    test: byAnySlug('short-form', 'vertical', 'tiktok', 'social-meme', 'dance', 'k-pop', 'karaoke', 'captions'),
   },
   {
-    parent: 'share',
-    slug: 'public-link',
-    label: 'Public link',
-    starterPrompt: 'Create an Open Design plugin that publishes an accepted artifact to a shareable public link.',
-    test: byAnySlug('public-link', 'share-link'),
+    parent: 'video',
+    slug: 'marketing-product',
+    label: 'Marketing / product',
+    starterPrompt: 'Create an OpenDesign video plugin for product promos, advertising, brand sizzle reels, or marketing cuts.',
+    test: byAnySlug('marketing', 'product', 'advertising', 'product-promo', 'saas', 'website-to-video', 'brand'),
   },
   {
-    parent: 'share',
-    slug: 'github-pr',
-    label: 'GitHub PR',
-    starterPrompt: 'Create an Open Design plugin that opens a GitHub pull request with the accepted artifact changes.',
-    test: byAnySlug('github-pr', 'pull-request'),
+    parent: 'video',
+    slug: 'data-explainers',
+    label: 'Data / explainers',
+    starterPrompt: 'Create an OpenDesign video plugin for data explainers, animated charts, maps, diagrams, or flow walkthroughs.',
+    test: byAnySlug('data', 'chart', 'flowchart', 'diagram', 'map', 'route', 'infographic'),
   },
   {
-    parent: 'share',
-    slug: 'github-gist',
-    label: 'GitHub Gist',
-    starterPrompt: 'Create an Open Design plugin that publishes an accepted artifact as a GitHub Gist.',
-    test: byAnySlug('gist', 'github-gist'),
-  },
-  {
-    parent: 'share',
-    slug: 'slack',
-    label: 'Slack',
-    starterPrompt: 'Create an Open Design plugin that shares an accepted artifact summary and link to Slack.',
-    test: byAnySlug('slack'),
-  },
-  {
-    parent: 'share',
-    slug: 'discord',
-    label: 'Discord',
-    starterPrompt: 'Create an Open Design plugin that shares an accepted artifact summary and link to Discord.',
-    test: byAnySlug('discord'),
-  },
-  {
-    parent: 'share',
-    slug: 'notion',
-    label: 'Notion',
-    starterPrompt: 'Create an Open Design plugin that publishes an accepted artifact and notes into Notion.',
-    test: byAnySlug('notion'),
-  },
-  {
-    parent: 'share',
-    slug: 'linear',
-    label: 'Linear',
-    starterPrompt: 'Create an Open Design plugin that posts an accepted artifact update to a Linear issue.',
-    test: byAnySlug('linear'),
-  },
-  {
-    parent: 'share',
-    slug: 'jira',
-    label: 'Jira',
-    starterPrompt: 'Create an Open Design plugin that posts an accepted artifact update to a Jira ticket.',
-    test: byAnySlug('jira'),
-  },
-  {
-    parent: 'deploy',
-    slug: 'vercel',
-    label: 'Vercel',
-    starterPrompt: 'Create an Open Design plugin that deploys an accepted web artifact to Vercel and returns preview and production links.',
-    test: byAnySlug('vercel'),
-  },
-  {
-    parent: 'deploy',
-    slug: 'cloudflare',
-    label: 'Cloudflare',
-    starterPrompt: 'Create an Open Design plugin that deploys an accepted web artifact to Cloudflare Pages.',
-    test: byAnySlug('cloudflare', 'cloudflare-pages'),
-  },
-  {
-    parent: 'deploy',
-    slug: 'netlify',
-    label: 'Netlify',
-    starterPrompt: 'Create an Open Design plugin that deploys an accepted web artifact to Netlify.',
-    test: byAnySlug('netlify'),
-  },
-  {
-    parent: 'deploy',
-    slug: 'github-pages',
-    label: 'GitHub Pages',
-    starterPrompt: 'Create an Open Design plugin that deploys an accepted static artifact to GitHub Pages.',
-    test: byAnySlug('github-pages'),
-  },
-  {
-    parent: 'deploy',
-    slug: 'fly-io',
-    label: 'Fly.io',
-    starterPrompt: 'Create an Open Design plugin that deploys an accepted app artifact to Fly.io.',
-    test: byAnySlug('fly', 'fly-io'),
-  },
-  {
-    parent: 'deploy',
-    slug: 'render',
-    label: 'Render',
-    starterPrompt: 'Create an Open Design plugin that deploys an accepted app artifact to Render.',
-    test: byAnySlug('render'),
-  },
-  {
-    parent: 'deploy',
-    slug: 'docker',
-    label: 'Docker',
-    starterPrompt: 'Create an Open Design plugin that packages an accepted app artifact into a Docker-ready handoff.',
-    test: byAnySlug('docker'),
-  },
-  {
-    parent: 'refine',
-    slug: 'tune',
-    label: 'Tune',
-    starterPrompt: 'Create an Open Design plugin that tunes an existing artifact based on user feedback.',
-    test: byAnySlug('tune-collab'),
-  },
-  {
-    parent: 'refine',
-    slug: 'review',
-    label: 'Review',
-    starterPrompt: 'Create an Open Design plugin that reviews an existing artifact and proposes concrete fixes.',
-    test: byAnySlug('critique', 'review', 'diff-review'),
-  },
-  {
-    parent: 'extend',
-    slug: 'plugin-authoring',
-    label: 'Plugin authoring',
-    starterPrompt: 'Create an Open Design plugin that helps users author, validate, and install new Open Design plugins.',
-    test: byAnySlug('plugin-authoring'),
+    parent: 'video',
+    slug: 'cinematic-story',
+    label: 'Cinematic / story',
+    starterPrompt: 'Create an OpenDesign video plugin for cinematic scenes, story sequences, anime/action shots, or fantasy clips.',
+    test: byAnySlug(
+      'cinematic',
+      'fantasy',
+      'action',
+      'anime',
+      'game-cinematic',
+      'cyberpunk',
+      'nature',
+      'cinematic-romance',
+      'combat',
+    ),
   },
 ];
 
@@ -674,7 +577,10 @@ export function buildSubcategoryCatalog(plugins: InstalledPluginRecord[]): Recor
         starterPrompt: c.starterPrompt,
         count: counts.get(`${category.slug}:${c.slug}`) ?? 0,
       }));
-    if (options.length > 0) acc[category.slug] = options;
+    if (options.length > 0) {
+      // Presentation order only; bucket membership is fixed by SUBCATEGORIES.
+      acc[category.slug] = orderSubcategoriesForDisplay(category.slug, options);
+    }
     return acc;
   }, {});
 }
@@ -714,6 +620,7 @@ export function isFeaturedPlugin(record: InstalledPluginRecord): boolean {
 export function filterByQuery(
   plugins: InstalledPluginRecord[],
   query: string,
+  locale?: string,
 ): InstalledPluginRecord[] {
   const q = query.trim().toLowerCase();
   if (!q) return plugins;
@@ -722,8 +629,10 @@ export function filterByQuery(
   return plugins.filter((p) => {
     const haystack = [
       p.title ?? '',
+      resolveLocalizedText(localizedText(p.manifest?.title_i18n), locale),
       p.id,
       p.manifest?.description ?? '',
+      resolveLocalizedText(localizedText(p.manifest?.description_i18n), locale),
       (p.manifest?.tags ?? []).join(' '),
     ]
       .join(' ')
@@ -732,20 +641,23 @@ export function filterByQuery(
   });
 }
 
-// Smart default selection. Lead users into the visually strongest
-// creation bucket first; Slides tends to contain polished, image-heavy
-// cards, while the broader Create lane remains one tap away.
+// Smart default selection. Lead with the first artifact kind in the
+// Home creation flow while keeping all prototype scenes visible.
 export const PREFERRED_DEFAULT_SELECTION: FacetSelection = {
-  category: 'create',
-  subcategory: 'deck',
+  category: 'deck',
+  subcategory: null,
 };
 
 export function resolveDefaultSelection(catalog: FacetCatalog): FacetSelection {
   const wantCategory = PREFERRED_DEFAULT_SELECTION.category;
-  const hasCategory = wantCategory
-    ? catalog.category.some((o) => o.slug === wantCategory)
-    : true;
-  if (!hasCategory || !wantCategory) return { category: null, subcategory: null };
+  const preferredCategory = wantCategory
+    ? catalog.category.find((o) => o.slug === wantCategory && o.count > 0)
+    : undefined;
+  const selectedCategory = preferredCategory ?? catalog.category.find((o) => o.count > 0);
+  if (!selectedCategory) return { category: null, subcategory: null };
+  if (selectedCategory.slug !== wantCategory) {
+    return { category: selectedCategory.slug, subcategory: null };
+  }
 
   const wantSubcategory = PREFERRED_DEFAULT_SELECTION.subcategory;
   if (!wantSubcategory) return PREFERRED_DEFAULT_SELECTION;

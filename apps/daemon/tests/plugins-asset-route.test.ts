@@ -12,13 +12,13 @@
 
 import type http from 'node:http';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { startServer } from '../src/server.js';
 import { migratePlugins } from '../src/plugins/persistence.js';
-import { upsertInstalledPlugin } from '../src/plugins/registry.js';
+import { defaultRegistryRoots, upsertInstalledPlugin } from '../src/plugins/registry.js';
 
 let server: http.Server;
 let baseUrl: string;
@@ -78,14 +78,38 @@ beforeAll(async () => {
       if (done) break;
     }
   }
+  const secretPath = path.join(pluginRoot, 'secret.txt');
+  const outsideDir = path.join(pluginRoot, 'outside');
+  await mkdir(outsideDir, { recursive: true });
+  await writeFile(secretPath, 'outside secret');
+  await writeFile(path.join(outsideDir, 'nested-secret.txt'), 'nested outside secret');
+  const installedSurfacesDir = path.join(defaultRegistryRoots().userPluginsRoot, 'asset-plugin', 'surfaces');
+  const installedInternalDir = path.join(defaultRegistryRoots().userPluginsRoot, 'asset-plugin', 'internal-assets');
+  await mkdir(installedInternalDir, { recursive: true });
+  await writeFile(path.join(installedInternalDir, 'nested-internal.txt'), 'nested internal secret');
+  await symlink(
+    secretPath,
+    path.join(installedSurfacesDir, 'leak.txt'),
+  );
+  await symlink(outsideDir, path.join(installedSurfacesDir, 'linked-outside'), 'dir');
+  await symlink(installedInternalDir, path.join(installedSurfacesDir, 'linked-internal'), 'dir');
+  const installedRoot = path.join(defaultRegistryRoots().userPluginsRoot, 'asset-plugin');
+  await writeFile(
+    path.join(installedRoot, 'SKILL.md'),
+    '---\nname: asset-plugin\ndescription: Fixture skill description.\n---\n\n# Asset plugin\n',
+  );
+  await writeFile(path.join(installedRoot, 'notes.markdown'), '# notes\n');
+  await writeFile(path.join(installedRoot, 'payload.bin'), 'not a text asset');
   void migratePlugins;
   void upsertInstalledPlugin;
   void Database;
 });
 
 afterAll(async () => {
+  await fetch(`${baseUrl}/api/plugins/asset-plugin/uninstall`, { method: 'POST' }).catch(() => undefined);
   await Promise.resolve(shutdown?.());
   await new Promise<void>((resolve) => server.close(() => resolve()));
+  await rm(path.join(defaultRegistryRoots().userPluginsRoot, 'asset-plugin'), { recursive: true, force: true });
   await rm(pluginRoot, { recursive: true, force: true });
 });
 
@@ -116,5 +140,53 @@ describe('GET /api/plugins/:id/asset/*', () => {
   it('returns 404 for a missing asset under a known plugin', async () => {
     const resp = await fetch(`${baseUrl}/api/plugins/asset-plugin/asset/does/not/exist.html`);
     expect(resp.status).toBe(404);
+  });
+
+  it('rejects symlinked assets inside the plugin root', async () => {
+    const resp = await fetch(`${baseUrl}/api/plugins/asset-plugin/asset/surfaces/leak.txt`);
+    expect(resp.status).toBe(404);
+    expect(await resp.text()).not.toContain('outside secret');
+  });
+
+  it('rejects assets reached through a symlinked directory inside the plugin root', async () => {
+    const resp = await fetch(`${baseUrl}/api/plugins/asset-plugin/asset/surfaces/linked-outside/nested-secret.txt`);
+    expect(resp.status).toBe(404);
+    expect(await resp.text()).not.toContain('nested outside secret');
+  });
+
+  it('rejects assets reached through an internal symlinked directory inside the plugin root', async () => {
+    const resp = await fetch(`${baseUrl}/api/plugins/asset-plugin/asset/surfaces/linked-internal/nested-internal.txt`);
+    expect(resp.status).toBe(404);
+    expect(await resp.text()).not.toContain('nested internal secret');
+  });
+});
+
+// The plugin detail page reads a suite's "Knowledge skills" descriptions by
+// fetching each `SKILL.md` through this route and parsing its frontmatter.
+// That client only parses bodies whose media type is in its markdown
+// allowlist (`apps/web/src/runtime/plugin-skill-descriptions.ts`); any other
+// type has the response body cancelled unread, which silently blanks the
+// description line under the skill title. Serving markdown with a markdown
+// media type is therefore a contract of this route, not a cosmetic detail.
+describe('GET /api/plugins/:id/asset/* markdown media type', () => {
+  it('serves SKILL.md as text/markdown so the client parses it', async () => {
+    const resp = await fetch(`${baseUrl}/api/plugins/asset-plugin/asset/SKILL.md`);
+    expect(resp.status).toBe(200);
+    expect(resp.headers.get('content-type')).toBe('text/markdown; charset=utf-8');
+    expect(await resp.text()).toContain('Fixture skill description.');
+  });
+
+  it('serves a .markdown asset with the same media type', async () => {
+    const resp = await fetch(`${baseUrl}/api/plugins/asset-plugin/asset/notes.markdown`);
+    expect(resp.status).toBe(200);
+    expect(resp.headers.get('content-type')).toBe('text/markdown; charset=utf-8');
+  });
+
+  // Guards the safe default: only known-safe types are named, everything else
+  // must stay a non-renderable download rather than become inlineable.
+  it('still falls back to application/octet-stream for unknown extensions', async () => {
+    const resp = await fetch(`${baseUrl}/api/plugins/asset-plugin/asset/payload.bin`);
+    expect(resp.status).toBe(200);
+    expect(resp.headers.get('content-type')).toBe('application/octet-stream');
   });
 });

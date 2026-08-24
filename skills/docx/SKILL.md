@@ -11,7 +11,7 @@ triggers:
 od:
   mode: prototype
   category: documents
-  upstream: "https://github.com/anthropics/skills/tree/main/docx"
+  upstream: "https://github.com/anthropics/skills/tree/main/skills/docx"
 ---
 
 # docx
@@ -24,19 +24,19 @@ Create, edit, and analyze Word documents with tracked changes, comments, and for
 
 ## Source
 
-- Upstream: https://github.com/anthropics/skills/tree/main/docx
+- Upstream: https://github.com/anthropics/skills/tree/main/skills/docx
 - Category: `documents`
 
 ## How to use
 
-This catalogue entry advertises the skill in Open Design so the agent
+This catalogue entry advertises the skill in OpenDesign so the agent
 discovers it during planning. To run the full upstream workflow with
 its original assets, scripts, and references, install the upstream
 bundle into your active agent's skills directory:
 
 ```bash
 # Inspect the upstream README for exact paths
-open https://github.com/anthropics/skills/tree/main/docx
+open https://github.com/anthropics/skills/tree/main/skills/docx
 ```
 
 Then ask the agent to invoke this skill by name (`docx`) or with

@@ -1,11 +1,10 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from '@/playwright/suite';
 import type { Locator, Page } from '@playwright/test';
+import { routeAgents } from '../lib/playwright/mock-factory.js';
+import { T } from '@/timeouts';
 
 const STORAGE_KEY = 'open-design:config';
-const OPEN_SETTINGS_LABEL = /Open settings|打开设置|開啟設定/i;
-const SETTINGS_MENU_LABEL = /^Settings$|^设置$|^設定$/i;
-
-test.describe.configure({ timeout: 30_000 });
+test.describe.configure({ timeout: T.xlong });
 
 const CONNECTORS = [
   {
@@ -44,6 +43,13 @@ function baseConfig(): Record<string, unknown> {
     skillId: null,
     designSystemId: null,
     onboardingCompleted: true,
+    privacyDecisionAt: 1,
+    telemetry: { metrics: true, content: true },
+    composio: {
+      apiKey: '',
+      apiKeyConfigured: true,
+      apiKeyTail: '1234',
+    },
     mediaProviders: {},
     agentModels: {},
     agentCliEnv: {},
@@ -55,28 +61,7 @@ function connectorCard(scope: Page | Locator, id: string) {
 }
 
 async function waitForLoadingToClear(page: Page) {
-  await expect(page.getByText('Loading Open Design…')).toHaveCount(0, { timeout: 15_000 });
-}
-
-async function gotoEntryHome(page: Page) {
-  await page.goto('/', { waitUntil: 'domcontentloaded' });
-  await waitForLoadingToClear(page);
-  const privacyDialog = page.getByRole('dialog').filter({ hasText: 'Help us improve Open Design' });
-  if (await privacyDialog.isVisible().catch(() => false)) {
-    await privacyDialog.getByRole('button', { name: /not now/i }).click();
-  }
-  await expect(page.getByTestId('home-hero')).toBeVisible();
-}
-
-async function openSettingsDialogFromEntry(page: Page) {
-  await waitForLoadingToClear(page);
-  await page.getByRole('button', { name: OPEN_SETTINGS_LABEL }).click();
-  const menu = page.getByRole('menu');
-  await expect(menu).toBeVisible();
-  await menu.getByRole('button', { name: SETTINGS_MENU_LABEL }).click();
-  const dialog = page.getByRole('dialog');
-  await expect(dialog).toBeVisible();
-  return dialog;
+  await expect(page.getByText('Loading OpenDesign…')).toHaveCount(0, { timeout: T.long });
 }
 
 async function openConnectorsSettings(
@@ -113,6 +98,7 @@ async function openConnectorsSettings(
     onDisconnect?: () => { status: number; body: Record<string, unknown> };
   } = {},
 ) {
+  let githubState: Record<string, unknown> = { ...CONNECTORS[0] };
   await page.addInitScript(({ key, value }) => {
     window.localStorage.setItem(key, JSON.stringify(value));
     window.open = ((() => ({
@@ -130,22 +116,16 @@ async function openConnectorsSettings(
     });
   });
 
-  await page.route('**/api/agents', async (route) => {
-    await route.fulfill({
-      json: {
-        agents: [
-          {
-            id: 'codex',
-            name: 'Codex CLI',
-            bin: 'codex',
-            available: true,
-            version: '0.130.0',
-            models: [{ id: 'default', label: 'Default' }],
-          },
-        ],
-      },
-    });
-  });
+  await routeAgents(page, [
+    {
+      id: 'codex',
+      name: 'Codex CLI',
+      bin: 'codex',
+      available: true,
+      version: '0.130.0',
+      models: [{ id: 'default', label: 'Default' }],
+    },
+  ]);
 
   await page.route('**/api/app-config', async (route) => {
     if (route.request().method() === 'GET') {
@@ -163,10 +143,15 @@ async function openConnectorsSettings(
     const statuses = Object.fromEntries(
       connectors.map((connector) => [
         connector.id,
-        {
-          status: connector.status,
-          accountLabel: 'accountLabel' in connector ? connector.accountLabel : undefined,
-        },
+        connector.id === 'github'
+          ? {
+              status: githubState.status,
+              accountLabel: githubState.accountLabel,
+            }
+          : {
+              status: connector.status,
+              accountLabel: 'accountLabel' in connector ? connector.accountLabel : undefined,
+            },
       ]),
     );
     await route.fulfill({ json: { statuses } });
@@ -175,8 +160,25 @@ async function openConnectorsSettings(
   await page.route('**/api/connectors/discovery*', async (route) => {
     await route.fulfill({
       json: {
-        connectors,
+        connectors: connectors.map((connector) => (
+          connector.id === 'github' ? ({ ...connector, ...githubState }) : connector
+        )),
         meta: { provider: 'composio' },
+      },
+    });
+  });
+
+  await page.route('**/api/connectors/github**', async (route) => {
+    if (route.request().method() !== 'GET') {
+      await route.fallback();
+      return;
+    }
+    await route.fulfill({
+      json: {
+        connector: {
+          ...CONNECTORS[0],
+          ...githubState,
+        },
       },
     });
   });
@@ -195,6 +197,10 @@ async function openConnectorsSettings(
 
   await page.route('**/api/connectors/github/connect', async (route) => {
     const response = onConnect();
+    githubState = {
+      ...CONNECTORS[0],
+      ...(response.body.connector ?? {}),
+    };
     await route.fulfill({
       status: response.status,
       contentType: 'application/json',
@@ -204,6 +210,10 @@ async function openConnectorsSettings(
 
   await page.route('**/api/connectors/github/connection', async (route) => {
     const response = onDisconnect();
+    githubState = {
+      ...CONNECTORS[0],
+      ...(response.body.connector ?? {}),
+    };
     await route.fulfill({
       status: response.status,
       contentType: 'application/json',
@@ -211,16 +221,20 @@ async function openConnectorsSettings(
     });
   });
 
-  await gotoEntryHome(page);
-  const dialog = await openSettingsDialogFromEntry(page);
-  await dialog.getByRole('button', { name: /Connectors|连接器/i }).click();
-  await expect(dialog.getByTestId('connector-grid-wrap')).toBeVisible();
-  await expect(connectorCard(dialog, 'github')).toBeVisible();
-  return dialog;
+  await page.goto('/integrations', { waitUntil: 'domcontentloaded' });
+  await waitForLoadingToClear(page);
+  const view = page.locator('.integrations-view');
+  await expect(view).toBeVisible();
+  const connectorsTab = view.getByTestId('integrations-tab-connectors');
+  await connectorsTab.click();
+  await expect(connectorsTab).toHaveAttribute('aria-selected', 'true');
+  await expect(view.getByTestId('connector-grid-wrap')).toBeVisible();
+  await expect(connectorCard(view, 'github')).toBeVisible();
+  return view;
 }
 
 test.describe('Settings connectors auth happy path', () => {
-  test('shows an inline connector error when connect fails', async ({ page }) => {
+  test('[P0] shows an inline connector error when connect fails', async ({ page }) => {
     const dialog = await openConnectorsSettings(page, {
       onConnect: () => ({
         status: 500,
@@ -237,7 +251,7 @@ test.describe('Settings connectors auth happy path', () => {
     await expect(githubCard.getByRole('button', { name: 'Connect' })).toBeVisible();
   });
 
-  test('clears the inline error when the user retries and the connector succeeds', async ({ page }) => {
+  test('[P0] clears the inline error when the user retries and the connector succeeds', async ({ page }) => {
     let connectAttempts = 0;
     const dialog = await openConnectorsSettings(page, {
       onConnect: () => {
@@ -276,7 +290,7 @@ test.describe('Settings connectors auth happy path', () => {
     await expect(dialog.getByText('Composio provider is not configured')).toHaveCount(0);
   });
 
-  test('switches from Connect to Disconnect on success, then returns to Connect after a successful disconnect', async ({ page }) => {
+  test('[P0] switches from Connect to Disconnect on success, then returns to Connect after a successful disconnect', async ({ page }) => {
     let disconnectRequests = 0;
     const dialog = await openConnectorsSettings(page, {
       onConnect: () => ({
@@ -314,5 +328,62 @@ test.describe('Settings connectors auth happy path', () => {
     await expect.poll(() => disconnectRequests).toBe(1);
     await expect(githubCard.getByRole('button', { name: 'Connect' })).toBeVisible();
     await expect(githubCard.getByRole('button', { name: 'Disconnect' })).toHaveCount(0);
+  });
+
+  test('[P0] disconnecting and reconnecting keeps the connector usable without stale pending state', async ({ page }) => {
+    let connectAttempts = 0;
+    let disconnectRequests = 0;
+    const dialog = await openConnectorsSettings(page, {
+      onConnect: () => {
+        connectAttempts += 1;
+        const accountLabel = connectAttempts === 1 ? 'octo-user' : 'octo-user-2';
+        return {
+          status: 200,
+          body: {
+            connector: {
+              ...CONNECTORS[0],
+              status: 'connected',
+              accountLabel,
+            },
+            auth: { kind: 'connected' },
+          },
+        };
+      },
+      onDisconnect: () => {
+        disconnectRequests += 1;
+        return {
+          status: 200,
+          body: {
+            connector: {
+              ...CONNECTORS[0],
+              status: 'available',
+            },
+          },
+        };
+      },
+    });
+
+    const githubCard = connectorCard(dialog, 'github');
+
+    await githubCard.getByRole('button', { name: 'Connect' }).click();
+    await expect(githubCard.getByRole('button', { name: 'Disconnect' })).toBeVisible();
+
+    await githubCard.click();
+    const drawer = page.getByTestId('connector-drawer');
+    await expect(drawer).toContainText('Connected');
+    await expect(drawer).not.toContainText('Authorization pending');
+    await drawer.getByTestId('connector-drawer-close').click();
+
+    await githubCard.getByRole('button', { name: 'Disconnect' }).click();
+    await expect.poll(() => disconnectRequests).toBe(1);
+    await expect(githubCard.getByRole('button', { name: 'Connect' })).toBeVisible();
+
+    await githubCard.getByRole('button', { name: 'Connect' }).click();
+    await expect.poll(() => connectAttempts).toBe(2);
+    await expect(githubCard.getByRole('button', { name: 'Disconnect' })).toBeVisible();
+    await githubCard.click();
+    await expect(drawer).toContainText('Connected');
+    await expect(drawer).not.toContainText('Authorization pending');
+    await expect(drawer).not.toContainText("Couldn't cancel authorization");
   });
 });

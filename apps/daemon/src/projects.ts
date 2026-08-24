@@ -7,41 +7,131 @@
 // All paths flowing in from HTTP handlers are validated against the project
 // directory to prevent path traversal — see resolveSafe().
 
+import { constants as fsConstants, createReadStream } from 'node:fs';
 import { link, lstat, mkdir, readdir, readFile, realpath, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { Readable } from 'node:stream';
 import JSZip from 'jszip';
 import {
   inferLegacyManifest,
   parsePersistedManifest,
   validateArtifactManifestInput,
-} from './artifact-manifest.js';
+} from './artifacts/manifest.js';
 import {
   ArtifactRegressionError,
   STUB_GUARDED_MANIFEST_KINDS,
   evaluateArtifactStubGuard,
   readArtifactStubGuardConfigFromEnv,
-} from './artifact-stub-guard.js';
+} from './artifacts/stub-guard.js';
+import {
+  assertArtifactPublicationAllowed,
+  isPublicationGuardedArtifactKind,
+} from './artifacts/publication-guard.js';
+import { normalizeArtifactRuntimeImports } from './artifacts/runtime-compat.js';
+import { isIgnoredProjectDirName } from './project-ignored-dirs.js';
+import {
+  isSandboxImportedProjectRootAllowed,
+  isSandboxModeEnabled,
+  SANDBOX_IMPORTED_PROJECT_UNAVAILABLE_MESSAGE,
+} from './sandbox-mode.js';
+import { isOrchestratorScratchWorkspace } from './workspace-contract.js';
 
 const FORBIDDEN_SEGMENT = /^$|^\.\.?$/;
-const RESERVED_PROJECT_FILE_SEGMENTS = new Set(['.live-artifacts']);
+const RESERVED_PROJECT_FILE_SEGMENTS = new Set(['.file-versions', '.live-artifacts']);
 const DESIGN_HANDOFF_FILENAME = 'DESIGN-HANDOFF.md';
 const DESIGN_MANIFEST_FILENAME = 'DESIGN-MANIFEST.json';
+export const RUN_ARTIFACT_RECONCILE_MTIME_GRACE_MS = 1000;
 export const projectFileRenameTestHooks = {
   beforeCommit: null as null | ((paths: { source: string; target: string }) => Promise<void> | void),
 };
+export const projectFileWriteTestHooks = {
+  afterCommit: null as null | ((write: { safeName: string; target: string; body: Buffer | string }) => Promise<void> | void),
+};
+
+function createLazyArchiveFileStream(filePath: string): Readable {
+  return Readable.from((async function* readFileChunks() {
+    const noFollow = fsConstants.O_NOFOLLOW ?? 0;
+    const source = createReadStream(filePath, {
+      flags: fsConstants.O_RDONLY | noFollow,
+    });
+    for await (const chunk of source) yield chunk;
+  })());
+}
+
+export function isRunTouchedProjectFile(fileMtimeMs, runStartTimeMs) {
+  if (!Number.isFinite(fileMtimeMs) || !Number.isFinite(runStartTimeMs)) return false;
+  return fileMtimeMs + RUN_ARTIFACT_RECONCILE_MTIME_GRACE_MS >= runStartTimeMs;
+}
+
+function containsIgnoredProjectDirSegment(name: string): boolean {
+  return name
+    .split('/')
+    .filter(Boolean)
+    .some((segment) => isIgnoredProjectDirName(segment));
+}
 
 export function projectDir(projectsRoot, projectId) {
   if (!isSafeId(projectId)) throw new Error('invalid project id');
   return path.join(projectsRoot, projectId);
 }
 
+export class SandboxImportedProjectError extends Error {
+  code = 'SANDBOX_IMPORTED_PROJECT_UNAVAILABLE';
+
+  constructor() {
+    super(SANDBOX_IMPORTED_PROJECT_UNAVAILABLE_MESSAGE);
+    this.name = 'SandboxImportedProjectError';
+  }
+}
+
+function hasExternalProjectRoot(metadata?) {
+  if (typeof metadata?.baseDir !== 'string') return false;
+  return path.isAbsolute(path.normalize(metadata.baseDir));
+}
+
+// For folder-imported projects (external baseDir) the file API resolves under
+// the user's OWN directory, so a hidden path segment (.ssh, .aws, .gnupg, …)
+// would let read/write/delete/rename/folder ops reach credential dotfiles that
+// live outside the app's managed data. Reject hidden segments for every such
+// operation — the single choke point every project file/folder mutation and
+// read funnels through — mirroring the rule buildBatchArchive already enforces
+// for exports. Managed projects (under PROJECTS_DIR, no external baseDir) are
+// unaffected. Callers pass the raw request name; we normalize before checking.
+export function assertVisibleForImportedProject(name, metadata?) {
+  if (!hasExternalProjectRoot(metadata)) return;
+  const segments = String(name ?? '').replace(/\\/g, '/').split('/').filter(Boolean);
+  if (segments.some((segment) => segment.startsWith('.'))) {
+    throw new Error('hidden path segments are not accessible in imported folders');
+  }
+}
+
+export function assertSandboxProjectRootAvailable(metadata?) {
+  if (
+    isSandboxModeEnabled(process.env) &&
+    hasExternalProjectRoot(metadata) &&
+    !isOrchestratorScratchWorkspace(metadata) &&
+    !isSandboxImportedProjectRootAllowed(metadata.baseDir)
+  ) {
+    throw new SandboxImportedProjectError();
+  }
+}
+
+function usesExternalProjectRoot(metadata?) {
+  if (!hasExternalProjectRoot(metadata)) return false;
+  if (isOrchestratorScratchWorkspace(metadata)) return true;
+  if (!isSandboxModeEnabled(process.env)) return true;
+  return isSandboxImportedProjectRootAllowed(metadata.baseDir);
+}
+
 // Returns the folder a project's files live in. For git-linked projects
 // (metadata.baseDir set), this is the user's own folder. Otherwise falls
 // back to the standard computed path under projectsRoot.
-export function resolveProjectDir(projectsRoot, projectId, metadata?) {
-  if (typeof metadata?.baseDir === 'string') {
-    const p = path.normalize(metadata.baseDir);
-    if (path.isAbsolute(p)) return p;
+export function resolveProjectDir(projectsRoot, projectId, metadata?, opts = {}) {
+  if (!opts.allowUnavailableSandboxImportedProject) {
+    assertSandboxProjectRootAvailable(metadata);
+  }
+  if (usesExternalProjectRoot(metadata)) {
+    return path.normalize(metadata.baseDir);
   }
   if (!isSafeId(projectId)) throw new Error('invalid project id');
   return path.join(projectsRoot, projectId);
@@ -50,7 +140,7 @@ export function resolveProjectDir(projectsRoot, projectId, metadata?) {
 export async function ensureProject(projectsRoot, projectId, metadata?) {
   const dir = resolveProjectDir(projectsRoot, projectId, metadata);
   // Git-linked folders already exist; skip mkdir to avoid side-effects.
-  if (typeof metadata?.baseDir !== 'string') {
+  if (!usesExternalProjectRoot(metadata)) {
     await mkdir(dir, { recursive: true });
   }
   return dir;
@@ -60,10 +150,10 @@ export async function listFiles(projectsRoot, projectId, opts = {}) {
   const metadata = opts?.metadata;
   const dir = resolveProjectDir(projectsRoot, projectId, metadata);
   const out = [];
-  // Skip build/install dirs for linked folders so node_modules doesn't stall
-  // the walk on large repos.
-  const skipDirs = metadata?.baseDir ? SKIP_DIRS : undefined;
-  await collectFiles(dir, '', out, skipDirs, dir);
+  // Skip generated dependency/build trees for all project roots. Standard OD
+  // projects can contain framework installs too; surfacing package HTML like
+  // node_modules/tslib/*.html as artifacts produces blank previews.
+  await collectFiles(dir, '', out, isIgnoredProjectDirName, dir);
   // Newest first — matches the visual order users expect after generating.
   out.sort((a, b) => b.mtime - a.mtime);
   const since = Number(opts.since);
@@ -73,15 +163,99 @@ export async function listFiles(projectsRoot, projectId, opts = {}) {
   return out;
 }
 
-// Build/install dirs that should be hidden from the file panel when a
-// project is rooted at metadata.baseDir (the user's own folder). Without
-// this, the listing would be dominated by node_modules, lockfiles, and
-// build output that have no design value.
-const SKIP_DIRS = new Set([
-  'node_modules', '.git', 'dist', 'build', '.next', '.nuxt', '.turbo',
-  '.cache', '.output', 'out', 'coverage', '__pycache__', '.venv',
-  'vendor', 'target', '.od', '.tmp',
-]);
+export async function listProjectFolders(projectsRoot, projectId, opts = {}) {
+  const metadata = opts?.metadata;
+  const dir = resolveProjectDir(projectsRoot, projectId, metadata);
+  const out = [];
+  await collectFolders(dir, '', out, isIgnoredProjectDirName);
+  out.sort((a, b) => a.name.localeCompare(b.name));
+  return out;
+}
+
+async function collectFolders(dir, relDir, out, shouldSkipDir?: (name: string) => boolean) {
+  let entries = [];
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch (err) {
+    if (err && err.code === 'ENOENT') return;
+    throw err;
+  }
+  for (const e of entries) {
+    if (!e.isDirectory()) continue;
+    if (e.name.startsWith('.')) continue;
+    if (shouldSkipDir?.(e.name)) continue;
+    const rel = relDir ? `${relDir}/${e.name}` : e.name;
+    const full = path.join(dir, e.name);
+    const st = await stat(full);
+    out.push({
+      name: rel,
+      path: rel,
+      type: 'dir',
+      size: 0,
+      mtime: st.mtimeMs,
+    });
+    await collectFolders(full, rel, out, shouldSkipDir);
+  }
+}
+
+export async function createProjectFolder(projectsRoot, projectId, name, metadata?) {
+  assertVisibleForImportedProject(name, metadata);
+  const dir = await ensureProject(projectsRoot, projectId, metadata);
+  const safeName = sanitizePath(name);
+  const target = await resolveSafeReal(dir, safeName);
+  await mkdir(target, { recursive: true });
+  const st = await stat(target);
+  if (!st.isDirectory()) {
+    const err = new Error('target path is not a folder');
+    err.code = 'ENOTDIR';
+    throw err;
+  }
+  return {
+    name: safeName,
+    path: safeName,
+    type: 'dir',
+    size: 0,
+    mtime: st.mtimeMs,
+  };
+}
+
+// Resolve (and create) a subdirectory under a project root, confined to the
+// project sandbox. Returns the absolute directory plus the sanitized,
+// forward-slash relative path ('' when no subdir was requested). Used by the
+// upload route so attachments dropped/picked while viewing a folder land in
+// that folder instead of the project root.
+export async function ensureProjectSubdir(projectsRoot, projectId, subdir, metadata?) {
+  const dir = await ensureProject(projectsRoot, projectId, metadata);
+  const raw = typeof subdir === 'string' ? subdir.trim() : '';
+  if (!raw) return { absDir: dir, relDir: '' };
+  const relDir = sanitizePath(raw);
+  const target = await resolveSafeReal(dir, relDir);
+  await mkdir(target, { recursive: true });
+  return { absDir: target, relDir };
+}
+
+// Recursively delete a folder (and everything under it) within the project
+// sandbox. Refuses to delete the project root itself. resolveSafeReal confines
+// the target to the project tree even across descendant symlinks.
+export async function deleteProjectFolder(projectsRoot, projectId, name, metadata?) {
+  assertVisibleForImportedProject(name, metadata);
+  const dir = resolveProjectDir(projectsRoot, projectId, metadata);
+  const safeName = sanitizePath(name);
+  const target = await resolveSafeReal(dir, safeName);
+  const dirReal = await realpath(dir).catch(() => dir);
+  if (target === dirReal) {
+    const err = new Error('cannot delete project root');
+    err.code = 'EINVAL';
+    throw err;
+  }
+  const st = await stat(target);
+  if (!st.isDirectory()) {
+    const err = new Error('target is not a folder');
+    err.code = 'ENOTDIR';
+    throw err;
+  }
+  await rm(target, { recursive: true, force: true });
+}
 
 // Best-effort entry-file detector — looks for index.html at the root,
 // then any *.html file. Returns null if nothing obvious is found, in
@@ -100,7 +274,7 @@ export async function detectEntryFile(dir: string): Promise<string | null> {
   return null;
 }
 
-async function collectFiles(dir, relDir, out, skipDirs?: Set<string>, projectRoot = dir) {
+async function collectFiles(dir, relDir, out, shouldSkipDir?: (name: string) => boolean, projectRoot = dir) {
   let entries = [];
   try {
     entries = await readdir(dir, { withFileTypes: true });
@@ -113,8 +287,8 @@ async function collectFiles(dir, relDir, out, skipDirs?: Set<string>, projectRoo
     const rel = relDir ? `${relDir}/${e.name}` : e.name;
     const full = path.join(dir, e.name);
     if (e.isDirectory()) {
-      if (skipDirs && skipDirs.has(e.name)) continue;
-      await collectFiles(full, rel, out, skipDirs, projectRoot);
+      if (shouldSkipDir?.(e.name)) continue;
+      await collectFiles(full, rel, out, shouldSkipDir, projectRoot);
       continue;
     }
     if (!e.isFile()) continue;
@@ -124,6 +298,7 @@ async function collectFiles(dir, relDir, out, skipDirs?: Set<string>, projectRoo
     out.push({
       name: rel,
       path: rel,
+      localPath: path.resolve(full),
       type: 'file',
       size: st.size,
       mtime: st.mtimeMs,
@@ -142,6 +317,21 @@ async function collectFiles(dir, relDir, out, skipDirs?: Set<string>, projectRoo
 // menu item, which exports the user's actual project tree (e.g. the
 // uploaded `ui-design/` folder), not just the rendered HTML.
 export async function buildProjectArchive(projectsRoot, projectId, root, metadata?) {
+  const { stream, baseName } = await createProjectArchiveStream(
+    projectsRoot,
+    projectId,
+    root,
+    metadata,
+  );
+  return { buffer: await collectArchiveStream(stream), baseName };
+}
+
+// The HTTP export path uses this streaming form. Unlike buildProjectArchive's
+// compatibility wrapper, it never holds every input file plus the finished ZIP
+// in daemon memory at once. All paths are collected and validated before the
+// first response byte is emitted, preserving the route's fail-before-download
+// behavior for missing, empty, or unsafe roots.
+export async function createProjectArchiveStream(projectsRoot, projectId, root, metadata?) {
   const projectRoot = resolveProjectDir(projectsRoot, projectId, metadata);
   let archiveRoot = projectRoot;
   let archiveBaseName = '';
@@ -187,8 +377,7 @@ export async function buildProjectArchive(projectsRoot, projectId, root, metadat
 
   const zip = new JSZip();
   for (const entry of entries) {
-    const buf = await readFile(entry.fullPath);
-    zip.file(entry.relPath, buf, {
+    zip.file(entry.relPath, createLazyArchiveFileStream(entry.fullPath), {
       date: new Date(entry.mtime),
       binary: true,
     });
@@ -199,18 +388,28 @@ export async function buildProjectArchive(projectsRoot, projectId, root, metadat
   // project trees (HTML/CSS/JS plus a handful of assets). Level 9 buys
   // <5% on already-compressed PNGs/fonts at 2-3× CPU; level 1 produces
   // noticeably larger archives. Revisit only if profiling says so.
-  const buffer = await zip.generateAsync({
+  const stream = zip.generateNodeStream({
     type: 'nodebuffer',
+    streamFiles: true,
     compression: 'DEFLATE',
     compressionOptions: { level: 6 },
   });
-  return { buffer, baseName: archiveBaseName };
+  return { stream, baseName: archiveBaseName };
 }
 
 export async function buildBatchArchive(projectsRoot, projectId, fileNames, metadata?) {
+  const { stream, baseName } = await createBatchArchiveStream(
+    projectsRoot,
+    projectId,
+    fileNames,
+    metadata,
+  );
+  return { buffer: await collectArchiveStream(stream), baseName };
+}
+
+export async function createBatchArchiveStream(projectsRoot, projectId, fileNames, metadata?) {
   const projectRoot = resolveProjectDir(projectsRoot, projectId, metadata);
-  const zip = new JSZip();
-  let packed = 0;
+  const eligible = [];
   const rejected = [];
 
   for (const name of fileNames) {
@@ -291,12 +490,7 @@ export async function buildBatchArchive(projectsRoot, projectId, fileNames, meta
       continue;
     }
 
-    const buf = await readFile(filePath);
-    zip.file(name, buf, {
-      date: new Date(st.mtimeMs),
-      binary: true,
-    });
-    packed += 1;
+    eligible.push({ name, filePath, mtime: st.mtimeMs });
   }
 
   // Fail-fast: any rejected entry means the request is invalid — mirror the
@@ -310,18 +504,36 @@ export async function buildBatchArchive(projectsRoot, projectId, fileNames, meta
     throw err;
   }
 
-  if (packed === 0) {
+  if (eligible.length === 0) {
     const err = new Error('no files could be packed');
     err.code = 'ENOENT';
     throw err;
   }
 
-  const buffer = await zip.generateAsync({
+  const zip = new JSZip();
+  for (const entry of eligible) {
+    zip.file(entry.name, createLazyArchiveFileStream(entry.filePath), {
+      date: new Date(entry.mtime),
+      binary: true,
+    });
+  }
+  const stream = zip.generateNodeStream({
     type: 'nodebuffer',
+    streamFiles: true,
     compression: 'DEFLATE',
     compressionOptions: { level: 6 },
   });
-  return { buffer, baseName: '' };
+  return { stream, baseName: '' };
+}
+
+async function collectArchiveStream(stream) {
+  return new Promise<Buffer>((resolve, reject) => {
+    const chunks = [];
+    stream.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+    stream.once('error', reject);
+    stream.once('end', () => resolve(Buffer.concat(chunks)));
+    stream.resume();
+  });
 }
 
 async function collectArchiveEntries(dir, relDir, out) {
@@ -338,11 +550,16 @@ async function collectArchiveEntries(dir, relDir, out) {
     const rel = relDir ? `${relDir}/${e.name}` : e.name;
     const full = path.join(dir, e.name);
     if (e.isDirectory()) {
+      if (isIgnoredProjectDirName(e.name)) continue;
       await collectArchiveEntries(full, rel, out);
       continue;
     }
     if (e.name.endsWith('.artifact.json')) continue;
-    const st = await stat(full);
+    const st = await lstat(full);
+    // A directory entry can be swapped for a symlink between readdir() and
+    // metadata collection. Keep the archive allowlist fail-closed; the lazy
+    // O_NOFOLLOW open below repeats the check when bytes are actually read.
+    if (!st.isFile() || st.isSymbolicLink()) continue;
     out.push({ relPath: rel, fullPath: full, mtime: st.mtimeMs });
   }
 }
@@ -395,7 +612,7 @@ function buildDesignManifest(entries, projectLabel) {
   const screenFiles = screenHtmlFiles.length > 0 ? screenHtmlFiles : [entryFile];
   return JSON.stringify({
     schema: 'open-design.design-manifest.v1',
-    title: projectLabel || 'Open Design project',
+    title: projectLabel || 'OpenDesign project',
     entryFile,
     sourceFiles: {
       all: files,
@@ -484,7 +701,7 @@ function buildDesignHandoff(entries, projectLabel) {
     files.some((name) => /(screens?|pages?|components?|app|src)\//i.test(name));
   const list = (items) => items.length > 0 ? items.map((name) => `- \`${name}\``).join('\n') : '- None detected';
 
-  return `# ${projectLabel || 'Open Design project'} implementation handoff
+  return `# ${projectLabel || 'OpenDesign project'} implementation handoff
 
 This archive is the source of truth for turning the design into production code. Start from \`${entryFile}\`, then preserve the visual system, responsive behavior, and interactions found in the exported files.
 
@@ -492,7 +709,7 @@ This archive is the source of truth for turning the design into production code.
 - Build production UI from the exported design, not a loose reinterpretation.
 - Preserve typography scale, spacing rhythm, color tokens, border radii, shadows, motion timing, and component states.
 - Replace static placeholders only when the target app has real data or functional equivalents.
-- Keep generated product UI free of Open Design chrome, preview labels, or design-process annotations.
+- Keep generated product UI free of OpenDesign chrome, preview labels, or design-process annotations.
 - Treat this handoff as a visual contract: if implementation choices conflict, match the exported pixels and behavior first, then refactor internals.
 
 ## Source map
@@ -523,7 +740,7 @@ For responsive web exports, treat these as a modern breakpoint system for one ad
 - Preserve real copy, labels, and data shown in the export. Do not replace specific text with generic marketing filler.
 - Preserve interactive affordances: hover, focus, pressed, disabled, loading, validation, copy/share, tab/accordion, modal/sheet, and keyboard states where present.
 - Preserve accessibility semantics when converting: headings stay hierarchical, controls remain buttons/links/inputs, focus states stay visible.
-- Do not keep prototype-only annotations, frame labels, or Open Design chrome in the production UI.
+- Do not keep prototype-only annotations, frame labels, or OpenDesign chrome in the production UI.
 
 ## CJX-ready UX contract
 - Use \`${DESIGN_MANIFEST_FILENAME}\` as the machine-readable map for screens, app modules, OS widgets, landing pages, tokens, interactions, and viewport checks.
@@ -575,6 +792,7 @@ ${list(assetFiles)}
 }
 
 export async function readProjectFile(projectsRoot, projectId, name, metadata?) {
+  assertVisibleForImportedProject(name, metadata);
   const dir = resolveProjectDir(projectsRoot, projectId, metadata);
   const file = await resolveSafeReal(dir, name);
   const buf = await readFile(file);
@@ -598,10 +816,12 @@ export async function readProjectFile(projectsRoot, projectId, name, metadata?) 
 // Like readProjectFile but skips loading the file content into memory.
 // Used by the media streaming endpoint so large video files are never buffered.
 export async function resolveProjectFilePath(projectsRoot, projectId, name, metadata?) {
+  assertVisibleForImportedProject(name, metadata);
   const dir = resolveProjectDir(projectsRoot, projectId, metadata);
   const file = await resolveSafeReal(dir, name);
   const st = await stat(file);
-  const rel = toProjectPath(path.relative(dir, file));
+  const rootReal = await realpath(dir).catch(() => dir);
+  const rel = toProjectPath(path.relative(rootReal, file));
   return {
     filePath: file,
     name: rel,
@@ -620,9 +840,11 @@ export async function writeProjectFile(
   { overwrite = true, artifactManifest = null } = {},
   metadata?,
 ) {
+  assertVisibleForImportedProject(name, metadata);
   const dir = await ensureProject(projectsRoot, projectId, metadata);
   const safeName = sanitizePath(name);
   const target = await resolveSafeReal(dir, safeName);
+  body = normalizeArtifactRuntimeImports(safeName, body);
   if (!overwrite) {
     try {
       await stat(target);
@@ -640,6 +862,15 @@ export async function writeProjectFile(
     const validated = validateArtifactManifestInput(artifactManifest, safeName);
     if (validated.ok && validated.value) {
       validatedManifest = validated.value;
+      // Publication guard: HTML/deck artifacts that still contain template
+      // placeholders (e.g. pitch-deck `Name to confirm`, `$X.XM`) must not
+      // land as published files. Runs at the write boundary so it covers
+      // every artifact that flows through writeProjectFile, regardless of
+      // which agent/atom produced the body. Throws
+      // ArtifactPublicationBlockedError which the route layer maps to 422.
+      if (isPublicationGuardedArtifactKind(validatedManifest.kind)) {
+        assertArtifactPublicationAllowed(body);
+      }
       const identifier = typeof validatedManifest.metadata?.identifier === 'string'
         ? validatedManifest.metadata.identifier
         : '';
@@ -680,6 +911,7 @@ export async function writeProjectFile(
     }
   }
   await writeFile(target, body);
+  await projectFileWriteTestHooks.afterCommit?.({ safeName, target, body });
   if (validatedManifest) {
     const manifestFileName = artifactManifestNameFor(safeName);
     const manifestTarget = await resolveSafeReal(dir, manifestFileName);
@@ -705,7 +937,69 @@ function artifactManifestNameFor(name) {
   return `${name}.artifact.json`;
 }
 
+export async function reconcileHtmlArtifactManifest(projectsRoot, projectId, name, metadata?) {
+  const dir = resolveProjectDir(projectsRoot, projectId, metadata);
+  const safeName = validateProjectPath(name);
+  if (containsIgnoredProjectDirSegment(safeName)) return null;
+  const ext = path.extname(safeName).toLowerCase();
+  if (ext !== '.html' && ext !== '.htm') return null;
+
+  let target;
+  try {
+    target = await resolveSafeReal(dir, safeName);
+  } catch (err) {
+    if (err && err.code === 'ENOENT') return null;
+    throw err;
+  }
+
+  let targetStat;
+  try {
+    targetStat = await stat(target);
+  } catch (err) {
+    if (err && err.code === 'ENOENT') return null;
+    throw err;
+  }
+  if (!targetStat.isFile()) return null;
+  if (await isViteDevHtmlEntry(dir, safeName, target)) return null;
+
+  const manifestFileName = artifactManifestNameFor(safeName);
+  const manifestTarget = await resolveSafeReal(dir, manifestFileName);
+  try {
+    const raw = await readFile(manifestTarget, 'utf8');
+    return parseManifest(raw);
+  } catch (err) {
+    if (!err || err.code !== 'ENOENT') throw err;
+  }
+
+  const inferred = inferLegacyManifest(safeName);
+  if (!inferred) return null;
+  const inferredMetadata =
+    inferred.metadata && typeof inferred.metadata === 'object' && !Array.isArray(inferred.metadata)
+      ? inferred.metadata
+      : {};
+  const validated = validateArtifactManifestInput(
+    {
+      ...inferred,
+      createdAt: new Date(targetStat.mtimeMs).toISOString(),
+      updatedAt: new Date(targetStat.mtimeMs).toISOString(),
+      metadata: {
+        ...inferredMetadata,
+        inferred: true,
+        reconciled: true,
+      },
+    },
+    safeName,
+    { preserveUpdatedAt: true },
+  );
+  if (!validated.ok || !validated.value) return null;
+  await writeFile(manifestTarget, JSON.stringify(validated.value, null, 2));
+  return validated.value;
+}
+
 async function readManifestForPath(projectDirPath, relPath) {
+  if (containsIgnoredProjectDirSegment(relPath)) return null;
+  const fullPath = path.join(projectDirPath, relPath);
+  if (await isViteDevHtmlEntry(projectDirPath, relPath, fullPath)) return null;
   const manifestPath = path.join(projectDirPath, artifactManifestNameFor(relPath));
   try {
     const raw = await readFile(manifestPath, 'utf8');
@@ -724,12 +1018,15 @@ function parseManifest(raw) {
 }
 
 export async function deleteProjectFile(projectsRoot, projectId, name, metadata?) {
+  assertVisibleForImportedProject(name, metadata);
   const dir = resolveProjectDir(projectsRoot, projectId, metadata);
   const file = await resolveSafeReal(dir, name);
   await unlink(file);
 }
 
 export async function renameProjectFile(projectsRoot, projectId, fromName, toName, metadata?) {
+  assertVisibleForImportedProject(fromName, metadata);
+  assertVisibleForImportedProject(toName, metadata);
   const dir = resolveProjectDir(projectsRoot, projectId, metadata);
   const oldName = validateProjectPath(fromName);
   const newName = sanitizePath(toName);
@@ -789,6 +1086,7 @@ export async function renameProjectFile(projectsRoot, projectId, fromName, toNam
   await projectFileRenameTestHooks.beforeCommit?.({ source, target: targetPath });
   await renameFilePath(source, targetPath, { noOverwrite: true });
   await commitArtifactManifestRename(manifestRename, newName);
+  await updateArtifactManifestRefsForRename(dir, oldName, newName);
 
   const st = await stat(targetPath);
   const manifest = await readManifestForPath(dir, newName);
@@ -883,16 +1181,22 @@ async function prepareArtifactManifestRename(dir, oldName, newName) {
     }
   }
 
-  return { oldManifestPath, newManifestPath: targetManifestPath, raw };
+  return { oldManifestPath, newManifestPath: targetManifestPath, raw, oldName };
 }
 
 async function commitArtifactManifestRename(manifestRename, newName) {
   if (!manifestRename) return;
-  const { oldManifestPath, newManifestPath, raw } = manifestRename;
+  const { oldManifestPath, newManifestPath, raw, oldName } = manifestRename;
   await mkdir(path.dirname(newManifestPath), { recursive: true });
   const parsed = parseManifest(raw);
   if (parsed) {
-    const validated = validateArtifactManifestInput(parsed, newName);
+    const parsedEntry = typeof parsed.entry === 'string'
+      ? parsed.entry.replace(/\\/g, '/')
+      : '';
+    const renamedManifest = parsedEntry === oldName
+      ? { ...parsed, entry: newName }
+      : parsed;
+    const validated = validateArtifactManifestInput(renamedManifest, newName);
     if (validated.ok && validated.value) {
       await writeFile(oldManifestPath, JSON.stringify(validated.value, null, 2));
       await renameFilePath(oldManifestPath, newManifestPath, { noOverwrite: true });
@@ -902,9 +1206,235 @@ async function commitArtifactManifestRename(manifestRename, newName) {
   await renameFilePath(oldManifestPath, newManifestPath, { noOverwrite: true });
 }
 
+async function updateArtifactManifestRefsForRename(dir, oldName, newName) {
+  const manifests = [];
+  await collectArtifactManifestFiles(dir, '', manifests);
+  for (const manifestFile of manifests) {
+    const ownerName = ownerNameForArtifactManifest(manifestFile.relPath);
+    if (!ownerName) continue;
+    let raw;
+    try {
+      raw = await readFile(manifestFile.fullPath, 'utf8');
+    } catch (err) {
+      if (err && err.code === 'ENOENT') continue;
+      throw err;
+    }
+    const parsed = parseManifest(raw);
+    if (!parsed) continue;
+
+    const updated = rewriteArtifactManifestRenameRefs(parsed, {
+      ownerName,
+      oldName,
+      newName,
+    });
+    if (!updated.changed) continue;
+
+    const validated = validateArtifactManifestInput(updated.manifest, ownerName);
+    if (!validated.ok || !validated.value) continue;
+    await writeFile(manifestFile.fullPath, JSON.stringify(validated.value, null, 2));
+  }
+}
+
+async function collectArtifactManifestFiles(dir, relDir, out) {
+  let entries = [];
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch (err) {
+    if (err && err.code === 'ENOENT') return;
+    throw err;
+  }
+  for (const entry of entries) {
+    if (entry.name.startsWith('.')) continue;
+    const relPath = relDir ? `${relDir}/${entry.name}` : entry.name;
+    const fullPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      await collectArtifactManifestFiles(fullPath, relPath, out);
+      continue;
+    }
+    if (entry.isFile() && entry.name.endsWith('.artifact.json')) {
+      out.push({ relPath, fullPath });
+    }
+  }
+}
+
+async function isViteDevHtmlEntry(projectDirPath, safeName, targetPath) {
+  if (!/(^|\/)index\.html?$/i.test(safeName)) return false;
+  let body = '';
+  try {
+    body = await readFile(targetPath, 'utf8');
+  } catch {
+    return false;
+  }
+  if (!/<script\b[^>]*\btype=["']module["'][^>]*\bsrc=["']\/src\//i.test(body)) {
+    return false;
+  }
+  const viteConfigCandidates = [
+    'vite.config.js',
+    'vite.config.mjs',
+    'vite.config.cjs',
+    'vite.config.ts',
+    'vite.config.mts',
+    'vite.config.cts',
+  ];
+  for (const candidate of viteConfigCandidates) {
+    try {
+      const st = await stat(path.join(projectDirPath, candidate));
+      if (st.isFile()) return true;
+    } catch (err) {
+      if (!err || err.code !== 'ENOENT') return false;
+    }
+  }
+  try {
+    const raw = await readFile(path.join(projectDirPath, 'package.json'), 'utf8');
+    const pkg = JSON.parse(raw);
+    return Boolean(pkg?.dependencies?.vite || pkg?.devDependencies?.vite);
+  } catch {
+    return false;
+  }
+}
+
+function ownerNameForArtifactManifest(manifestName) {
+  const suffix = '.artifact.json';
+  if (!manifestName.endsWith(suffix)) return null;
+  return manifestName.slice(0, -suffix.length);
+}
+
+function rewriteArtifactManifestRenameRefs(manifest, { ownerName, oldName, newName }) {
+  let changed = false;
+  const next = { ...manifest };
+
+  const entry = rewriteManifestRefForRename(next.entry, ownerName, oldName, newName, {
+    preferProjectRoot: true,
+  });
+  if (entry.changed) {
+    next.entry = entry.value;
+    changed = true;
+  }
+
+  if (typeof next.primary === 'string') {
+    const primary = rewriteManifestRefForRename(next.primary, ownerName, oldName, newName, {
+      preferProjectRoot: true,
+    });
+    if (primary.changed) {
+      next.primary = primary.value;
+      changed = true;
+    }
+  }
+
+  if (Array.isArray(next.supportingFiles)) {
+    const supportingFiles = next.supportingFiles.map((ref) => {
+      const updated = rewriteManifestRefForRename(ref, ownerName, oldName, newName);
+      if (updated.changed) changed = true;
+      return updated.value;
+    });
+    if (changed) next.supportingFiles = supportingFiles;
+  }
+
+  return { changed, manifest: next };
+}
+
+function rewriteManifestRefForRename(
+  ref,
+  ownerName,
+  oldName,
+  newName,
+  options = {},
+) {
+  if (typeof ref !== 'string') return { changed: false, value: ref };
+  const normalized = ref.replace(/\\/g, '/').trim();
+  if (!normalized) return { changed: false, value: ref };
+
+  if (options.preferProjectRoot && normalizeManifestProjectRootRef(normalized) === oldName) {
+    return { changed: true, value: newName };
+  }
+
+  if (normalizeManifestProjectRef(normalized, ownerName) === oldName) {
+    return {
+      changed: true,
+      value: relativeManifestRefForOwner(ownerName, newName),
+    };
+  }
+
+  if (normalized === oldName) {
+    return { changed: true, value: newName };
+  }
+
+  return { changed: false, value: ref };
+}
+
+function relativeManifestRefForOwner(ownerName, targetName) {
+  const ownerDir = path.posix.dirname(ownerName);
+  if (ownerDir === '.') return targetName;
+  const relative = path.posix.relative(ownerDir, targetName);
+  if (!relative || relative === '.' || relative.startsWith('../') || relative.includes('/../')) {
+    return targetName;
+  }
+  return relative;
+}
+
+function normalizeManifestProjectRootRef(ref) {
+  return normalizeManifestProjectRef(ref, '');
+}
+
+function normalizeManifestProjectRef(ref, ownerName) {
+  if (typeof ref !== 'string' || !ref.trim()) return null;
+  const value = ref.trim().replace(/\\/g, '/');
+  if (value.includes('\0') || value.startsWith('/')) return null;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(value)) return null;
+  const ownerDir = path.posix.dirname(ownerName);
+  const joined = ownerDir === '.' ? value : `${ownerDir}/${value}`;
+  const normalized = path.posix.normalize(joined).replace(/^\.\//, '');
+  if (!normalized || normalized === '.' || normalized.startsWith('../')) return null;
+  if (normalized.split('/').some((segment) => segment === '..' || segment === '.')) return null;
+  return normalized;
+}
+
 export async function removeProjectDir(projectsRoot, projectId) {
   const dir = projectDir(projectsRoot, projectId);
   await rm(dir, { recursive: true, force: true });
+}
+
+export async function stageProjectDirsForDelete(projectsRoot, projectIds, batchId) {
+  const uniqueProjectIds = Array.from(new Set(projectIds));
+  const stagingRoot = path.join(projectsRoot, '.delete-staging', batchId);
+  const staged = [];
+  await mkdir(stagingRoot, { recursive: true });
+  try {
+    for (const projectId of uniqueProjectIds) {
+      const source = projectDir(projectsRoot, projectId);
+      const target = path.join(stagingRoot, projectId);
+      try {
+        await rename(source, target);
+        staged.push({ projectId, source, target });
+      } catch (error) {
+        if (error?.code === 'ENOENT') continue;
+        throw error;
+      }
+    }
+  } catch (error) {
+    await Promise.allSettled(
+      staged
+        .slice()
+        .reverse()
+        .map((entry) => rename(entry.target, entry.source)),
+    );
+    await rm(stagingRoot, { recursive: true, force: true }).catch(() => {});
+    throw error;
+  }
+  return {
+    async rollback() {
+      await Promise.allSettled(
+        staged
+          .slice()
+          .reverse()
+          .map((entry) => rename(entry.target, entry.source)),
+      );
+      await rm(stagingRoot, { recursive: true, force: true }).catch(() => {});
+    },
+    async commit() {
+      await rm(stagingRoot, { recursive: true, force: true });
+    },
+  };
 }
 
 function resolveSafe(dir, name) {

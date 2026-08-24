@@ -99,6 +99,9 @@ function renderChatPane({
   messages,
   streaming = false,
   onAssistantFeedback = vi.fn(),
+  hasActiveDesignSystem = false,
+  onForkFromMessage,
+  viewerOnly = false,
 }: {
   messages: ChatMessage[];
   streaming?: boolean;
@@ -106,16 +109,21 @@ function renderChatPane({
     assistantMessage: ChatMessage,
     change: ChatMessageFeedbackChange,
   ) => void;
+  hasActiveDesignSystem?: boolean;
+  onForkFromMessage?: (message: ChatMessage) => void;
+  viewerOnly?: boolean;
 }) {
   return {
     onAssistantFeedback,
     ...render(
       <ChatPane
+        projectKindForTracking="prototype"
         messages={messages}
         streaming={streaming}
         error={null}
         projectId="project-1"
         projectFiles={[]}
+        hasActiveDesignSystem={hasActiveDesignSystem}
         onEnsureProject={async () => 'project-1'}
         onSend={() => {}}
         onStop={() => {}}
@@ -124,6 +132,8 @@ function renderChatPane({
         onSelectConversation={() => {}}
         onDeleteConversation={() => {}}
         onAssistantFeedback={onAssistantFeedback}
+        onForkFromMessage={onForkFromMessage}
+        viewerOnly={viewerOnly}
       />,
     ),
   };
@@ -141,12 +151,22 @@ describe('chat assistant feedback', () => {
     vi.restoreAllMocks();
   });
 
-  it('collects feedback only after an assistant turn produces an artifact', () => {
+  it('collects feedback after any successfully completed assistant turn', () => {
     renderChatPane({
       messages: [completedAssistant()],
     });
 
-    expect(screen.queryByRole('group', { name: 'Feedback' })).toBeNull();
+    expect(screen.getByRole('group', { name: 'Feedback' })).toBeTruthy();
+  });
+
+  it('hides conversation fork actions from read-only project viewers', () => {
+    renderChatPane({
+      messages: [completedAssistant()],
+      onForkFromMessage: vi.fn(),
+      viewerOnly: true,
+    });
+
+    expect(screen.queryByRole('button', { name: 'Fork from here' })).toBeNull();
   });
 
   it('collects positive and negative feedback on completed artifact results', () => {
@@ -269,6 +289,10 @@ describe('chat assistant feedback', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Helpful' }));
     expect(screen.getByText('Tell us why')).toBeTruthy();
     expect(screen.getByText('😊')).toBeTruthy();
+    expect(
+      screen.getByTestId('assistant-feedback-discord-positive').getAttribute('href'),
+    ).toBe('https://discord.gg/mHAjSMV6gz');
+    expect(screen.getByText(/Share what you made with the/i)).toBeTruthy();
 
     fireEvent.click(screen.getByLabelText('Understood my request'));
     fireEvent.click(screen.getByLabelText('Other'));
@@ -287,6 +311,36 @@ describe('chat assistant feedback', () => {
       }),
     );
     expect(screen.queryByText('Tell us why')).toBeNull();
+  });
+
+  it('adds design-system feedback reasons only when a design system is active', () => {
+    const { unmount } = renderChatPane({
+      messages: [completedArtifactAssistant()],
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Helpful' }));
+    expect(screen.queryByLabelText('Followed the design system')).toBeNull();
+    unmount();
+
+    const { onAssistantFeedback } = renderChatPane({
+      messages: [completedArtifactAssistant()],
+      hasActiveDesignSystem: true,
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Helpful' }));
+    fireEvent.click(screen.getByLabelText('Followed the design system'));
+    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+
+    expect(onAssistantFeedback).toHaveBeenLastCalledWith(
+      expect.objectContaining({ id: 'assistant-1' }),
+      expect.objectContaining({
+        rating: 'positive',
+        reasonCodes: ['followed_design_system'],
+      }),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Not helpful' }));
+    expect(screen.getByLabelText('Did not follow the design system')).toBeTruthy();
   });
 
   it('clears custom reason when Other is deselected', () => {
@@ -325,6 +379,12 @@ describe('chat assistant feedback', () => {
 
     expect(screen.getByText('Tell us why')).toBeTruthy();
     expect(screen.getByText('😔')).toBeTruthy();
+    expect(
+      screen.getByTestId('assistant-feedback-discord-negative').getAttribute('href'),
+    ).toBe('https://discord.gg/mHAjSMV6gz');
+    expect(
+      screen.getByText(/so the team can understand what went wrong/i),
+    ).toBeTruthy();
   });
 
   it('scrolls the feedback reasons panel into view after selecting a rating', () => {
@@ -360,6 +420,49 @@ describe('chat assistant feedback', () => {
               mime: 'text/html',
             },
           ],
+        },
+      ],
+    });
+
+    expect(screen.queryByRole('group', { name: 'Feedback' })).toBeNull();
+  });
+
+  it('collects feedback on a failed assistant turn', () => {
+    renderChatPane({
+      messages: [
+        completedAssistant({
+          content: '',
+          runStatus: 'failed',
+          events: [{ kind: 'status', label: 'error', detail: 'boom-401' }],
+        }),
+      ],
+    });
+
+    expect(screen.getByRole('group', { name: 'Feedback' })).toBeTruthy();
+  });
+
+  it('collects feedback on a canceled assistant turn', () => {
+    renderChatPane({
+      messages: [
+        completedAssistant({
+          content: 'Partial answer',
+          runStatus: 'canceled',
+        }),
+      ],
+    });
+
+    expect(screen.getByRole('group', { name: 'Feedback' })).toBeTruthy();
+  });
+
+  it('does not ask for feedback on a queued turn that has not started', () => {
+    renderChatPane({
+      messages: [
+        {
+          id: 'assistant-1',
+          role: 'assistant',
+          content: '',
+          createdAt: 1_700_000_000_000,
+          runStatus: 'queued',
         },
       ],
     });

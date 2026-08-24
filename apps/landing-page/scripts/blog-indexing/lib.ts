@@ -1,10 +1,10 @@
 /*
  * Blog indexing — shared helpers.
  *
- * One-stop module for the post-deploy / cron indexing scripts. Keeps
+ * One-stop module for the post-deploy indexing scripts. Keeps
  * the surface tiny so each task script (detect-changed-urls,
  * verify-readiness, submit-sitemap, inspect-urls, render-status,
- * scheduled-window) stays focused.
+ * query-search-analytics) stays focused.
  *
  * Authoritative reference: ~/.codex/skills/blog-indexing-automation/SKILL.md.
  *
@@ -81,16 +81,35 @@ export interface ReadinessResult {
   canonical?: string;
 }
 
+export type SearchAnalyticsWindow = 3 | 7 | 28;
+
 export interface SearchAnalyticsRecord {
   url: string;
   queriedAt: string;
-  windowDays: 7 | 28;
+  windowDays: SearchAnalyticsWindow;
   startDate: string;
   endDate: string;
   clicks: number;
   impressions: number;
   ctr: number;
   position: number;
+}
+
+export interface SearchAnalyticsRow {
+  keys: string[];
+  clicks: number;
+  impressions: number;
+  ctr: number;
+  position: number;
+}
+
+export interface SearchAnalyticsQueryOptions {
+  startDate: string;
+  endDate: string;
+  dimensions?: string[];
+  rowLimit?: number;
+  dataState?: 'final' | 'all' | 'hourly_all';
+  dimensionFilterGroups?: unknown[];
 }
 
 export interface BlogIndexingState {
@@ -327,7 +346,7 @@ export async function inspectUrl(url: string): Promise<InspectionVerdict> {
  */
 export async function querySearchAnalytics(
   url: string,
-  windowDays: 7 | 28,
+  windowDays: SearchAnalyticsWindow,
 ): Promise<SearchAnalyticsRecord> {
   const token = await getAccessToken();
   const end = new Date();
@@ -388,6 +407,41 @@ export async function querySearchAnalytics(
   };
 }
 
+export async function querySearchAnalyticsRows(
+  options: SearchAnalyticsQueryOptions,
+): Promise<SearchAnalyticsRow[]> {
+  const token = await getAccessToken();
+  const endpoint = `https://www.googleapis.com/webmasters/v3/sites/${encodeURIComponent(GSC_SITE_URL)}/searchAnalytics/query`;
+  const res = await fetchWithRetry(endpoint, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${token}`,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      startDate: options.startDate,
+      endDate: options.endDate,
+      dimensions: options.dimensions ?? [],
+      rowLimit: options.rowLimit ?? 25_000,
+      ...(options.dataState ? { dataState: options.dataState } : {}),
+      ...(options.dimensionFilterGroups
+        ? { dimensionFilterGroups: options.dimensionFilterGroups }
+        : {}),
+    }),
+  });
+  if (!res.ok) {
+    throw new Error(`Search Analytics failed (${res.status}): ${await res.text()}`);
+  }
+  const body = (await res.json()) as { rows?: SearchAnalyticsRow[] };
+  return (body.rows ?? []).map((row) => ({
+    keys: row.keys ?? [],
+    clicks: row.clicks ?? 0,
+    impressions: row.impressions ?? 0,
+    ctr: row.ctr ?? 0,
+    position: row.position ?? 0,
+  }));
+}
+
 /* --------------------------- URLs ---------------------------- */
 
 /**
@@ -411,6 +465,30 @@ export function isPostFile(file: string): boolean {
 /** Strips the blog prefix and `.md` to derive the post slug. */
 export function fileToSlug(file: string): string {
   return path.basename(file).replace(/\.md$/, '');
+}
+
+/**
+ * Derives the post slug from a canonical blog URL, or undefined for any
+ * other URL shape. Inverse of `blogSlugToUrl`.
+ */
+export function urlToBlogSlug(url: string): string | undefined {
+  const m = url.match(new RegExp(`^${SITE}/blog/([^/]+)/$`));
+  return m?.[1];
+}
+
+/**
+ * True when the post's source frontmatter opts the whole cluster out of the
+ * search index with a top-level `noindex: true` (see the `noindex` docblock
+ * in `apps/landing-page/app/content.config.ts`). Such posts are deliberately
+ * noindexed and dropped from the sitemap, so the indexing pipeline must skip
+ * them instead of treating them as readiness failures. Same regex style as
+ * the sitemap filter in `astro.config.ts`; the anchored `noindex:` does not
+ * match the indented i18n keys or `noindexLocaleVariants:`.
+ */
+export function isNoindexPost(slug: string): boolean {
+  const file = path.join(BLOG_DIR, `${slug}.md`);
+  if (!existsSync(file)) return false;
+  return /^noindex:\s*true\b/m.test(readFileSync(file, 'utf8'));
 }
 
 /* -------------------------- IO utils ------------------------- */

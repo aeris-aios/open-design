@@ -10,7 +10,7 @@ triggers:
 od:
   mode: design-system
   category: design-systems
-  upstream: "https://github.com/anthropics/skills/tree/main/brand-guidelines"
+  upstream: "https://github.com/anthropics/skills/tree/main/skills/brand-guidelines"
 ---
 
 # brand-guidelines
@@ -23,19 +23,19 @@ Apply Anthropic's official brand colors and typography to artifacts for consiste
 
 ## Source
 
-- Upstream: https://github.com/anthropics/skills/tree/main/brand-guidelines
+- Upstream: https://github.com/anthropics/skills/tree/main/skills/brand-guidelines
 - Category: `design-systems`
 
 ## How to use
 
-This catalogue entry advertises the skill in Open Design so the agent
+This catalogue entry advertises the skill in OpenDesign so the agent
 discovers it during planning. To run the full upstream workflow with
 its original assets, scripts, and references, install the upstream
 bundle into your active agent's skills directory:
 
 ```bash
 # Inspect the upstream README for exact paths
-open https://github.com/anthropics/skills/tree/main/brand-guidelines
+open https://github.com/anthropics/skills/tree/main/skills/brand-guidelines
 ```
 
 Then ask the agent to invoke this skill by name (`brand-guidelines`) or with

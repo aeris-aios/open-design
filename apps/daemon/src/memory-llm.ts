@@ -25,13 +25,19 @@
 //      config OpenAI key for openai/azure overrides) so a "I want to
 //      switch to OpenAI but reuse my existing key" change costs zero
 //      typing.
-//   1. ANTHROPIC_API_KEY env → Claude Haiku 4.5 (cheapest + fastest path)
-//   2. OPENAI_API_KEY env    → gpt-4o-mini
-//   3. media-config OpenAI BYOK → gpt-4o-mini
+//   1. current Local CLI, when the caller passed `chatAgentId` and the
+//      agent supports headless one-shot output (Claude Code today).
+//   2. matching provider env var for the current chat protocol.
+//   3. BYOK chat-config snapshot for API-mode chats.
+//   4. ANTHROPIC_API_KEY env → Claude Haiku 4.5 (legacy fallback)
+//   5. OPENAI_API_KEY env    → gpt-4o-mini
+//   6. media-config text-capable BYOK → OpenAI / MiniMax /
+//      AIHubMix / SenseAudio fast defaults
 //      (the key the user already typed into Settings → Media providers;
 //       reuses an existing credential so Local-CLI users don't have to
 //       paste it twice just to get LLM-side memory extraction)
-//   4. nothing               → record a 'skipped: no-provider' attempt
+//   7. unsupported media key → record a 'skipped: unsupported-provider'
+//   8. nothing               → record a 'skipped: no-provider' attempt
 //      so the UI can surface "configure a key to enable LLM memory"
 //      instead of staying silent
 //
@@ -39,6 +45,7 @@
 // — produces a record in `memory-extractions.ts` so the settings panel
 // can show running / skipped / success / failed states in real time.
 
+import { MEMORY_TYPES } from '@open-design/contracts';
 import {
   composeMemoryBody,
   listMemoryEntries,
@@ -55,7 +62,20 @@ import {
   markSuccess,
   markFailed,
 } from './memory-extractions.js';
-import { resolveProviderConfig } from './media-config.js';
+import { resolveProviderConfig } from './media/config.js';
+import { AIHUBMIX_APP_CODE } from './integrations/aihubmix.js';
+import { spawn } from 'node:child_process';
+import os from 'node:os';
+import { createHash } from 'node:crypto';
+import { createCommandInvocation } from '@open-design/platform';
+import {
+  applyAgentLaunchEnv,
+  getAgentDef,
+  resolveAgentLaunch,
+  spawnEnvForAgent,
+} from './agents.js';
+import { agentCliEnvForAgent, readAppConfig } from './app-config.js';
+import { createJsonEventStreamHandler } from './runtimes/json-event-stream.js';
 
 const SYSTEM_PROMPT = `You are a memory extractor for a personal AI design assistant.
 
@@ -88,6 +108,39 @@ Type rules:
 - project: ongoing initiatives, deadlines, why-decisions; usually time-bounded
 - reference: pointers to external systems (Linear projects, Slack channels, dashboards)`;
 
+// Specialised system prompt for the annotation distiller. The user just
+// reviewed a generated design artifact and left inline marks — comments,
+// highlights, or drawn strokes — on specific elements. We turn the durable
+// signal in those marks into `feedback` (a standing preference) and `rule`
+// (an enforceable, checkable constraint) memory so the next generation honors
+// it without the user re-explaining. The output shape matches the generic
+// extractor so the same parser/writer pipeline applies.
+const ANNOTATION_SYSTEM_PROMPT = `You are a memory distiller for a personal AI design assistant.
+
+The user just reviewed a generated design artifact and left inline annotations — comments, highlights, or drawn marks — each attached to a specific element. Your job is to distill any STANDING design preference or constraint the user is expressing, so future generations honor it without the user repeating themselves.
+
+Only extract a fact when the annotation expresses a durable preference that should apply to FUTURE work — never a one-off tweak to this single element.
+- "make THIS button green" → one-off, do NOT remember.
+- "always use the brand green for primary actions" / a complaint they clearly keep making → durable, remember.
+- "too busy" / "太花了" as a recurring critique → remember as feedback about visual density / decoration.
+
+Generalize the wording so it is not tied to this one element, page, or run.
+
+Output STRICT JSON in this exact shape — nothing else, no prose, no markdown fences:
+{
+  "entries": [
+    { "type": "feedback|rule", "name": "short title (≤ 60 chars)", "description": "one-line summary (≤ 140 chars)", "body": "the remembered preference/rule" }
+  ]
+}
+
+If nothing is durable, return: {"entries": []}
+
+Type rules:
+- feedback: a preference about how to work or what the user likes/dislikes ("keep decoration minimal — at most two accent colors").
+- rule: an enforceable, checkable constraint. The body MUST be exactly two lines:
+  Assertion: <what must always hold in the output>
+  Check: <how to verify it on a rendered artifact>`;
+
 // Provider defaults are centralised so the override path and the
 // auto-pick path can't drift apart. When the user picks "Custom →
 // anthropic" without typing a model, we still want the same
@@ -112,7 +165,7 @@ const PROVIDER_DEFAULTS = {
     apiVersion: '2024-10-21',
   },
   google: {
-    model: 'gemini-2.0-flash',
+    model: 'gemini-3.5-flash',
     baseUrl: 'https://generativelanguage.googleapis.com',
   },
   // Ollama Cloud speaks OpenAI-compatible chat-completions, so the
@@ -125,7 +178,53 @@ const PROVIDER_DEFAULTS = {
     model: 'gemma3:4b',
     baseUrl: 'https://ollama.com',
   },
+  // SenseAudio's chat API is OpenAI-compatible (POST /v1/chat/completions,
+  // Bearer auth), so the extractor falls through to callOpenAI with this
+  // base URL and the user's SenseAudio API key. The default model is the
+  // small/fast variant so auto-pick stays cheap; users can swap in
+  // senseaudio-s2 or any gateway model via the picker.
+  senseaudio: {
+    model: 'senseaudio-s2-flash',
+    baseUrl: 'https://api.senseaudio.cn',
+  },
+  // AIHubMix is OpenAI-wire-compatible, so the extractor falls through to
+  // callOpenAI with this base URL and the user's AIHubMix key (plus the fixed
+  // APP-Code header callOpenAI injects). Default to a small/fast model.
+  aihubmix: {
+    model: 'gpt-4o-mini',
+    baseUrl: 'https://aihubmix.com/v1',
+  },
 };
+
+// Some Settings -> Media providers credentials are usable for text
+// extraction even though their media base URL targets image/TTS endpoints.
+// Keep those fallbacks explicit so a saved image/audio-only key does not get
+// reported as "no API key", and so we never accidentally call a non-chat media
+// endpoint as the memory extractor.
+const MEDIA_MEMORY_PROVIDER_FALLBACKS = [
+  {
+    mediaProviderId: 'minimax',
+    memoryProvider: 'openai',
+    model: 'MiniMax-M2.7-highspeed',
+    baseUrl: 'https://api.minimax.io/v1',
+  },
+  {
+    mediaProviderId: 'aihubmix',
+    memoryProvider: 'aihubmix',
+    model: PROVIDER_DEFAULTS.aihubmix.model,
+    baseUrl: PROVIDER_DEFAULTS.aihubmix.baseUrl,
+  },
+  {
+    mediaProviderId: 'senseaudio',
+    memoryProvider: 'senseaudio',
+    model: PROVIDER_DEFAULTS.senseaudio.model,
+    baseUrl: PROVIDER_DEFAULTS.senseaudio.baseUrl,
+  },
+];
+
+const MEDIA_MEMORY_PROVIDER_IDS = new Set(
+  MEDIA_MEMORY_PROVIDER_FALLBACKS.map((fallback) => fallback.mediaProviderId),
+);
 
 // Map an explicit override provider to the env var the daemon should
 // consult when the override doesn't carry its own apiKey. The fallback
@@ -151,6 +250,20 @@ function envKeyFor(provider) {
   }
   if (provider === 'ollama') {
     return process.env.OLLAMA_API_KEY?.trim() || '';
+  }
+  if (provider === 'senseaudio') {
+    return (
+      process.env.OD_SENSEAUDIO_API_KEY?.trim()
+      || process.env.SENSEAUDIO_API_KEY?.trim()
+      || ''
+    );
+  }
+  if (provider === 'aihubmix') {
+    return (
+      process.env.OD_AIHUBMIX_API_KEY?.trim()
+      || process.env.AIHUBMIX_API_KEY?.trim()
+      || ''
+    );
   }
   return '';
 }
@@ -193,17 +306,103 @@ function chatProtocolFromAgentId(agentId) {
   return null;
 }
 
+function canUseLocalCliForMemory(agentId, provider) {
+  // Keep this allowlist explicit: each entry below has a headless one-shot
+  // mode that accepts stdin and a parser we can reduce back to assistant text.
+  if (agentId === 'claude' && provider === 'anthropic') return true;
+  if (agentId === 'codex' && provider === 'openai') return true;
+  if (agentId === 'opencode' && provider === 'openai') return true;
+  return false;
+}
+
+function localCliProviderFor(agentId, provider, model) {
+  if (!canUseLocalCliForMemory(agentId, provider)) return null;
+  return {
+    kind: provider,
+    model: (typeof model === 'string' && model.trim()) || 'default',
+    baseUrl: 'local-cli',
+    apiVersion: '',
+    credentialSource: 'chat-cli',
+    transport: 'chat-cli',
+    agentId,
+  };
+}
+
+function providerFromOpenAiMediaConfig(cred, envOverrideModel) {
+  if (!cred || typeof cred.apiKey !== 'string' || !cred.apiKey.trim()) return null;
+  return {
+    kind: 'openai',
+    apiKey: cred.apiKey.trim(),
+    model:
+      envOverrideModel || cred.model || PROVIDER_DEFAULTS.openai.model,
+    baseUrl: (cred.baseUrl && String(cred.baseUrl).trim())
+      || PROVIDER_DEFAULTS.openai.baseUrl,
+    apiVersion: '',
+    credentialSource: 'media-config',
+  };
+}
+
+async function providerFromMediaMemoryFallbacks(projectRoot, envOverrideModel) {
+  for (const fallback of MEDIA_MEMORY_PROVIDER_FALLBACKS) {
+    try {
+      const cred = await resolveProviderConfig(projectRoot, fallback.mediaProviderId);
+      if (cred && typeof cred.apiKey === 'string' && cred.apiKey.trim()) {
+        return {
+          kind: fallback.memoryProvider,
+          apiKey: cred.apiKey.trim(),
+          model: envOverrideModel || fallback.model,
+          // Deliberately use the text-chat default, not the media base URL.
+          baseUrl: fallback.baseUrl,
+          apiVersion: '',
+          credentialSource: 'media-config',
+        };
+      }
+    } catch (err) {
+      console.warn(
+        `[memory-llm] media-config lookup failed (${fallback.mediaProviderId})`,
+        err?.message ?? err,
+      );
+    }
+  }
+  return null;
+}
+
+async function hasUnsupportedMediaProviderConfig(projectRoot) {
+  try {
+    const { readMaskedConfig } = await import('./media/config.js');
+    const masked = await readMaskedConfig(projectRoot);
+    const configured = Object.entries(masked.providers)
+      .filter(([, provider]) => provider?.configured)
+      .map(([id]) => id);
+    if (configured.length === 0) return false;
+    const hasTextCapable = configured.some(
+      (id) => id === 'openai' || MEDIA_MEMORY_PROVIDER_IDS.has(id),
+    );
+    return !hasTextCapable;
+  } catch (err) {
+    console.warn(
+      '[memory-llm] failed to inspect media-config support',
+      err?.message ?? err,
+    );
+    return false;
+  }
+}
+
 // Pick a provider in this order:
 //   0. Memory config override → user-set provider/model/baseUrl/apiKey
-//   1. Chat-protocol-constrained env var → if the chat is on Claude
+//   1. Current Local CLI → if the user is chatting through Claude Code,
+//      run the same CLI in one-shot mode for extraction. This keeps
+//      "Same as chat" literal: no extra OpenAI/Anthropic key required
+//      just because the extraction happens in the background.
+//   2. Chat-protocol-constrained env var → if the chat is on Claude
 //      Code (anthropic), only ANTHROPIC_API_KEY counts; Codex/OpenAI-
-//      compatible CLIs only consult OPENAI_API_KEY (and the media-
-//      config OpenAI key as a secondary fallback). This stops the
+//      compatible CLIs only consult OPENAI_API_KEY (and text-capable
+//      media-config keys as a secondary fallback). This stops the
 //      legacy "claude user, openai gpt-4o-mini extracts in the
 //      background" surprise — if the matching key isn't configured,
 //      we'd rather skip with 'no-provider' and surface that in the
 //      history than quietly run on a different vendor's key.
-//   2. BYOK chat-config snapshot → for API-mode chats (the picker is
+//   3. BYOK chat-config snapshot → for API-mode chats (the picker is
 //      on "Same as chat"), `/api/memory/extract` forwards the live
 //      chat provider/key/baseUrl/apiVersion as `chatProvider`. We use
 //      it directly with the per-protocol fast-model default so the
@@ -213,14 +412,15 @@ function chatProtocolFromAgentId(agentId) {
 //      user-supplied `chatProvider.model` only when none was given —
 //      memory should default to a cheaper/faster model than the chat
 //      model the user is paying for.
-//   3. (legacy fallback, only when we can't tell which CLI is in use
+//   4. (legacy fallback, only when we can't tell which CLI is in use
 //      AND the caller didn't pass `chatProvider`)
 //      ANTHROPIC_API_KEY env → Claude Haiku 4.5
-//   4. (legacy fallback) OPENAI_API_KEY env → gpt-4o-mini
-//   5. (legacy fallback) media-config OpenAI BYOK → gpt-4o-mini
+//   5. (legacy fallback) OPENAI_API_KEY env → gpt-4o-mini
+//   6. (legacy fallback) media-config text-capable BYOK → OpenAI /
+//      MiniMax / AIHubMix / SenseAudio fast defaults
 //
 // The `OD_MEMORY_MODEL` env continues to override the model name across
-// (1)–(5) so power users don't lose that lever. It does NOT override the
+// (1)–(6) so power users don't lose that lever. It does NOT override the
 // memory-config provider since that one carries an explicit user choice.
 // `projectRoot` is required for the media-config path; `chatAgentId` is
 // optional but recommended — without it we fall through to the legacy
@@ -230,7 +430,10 @@ function chatProtocolFromAgentId(agentId) {
 // through from the web app on a per-call basis (the daemon never
 // persists BYOK creds, so this is the only signal we have for that
 // mode).
-async function pickProvider(projectRoot, dataDir, chatAgentId, chatProvider) {
+async function pickProvider(projectRoot, dataDir, chatAgentId, chatProvider, chatModel) {
+  const chatProtocol = chatProtocolFromAgentId(chatAgentId);
+  const normalizedChatAgentId =
+    typeof chatAgentId === 'string' ? chatAgentId.trim().toLowerCase() : '';
   let override = null;
   if (dataDir) {
     try {
@@ -273,7 +476,15 @@ async function pickProvider(projectRoot, dataDir, chatAgentId, chatProvider) {
         // Ignore — we'll record a no-provider skip below.
       }
     }
-    if (!resolvedKey) return null;
+    if (!resolvedKey) {
+      const localCliProvider = localCliProviderFor(
+        normalizedChatAgentId,
+        override.provider,
+        override.model,
+      );
+      if (localCliProvider) return localCliProvider;
+      return null;
+    }
     const baseUrl =
       (typeof override.baseUrl === 'string' && override.baseUrl.trim())
       || defaults.baseUrl;
@@ -306,8 +517,14 @@ async function pickProvider(projectRoot, dataDir, chatAgentId, chatProvider) {
   // env var for a different provider is set, because doing so produces
   // the "I'm using Claude but memory says openai gpt-4o-mini" surprise
   // the user reported.
-  const chatProtocol = chatProtocolFromAgentId(chatAgentId);
   if (chatProtocol) {
+    const localCliProvider = localCliProviderFor(
+      normalizedChatAgentId,
+      chatProtocol,
+      process.env.OD_MEMORY_MODEL || chatModel,
+    );
+    if (localCliProvider) return localCliProvider;
+
     const envKey = envKeyFor(chatProtocol);
     if (envKey) {
       const defaults = PROVIDER_DEFAULTS[chatProtocol];
@@ -332,16 +549,8 @@ async function pickProvider(projectRoot, dataDir, chatAgentId, chatProvider) {
       try {
         const cred = await resolveProviderConfig(projectRoot, 'openai');
         if (cred && typeof cred.apiKey === 'string' && cred.apiKey.trim()) {
-          return {
-            kind: 'openai',
-            apiKey: cred.apiKey.trim(),
-            model:
-              envOverrideModel || cred.model || PROVIDER_DEFAULTS.openai.model,
-            baseUrl: (cred.baseUrl && String(cred.baseUrl).trim())
-              || PROVIDER_DEFAULTS.openai.baseUrl,
-            apiVersion: '',
-            credentialSource: 'media-config',
-          };
+          const provider = providerFromOpenAiMediaConfig(cred, envOverrideModel);
+          if (provider) return provider;
         }
       } catch (err) {
         console.warn(
@@ -349,6 +558,11 @@ async function pickProvider(projectRoot, dataDir, chatAgentId, chatProvider) {
           err?.message ?? err,
         );
       }
+      const mediaProvider = await providerFromMediaMemoryFallbacks(
+        projectRoot,
+        envOverrideModel,
+      );
+      if (mediaProvider) return mediaProvider;
     }
     // The chat protocol is known but no key for it is available. Bail
     // out instead of wandering — recording 'skipped: no-provider' is
@@ -365,6 +579,14 @@ async function pickProvider(projectRoot, dataDir, chatAgentId, chatProvider) {
   // big chat model (gpt-4o, claude-sonnet-4-5) silently turns into a
   // cheap haiku/mini call. The caller can opt into using the chat
   // model verbatim by setting `chatProvider.model`.
+  //
+  // Keyless BYOK (local vLLM / Ollama / openai-compatible servers with
+  // `requiresApiKey: false`) is also valid — the web app explicitly
+  // marks it via `requiresApiKey: false` on the snapshot. We must
+  // enter the BYOK branch in that case too because the alternative
+  // paths below all require an env / media-config key and would fall
+  // back to unrelated OpenAI credentials (the gpt-4o-mini default this
+  // hook exists to avoid), defeating the BYOK guarantee.
   if (
     chatProvider
     && chatProvider.provider
@@ -372,13 +594,14 @@ async function pickProvider(projectRoot, dataDir, chatAgentId, chatProvider) {
   ) {
     const apiKey =
       typeof chatProvider.apiKey === 'string' ? chatProvider.apiKey.trim() : '';
-    if (apiKey) {
+    const allowKeyless = chatProvider.requiresApiKey === false;
+    if (apiKey || allowKeyless) {
       const defaults = PROVIDER_DEFAULTS[chatProvider.provider];
       const baseUrl =
         (typeof chatProvider.baseUrl === 'string' && chatProvider.baseUrl.trim())
         || defaults.baseUrl;
       // Azure with no resource URL is unrecoverable — same guard as
-      // the override path above.
+      // the override path above. (Azure is never keyless.)
       if (chatProvider.provider !== 'azure' || baseUrl) {
         const explicitModel =
           typeof chatProvider.model === 'string' && chatProvider.model.trim()
@@ -396,6 +619,10 @@ async function pickProvider(projectRoot, dataDir, chatAgentId, chatProvider) {
                 || PROVIDER_DEFAULTS.azure.apiVersion
               : '',
           credentialSource: 'chat-byok',
+          // Preserve the keyless signal for the HTTP call layer so it
+          // omits the Authorization header instead of sending `Bearer `
+          // (empty) which the local server would reject.
+          ...(allowKeyless ? { requiresApiKey: false } : {}),
         };
       }
     }
@@ -429,23 +656,19 @@ async function pickProvider(projectRoot, dataDir, chatAgentId, chatProvider) {
   if (projectRoot) {
     try {
       const cred = await resolveProviderConfig(projectRoot, 'openai');
-      if (cred && typeof cred.apiKey === 'string' && cred.apiKey.trim()) {
-        return {
-          kind: 'openai',
-          apiKey: cred.apiKey.trim(),
-          model:
-            envOverrideModel || cred.model || PROVIDER_DEFAULTS.openai.model,
-          baseUrl: (cred.baseUrl && String(cred.baseUrl).trim())
-            || PROVIDER_DEFAULTS.openai.baseUrl,
-          credentialSource: 'media-config',
-        };
-      }
+      const provider = providerFromOpenAiMediaConfig(cred, envOverrideModel);
+      if (provider) return provider;
     } catch (err) {
       console.warn(
         '[memory-llm] failed to read media-config for fallback',
         err?.message ?? err,
       );
     }
+    const mediaProvider = await providerFromMediaMemoryFallbacks(
+      projectRoot,
+      envOverrideModel,
+    );
+    if (mediaProvider) return mediaProvider;
   }
   return null;
 }
@@ -592,7 +815,19 @@ async function callOpenAI(provider, system, user) {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          authorization: `Bearer ${provider.apiKey}`,
+          // Keyless BYOK endpoints (local vLLM / Ollama / openai-compatible
+          // servers marked with `requiresApiKey: false`) accept requests
+          // without an Authorization header — sending `Bearer ` (empty)
+          // would cause some servers to reject the call. Only attach the
+          // header when we actually have a key.
+          ...(provider.apiKey
+            ? { authorization: `Bearer ${provider.apiKey}` }
+            : {}),
+          // AIHubMix routes through this same OpenAI-compatible path but wants
+          // the fixed APP-Code attribution header on every request.
+          ...(provider.kind === 'aihubmix' && AIHUBMIX_APP_CODE
+            ? { 'APP-Code': AIHUBMIX_APP_CODE }
+            : {}),
         },
         body: JSON.stringify({
           model: provider.model,
@@ -689,6 +924,194 @@ async function callGoogle(provider, system, user) {
   return '';
 }
 
+const LOCAL_CLI_TIMEOUT_MS = 60_000;
+
+function extractJsonEventText(kind, raw, agentName) {
+  const events = [];
+  const handler = createJsonEventStreamHandler(kind, (event) => events.push(event));
+  handler.feed(raw);
+  handler.flush();
+
+  const errorEvent = events.find((event) => event?.type === 'error');
+  if (errorEvent) {
+    const message =
+      typeof errorEvent.message === 'string' && errorEvent.message.trim()
+        ? errorEvent.message.trim()
+        : 'unknown error';
+    throw new Error(`${agentName} CLI error: ${message}`);
+  }
+
+  return events
+    .filter((event) => event?.type === 'text_delta' && typeof event.delta === 'string')
+    .map((event) => event.delta)
+    .join('')
+    .trim();
+}
+
+async function callLocalCli(provider, system, user, options) {
+  if (typeof options?.localCliRunner === 'function') {
+    return options.localCliRunner({
+      agentId: provider.agentId,
+      model: provider.model,
+      system,
+      user,
+      projectRoot: options?.projectRoot ?? null,
+      dataDir: options?.dataDir ?? null,
+    });
+  }
+
+  const def = getAgentDef(provider.agentId);
+  if (!def) {
+    throw new Error(`Local CLI agent "${provider.agentId}" is not installed`);
+  }
+
+  let configuredAgentEnv = {};
+  try {
+    const appConfig = options?.dataDir ? await readAppConfig(options.dataDir) : {};
+    configuredAgentEnv = agentCliEnvForAgent(appConfig.agentCliEnv, def.id);
+  } catch {
+    configuredAgentEnv = {};
+  }
+
+  const launch = resolveAgentLaunch(def, configuredAgentEnv);
+  if (!launch?.launchPath) {
+    throw new Error(`${def.name} CLI is not installed or not on PATH`);
+  }
+
+  // The memory extractor is a tool-less, JSON-only background call that never
+  // reads project files, so it has no reason to run in the daemon's own cwd.
+  // Falling back to process.cwd() there meant a bun-based agent (OpenCode) ran
+  // its startup `bun install` in whatever directory the daemon was launched from
+  // — clobbering a pnpm workspace (dev checkout). Use a neutral temp cwd.
+  const cwd =
+    typeof options?.projectRoot === 'string' && options.projectRoot.trim()
+      ? options.projectRoot
+      : os.tmpdir();
+  const prompt = [
+    system,
+    '',
+    'You are running as a background memory extractor. Do not use tools. Return strict JSON only.',
+    '',
+    user,
+  ].join('\n');
+
+  let args;
+  let stdinText = prompt;
+  let parseStdout = (raw) => raw.trim();
+  if (provider.agentId === 'claude') {
+    args = ['-p', '--input-format', 'text', '--output-format', 'text'];
+    if (provider.model && provider.model !== 'default') {
+      args.push('--model', provider.model);
+    }
+  } else if (provider.agentId === 'codex') {
+    args = def.buildArgs(
+      '',
+      [],
+      [],
+      { model: provider.model },
+      { cwd },
+    );
+    parseStdout = (raw) => extractJsonEventText(def.eventParser || def.id, raw, def.name);
+  } else if (provider.agentId === 'opencode') {
+    // Deliver the prompt on stdin, matching the chat-run path
+    // (def.promptViaStdin). `opencode run`'s `-f, --file` is a yargs array
+    // option that greedily consumes every trailing non-flag token, so
+    // `--file <prompt-file> "<message>"` made OpenCode treat the message
+    // text as a second attachment and exit with "File not found". Bare
+    // `opencode run --format json` reads the message from stdin instead.
+    args = def.buildArgs(
+      '',
+      [],
+      [],
+      { model: provider.model },
+      { cwd },
+    );
+    parseStdout = (raw) => extractJsonEventText(def.eventParser || def.id, raw, def.name);
+  } else {
+    throw new Error(`Local CLI memory extraction is not supported for ${provider.agentId}`);
+  }
+
+  const env = applyAgentLaunchEnv(
+    spawnEnvForAgent(
+      def.id,
+      { ...process.env, ...(def.env || {}) },
+      configuredAgentEnv,
+      undefined,
+      { resolvedBin: launch.selectedPath },
+    ),
+    launch,
+  );
+  const invocation = createCommandInvocation({
+    command: launch.launchPath,
+    args,
+    env,
+  });
+
+  return await new Promise((resolve, reject) => {
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+    let closed = false;
+    const child = spawn(invocation.command, invocation.args, {
+      env,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      cwd,
+      shell: false,
+      windowsVerbatimArguments: invocation.windowsVerbatimArguments,
+    });
+
+    const finish = (err, text) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      if (err) reject(err);
+      else resolve(text);
+    };
+
+    const timeout = setTimeout(() => {
+      child.kill('SIGTERM');
+      setTimeout(() => {
+        if (!closed) child.kill('SIGKILL');
+      }, 2_000).unref?.();
+      finish(new Error(`${def.name} CLI timed out after ${Math.round(LOCAL_CLI_TIMEOUT_MS / 1000)}s`));
+    }, LOCAL_CLI_TIMEOUT_MS);
+    timeout.unref?.();
+
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk) => {
+      stdout = `${stdout}${chunk}`.slice(-64_000);
+    });
+    child.stderr.on('data', (chunk) => {
+      stderr = `${stderr}${chunk}`.slice(-8_000);
+    });
+    child.once('error', (err) => finish(err));
+    child.once('close', (code, signal) => {
+      closed = true;
+      if (code === 0) {
+        let text = '';
+        try {
+          text = parseStdout(stdout);
+        } catch (err) {
+          finish(err);
+          return;
+        }
+        if (text) {
+          finish(null, text);
+          return;
+        }
+      }
+      const detail = (stderr.trim() || stdout.trim() || 'no output').slice(0, 1000);
+      const status = signal ? `signal ${signal}` : `exit ${code}`;
+      finish(new Error(`${def.name} CLI ${status}: ${detail}`));
+    });
+    child.stdin.on('error', (err) => {
+      if (err.code !== 'EPIPE') finish(err);
+    });
+    child.stdin.end(stdinText);
+  });
+}
+
 // Tolerant JSON parse — the model occasionally wraps output in ```json
 // fences even when told not to. Strip those defensively.
 function parseEntries(rawText) {
@@ -711,7 +1134,10 @@ function parseEntries(rawText) {
     }
   }
   const list = Array.isArray(parsed?.entries) ? parsed.entries : [];
-  const validTypes = new Set(['user', 'feedback', 'project', 'reference']);
+  // Accept every type the shared contract knows about — including the new
+  // `profile` / `rule` buckets — so an LLM that proposes a verified rule or a
+  // profile fact isn't silently discarded here.
+  const validTypes = new Set(MEMORY_TYPES);
   return list
     .filter(
       (e) =>
@@ -734,9 +1160,64 @@ function alreadyKnown(existing, candidate) {
   return false;
 }
 
-export async function extractWithLLM(dataDir, input, options) {
+function toMemoryDraft(candidate) {
+  return {
+    type: candidate.type,
+    name: String(candidate.name).trim().slice(0, 80),
+    description: String(candidate.description || '').trim().slice(0, 200),
+    body: String(candidate.body).trim(),
+  };
+}
+
+// Duplicate-turn de-duplication for chat ('llm') extraction. The daemon fires
+// the extractor from a run's child-close hook, so a turn that is re-fed —
+// retried, re-posted, or re-ground during a long build — re-enters here with the
+// same (conversation, user message, rendered reply). A failed/out-of-credits
+// attempt yields an empty reply, so the whole re-fire storm shares one signature
+// and collapses to a single pass. The signature is keyed by conversation, so an
+// identical message+reply in a different conversation is still examined, and it
+// is recorded only AFTER a provider call succeeds (see collectProposedEntries) —
+// a failed or no-provider attempt must not permanently mark a turn as seen. The
+// set is bounded, and process-lifetime only: a restart is a fine reason to
+// re-examine a turn.
+const RECENT_LLM_TURN_LIMIT = 256;
+const recentLlmTurnSignatures = new Set();
+
+function llmTurnSignature(conversationKey, userMessage, assistantMessage) {
+  // JSON-encode the parts so the (conversation, message, reply) boundaries are
+  // unambiguous without a separator byte the content itself could contain.
+  return createHash('sha256')
+    .update(JSON.stringify([
+      String(conversationKey ?? ''),
+      String(userMessage ?? ''),
+      String(assistantMessage ?? ''),
+    ]))
+    .digest('hex');
+}
+
+function rememberLlmTurnSignature(signature) {
+  recentLlmTurnSignatures.add(signature);
+  if (recentLlmTurnSignatures.size > RECENT_LLM_TURN_LIMIT) {
+    // Evict the oldest (insertion order) so the working set stays bounded.
+    const oldest = recentLlmTurnSignatures.values().next().value;
+    if (oldest !== undefined) recentLlmTurnSignatures.delete(oldest);
+  }
+}
+
+// Test-only — reset the duplicate-turn de-dup set so specs start from a clean slate.
+export function __resetMemoryTurnDedupeForTests() {
+  recentLlmTurnSignatures.clear();
+}
+
+async function collectProposedEntries(dataDir, input, options) {
   const projectRoot = options?.projectRoot ?? null;
   const chatAgentId = options?.chatAgentId ?? null;
+  const chatModel = options?.chatModel ?? null;
+  const extractionKind = options?.kind ?? 'llm';
+  const systemPrompt =
+    typeof options?.systemPrompt === 'string' && options.systemPrompt.trim()
+      ? options.systemPrompt.trim()
+      : SYSTEM_PROMPT;
   // BYOK chat-config snapshot — only present for API-mode calls
   // forwarded through `/api/memory/extract`. The daemon doesn't
   // persist BYOK creds, so this per-call signal is the *only* way
@@ -747,12 +1228,43 @@ export async function extractWithLLM(dataDir, input, options) {
 
   const cfg = await readMemoryConfig(dataDir);
   if (!cfg.enabled) {
-    recordSkip({ userMessage, reason: 'memory-disabled' });
-    return [];
+    recordSkip({ userMessage, reason: 'memory-disabled', kind: extractionKind });
+    return { status: 'skipped', attemptId: null, proposed: [], existingEntries: [] };
+  }
+  if (extractionKind !== 'connector' && !cfg.chatExtractionEnabled) {
+    return { status: 'skipped', attemptId: null, proposed: [], existingEntries: [] };
   }
   if (userMessage.length === 0) {
-    recordSkip({ userMessage, reason: 'empty-message' });
-    return [];
+    recordSkip({ userMessage, reason: 'empty-message', kind: extractionKind });
+    return { status: 'skipped', attemptId: null, proposed: [], existingEntries: [] };
+  }
+
+  // Duplicate-turn gate — skip BEFORE picking a provider so no LLM call is spent
+  // re-mining a turn already extracted. The daemon fires this from the run's
+  // child-close hook, which re-runs on every retry / re-fed attempt of the same
+  // turn (a long out-of-credits build re-analyzed one turn dozens of times). A
+  // failed attempt has an empty reply, so its (conversation, message, "")
+  // signature is identical across the storm and collapses to a single pass.
+  // Deliberately NOT gated on retryAttemptCount: a turn that only succeeds on a
+  // retry produces its reply on that attempt, and must still be mined. The
+  // signature is recorded only AFTER a successful provider call (below), so a
+  // failed or no-provider extraction never permanently marks the turn as seen.
+  //
+  // Gate is scoped to a REAL conversation id. Callers that don't thread one —
+  // e.g. the BYOK/API-mode `/api/memory/extract` post-turn path — get no
+  // de-dup at all, because an empty fallback key would be shared across every
+  // such caller and collapse identical (message, reply) pairs from unrelated
+  // conversations into a single skipped extraction. The chat close hook that
+  // caused the re-fire storm always passes `run.conversationId`, so its
+  // protection is preserved.
+  const conversationKey =
+    typeof options?.conversationId === 'string' ? options.conversationId : '';
+  let turnSignature = null;
+  if (extractionKind === 'llm' && conversationKey) {
+    turnSignature = llmTurnSignature(conversationKey, userMessage, input?.assistantMessage);
+    if (recentLlmTurnSignatures.has(turnSignature)) {
+      return { status: 'skipped', attemptId: null, proposed: [], existingEntries: [] };
+    }
   }
 
   const provider = await pickProvider(
@@ -760,16 +1272,21 @@ export async function extractWithLLM(dataDir, input, options) {
     dataDir,
     chatAgentId,
     chatProvider,
+    chatModel,
   );
   if (!provider) {
-    recordSkip({ userMessage, reason: 'no-provider' });
-    return [];
+    const reason =
+      projectRoot && await hasUnsupportedMediaProviderConfig(projectRoot)
+        ? 'unsupported-provider'
+        : 'no-provider';
+    recordSkip({ userMessage, reason, kind: extractionKind });
+    return { status: 'skipped', attemptId: null, proposed: [], existingEntries: [] };
   }
 
   // Past this point we have a provider committed and an actual model
   // call about to happen — switch from one-shot skip records to a
   // running record we can update through phase transitions.
-  const attemptId = startExtraction({ userMessage });
+  const attemptId = startExtraction({ userMessage, kind: extractionKind });
   markProvider(attemptId, {
     kind: provider.kind,
     model: provider.model,
@@ -795,17 +1312,23 @@ export async function extractWithLLM(dataDir, input, options) {
 
   let raw = '';
   try {
-    if (provider.kind === 'anthropic') {
-      raw = await callAnthropic(provider, SYSTEM_PROMPT, userPayload);
+    if (provider.transport === 'chat-cli') {
+      raw = await callLocalCli(provider, systemPrompt, userPayload, {
+        dataDir,
+        projectRoot,
+        localCliRunner: options?.localCliRunner,
+      });
+    } else if (provider.kind === 'anthropic') {
+      raw = await callAnthropic(provider, systemPrompt, userPayload);
     } else if (provider.kind === 'azure') {
-      raw = await callAzure(provider, SYSTEM_PROMPT, userPayload);
+      raw = await callAzure(provider, systemPrompt, userPayload);
     } else if (provider.kind === 'google') {
-      raw = await callGoogle(provider, SYSTEM_PROMPT, userPayload);
+      raw = await callGoogle(provider, systemPrompt, userPayload);
     } else {
       // openai or ollama — both speak the OpenAI chat-completions
       // wire shape, so callOpenAI handles them with just a different
       // base URL.
-      raw = await callOpenAI(provider, SYSTEM_PROMPT, userPayload);
+      raw = await callOpenAI(provider, systemPrompt, userPayload);
     }
   } catch (err) {
     // err.message is already pre-formatted by describeFetchError() when
@@ -813,17 +1336,124 @@ export async function extractWithLLM(dataDir, input, options) {
     // (`anthropic 401: …`) the message is already user-facing too.
     console.warn(`[memory-llm] ${provider.kind} call failed`, err?.message ?? err);
     markFailed(attemptId, err);
-    return [];
+    return { status: 'failed', attemptId, proposed: [], existingEntries };
   }
 
   let proposed;
   try {
     proposed = parseEntries(raw);
+    if (typeof options?.candidateFilter === 'function') {
+      proposed = proposed.filter((candidate) => {
+        try {
+          return options.candidateFilter(candidate);
+        } catch {
+          return false;
+        }
+      });
+    }
   } catch (err) {
     markFailed(attemptId, err);
-    return [];
+    return { status: 'failed', attemptId, proposed: [], existingEntries };
   }
   markProposed(attemptId, proposed.length);
+  // Provider call succeeded (even an empty extraction) — now safe to remember
+  // this turn so identical re-fires skip. Recording here, not before the call,
+  // means a failed / no-provider attempt can still be retried for this turn.
+  if (turnSignature) rememberLlmTurnSignature(turnSignature);
+  return { status: 'ok', attemptId, proposed, existingEntries };
+}
+
+export async function suggestWithLLM(dataDir, input, options) {
+  const result = await collectProposedEntries(dataDir, input, options);
+  if (result.status !== 'ok') return [];
+
+  const suggestions = result.proposed
+    .filter((cand) => !alreadyKnown(result.existingEntries, cand))
+    .map(toMemoryDraft);
+
+  markSuccess(result.attemptId, {
+    writtenCount: 0,
+    writtenIds: [],
+  });
+
+  return suggestions;
+}
+
+// Build the distiller payload from a turn's annotations. Each annotation is
+// the user's words plus enough target context (what element, its current
+// copy, the mark intent) for the model to judge whether the critique is a
+// one-off or a standing preference. The typed message that rode along with
+// the annotations is appended as extra context.
+function renderAnnotationPayload(annotations, userMessage) {
+  const parts = [
+    'The user reviewed a generated design artifact and left these inline annotations:',
+  ];
+  annotations.forEach((a, index) => {
+    parts.push('');
+    parts.push(`Annotation ${index + 1}:`);
+    parts.push(`- comment: ${String(a.comment || '').trim()}`);
+    if (a.label) parts.push(`- target element: ${String(a.label).trim()}`);
+    if (a.currentText) {
+      parts.push(`- target current text: ${String(a.currentText).trim().slice(0, 240)}`);
+    }
+    if (a.selectionKind) parts.push(`- selection kind: ${a.selectionKind}`);
+    if (a.intent) parts.push(`- mark intent: ${a.intent}`);
+    if (a.markKind) parts.push(`- mark kind: ${a.markKind}`);
+  });
+  const trimmedMessage = String(userMessage || '').trim();
+  if (trimmedMessage.length > 0) {
+    parts.push('');
+    parts.push('The message the user sent alongside the annotations:');
+    parts.push(trimmedMessage.slice(0, 2000));
+  }
+  parts.push('');
+  parts.push(
+    'Return ONLY the JSON object described in the system prompt — no prose, no fences.',
+  );
+  return parts.join('\n');
+}
+
+// Auto-distill preview annotations (comments / highlights / drawn marks) into
+// durable `feedback` and `rule` memory. This is the automatic half of the
+// "interaction → memory" loop: instead of waiting for the agent to propose a
+// rule and the user to click Keep, every review turn that carries inline
+// feedback is mined in the background and written straight to the store
+// (auto-keep), de-duped against existing entries. Reuses extractWithLLM so the
+// provider selection, memory toggles, dedup, index linking, and the batched
+// `extract` change event (which drives the "Memory updated" toast) all apply.
+//
+// `input.annotations` is the turn's comment-attachment list; only annotations
+// carrying a non-empty user comment are mined (a bare highlight with no words
+// has no durable signal to distill). Returns the written entries.
+export async function distillAnnotationsToMemory(dataDir, input, options) {
+  const annotations = Array.isArray(input?.annotations) ? input.annotations : [];
+  const withComment = annotations.filter(
+    (a) => a && typeof a.comment === 'string' && a.comment.trim().length > 0,
+  );
+  if (withComment.length === 0) return [];
+  const payload = renderAnnotationPayload(withComment, input?.userMessage);
+  return extractWithLLM(
+    dataDir,
+    { userMessage: payload, assistantMessage: input?.assistantMessage },
+    {
+      ...options,
+      systemPrompt: ANNOTATION_SYSTEM_PROMPT,
+      source: 'annotation',
+      kind: 'annotation',
+      // The distiller only deals in durable preferences/constraints — never
+      // let it spawn project/reference/user noise from a design critique.
+      candidateFilter: (candidate) =>
+        candidate.type === 'feedback' || candidate.type === 'rule',
+    },
+  );
+}
+
+export async function extractWithLLM(dataDir, input, options) {
+  const changeSource = options?.source ?? 'llm';
+  const result = await collectProposedEntries(dataDir, input, options);
+  if (result.status !== 'ok') return [];
+  const { attemptId, proposed, existingEntries } = result;
+
   if (proposed.length === 0) {
     markSuccess(attemptId, { writtenCount: 0, writtenIds: [] });
     return [];
@@ -835,15 +1465,10 @@ export async function extractWithLLM(dataDir, input, options) {
     try {
       const entry = await upsertMemoryEntry(
         dataDir,
-        {
-          type: cand.type,
-          name: String(cand.name).trim().slice(0, 80),
-          description: String(cand.description || '').trim().slice(0, 200),
-          body: String(cand.body).trim(),
-        },
+        toMemoryDraft(cand),
         // Suppress per-entry events; we batch a single 'extract' below
         // so the toast says "Memory updated (3 · LLM)" once.
-        { silent: true, source: 'llm' },
+        { silent: true, source: changeSource },
       );
       written.push({
         id: entry.id,
@@ -861,7 +1486,7 @@ export async function extractWithLLM(dataDir, input, options) {
     memoryEvents.emit('change', {
       kind: 'extract',
       count: written.length,
-      source: 'llm',
+      source: changeSource,
       at: Date.now(),
     });
   }

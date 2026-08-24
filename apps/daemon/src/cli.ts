@@ -1,15 +1,43 @@
 #!/usr/bin/env node
 // @ts-nocheck
-import { runDaemonCliStartup } from './daemon-startup.js';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { basename } from 'node:path';
+import { runDaemonCliStartup, startDaemonRuntime } from './daemon-startup.js';
 import { runLiveArtifactsMcpServer } from './mcp-live-artifacts-server.js';
 import { runArtifactsCli } from './artifacts-cli.js';
+import { runResource } from './resource-cli.js';
+import { runProjectHandoff } from './handoff-cli.js';
 import { runConnectorsToolCli } from './tools-connectors-cli.js';
 import { runDesignSystemsToolCli } from './tools-design-systems-cli.js';
+import { DESIGN_SYSTEMS_USAGE, isDesignSystemsHelpArg } from './cli-help/index.js';
+import { BRAND_USAGE, isBrandHelpArg } from './cli-help/index.js';
+import { parseDesignSystemRenameArgs } from './design-systems/rename-args.js';
 import { runLiveArtifactsToolCli } from './tools-live-artifacts-cli.js';
 import { splitResearchSubcommand } from './research/cli-args.js';
 import { resolveDaemonUrl } from './daemon-url.js';
+import { requestJsonIpc } from '@open-design/sidecar';
+import { SIDECAR_ENV, SIDECAR_MESSAGES } from '@open-design/sidecar-proto';
+import { EXPORT_FORMATS, EXPORT_IMAGE_FORMATS } from '@open-design/contracts';
+import type { ArtifactLintFinding, LintArtifactCliResultEnvelope, LintArtifactResponse, LintFailOn } from '@open-design/contracts';
+import { buildExportCliRequestBody, buildExportCliResultEnvelope, resolveExportCliDeckMode } from './export-cli-request.js';
+import { exportRoutePath } from './export-cli-routing.js';
+import {
+  AGENT_SLUGS,
+  isAgentSlug,
+  planAgentInstall,
+  applyJsonInstall,
+  removeJsonInstall,
+} from './mcp-agent-install.js';
+import { resolveMcpWorkspaceContext } from './mcp-workspace-context.js';
 
 const argv = process.argv.slice(2);
+
+const RESUME_CONTINUE_PROMPT =
+  'The previous turn was interrupted by a transient failure. ' +
+  'If your last response was cut off, continue it from where you left off ' +
+  'and keep any work already completed; otherwise complete the original ' +
+  'request. Inspect the current project files as needed before making ' +
+  'further changes.';
 
 // ---- Subcommand router ----------------------------------------------------
 //
@@ -35,11 +63,16 @@ const argv = process.argv.slice(2);
 // initialization") and crash every `od media …` invocation.
 const MEDIA_GENERATE_STRING_FLAGS = new Set([
   'project',
+  'workspace',
+  'workspace-member',
   'surface',
   'model',
   'prompt',
+  'prompt-file',
   'output',
   'aspect',
+  'quality',
+  'resolution',
   'length',
   'duration',
   'prompt-influence',
@@ -55,6 +88,14 @@ const MEDIA_GENERATE_BOOLEAN_FLAGS = new Set([
   'h',
   'loop',
 ]);
+const MEDIA_SCAFFOLD_STRING_FLAGS = new Set([
+  'project',
+  'workspace',
+  'workspace-member',
+  'composition-dir',
+  'daemon-url',
+]);
+const MEDIA_SCAFFOLD_BOOLEAN_FLAGS = new Set(['help', 'h', 'json']);
 
 const MCP_STRING_FLAGS = new Set([
   'daemon-url',
@@ -62,6 +103,28 @@ const MCP_STRING_FLAGS = new Set([
 const MCP_BOOLEAN_FLAGS = new Set([
   'help',
   'h',
+]);
+
+// Hoisted next to MCP_*_FLAGS for the same TDZ reason as the MEDIA flags
+// above: `od mcp install <agent>` dispatches through SUBCOMMAND_MAP during
+// top-level module evaluation, and runMcpInstall references these `const`
+// Sets — defining them next to runMcpInstall lower in the file would hit
+// the TDZ.
+const MCP_INSTALL_STRING_FLAGS = new Set([
+  'daemon-url',
+  'name',
+]);
+const MCP_INSTALL_CLI_PROBE_FLAG = 'open-design-cli-probe';
+const MCP_INSTALL_CLI_PROBE_TOKEN = 'open-design-cli:mcp-install:v1';
+const MCP_INSTALL_BOOLEAN_FLAGS = new Set([
+  'help',
+  'h',
+  MCP_INSTALL_CLI_PROBE_FLAG,
+  'json',
+  'print',
+  'dry-run',
+  'uninstall',
+  'remove',
 ]);
 
 const RESEARCH_SEARCH_STRING_FLAGS = new Set([
@@ -94,6 +157,14 @@ const PLUGIN_STRING_FLAGS = new Set([
   'reason',
   'catalog',
   'host',
+  'name',
+  'workspace',
+  'workspace-member',
+]);
+const PLUGIN_PROJECT_RESOURCE_STRING_FLAGS = new Set([
+  ...PLUGIN_STRING_FLAGS,
+  'workspace',
+  'workspace-member',
 ]);
 const PLUGIN_BOOLEAN_FLAGS = new Set([
   'help',
@@ -108,6 +179,8 @@ const UI_STRING_FLAGS = new Set([
   'daemon-url',
   'run',
   'project',
+  'workspace',
+  'workspace-member',
   'value',
   'value-json',
   'plugin',
@@ -132,26 +205,84 @@ const UI_BOOLEAN_FLAGS = new Set([
 // during module load; any const declared further down the file is
 // still in TDZ when the handler executes, so `od status` /
 // `od atoms list` / etc. would crash with `Cannot access X before
-// initialization`. The actual definitions stay further down (next
-// to their handlers); we just export the bindings up here so the
-// dispatch path always sees an initialized value.
+// initialization`.
 const DAEMON_STRING_FLAGS = new Set([
   'daemon-url', 'port', 'host',
 ]);
 const DAEMON_BOOLEAN_FLAGS = new Set([
   'help', 'h', 'json', 'headless', 'serve-web', 'no-open',
 ]);
-const LIBRARY_STRING_FLAGS = new Set(['daemon-url', 'query', 'tag']);
+const LIBRARY_STRING_FLAGS = new Set([
+  'daemon-url', 'query', 'tag', 'workspace', 'workspace-member',
+]);
 const LIBRARY_BOOLEAN_FLAGS = new Set(['help', 'h', 'json']);
+// `od library …` (OD Library asset registry). Hoisted so the dispatcher can
+// parse flags without hitting a temporal-dead-zone on these sets.
+const LIBRARY_ASSET_STRING_FLAGS = new Set([
+  'daemon-url', 'kind', 'tag', 'source', 'date', 'query', 'project', 'label', 'out', 'dir',
+  'workspace', 'workspace-member',
+]);
+const LIBRARY_ASSET_BOOLEAN_FLAGS = new Set(['help', 'h', 'json']);
+const DIAGNOSTICS_STRING_FLAGS = new Set(['daemon-url', 'output']);
+const DIAGNOSTICS_BOOLEAN_FLAGS = new Set(['help', 'h', 'json']);
+const CONFIG_STRING_FLAGS = new Set(['daemon-url', 'value', 'value-json']);
+const CONFIG_BOOLEAN_FLAGS = new Set(['help', 'h', 'json']);
+const AMR_STRING_FLAGS = new Set(['daemon-url']);
+const AMR_BOOLEAN_FLAGS = new Set(['help', 'h', 'json', 'refresh']);
+const COLLAB_STRING_FLAGS = new Set([
+  'daemon-url', 'project', 'member', 'name', 'role', 'client-id', 'sequence', 'design-system',
+  'workspace', 'workspace-member',
+]);
+const COLLAB_BOOLEAN_FLAGS = new Set(['help', 'h', 'json']);
+const MESSAGE_CENTER_STRING_FLAGS = new Set([
+  'daemon-url',
+  'locale',
+  'filter',
+  'limit',
+  'cursor',
+]);
+const MESSAGE_CENTER_BOOLEAN_FLAGS = new Set(['help', 'h', 'json']);
 const PROJECT_STRING_FLAGS = new Set([
   'daemon-url', 'name', 'skill', 'design-system', 'plugin', 'metadata-json',
-  'pending-prompt', 'project', 'conversation', 'message', 'path', 'as',
-  'agent', 'model', 'snapshot-id', 'inputs', 'grant-caps',
+  'pending-prompt', 'project', 'conversation', 'message', 'prompt',
+  'prompt-file', 'path', 'dir', 'as', 'url',
+  'agent', 'model', 'service-tier', 'snapshot-id', 'inputs', 'grant-caps', 'editor',
+  'title', 'label', 'against', 'seed-from', 'fork-after', 'mode',
+  'source',
+]);
+const PROJECT_RESOURCE_STRING_FLAGS = new Set([
+  ...PROJECT_STRING_FLAGS,
+  'workspace',
+  'workspace-member',
 ]);
 const PROJECT_BOOLEAN_FLAGS = new Set(['help', 'h', 'json', 'follow']);
+const WORKSPACE_STRING_FLAGS = new Set([
+  'daemon-url', 'workspace', 'view', 'visibility', 'owner', 'project',
+  'member', 'role', 'email', 'app-user', 'lifecycle-state',
+  'member-status', 'can-share-projects', 'can-write-synced-files',
+  'workspace-type',
+]);
+const WORKSPACE_BOOLEAN_FLAGS = new Set(['help', 'h', 'json']);
+// `od templates …` mirrors NewProjectPanel / ExamplesTab. Same surface,
+// same /api/templates store. The CLI form is the embeddability contract:
+// external agents (hermes-agent, openclaw, ...) can snapshot, list, or
+// remove user-saved project templates without going through the web UI.
+const TEMPLATES_STRING_FLAGS = new Set([
+  'daemon-url', 'name', 'description',
+]);
+const TEMPLATES_BOOLEAN_FLAGS = new Set(['help', 'h', 'json']);
+// `od deploy …` posts to /api/projects/:id/deploy. The CLI form is the
+// embeddability contract: external agents can deploy a project file to
+// Vercel or Cloudflare Pages without going through the web UI.
+const DEPLOY_STRING_FLAGS = new Set([
+  'daemon-url', 'file', 'provider', 'target',
+  'cf-zone-id', 'cf-zone-name', 'cf-domain-prefix',
+  'workspace', 'workspace-member',
+]);
+const DEPLOY_BOOLEAN_FLAGS = new Set(['help', 'h', 'json']);
 // `od automation …` mirrors the Automations tab. Same surface, same
 // /api/routines store. The CLI form is the embeddability contract:
-// external agents (hermes-agent, openclaw, etc.) can drive Open Design
+// external agents (hermes-agent, openclaw, etc.) can drive OpenDesign
 // automations headlessly without going through the web UI.
 const AUTOMATION_STRING_FLAGS = new Set([
   'daemon-url', 'name', 'prompt', 'prompt-file', 'schedule', 'target',
@@ -165,10 +296,58 @@ const AUTOMATION_BOOLEAN_FLAGS = new Set([
 ]);
 const MEMORY_STRING_FLAGS = new Set([
   'daemon-url', 'name', 'description', 'type', 'body', 'body-file',
+  // `od memory profile set` reads structured fields verbatim and/or a prose
+  // body; `--field "Label=Value"` is repeatable (scanned manually below since
+  // parseFlags collapses duplicate keys). `--prompt-file <path|->` mirrors the
+  // long-prose embeddability contract used by `od automation`/`od brand`.
+  'field', 'prompt-file', 'assertion', 'check', 'rationale',
+  // `od memory rule suggest` distils annotations into rule proposals: a single
+  // `--note` plus optional target context, or a `--prompt-file` carrying a JSON
+  // array of annotations / newline-separated notes.
+  'note', 'target', 'file', 'current-text',
+  // `od memory config` toggles accept true|false values (string, not boolean)
+  // so an agent can set OR clear a hook in one shape: `--profile false`.
+  'enabled', 'profile', 'rewrite', 'verify', 'extraction',
 ]);
 const MEMORY_BOOLEAN_FLAGS = new Set([
   'help', 'h', 'json',
 ]);
+const SHARE_STRING_FLAGS = new Set([
+  'daemon-url', 'url', 'title', 'text', 'copy-text', 'locale', 'platform',
+]);
+const SHARE_BOOLEAN_FLAGS = new Set([
+  'help', 'h', 'json',
+]);
+// Defined near the top because `runFigma` is reachable through the
+// top-of-file SUBCOMMAND_MAP dispatch during module evaluation; a `const`
+// further down would still be in TDZ when the handler reads it.
+const FIGMA_STRING_FLAGS = new Set([
+  'daemon-url', 'project', 'file', 'figma-url', 'notes', 'prompt', 'prompt-file',
+]);
+const FIGMA_PROJECT_RESOURCE_STRING_FLAGS = new Set([
+  ...FIGMA_STRING_FLAGS,
+  'workspace',
+  'workspace-member',
+]);
+const FIGMA_BOOLEAN_FLAGS = new Set([
+  'help', 'h', 'json', 'build',
+]);
+// `od brand …` mirrors the Brands library + New Brand modal. Same surface,
+// same /api/brands store. The CLI form is the embeddability contract: an
+// external agent (hermes-agent, openclaw, scripted job) can extract, list,
+// inspect, and remove brands headlessly without rendering the web UI.
+// Hoisted next to the other dispatch-touched flag sets because runBrand is
+// reachable through the top-of-file SUBCOMMAND_MAP dispatch, which runs during
+// module evaluation — a const declared further down would still be in TDZ.
+const BRAND_STRING_FLAGS = new Set([
+  'daemon-url', 'prompt-file', 'project', 'locale',
+  'html-file', 'css-file', 'base-url',
+]);
+const BRAND_BOOLEAN_FLAGS = new Set([
+  'help', 'h', 'json',
+]);
+const AGENT_STRING_FLAGS = new Set(['daemon-url']);
+const AGENT_BOOLEAN_FLAGS = new Set(['help', 'h', 'json']);
 // Hoisted because `runAutomation` is reachable through the top-of-file
 // SUBCOMMAND_MAP dispatch, which runs during module evaluation —
 // any `const` declared further down would still be in TDZ when
@@ -190,6 +369,8 @@ const RECOVERABLE_EXIT_CODES = {
   'plugin-requires-daemon':   71,
   'snapshot-stale':           72,
   'genui-surface-awaiting':   73,
+  'desktop-auth-pending':     74,
+  'desktop-import-token-rejected': 75,
 };
 const PLUGIN_LIST_FILTER_FLAGS = new Set([
   ...PLUGIN_STRING_FLAGS,
@@ -201,30 +382,355 @@ const PLUGIN_LIST_BOOLEAN_FLAGS = new Set([
 ]);
 
 const SUBCOMMAND_MAP = {
+  agent: runAgent,
   artifacts: runArtifacts,
   media: runMedia,
   mcp: runMcp,
+  amr: runAmr,
+  collab: runCollab,
+  'message-center': runMessageCenter,
   research: runResearch,
   plugin: runPlugin,
   ui: runUi,
   marketplace: runMarketplace,
+  share: runShare,
+  brand: runBrand,
+  brands: runBrand,
   project: runProject,
+  workspace: runWorkspace,
   automation: runAutomation,
   automations: runAutomation,
   memory: runMemory,
   run: runRun,
   files: runFiles,
+  templates: runTemplates,
   conversation: runConversation,
+  chat: runChat,
+  deploy: runDeploy,
   daemon: runDaemon,
   atoms: runAtoms,
+  skill: runSkills,
   skills: runSkills,
   'design-systems': runDesignSystems,
+  resource: runResource,
   craft: runCraft,
+  diagnostics: runDiagnostics,
+  export: runExport,
+  lint: runLint,
   status: runStatus,
   version: runVersion,
+  'whats-new': runWhatsNew,
   doctor: runDoctor,
   config: runConfig,
+  library: runLibrary,
+  figma: runFigma,
 };
+
+function printAgentHelp() {
+  console.log(`Usage: od agent setup deepseek-harness [options]
+
+Install or repair OpenDesign's bundled connection component in the user's
+official DeepSeek Harness installation. The dsh CLI itself is not installed
+or upgraded by OpenDesign.
+
+Options:
+  --json                  Print a machine-readable result.
+  --daemon-url <url>      Override daemon URL.`);
+}
+
+async function runAgent(args) {
+  let flags;
+  try {
+    flags = parseFlags(args, { string: AGENT_STRING_FLAGS, boolean: AGENT_BOOLEAN_FLAGS });
+  } catch (error) {
+    console.error(error.message);
+    process.exit(2);
+  }
+  const positional = positionalArgs(args, AGENT_STRING_FLAGS);
+  if (flags.help || flags.h || positional[0] === 'help') {
+    printAgentHelp();
+    return;
+  }
+  if (positional[0] !== 'setup' || positional[1] !== 'deepseek-harness') {
+    printAgentHelp();
+    process.exit(2);
+  }
+  const base = await cliDaemonBaseUrl(flags);
+  let response;
+  try {
+    response = await fetch(`${base}/api/agents/deepseek-harness/companion/install`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    });
+  } catch (error) {
+    surfaceFetchError(error, base);
+    process.exit(3);
+  }
+  if (!response.ok) return structuredHttpFailure(response, 'daemon-not-running');
+  const result = await response.json();
+  if (flags.json) {
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    return;
+  }
+  const verb = result.action === 'already-compatible' ? 'already compatible' : result.action;
+  console.log(`DeepSeek Harness connection component ${verb} (${result.packageVersion}).`);
+}
+
+const EXPORT_STRING_FLAGS = new Set([
+  'daemon-url', 'project', 'format', 'out', 'output', 'image-format', 'title', 'file',
+  // Backwards-compatible no-ops. Older scripts may still pass these, but
+  // export authority is derived from the project id by the daemon.
+  'workspace', 'workspace-member',
+]);
+const EXPORT_BOOLEAN_FLAGS = new Set(['help', 'h', 'json', 'deck', 'page', 'no-deck']);
+// EXPORT_FORMATS / EXPORT_IMAGE_FORMATS are the shared contract DTO (single
+// source of truth for the web/daemon/CLI export surface), imported above.
+
+function printExportHelp() {
+  console.log(`Usage:
+  od export <file> --project <id> --format <fmt> [options]
+
+Programmatic export of an HTML/deck artifact to standalone HTML, PDF, image,
+or PPTX. Runs without model/agent calls. Standalone HTML works in a headless
+daemon; visual formats require the desktop runtime's bundled Chromium.
+
+Formats:  ${EXPORT_FORMATS.join(', ')}
+
+Options:
+  --project <id>           Project id (required)
+  --format <fmt>           One of: ${EXPORT_FORMATS.join(' | ')} (required)
+  --out <path>             Write the file here (defaults to the suggested name)
+  --image-format <fmt>     png | jpeg (for --format image)
+  --deck                   Treat the artifact as a multi-slide deck
+  --page, --no-deck        Treat the artifact as a normal scrollable page
+  --title <title>          Title used for metadata / default filename
+  --json                   Print a machine-readable result envelope
+  --daemon-url <url>       Override daemon URL
+
+Examples:
+  od export index.html --project p1 --format pdf --out page.pdf
+  od export index.html --project p1 --format html --out standalone.html
+  od export slide.html --project p1 --format image --image-format png --out slide.png
+  od export deck.html --project p1 --format pptx --out deck.pptx`);
+}
+
+async function runExport(args) {
+  if (args.length === 0 || args[0] === 'help' || args.includes('--help') || args.includes('-h')) {
+    printExportHelp();
+    process.exit(args.length === 0 ? 2 : 0);
+  }
+  let flags;
+  try {
+    flags = parseFlags(args, { string: EXPORT_STRING_FLAGS, boolean: EXPORT_BOOLEAN_FLAGS });
+  } catch (err) {
+    console.error(err.message);
+    process.exit(2);
+  }
+  const pos = positionalArgs(args, EXPORT_STRING_FLAGS);
+  const file = flags.file || pos[0];
+  const projectId = flags.project || process.env.OD_PROJECT_ID;
+  const format = flags.format;
+  if (!file || !projectId || !format) {
+    printExportHelp();
+    process.exit(2);
+  }
+  if (!(EXPORT_FORMATS as readonly string[]).includes(format)) {
+    console.error(`invalid --format: ${format} (expected ${EXPORT_FORMATS.join(' | ')})`);
+    process.exit(2);
+  }
+  if (flags['image-format'] && !(EXPORT_IMAGE_FORMATS as readonly string[]).includes(flags['image-format'])) {
+    console.error(`invalid --image-format: ${flags['image-format']} (expected ${EXPORT_IMAGE_FORMATS.join(' | ')})`);
+    process.exit(2);
+  }
+  if (flags['image-format'] && format !== 'image') {
+    console.error('--image-format is only valid with --format image');
+    process.exit(2);
+  }
+  const base = await cliDaemonBaseUrl(flags);
+  const token = process.env.OD_TOOL_TOKEN;
+  const requestHeaders = token
+    ? { authorization: `Bearer ${token}` }
+    : {};
+  // Visual formats rasterize through the desktop screenshot renderer so the
+  // CLI matches the UI exactly. In particular `pdf` uses `/export/pdf-image`
+  // (one raster page per deck slide / per viewport for a page) — NOT the generic
+  // `/export` vector `printToPDF` path, which drops CJK glyphs in the packaged
+  // runtime and is the bug this feature exists to avoid.
+  const exportPath = exportRoutePath(format);
+  let deckMode;
+  try {
+    deckMode = resolveExportCliDeckMode({
+      format,
+      deck: flags.deck === true,
+      page: flags.page === true,
+      noDeck: flags['no-deck'] === true,
+    });
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err));
+    process.exit(2);
+  }
+  const requestBody = buildExportCliRequestBody({
+    fileName: file,
+    format,
+    deck: deckMode,
+    ...(format === 'image' && flags['image-format'] ? { imageFormat: flags['image-format'] } : {}),
+    ...(flags.title ? { title: flags.title } : {}),
+  });
+  let resp;
+  try {
+    resp = await fetch(`${base}/api/projects/${encodeURIComponent(projectId)}/${exportPath}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...requestHeaders },
+      body: JSON.stringify(requestBody),
+    });
+  } catch (err) {
+    surfaceFetchError(err, base);
+    process.exit(3);
+  }
+  if (!resp.ok) return structuredHttpFailure(resp);
+  const buffer = Buffer.from(await resp.arrayBuffer());
+  let out = flags.out || flags.output;
+  if (!out) {
+    const cd = resp.headers.get('content-disposition') || '';
+    const star = /filename\*=UTF-8''([^;]+)/i.exec(cd);
+    const plain = /filename="([^"]+)"/i.exec(cd);
+    if (star && star[1]) {
+      try { out = decodeURIComponent(star[1]); } catch { out = plain && plain[1] ? plain[1] : null; }
+    } else if (plain && plain[1]) {
+      out = plain[1];
+    }
+    if (!out) {
+      const ext = format === 'image'
+        ? (flags['image-format'] === 'jpeg' ? 'jpg' : 'png')
+        : format === 'pptx' ? 'pptx' : format === 'html' ? 'html' : 'pdf';
+      out = `artifact.${ext}`;
+    }
+  }
+  const { writeFile } = await import('node:fs/promises');
+  await writeFile(out, buffer);
+  if (flags.json) {
+    return process.stdout.write(
+      JSON.stringify(buildExportCliResultEnvelope({ path: out, bytes: buffer.length, format }), null, 2) + '\n',
+    );
+  }
+  console.log(`wrote ${out} (${buffer.length} bytes)`);
+}
+
+const LINT_STRING_FLAGS = new Set(['daemon-url', 'file', 'html-file', 'fail-on']);
+const LINT_BOOLEAN_FLAGS = new Set(['help', 'h', 'json', 'agent-message']);
+const LINT_FAIL_ON_VALUES = ['p0', 'p1', 'p2', 'none'];
+
+function printLintHelp() {
+  console.log(`Usage:
+  od lint <file.html|-> [options]
+
+Run the daemon's anti-slop artifact linter (the same checks applied on
+artifact save) against an HTML file, or stdin when the file is \`-\`.
+Runs without model/agent calls; works against a headless daemon.
+
+Exit codes: 0 clean at threshold · 1 findings at/above --fail-on ·
+2 usage · 3 daemon unreachable.
+
+Options:
+  --file, --html-file <p>  Input path (alternative to the positional; \`-\` = stdin)
+  --fail-on <sev>          p0 | p1 | p2 | none — exit 1 threshold (default p0)
+  --agent-message          Also print the <artifact-lint> block for agent splicing
+  --json                   Print a machine-readable result envelope
+  --daemon-url <url>       Override daemon URL
+
+Examples:
+  od lint artifact.html
+  od lint - < artifact.html --json
+  od lint report.html --fail-on p1 --agent-message`);
+}
+
+// CLI half of POST /api/artifacts/lint. The endpoint has been live since the
+// linter landed, but without a subcommand it was unreachable from external
+// agents — the exact gap the dual-track rule in AGENTS.md exists to prevent.
+async function runLint(args) {
+  if (args.length === 0 || args[0] === 'help' || args.includes('--help') || args.includes('-h')) {
+    printLintHelp();
+    process.exit(args.length === 0 ? 2 : 0);
+  }
+  let flags;
+  try {
+    flags = parseFlags(args, { string: LINT_STRING_FLAGS, boolean: LINT_BOOLEAN_FLAGS });
+  } catch (err) {
+    console.error(err.message);
+    process.exit(2);
+  }
+  const pos = positionalArgs(args, LINT_STRING_FLAGS);
+  const file = flags.file || flags['html-file'] || pos[0];
+  if (!file) {
+    printLintHelp();
+    process.exit(2);
+  }
+  const failOn = (flags['fail-on'] || 'p0') as LintFailOn;
+  if (!LINT_FAIL_ON_VALUES.includes(failOn)) {
+    console.error(`invalid --fail-on: ${failOn} (expected ${LINT_FAIL_ON_VALUES.join(' | ')})`);
+    process.exit(2);
+  }
+  let html;
+  try {
+    if (file === '-') {
+      const chunks = [];
+      for await (const chunk of process.stdin) chunks.push(chunk);
+      html = Buffer.concat(chunks).toString('utf8');
+    } else {
+      const { readFile } = await import('node:fs/promises');
+      html = await readFile(file, 'utf8');
+    }
+  } catch (err) {
+    console.error(`cannot read ${file}: ${err instanceof Error ? err.message : String(err)}`);
+    process.exit(2);
+  }
+  if (html.length === 0) {
+    console.error(`empty input: ${file}`);
+    process.exit(2);
+  }
+  const base = await cliDaemonBaseUrl(flags);
+  let resp;
+  try {
+    resp = await fetch(`${base}/api/artifacts/lint`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ html }),
+    });
+  } catch (err) {
+    surfaceFetchError(err, base);
+    process.exit(3);
+  }
+  if (!resp.ok) return structuredHttpFailure(resp);
+  const { findings, agentMessage } = (await resp.json()) as LintArtifactResponse;
+  const counts = { p0: 0, p1: 0, p2: 0 };
+  for (const f of findings) {
+    if (f.severity === 'P0') counts.p0 += 1;
+    else if (f.severity === 'P1') counts.p1 += 1;
+    else counts.p2 += 1;
+  }
+  const failed =
+    failOn === 'p0' ? counts.p0 > 0
+    : failOn === 'p1' ? counts.p0 + counts.p1 > 0
+    : failOn === 'p2' ? findings.length > 0
+    : false;
+  if (flags.json) {
+    const envelope: LintArtifactCliResultEnvelope = {
+      ok: !failed, file, failOn, counts, findings, agentMessage,
+    };
+    process.stdout.write(JSON.stringify(envelope, null, 2) + '\n');
+  } else {
+    for (const f of findings as ArtifactLintFinding[]) {
+      console.log(`[${f.severity}] ${f.id} — ${f.message}`);
+      if (f.snippet) console.log(`      ${f.snippet}`);
+      console.log(`      fix: ${f.fix}`);
+    }
+    const summary = `${findings.length} finding${findings.length === 1 ? '' : 's'} (P0 ${counts.p0} · P1 ${counts.p1} · P2 ${counts.p2})`;
+    console.log(findings.length ? summary : `clean — ${summary}`);
+    if (flags['agent-message'] && agentMessage) console.log(`\n${agentMessage}`);
+  }
+  if (failed) process.exitCode = 1;
+}
 
 if (argv[0] === 'mcp' && argv[1] === 'live-artifacts') {
   try {
@@ -242,7 +748,9 @@ if (first && SUBCOMMAND_MAP[first]) {
   const idx = argv.indexOf(first);
   const rest = [...argv.slice(0, idx), ...argv.slice(idx + 1)];
   await SUBCOMMAND_MAP[first](rest);
-  process.exit(0);
+  // Respect a non-zero exit code a handler set via process.exitCode (e.g. a
+  // failed `od resource get`); default to 0 when it left it unset.
+  process.exit(process.exitCode ?? 0);
 }
 
 if (argv[0] === 'tools' && argv[1] === 'live-artifacts') {
@@ -265,6 +773,11 @@ if (argv[0] === 'tools' && argv[1] === 'live-artifacts') {
       process.stderr.write(`${JSON.stringify({ ok: false, error: { message } })}\n`);
       process.exitCode = 1;
     });
+} else if (argv[0] === 'tools' && argv[1] === 'directions') {
+  // Agent-facing pull layer for the direction library: the slim prompt
+  // carries only an id+label index and the agent fetches the chosen
+  // direction's full spec (palette, font stacks, posture) here.
+  runDirectionsToolCli(argv.slice(2));
 } else if (argv[0] === 'tools' && argv[1] === 'design-systems') {
   runDesignSystemsToolCli(argv.slice(2))
     .then(({ exitCode }) => {
@@ -279,6 +792,70 @@ if (argv[0] === 'tools' && argv[1] === 'live-artifacts') {
   await runDaemonCliStartup(argv, { printHelp: printRootHelp });
 }
 
+async function runDirectionsToolCli(args) {
+  const { DESIGN_DIRECTIONS, formatDirectionSpecText } = await import(
+    './prompts/directions.js'
+  );
+  const wantJson = args.includes('--json');
+  // Agents call this command straight from the prompt contract, so malformed
+  // invocations must fail fast instead of falling through to the full list
+  // or swallowing the next flag as the value.
+  const readFlagValue = (flag: string): string | null => {
+    const idx = args.indexOf(flag);
+    if (idx === -1) return null;
+    if (args.indexOf(flag, idx + 1) !== -1) {
+      console.error(`duplicate ${flag} flag`);
+      process.exit(1);
+    }
+    const value = args[idx + 1];
+    if (value === undefined || value.startsWith('--')) {
+      console.error(`missing value for ${flag}`);
+      process.exit(1);
+    }
+    return value;
+  };
+  const idValue = readFlagValue('--id');
+  const labelValue = readFlagValue('--label');
+  if (idValue !== null && labelValue !== null) {
+    console.error('pass either --id or --label, not both');
+    process.exit(1);
+  }
+  const needle = idValue ?? labelValue;
+  if (needle) {
+    if (wantJson) {
+      const match = DESIGN_DIRECTIONS.find(
+        (d) =>
+          d.id.toLowerCase() === String(needle).trim().toLowerCase() ||
+          d.label.toLowerCase() === String(needle).trim().toLowerCase(),
+      );
+      if (!match) {
+        console.error(`unknown direction: ${needle}`);
+        process.exit(1);
+      }
+      process.stdout.write(JSON.stringify(match) + '\n');
+      return;
+    }
+    const spec = formatDirectionSpecText(String(needle));
+    if (!spec) {
+      console.error(
+        `unknown direction: ${needle}\nRun \`od tools directions\` to list ids.`,
+      );
+      process.exit(1);
+    }
+    process.stdout.write(spec + '\n');
+    return;
+  }
+  if (wantJson) {
+    process.stdout.write(
+      JSON.stringify(DESIGN_DIRECTIONS.map(({ id, label }) => ({ id, label }))) + '\n',
+    );
+    return;
+  }
+  for (const d of DESIGN_DIRECTIONS) {
+    console.log(`${d.id}\t${d.label}`);
+  }
+}
+
 function printRootHelp() {
   console.log(`Usage:
   od [--port <n>] [--host <addr>] [--no-open]
@@ -286,6 +863,10 @@ function printRootHelp() {
 
   od tools live-artifacts <create|list|update|refresh> [options]
       Manage live artifacts through daemon wrapper commands.
+
+  od tools directions [--id <id> | --label <label>] [--json]
+      List the built-in design directions, or print one direction's full
+      palette / font stacks / posture spec for binding into :root.
 
   od artifacts create --name <path> --input <file> [--project <id-or-name>]
       Create a normal project artifact through the local daemon.
@@ -304,6 +885,10 @@ function printRootHelp() {
 
   od plugin <list|info|install|uninstall|apply|doctor|replay|trust> [args]
       Discover, install, and apply plugins through the local daemon.
+  od plugin publish-repo <folder>
+      Create/update the author's GitHub repo for a local plugin folder.
+  od plugin open-design-pr <folder>
+      Push a community-catalog branch and open the OpenDesign PR form.
 
   od automation <list|get|create|update|run|runs|pause|resume|delete> [args]
       Drive the Automations surface headlessly. Same store as the UI's
@@ -311,11 +896,43 @@ function printRootHelp() {
       schedule, trigger, or harvest results from a routine without
       opening the web UI.
 
+  od message-center <list|read|read-all> [args]
+      Read and acknowledge message-center inbox items through the same
+      daemon endpoints the bell UI uses.
+
+  od amr <login|status> [args]
+      Start Vela browser sign-in or inspect the current Vela account through
+      the local OpenDesign daemon.
+
   od memory tree <list|view|edit|move> [args]
       Inspect and edit the memory tree that is injected into agent prompts.
 
+  od share <open-design|url> [options]
+      Build localized social-share targets for the OpenDesign repo or a
+      deployed project URL. Use --json for scripted integrations.
+
   od ui <list|show|respond|revoke|prefill> [args]
       Read and answer GenUI surfaces (form / choice / confirmation / oauth-prompt) headlessly.
+
+  od chat new --project <id> [--seed-from <cid>] [--fork-after <mid>] [--title "<t>"] [--json]
+      Create a Side Chat: a new conversation that inherits another
+      conversation's context by copying its messages (--seed-from), optionally
+      stopping at one message (--fork-after). Mirrors the web chat fork action.
+
+  od diagnostics export [<path>] [--json]
+      Bundle daemon/web/desktop logs, machine info, and recent crash reports
+      into a zip for support tickets. Same output as Settings → About →
+      Export diagnostics.
+
+  od export <file> --project <id> --format <html|pdf|image|pptx> [--out <path>]
+      Programmatically export an HTML/deck artifact to HTML, PDF, image, or PPTX
+      (no model/agent calls). Mirrors the web Download menu; rasterization uses
+      the desktop runtime's bundled Chromium.
+
+  od lint <file.html|-> [--fail-on <p0|p1|p2|none>] [--json]
+      Run the daemon's anti-slop artifact linter against an HTML file or stdin
+      (no model/agent calls; headless-safe). Exits 1 when findings meet the
+      --fail-on threshold, so it can gate cron/CI render pipelines.
 
   "$OD_NODE_BIN" "$OD_BIN" tools ...
       Recommended agent-runtime form; avoids relying on user PATH for od or node.
@@ -325,11 +942,15 @@ function printRootHelp() {
       Designed to be invoked by a code agent - picks up OD_DAEMON_URL
       and OD_PROJECT_ID from the env that the daemon injected on spawn.
 
+  od media scaffold --composition-dir .hyperframes-cache/<id>
+      Create a deterministic HyperFrames composition without npx or global
+      skill installation, before dispatching it through media generate.
+
   od mcp [--daemon-url <url>]
       Run a stdio MCP server that proxies project tool calls to a
-      running Open Design daemon. Wire it into a coding agent
+      running OpenDesign daemon. Wire it into a coding agent
       (Claude Code, Cursor, VS Code, Zed, Windsurf) in another repo
-      to pull files from a local Open Design project and create
+      to pull files from a local OpenDesign project and create
       project-scoped artifacts without exporting a zip.
 
 Options:
@@ -340,11 +961,589 @@ Options:
   --no-open        Do not open the browser after start.
 
 What the daemon does:
-  * scans PATH for installed code-agent CLIs (claude, codex, devin, gemini, opencode, cursor-agent, ...)
+  * scans PATH for installed code-agent CLIs (claude, codex, devin, opencode, cursor-agent, ...)
   * serves the chat UI at http://<host>:<port>
   * proxies messages (text + images) to the selected agent via child-process spawn
-  * exposes /api/projects/:id/media/generate — the unified image/video/audio
-     dispatcher that the agent calls via \`od media generate\`.`);
+  * exposes project-scoped media scaffold/generate APIs — the unified path
+     that the agent calls via \`od media scaffold\` and \`od media generate\`.`);
+}
+
+// ---------------------------------------------------------------------------
+// Subcommand: od amr …
+// ---------------------------------------------------------------------------
+
+async function runAmr(args) {
+  const sub = args[0];
+  if (!sub || sub === 'help' || args.includes('--help') || args.includes('-h')) {
+    console.log(`Usage:
+  od amr login [--json]
+  od amr logout [--json]
+  od amr status [--refresh] [--json]
+
+Options:
+  --daemon-url <url>   OpenDesign daemon HTTP base.
+  --refresh            Bypass the daemon's short wallet display cache.
+  --json               Emit raw JSON.`);
+    process.exit(sub === 'help' || args.includes('--help') || args.includes('-h') ? 0 : 2);
+  }
+  const rest = args.slice(1);
+  const flags = parseFlags(rest, { string: AMR_STRING_FLAGS, boolean: AMR_BOOLEAN_FLAGS });
+  const base = await cliDaemonBaseUrl(flags);
+  switch (sub) {
+    case 'logout': {
+      const logoutResp = await fetch(`${base}/api/integrations/vela/logout`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{}',
+      });
+      if (!logoutResp.ok) return structuredHttpFailure(logoutResp);
+      const result = await logoutResp.json();
+      if (flags.json) {
+        return process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+      }
+      console.log('AMR account\tsigned out');
+      return;
+    }
+    case 'login': {
+      const loginResp = await fetch(`${base}/api/integrations/vela/login`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{}',
+      });
+      if (!loginResp.ok) return structuredHttpFailure(loginResp);
+      const started = await loginResp.json();
+      const statusResp = await fetch(`${base}/api/integrations/vela/status`);
+      if (!statusResp.ok) return structuredHttpFailure(statusResp);
+      const status = await statusResp.json();
+      if (flags.json) {
+        return process.stdout.write(JSON.stringify({ started, status }, null, 2) + '\n');
+      }
+      console.log(`Vela login\tstarted`);
+      console.log(`Profile\t${status?.profile ?? started?.profile ?? '-'}`);
+      if (status?.loggedIn) {
+        console.log(`Status\tlogged in`);
+        return;
+      }
+      console.log(`Status\t${status?.loginInFlight ? 'waiting for browser authorization' : 'sign-in pending'}`);
+      if (status?.activationUrl) console.log(`Open\t${status.activationUrl}`);
+      if (status?.userCode) console.log(`Code\t${status.userCode}`);
+      if (status?.browserOpenFailed) {
+        console.log(`Note\tbrowser could not be opened automatically; use the link above`);
+      }
+      return;
+    }
+    case 'status': {
+      const query = flags.refresh ? '?refresh=1' : '';
+      const statusResp = await fetch(`${base}/api/integrations/vela/status`);
+      if (!statusResp.ok) return structuredHttpFailure(statusResp);
+      const status = await statusResp.json();
+      let wallet = null;
+      if (status?.loggedIn && (!status?.account?.balanceUsd || flags.refresh)) {
+        const walletResp = await fetch(`${base}/api/integrations/vela/wallet${query}`);
+        if (walletResp.ok) wallet = await walletResp.json();
+        else if (flags.refresh && !status?.account?.balanceUsd) return structuredHttpFailure(walletResp);
+      }
+      const merged = {
+        ...status,
+        user: status?.user ?? wallet?.user ?? null,
+        account:
+          status?.loggedIn && wallet?.status === 'available'
+            ? {
+                ...(status?.account ?? {}),
+                balanceUsd: status?.account?.balanceUsd ?? wallet.balanceUsd,
+              }
+            : status?.account,
+        wallet,
+      };
+      if (flags.json) return process.stdout.write(JSON.stringify(merged, null, 2) + '\n');
+      const account = merged?.user?.email ?? merged?.user?.id ?? '-';
+      console.log(`AMR account\t${account}`);
+      console.log(`Profile\t${merged?.profile ?? '-'}`);
+      // Only present when this build was given a vela web console origin
+      // (OD_VELA_WEB_URL); printing it makes "which backend is this app
+      // pointed at" answerable without reading the packaged config.
+      if (merged?.consoleOrigin) console.log(`Console\t${merged.consoleOrigin}`);
+      if (merged?.account?.plan) console.log(`Plan\t${merged.account.plan}`);
+      if (merged?.account?.balanceUsd) {
+        console.log(`Wallet balance\t$${merged.account.balanceUsd}`);
+        if (wallet?.updatedAt || wallet?.fetchedAt) {
+          console.log(`Updated\t${wallet.updatedAt ?? wallet.fetchedAt}`);
+        }
+        console.log(`Source\t${wallet?.source ?? 'status_account'}`);
+        return;
+      }
+      console.log(`Wallet balance\tunavailable`);
+      console.log(`Status\t${wallet?.status ?? (merged?.loggedIn ? 'logged_in' : 'signed_out')}`);
+      if (wallet?.error?.message) console.log(`Reason\t${wallet.error.message}`);
+      return;
+    }
+    default:
+      console.error(`unknown subcommand: od amr ${sub}`);
+      process.exit(2);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Subcommand: od collab …  (team-edition collaboration)
+// ---------------------------------------------------------------------------
+
+function workspaceHeadersFromExplicitFlags(flags, required = false) {
+  const workspaceId =
+    typeof flags?.workspace === 'string' ? flags.workspace.trim() : '';
+  const workspaceMemberId =
+    typeof flags?.['workspace-member'] === 'string'
+      ? flags['workspace-member'].trim()
+      : typeof flags?.member === 'string'
+        ? flags.member.trim()
+        : '';
+  if (workspaceId && workspaceMemberId) {
+    return {
+      'x-od-workspace-id': workspaceId,
+      'x-od-workspace-member-id': workspaceMemberId,
+    };
+  }
+  if (required || workspaceId || workspaceMemberId) {
+    exitWithStructuredError({
+      code: 'workspace-context-required',
+      message: 'pass --workspace <id> and --workspace-member <id>',
+    });
+  }
+  return null;
+}
+
+function printCollabHelp() {
+  console.log(`Usage:
+  od collab status <projectId> --workspace <id> --workspace-member <id> [--json]
+  od collab presence <projectId> --workspace <id> --workspace-member <id> [--json]
+  od collab heartbeat <projectId> --workspace <id> --workspace-member <id> --member <id> [--client-id <id> --sequence <n>] [--name <name>] [--role owner|admin|member] [--json]
+  od collab leave <projectId> --workspace <id> --workspace-member <id> --member <id> [--client-id <id> --sequence <n>] [--json]
+  od collab changed <projectId> --workspace <id> --workspace-member <id> [--json]
+  od collab publish <projectId> --workspace <id> --workspace-member <id> [--json]
+  od collab share <projectId> --workspace <id> --workspace-member <id> [--json]
+  od collab pull <projectId> --workspace <id> --workspace-member <id> [--json]
+  od collab share-resource <design-systems|plugins|skills> <id> --workspace <id> --workspace-member <id> [--json]
+  od collab team-resources <design-systems|plugins|skills> --workspace <id> --workspace-member <id> [--json]
+  od collab share-design-system <designSystemId> --workspace <id> --workspace-member <id> [--json]
+  od collab team-design-systems --workspace <id> --workspace-member <id> [--json]
+
+Team-edition collaboration: presence overlay + sync trigger. The
+client is authoritative about whether it is in a shared context, so it drives
+the trigger; the daemon coalesces author edits and flushes at a run boundary,
+advancing the published head version members poll to learn when to pull.
+\`share\` is the team-share intent: it requests the project be published so
+members can pull it, and reports the sync state (local_only / pending_upload /
+synced / sync_failed). \`share-resource <kind> <id>\` promotes a personal design
+system, plugin, or skill into the team scope through the resource hub, and
+\`team-resources <kind>\` lists the ones already shared (the \`*-design-system\`
+forms are kept as aliases).
+
+Options:
+  --project <id>          Project id (alternative to the positional argument).
+  --design-system <id>    Design system id for share-design-system.
+  --workspace <id>        Explicit workspace id for request authorization.
+  --workspace-member <id> Explicit workspace member id for request authorization.
+  --member <id>           Member id for the presence heartbeat / leave.
+  --client-id <id>        Stable id for one presence session.
+  --sequence <n>          Positive monotonic operation number for --client-id.
+  --name <name>           Display name attached to a heartbeat.
+  --role <role>           owner | admin | member.
+  --json                  Emit raw JSON.
+  --daemon-url <url>      Override daemon URL.
+
+Examples:
+  od collab presence p1 --workspace team-1 --workspace-member m-42 --json
+  od collab heartbeat p1 --workspace team-1 --workspace-member m-42 --member m-42 --name "Ma Shu" --role member
+  od collab publish p1 --workspace team-1 --workspace-member m-42
+  od collab share-resource plugins my-plugin --workspace team-1 --workspace-member m-42 --json
+  od collab team-resources skills --workspace team-1 --workspace-member m-42 --json
+  od collab share-design-system user:palette-x --workspace team-1 --workspace-member m-42 --json
+  od collab status p1 --workspace team-1 --workspace-member m-42 --json`);
+}
+
+async function runCollab(args) {
+  const sub = args[0];
+  if (!sub || sub === 'help' || args.includes('--help') || args.includes('-h')) {
+    printCollabHelp();
+    process.exit(!sub ? 2 : 0);
+  }
+  const rest = args.slice(1);
+  let flags;
+  try {
+    flags = parseFlags(rest, { string: COLLAB_STRING_FLAGS, boolean: COLLAB_BOOLEAN_FLAGS });
+  } catch (err) {
+    console.error(err.message);
+    process.exit(2);
+  }
+  // Team resource sharing (design systems / plugins / skills) is workspace-scoped
+  // — it takes a resource id, not a project id — so it runs before the project-id
+  // requirement below. `share-resource <kind> <id>` / `team-resources <kind>` are
+  // the generic forms; the design-system aliases are kept for compatibility.
+  const RESOURCE_BASE_PATHS = new Set(['design-systems', 'plugins', 'skills']);
+  if (
+    sub === 'share-resource' ||
+    sub === 'team-resources' ||
+    sub === 'share-design-system' ||
+    sub === 'team-design-systems'
+  ) {
+    const base = await cliDaemonBaseUrl(flags);
+    const workspaceHeaders = workspaceHeadersFromExplicitFlags(flags, true);
+    const emit = (payload, plain) =>
+      flags.json ? process.stdout.write(JSON.stringify(payload, null, 2) + '\n') : plain();
+    const wsRequest = async (method, path, body) => {
+      let resp;
+      try {
+        resp = await fetch(`${base}${path}`, {
+          method,
+          headers: {
+            ...workspaceHeaders,
+            ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
+          },
+          ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+        });
+      } catch (err) {
+        surfaceFetchError(err, base);
+        process.exit(3);
+      }
+      if (!resp.ok) return structuredHttpFailure(resp);
+      return resp.json();
+    };
+
+    // Resolve the resource kind (URL base path), whether this lists or shares,
+    // and the target id — from either the aliases or the generic <kind> <id>.
+    const positionals = positionalArgs(rest, COLLAB_STRING_FLAGS);
+    let basePath;
+    let isList;
+    let resourceId;
+    if (sub === 'team-design-systems') {
+      basePath = 'design-systems';
+      isList = true;
+    } else if (sub === 'share-design-system') {
+      basePath = 'design-systems';
+      isList = false;
+      resourceId = flags['design-system'] || positionals[0];
+    } else {
+      basePath = positionals[0];
+      if (!RESOURCE_BASE_PATHS.has(basePath)) {
+        console.error('kind must be one of: design-systems | plugins | skills');
+        process.exit(2);
+      }
+      isList = sub === 'team-resources';
+      resourceId = positionals[1];
+    }
+
+    if (isList) {
+      const body = await wsRequest('GET', `/api/workspace/${basePath}/team`);
+      return emit(body, () => {
+        const ids = Array.isArray(body?.ids) ? body.ids : [];
+        if (ids.length === 0) return console.log(`no shared ${basePath}`);
+        for (const id of ids) console.log(id);
+      });
+    }
+    if (!resourceId) {
+      console.error('missing <id>');
+      process.exit(2);
+    }
+    const body = await wsRequest(
+      'POST',
+      `/api/workspace/${basePath}/${encodeURIComponent(resourceId)}/share`,
+    );
+    return emit(body, () =>
+      console.log(`shared=${body?.shared ?? false}\tversion=${body?.version ?? '-'}`),
+    );
+  }
+
+  const projectId =
+    flags.project || positionalArgs(rest, COLLAB_STRING_FLAGS)[0] || process.env.OD_PROJECT_ID;
+  if (!projectId) {
+    console.error('missing <projectId> (positional, --project, or OD_PROJECT_ID)');
+    process.exit(2);
+  }
+  const base = await cliDaemonBaseUrl(flags);
+  const encoded = encodeURIComponent(projectId);
+  const workspaceHeaders = workspaceHeadersFromExplicitFlags(flags, true);
+
+  const request = async (method, path, body) => {
+    let resp;
+    try {
+      resp = await fetch(`${base}/api/projects/${encoded}${path}`, {
+        method,
+        headers: {
+          ...workspaceHeaders,
+          ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
+        },
+        ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+      });
+    } catch (err) {
+      surfaceFetchError(err, base);
+      process.exit(3);
+    }
+    if (!resp.ok) return structuredHttpFailure(resp);
+    return resp.json();
+  };
+
+  const emit = (payload, plain) => {
+    if (flags.json) return process.stdout.write(JSON.stringify(payload, null, 2) + '\n');
+    return plain();
+  };
+
+  switch (sub) {
+    case 'status': {
+      const body = await request('GET', '/collab/status');
+      return emit(body, () => {
+        console.log(`publishedVersion\t${body?.publishedVersion ?? '-'}`);
+        console.log(`materializedVersion\t${body?.materializedVersion ?? '-'}`);
+        // Whether this daemon's local files are the project's content at all:
+        // true means it holds only an unmaterialized shared-project
+        // placeholder, so an `od files list` here would report an empty
+        // project that is really still downloading.
+        console.log(`awaitingFirstMaterialization\t${body?.awaitingFirstMaterialization === true}`);
+        console.log(`syncState\t${body?.syncState ?? '-'}`);
+      });
+    }
+    case 'share': {
+      // Team-share intent: request the project be published so members can pull.
+      const body = await request('POST', '/collab/sync-intent', {
+        event: 'project_team_share_requested',
+        projectId,
+      });
+      return emit(body, () => console.log(`ok\tsyncState=${body?.syncState ?? '-'}`));
+    }
+    case 'pull': {
+      // Member pull: fetch the published head (E extracts the bytes behind C's trigger).
+      const body = await request('POST', '/collab/pull');
+      return emit(body, () => console.log(`pulled\tversion=${body?.version ?? '-'}`));
+    }
+    case 'presence': {
+      const body = await request('GET', '/presence');
+      return emit(body, () => {
+        const present = Array.isArray(body?.present) ? body.present : [];
+        if (present.length === 0) return console.log('no members present');
+        for (const m of present) console.log(`${m.memberId}\t${m.name ?? '-'}\t${m.role ?? '-'}`);
+      });
+    }
+    case 'heartbeat': {
+      if (!flags.member) {
+        console.error('missing --member <id>');
+        process.exit(2);
+      }
+      const presenceSession = readCollabPresenceSessionFlags(flags);
+      const memberBody = {
+        memberId: flags.member,
+        ...presenceSession,
+        ...(flags.name ? { name: flags.name } : {}),
+        ...(flags.role ? { role: flags.role } : {}),
+      };
+      const body = await request('POST', '/presence/heartbeat', memberBody);
+      return emit(body, () => {
+        const present = Array.isArray(body?.present) ? body.present : [];
+        console.log(`ok\t${present.length} present`);
+      });
+    }
+    case 'leave': {
+      if (!flags.member) {
+        console.error('missing --member <id>');
+        process.exit(2);
+      }
+      const body = await request('POST', '/presence/leave', {
+        memberId: flags.member,
+        ...readCollabPresenceSessionFlags(flags),
+      });
+      return emit(body, () => console.log('left'));
+    }
+    case 'changed': {
+      const body = await request('POST', '/collab/changed');
+      return emit(body, () => console.log('change queued'));
+    }
+    case 'publish': {
+      const body = await request('POST', '/collab/publish');
+      return emit(body, () => console.log('publish requested'));
+    }
+    default:
+      console.error(`unknown subcommand: od collab ${sub}`);
+      process.exit(2);
+  }
+}
+
+function readCollabPresenceSessionFlags(flags) {
+  const clientId = typeof flags['client-id'] === 'string'
+    ? flags['client-id'].trim()
+    : '';
+  const rawSequence = typeof flags.sequence === 'string'
+    ? flags.sequence.trim()
+    : '';
+  if (!rawSequence) return clientId ? { clientId } : {};
+  if (!clientId) {
+    console.error('--sequence requires --client-id <id>');
+    process.exit(2);
+  }
+  const sequence = Number(rawSequence);
+  if (!Number.isSafeInteger(sequence) || sequence <= 0) {
+    console.error('--sequence must be a positive safe integer');
+    process.exit(2);
+  }
+  return { clientId, sequence };
+}
+// Subcommand: od message-center …
+// ---------------------------------------------------------------------------
+
+async function runMessageCenter(args) {
+  const sub = args[0];
+  if (!sub || sub === 'help' || args.includes('--help') || args.includes('-h')) {
+    printMessageCenterHelp();
+    process.exit(sub === 'help' || args.includes('--help') || args.includes('-h') ? 0 : 2);
+  }
+  const rest = args.slice(1);
+  let flags;
+  try {
+    flags = parseFlags(rest, {
+      string: MESSAGE_CENTER_STRING_FLAGS,
+      boolean: MESSAGE_CENTER_BOOLEAN_FLAGS,
+    });
+  } catch (err) {
+    console.error(err.message);
+    printMessageCenterHelp();
+    process.exit(2);
+  }
+  const base = await cliDaemonBaseUrl(flags);
+  switch (sub) {
+    case 'list':
+      return runMessageCenterList(rest, flags, base);
+    case 'read':
+      return runMessageCenterRead(rest, flags, base);
+    case 'read-all':
+      return runMessageCenterReadAll(flags, base);
+    default:
+      console.error(`unknown subcommand: od message-center ${sub}`);
+      printMessageCenterHelp();
+      process.exit(2);
+  }
+}
+
+async function runMessageCenterList(rawArgs, flags, base) {
+  const limit = flags.limit == null ? 100 : Number(flags.limit);
+  if (!Number.isInteger(limit) || limit <= 0) {
+    console.error('--limit must be a positive integer');
+    process.exit(2);
+  }
+  const filter = flags.filter == null ? 'all' : String(flags.filter);
+  if (filter !== 'all' && filter !== 'unread' && filter !== 'read') {
+    console.error('--filter must be one of: all | unread | read');
+    process.exit(2);
+  }
+  const query = new URLSearchParams({
+    locale: messageCenterApiLocale(flags.locale == null ? 'en' : String(flags.locale)),
+    filter,
+    limit: String(limit),
+  });
+  if (typeof flags.cursor === 'string' && flags.cursor.length > 0) query.set('cursor', flags.cursor);
+  let resp;
+  try {
+    resp = await fetch(`${base}/api/integrations/vela/message-center/messages?${query}`);
+  } catch (err) {
+    surfaceFetchError(err, base);
+    process.exit(3);
+  }
+  if (!resp.ok) return structuredHttpFailure(resp);
+  const payload = await resp.json();
+  if (flags.json) {
+    process.stdout.write(JSON.stringify(payload, null, 2) + '\n');
+    return;
+  }
+  const messages = Array.isArray(payload?.messages) ? payload.messages : [];
+  if (messages.length === 0) {
+    console.log('No message-center messages.');
+    return;
+  }
+  for (const message of messages) {
+    const status = message?.readAt ? 'read' : 'unread';
+    const id = typeof message?.id === 'string' ? message.id : '(missing-id)';
+    const typeName = typeof message?.typeName === 'string' ? message.typeName : '-';
+    const publishedAt = typeof message?.publishedAt === 'string' ? message.publishedAt : '-';
+    const title = typeof message?.title === 'string' ? message.title : '';
+    console.log(`${id}\t${status}\t${typeName}\t${publishedAt}\t${title}`);
+  }
+  if (payload?.nextCursor) console.log(`nextCursor\t${payload.nextCursor}`);
+  if (typeof payload?.unreadCount === 'number') console.log(`unreadCount\t${payload.unreadCount}`);
+}
+
+async function runMessageCenterRead(rawArgs, flags, base) {
+  const id = positionalArgs(rawArgs, MESSAGE_CENTER_STRING_FLAGS)[0];
+  if (!id) {
+    console.error('Usage: od message-center read <id> [--json] [--daemon-url <url>]');
+    process.exit(2);
+  }
+  let resp;
+  try {
+    resp = await fetch(`${base}/api/integrations/vela/message-center/messages/${encodeURIComponent(id)}/read`, {
+      method: 'POST',
+    });
+  } catch (err) {
+    surfaceFetchError(err, base);
+    process.exit(3);
+  }
+  if (!resp.ok) return structuredHttpFailure(resp);
+  const bodyText = await resp.text();
+  const payload = bodyText ? safeJsonParse(bodyText) : null;
+  if (flags.json) {
+    process.stdout.write(
+      JSON.stringify(payload ?? { ok: true, id }, null, 2) + '\n',
+    );
+    return;
+  }
+  console.log(`Marked message as read\t${id}`);
+}
+
+async function runMessageCenterReadAll(flags, base) {
+  let resp;
+  try {
+    resp = await fetch(`${base}/api/integrations/vela/message-center/read-all`, {
+      method: 'POST',
+    });
+  } catch (err) {
+    surfaceFetchError(err, base);
+    process.exit(3);
+  }
+  if (!resp.ok) return structuredHttpFailure(resp);
+  const bodyText = await resp.text();
+  const payload = bodyText ? safeJsonParse(bodyText) : null;
+  if (flags.json) {
+    process.stdout.write(
+      JSON.stringify(payload ?? { ok: true }, null, 2) + '\n',
+    );
+    return;
+  }
+  console.log('Marked all message-center messages as read');
+}
+
+function printMessageCenterHelp() {
+  console.log(`Usage:
+  od message-center list [--locale <locale>] [--filter <all|unread|read>] [--limit <n>] [--cursor <token>] [--json] [--daemon-url <url>]
+  od message-center read <id> [--json] [--daemon-url <url>]
+  od message-center read-all [--json] [--daemon-url <url>]
+
+Mirrors the message-center inbox surface exposed in the web UI through the
+same /api/integrations/vela/message-center daemon routes.
+
+Options:
+  --locale <locale>     Defaults to en. Mapped to the daemon API locale shape.
+  --filter <value>      all | unread | read (default: all).
+  --limit <n>           Positive integer page size (default: 100).
+  --cursor <token>      Forward a server pagination cursor for list.
+  --json                Emit raw JSON for scripts and external agents.
+  --daemon-url <url>    OpenDesign daemon HTTP base.`);
+}
+
+function messageCenterApiLocale(locale) {
+  const mapping = { en: 'en-US', 'es-ES': 'es', 'pt-BR': 'pt' };
+  return mapping[locale] ?? locale;
+}
+
+function safeJsonParse(text) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -417,7 +1616,7 @@ function printResearchHelp() {
   console.log(`Usage:
   od research search --query <text> [--max-sources 5] [--daemon-url <url>]
 
-Runs Tavily-backed shallow research through the local Open Design daemon.
+Runs Tavily-backed shallow research through the local OpenDesign daemon.
 Output is JSON only on stdout:
   { "query": "...", "summary": "...", "sources": [...], "provider": "tavily", "depth": "shallow", "fetchedAt": 0 }
 
@@ -437,7 +1636,7 @@ async function runMedia(args) {
     printMediaHelp();
     return;
   }
-  if (sub !== 'generate' && sub !== 'wait') {
+  if (sub !== 'generate' && sub !== 'wait' && sub !== 'scaffold') {
     console.error(`unknown subcommand: od media ${sub}`);
     printMediaHelp();
     process.exit(1);
@@ -446,7 +1645,64 @@ async function runMedia(args) {
   const idx = args.indexOf(sub);
   const subArgs = [...args.slice(0, idx), ...args.slice(idx + 1)];
   if (sub === 'wait') return runMediaWait(subArgs);
+  if (sub === 'scaffold') return runMediaScaffold(subArgs);
   return runMediaGenerate(subArgs);
+}
+
+async function runMediaScaffold(rawArgs) {
+  let flags;
+  try {
+    flags = parseFlags(rawArgs, {
+      string: MEDIA_SCAFFOLD_STRING_FLAGS,
+      boolean: MEDIA_SCAFFOLD_BOOLEAN_FLAGS,
+    });
+  } catch (err) {
+    console.error(err.message);
+    printMediaHelp();
+    process.exit(2);
+  }
+  if (flags.help || flags.h) {
+    printMediaHelp();
+    return;
+  }
+
+  const daemonUrl = await cliDaemonUrl(flags);
+  const projectId = flags.project || process.env.OD_PROJECT_ID;
+  const token = process.env.OD_TOOL_TOKEN;
+  if (!projectId && !token) {
+    console.error('project id required. Pass --project <id> or set OD_PROJECT_ID.');
+    process.exit(2);
+  }
+  const compositionDir = flags['composition-dir'];
+  if (!compositionDir) {
+    console.error('--composition-dir required (expected .hyperframes-cache/<id>)');
+    process.exit(2);
+  }
+
+  const url = token
+    ? `${daemonUrl.replace(/\/$/, '')}/api/tools/media/hyperframes/scaffold`
+    : `${daemonUrl.replace(/\/$/, '')}/api/projects/${encodeURIComponent(projectId)}/media/hyperframes/scaffold`;
+  let resp;
+  try {
+    resp = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
+        ...(token ? {} : workspaceHeadersFromExplicitFlags(flags) ?? {}),
+      },
+      body: JSON.stringify({ compositionDir }),
+    });
+  } catch (err) {
+    surfaceFetchError(err, daemonUrl);
+    process.exit(3);
+  }
+  if (!resp.ok) {
+    const responseText = await resp.text();
+    console.error(`daemon ${resp.status}: ${responseText}`);
+    process.exit(4);
+  }
+  process.stdout.write(`${JSON.stringify(await resp.json())}\n`);
 }
 
 async function runMediaGenerate(rawArgs) {
@@ -464,7 +1720,11 @@ async function runMediaGenerate(rawArgs) {
 
   const daemonUrl = await cliDaemonUrl(flags);
   const projectId = flags.project || process.env.OD_PROJECT_ID;
-  if (!projectId) {
+  const token = process.env.OD_TOOL_TOKEN;
+  const workspaceHeaders = token
+    ? {}
+    : workspaceHeadersFromExplicitFlags(flags) ?? {};
+  if (!projectId && !token) {
     console.error(
       'project id required. Pass --project <id> or set OD_PROJECT_ID. The daemon injects this when it spawns the code agent.',
     );
@@ -480,17 +1740,31 @@ async function runMediaGenerate(rawArgs) {
     console.error('--model required (see http://<daemon>/api/media/models)');
     process.exit(2);
   }
+  const images = repeatableFlagValues(rawArgs, 'image');
+  if (flags.model.startsWith('vela/') && images.length > 5) {
+    console.error(`Vela media accepts at most 5 --image values; received ${images.length}`);
+    process.exit(2);
+  }
+
+  // Long-form media prompts (detailed image/video descriptions, program-
+  // generated prompts) arrive via --prompt-file <path|-> (stdin) per the CLI
+  // contract; readPromptFromFlags prefers an inline --prompt and otherwise reads
+  // the file/stdin, matching od run / od brand / od automation.
+  const prompt = await readPromptFromFlags(flags);
 
   const body = {
     surface,
     model: flags.model,
-    prompt: flags.prompt,
+    prompt,
     output: flags.output,
     aspect: flags.aspect,
+    quality: flags.quality,
+    resolution: flags.resolution,
     voice: flags.voice,
     audioKind: flags['audio-kind'],
     compositionDir: flags['composition-dir'],
-    image: flags.image,
+    image: images[0],
+    images,
     language: flags.language,
   };
   if (flags.length != null) body.length = Number(flags.length);
@@ -498,22 +1772,28 @@ async function runMediaGenerate(rawArgs) {
   if (flags['prompt-influence'] != null) body.promptInfluence = Number(flags['prompt-influence']);
   if (flags.loop === true) body.loop = true;
 
-  const url = `${daemonUrl.replace(/\/$/, '')}/api/projects/${encodeURIComponent(projectId)}/media/generate`;
+  const url = token
+    ? `${daemonUrl.replace(/\/$/, '')}/api/tools/media/generate`
+    : `${daemonUrl.replace(/\/$/, '')}/api/projects/${encodeURIComponent(projectId)}/media/generate`;
   let resp;
   try {
     resp = await fetch(url, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
+        ...workspaceHeaders,
+      },
       body: JSON.stringify(body),
     });
-  } catch (err) {
-    surfaceFetchError(err, daemonUrl);
-    process.exit(3);
+  } catch {
+    await exitWithMediaError({
+      code: 'MEDIA_DISPATCHER_UNREACHABLE',
+      message: 'local media dispatcher could not be reached',
+    }, 3);
   }
   if (!resp.ok) {
-    const text = await resp.text();
-    console.error(`daemon ${resp.status}: ${text}`);
-    process.exit(4);
+    await exitWithMediaHttpFailure(resp);
   }
   const accepted = await resp.json();
   const { taskId } = accepted;
@@ -524,20 +1804,57 @@ async function runMediaGenerate(rawArgs) {
   console.error(`task ${taskId} queued (${accepted.status || 'queued'})`);
   await pollUntilDoneOrBudget(daemonUrl, taskId, 0, {
     stillRunningExitCode: 0,
+    requestHeaders: token
+      ? { authorization: `Bearer ${token}` }
+      : workspaceHeaders,
   });
 }
 
-async function runMediaWait(rawArgs) {
-  const taskId = rawArgs.find((a) => a && !a.startsWith('--'));
-  if (!taskId) {
-    console.error('usage: od media wait <taskId> [--since <n>] [--daemon-url <url>]');
-    process.exit(2);
+async function exitWithMediaError(error, exitCode) {
+  const safeError = {
+    code: error.code,
+    message: error.message,
+    ...(typeof error.retryable === 'boolean' ? { retryable: error.retryable } : {}),
+  };
+  process.stderr.write(JSON.stringify({ error: safeError }) + '\n');
+  await flushStreamsAndExit(exitCode);
+}
+
+async function exitWithMediaHttpFailure(resp) {
+  let parsed = null;
+  try {
+    parsed = await resp.json();
+  } catch {
+    // Non-JSON daemon responses are operational diagnostics, not public copy.
   }
-  const flagsOnly = rawArgs.filter((a) => a !== taskId);
+  const error = parsed?.error;
+  if (
+    error
+    && typeof error === 'object'
+    && typeof error.code === 'string'
+    && error.code.trim()
+    && typeof error.message === 'string'
+    && error.message.trim()
+  ) {
+    await exitWithMediaError(error, 4);
+  }
+  await exitWithMediaError({
+    code: 'MEDIA_DISPATCH_FAILED',
+    message: 'media dispatcher failed before generation started',
+  }, 4);
+}
+
+async function runMediaWait(rawArgs) {
+  const stringFlags = new Set([
+    'since',
+    'daemon-url',
+    'workspace',
+    'workspace-member',
+  ]);
   let flags;
   try {
-    flags = parseFlags(flagsOnly, {
-      string: new Set(['since', 'daemon-url']),
+    flags = parseFlags(rawArgs, {
+      string: stringFlags,
       boolean: new Set(['help', 'h']),
     });
   } catch (err) {
@@ -545,20 +1862,53 @@ async function runMediaWait(rawArgs) {
     printMediaHelp();
     process.exit(2);
   }
+  const taskId = positionalArgs(rawArgs, stringFlags)[0];
+  if (!taskId) {
+    console.error(
+      'usage: od media wait <taskId> [--since <n>] [--workspace <id> --workspace-member <id>] [--daemon-url <url>]',
+    );
+    process.exit(2);
+  }
   const daemonUrl = await cliDaemonUrl(flags);
   const since = Number.isFinite(Number(flags.since))
     ? Number(flags.since)
     : 0;
-  await pollUntilDoneOrBudget(daemonUrl, taskId, since);
+  const token = process.env.OD_TOOL_TOKEN;
+  await pollUntilDoneOrBudget(daemonUrl, taskId, since, {
+    totalBudgetMs: 120_000,
+    requestHeaders: token
+      ? { authorization: `Bearer ${token}` }
+      : workspaceHeadersFromExplicitFlags(flags) ?? {},
+  });
+}
+
+// Flush stdout and stderr before exiting. process.exit() terminates the
+// process without waiting for pending async writes; when stdout is a pipe
+// (Windows named pipes, or large/backpressured output on any platform) the
+// final JSON line can be dropped, leaving the caller with exit 0 and empty
+// output. Writing an empty chunk with a callback resolves only after every
+// previously queued write has been flushed. The resolve callback
+// deliberately ignores the error argument (EPIPE and similar still exit
+// with the requested code).
+async function flushStreamsAndExit(code) {
+  await Promise.all([
+    new Promise((resolve) => process.stdout.write('', resolve)),
+    new Promise((resolve) => process.stderr.write('', resolve)),
+  ]);
+  process.exit(code);
 }
 
 async function pollUntilDoneOrBudget(daemonUrl, taskId, sinceStart, options = {}) {
-  const totalBudgetMs = 25_000;
+  const totalBudgetMs = typeof options.totalBudgetMs === 'number' ? options.totalBudgetMs : 25_000;
   const perCallTimeoutMs = 4_000;
   const stillRunningExitCode =
     typeof options.stillRunningExitCode === 'number'
       ? options.stillRunningExitCode
       : 2;
+  const requestHeaders =
+    options.requestHeaders && typeof options.requestHeaders === 'object'
+      ? options.requestHeaders
+      : {};
   const startedAt = Date.now();
   const url = `${daemonUrl.replace(/\/$/, '')}/api/media/tasks/${encodeURIComponent(taskId)}/wait`;
 
@@ -572,28 +1922,28 @@ async function pollUntilDoneOrBudget(daemonUrl, taskId, sinceStart, options = {}
     try {
       resp = await fetch(url, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', ...requestHeaders },
         body: JSON.stringify({ since, timeoutMs: callTimeout }),
       });
     } catch (err) {
       surfaceFetchError(err, daemonUrl);
-      process.exit(3);
+      await flushStreamsAndExit(3);
     }
     if (resp.status === 404) {
       console.error(`task ${taskId} not found (expired or never queued)`);
-      process.exit(4);
+      await flushStreamsAndExit(4);
     }
     if (!resp.ok) {
       const text = await resp.text();
       console.error(`daemon ${resp.status}: ${text}`);
-      process.exit(4);
+      await flushStreamsAndExit(4);
     }
     let snap;
     try {
       snap = await resp.json();
     } catch {
       console.error('daemon returned non-JSON for /wait');
-      process.exit(4);
+      await flushStreamsAndExit(4);
     }
     lastSnapshot = snap;
     if (Array.isArray(snap.progress)) {
@@ -621,7 +1971,7 @@ async function pollUntilDoneOrBudget(daemonUrl, taskId, sinceStart, options = {}
         );
       }
       process.stdout.write(JSON.stringify({ file }) + '\n');
-      process.exit(file.providerError ? 5 : 0);
+      await flushStreamsAndExit(file.providerError ? 5 : 0);
     }
     if (snap.status === 'failed') {
       const msg = snap.error?.message || 'task failed';
@@ -629,7 +1979,7 @@ async function pollUntilDoneOrBudget(daemonUrl, taskId, sinceStart, options = {}
       process.stdout.write(
         JSON.stringify({ taskId, status: 'failed', error: snap.error || {} }) + '\n',
       );
-      process.exit(snap.error?.status || 5);
+      await flushStreamsAndExit(snap.error?.status || 5);
     }
     if (snap.status === 'interrupted') {
       const msg = snap.error?.message || 'task interrupted';
@@ -637,7 +1987,7 @@ async function pollUntilDoneOrBudget(daemonUrl, taskId, sinceStart, options = {}
       process.stdout.write(
         JSON.stringify({ taskId, status: 'interrupted', error: snap.error || {} }) + '\n',
       );
-      process.exit(snap.error?.status || 5);
+      await flushStreamsAndExit(snap.error?.status || 5);
     }
   }
 
@@ -657,7 +2007,7 @@ async function pollUntilDoneOrBudget(daemonUrl, taskId, sinceStart, options = {}
       `Run \`"$OD_NODE_BIN" "$OD_BIN" media wait ${taskId} --since ${since}\` to continue in an agent runtime ` +
       `(${stillRunningHint}).\n`,
   );
-  process.exit(stillRunningExitCode);
+  await flushStreamsAndExit(stillRunningExitCode);
 }
 
 function surfaceFetchError(err, daemonUrl) {
@@ -678,7 +2028,7 @@ function surfaceFetchError(err, daemonUrl) {
     console.error(
       'hint: outbound connect was denied by a sandbox. If you launched ' +
         'this command from a code agent, check the agent\'s sandbox / ' +
-        'network policy. The Open Design daemon itself is unaffected - it can be ' +
+        'network policy. The OpenDesign daemon itself is unaffected - it can be ' +
         'reached from a regular shell.',
     );
   }
@@ -735,6 +2085,42 @@ function parseFlags(argv, opts = {}) {
   return out;
 }
 
+function positionalArgs(argv, stringFlags = new Set()) {
+  const out = [];
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (!a) continue;
+    if (!a.startsWith('--')) {
+      out.push(a);
+      continue;
+    }
+    const eq = a.indexOf('=');
+    const key = eq >= 0 ? a.slice(2, eq) : a.slice(2);
+    if (eq < 0 && stringFlags.has(key)) i++;
+  }
+  return out;
+}
+
+function repeatableFlagValues(argv, name) {
+  const values = [];
+  const prefix = `--${name}=`;
+  for (let i = 0; i < argv.length; i++) {
+    const item = argv[i];
+    if (typeof item !== 'string') continue;
+    if (item.startsWith(prefix)) {
+      const value = item.slice(prefix.length).trim();
+      if (value) values.push(value);
+      continue;
+    }
+    if (item === `--${name}`) {
+      const value = typeof argv[i + 1] === 'string' ? argv[i + 1].trim() : '';
+      if (value && !value.startsWith('--')) values.push(value);
+      i++;
+    }
+  }
+  return values;
+}
+
 async function cliDaemonUrl(flags) {
   return resolveDaemonUrl({ flagUrl: flags?.['daemon-url'] });
 }
@@ -744,18 +2130,35 @@ async function cliDaemonBaseUrl(flags) {
 }
 
 function printMediaHelp() {
-  console.log(`Usage: od media generate --surface <image|video|audio> --model <id> [opts]
+  console.log(`Usage: od media scaffold --composition-dir .hyperframes-cache/<id> [opts]
+       od media generate --surface <image|video|audio> --model <id> [opts]
        "$OD_NODE_BIN" "$OD_BIN" media generate --surface <image|video|audio> --model <id> [opts]
 
-Required:
+Scaffold:
+  Creates hyperframes.json, meta.json, and index.html without running
+  HyperFrames init or installing global skills. The target must be new and
+  live directly under .hyperframes-cache.
+  --json is accepted for consistency; scaffold output is always one JSON line.
+
+Generate required:
   --surface  image | video | audio
   --model    Model id from /api/media/models (e.g. gpt-image-2, seedance-2, suno-v5).
   --project  Project id. Auto-resolved from OD_PROJECT_ID when invoked by the daemon.
+  --workspace <id>         Explicit Workspace id for a bound project.
+  --workspace-member <id>  Explicit Workspace member id for a bound project.
 
 Common options:
   --prompt "<text>"         Generation prompt. ElevenLabs SFX prompts must stay under 450 characters.
+  --prompt-file <path|->     Read the prompt from a file, or - for stdin (for long-form prompts).
   --output <filename>       File to write under the project. Auto-named if omitted.
   --aspect 1:1|16:9|9:16|4:3|3:4
+  --quality <tier>          OpenDesign Cloud images only: published quality tier
+                            (gpt-image-2 accepts low|medium|high). Omit to let the
+                            model's own default tier decide — tiers are priced
+                            differently, so this is a billing choice.
+  --resolution <res>        OpenDesign Cloud images only: published output resolution
+                            (e.g. 1K, 2K). Must name a resolution the model publishes
+                            for --aspect. Omit to use the model's default profile.
   --length <seconds>        Video length.
   --duration <seconds>      Audio duration.
   --prompt-influence <0-1>  ElevenLabs SFX prompt adherence. Higher values follow the prompt more closely.
@@ -765,16 +2168,40 @@ Common options:
   --audio-kind music|speech|sfx
   --composition-dir <path>  hyperframes-html only — project-relative path
                             to the dir containing hyperframes.json /
-                            meta.json / index.html. The daemon runs
-                            \`npx hyperframes render\` against it.
-  --image <path>            Project-relative path to a reference image
-                            (image-to-video for Seedance i2v models, or
-                            future image-edit endpoints). Daemon reads
-                            the file from the project, base64-encodes
-                            it, and forwards it to the upstream API.
+                            meta.json / index.html. Use \`media scaffold\` to
+                            create it; the daemon renders it with its pinned
+                            HyperFrames runtime.
+  --image <path>            Project-relative reference image; repeat up to 5
+                            times for Vela image editing or video references.
+                            The first video image is the first frame; the rest
+                            are references. Existing providers still receive
+                            the first image through the legacy single-image field.
   --daemon-url <url>
 
-Output: a single line of JSON: {"file": { name, size, kind, mime, ... }}.
+Output: a single line of JSON: {"file": { name, size, kind, mime, ... }}
+  Slow models return {"taskId": "...", "nextSince": n} with exit 0 instead —
+  a successful queued handoff, not a failure. Poll with \`media wait\`:
+  exit 0 = done ({"file": ...} on stdout), exit 2 = still running (re-run
+  the wait command stderr prints, carrying forward nextSince), 5 = failed.
+  Standalone wait calls accept the same Workspace pair. Tool-token calls retain
+  their injected authorization proof automatically through every poll.
+
+Worked generate→wait loop (POSIX bash — do NOT translate to PowerShell;
+parse JSON with python3, not jq):
+
+  out=\$("\$OD_NODE_BIN" "\$OD_BIN" media generate --project "\$OD_PROJECT_ID" \\
+    --surface image --model flux-pro-ultra --prompt "..." --aspect 16:9)
+  last=\$(printf '%s\\n' "\$out" | tail -1)
+  task_id=\$(printf '%s\\n' "\$last" | python3 -c "import sys,json; print(json.load(sys.stdin).get('taskId',''))" 2>/dev/null)
+  since=\$(printf '%s\\n' "\$last" | python3 -c "import sys,json; print(json.load(sys.stdin).get('nextSince',0))" 2>/dev/null)
+  while [ -n "\$task_id" ]; do
+    out=\$("\$OD_NODE_BIN" "\$OD_BIN" media wait "\$task_id" --since "\${since:-0}")
+    ec=\$?
+    last=\$(printf '%s\\n' "\$out" | tail -1)
+    since=\$(printf '%s\\n' "\$last" | python3 -c "import sys,json; print(json.load(sys.stdin).get('nextSince',0))" 2>/dev/null)
+    if [ "\$ec" -eq 0 ]; then task_id=""; elif [ "\$ec" -ne 2 ]; then echo "\$out" >&2; exit "\$ec"; fi
+  done
+  printf '%s\\n' "\$last"
 
 Skills should call this and then reference the returned filename in their
 artifact / message body. The daemon writes the bytes into the project's
@@ -786,6 +2213,9 @@ files folder so the FileViewer can preview them immediately.`);
 // ---------------------------------------------------------------------------
 
 async function runMcp(args) {
+  if (args[0] === 'install') {
+    return runMcpInstall(args.slice(1));
+  }
   let flags;
   try {
     flags = parseFlags(args, {
@@ -802,34 +2232,48 @@ async function runMcp(args) {
     return;
   }
 
-  const daemonUrl = await cliDaemonUrl(flags);
+  const { ensureMcpDaemonUrl } = await import('./mcp-bootstrap.js');
+  const daemonUrl = await ensureMcpDaemonUrl({
+    flagUrl: flags['daemon-url'],
+  });
 
   const { runMcpStdio } = await import('./mcp.js');
-  await runMcpStdio({ daemonUrl });
+  await runMcpStdio({
+    daemonUrl,
+    ...(flags['daemon-url']
+      ? {}
+      : {
+          resolveDaemonUrl: async () => await ensureMcpDaemonUrl({}),
+        }),
+  });
 }
 
 function printMcpHelp() {
   console.log(`Usage: od mcp [--daemon-url <url>]
 
 Run a stdio MCP (Model Context Protocol) server that proxies project
-tool calls to a running Open Design daemon. Wire it into a coding agent
-in another repo so the agent can pull files from a local Open Design
+tool calls to a running OpenDesign daemon. Wire it into a coding agent
+in another repo so the agent can pull files from a local OpenDesign
 project and create project-scoped artifacts without exporting a zip
 every iteration.
 
 Options:
-  --daemon-url <url>   Open Design daemon HTTP base URL. Resolution
+  --daemon-url <url>   OpenDesign daemon HTTP base URL. Resolution
                        order: this flag, OD_DAEMON_URL, OD_SIDECAR_IPC_PATH,
                        then http://127.0.0.1:7456. Each new MCP spawn
                        discovers the live daemon URL at startup, so
                        MCP client configs stay valid across daemon
                        restarts even when the port is ephemeral. A
-                       running MCP server caches the URL; restart the
-                       MCP client after a daemon restart to pick up a
-                       new port.
+                       packaged install also starts the signed Open
+                       Design app in --headless mode when its daemon
+                       is stopped; no Electron window is opened. The
+                       MCP server re-discovers the registered runtime
+                       before calls and safely retries reads when the
+                       daemon changes ports, so an existing task can
+                       survive an OpenDesign restart.
 
 Tools exposed:
-  list_projects                  list every Open Design project
+  list_projects                  list every OpenDesign project
   get_active_context             what project/file the user has open right now
   get_artifact([project, entry]) bundle: entry file + every referenced sibling
   get_project([project])         single project metadata
@@ -840,14 +2284,268 @@ Tools exposed:
 
 When project is omitted, get_artifact / get_project / get_file /
 search_files / list_files / create_artifact default to the project the
-user has open in Open Design; get_artifact and get_file additionally
+user has open in OpenDesign; get_artifact and get_file additionally
 default to the active file. The response stamps usedActiveContext so
 callers can see which project/file got resolved.
 
 For the copy-paste, per-client snippet (with absolute paths resolved
 for your machine, plus a one-click deeplink for Cursor), open Settings
-→ MCP server in the Open Design app. The daemon must be running locally
-for tool calls to succeed.`);
+→ MCP server in the OpenDesign app. The daemon must be running locally
+for tool calls to succeed.
+
+To register this server into a coding agent's own config automatically:
+  od mcp install <agent> [--uninstall] [--print] [--json] [--daemon-url <url>]
+  Agents: ${AGENT_SLUGS.join(' ')}`);
+}
+
+// ---------------------------------------------------------------------------
+// Subcommand: od mcp install <agent>
+//
+// Wires this daemon's stdio MCP server into a coding agent's own config.
+// The pure planner (mcp-agent-install.ts) maps a resolved launch spec onto
+// one of three strategies — drive the agent's own `mcp add/remove` CLI,
+// deep-merge a JSON config file, or (for unverified formats) print a
+// ready-to-paste snippet. This executor performs the IO the planner avoids.
+// ---------------------------------------------------------------------------
+
+// Resolve the canonical launch spec from the running daemon's
+// /api/mcp/install-info (the same payload the Settings → MCP panel and the
+// Codex one-click install use), so every install path configures byte-for-
+// byte the same command. Falls back to a minimal `od mcp --daemon-url`
+// spec when the daemon is unreachable.
+async function resolveMcpLaunchSpec(flags) {
+  const base = await cliDaemonBaseUrl(flags);
+  try {
+    const resp = await fetch(`${base}/api/mcp/install-info`);
+    if (resp.ok) {
+      const info = await resp.json();
+      if (info && typeof info.command === 'string' && Array.isArray(info.args)) {
+        return {
+          command: info.command,
+          args: info.args,
+          env: info.env && typeof info.env === 'object' ? info.env : {},
+        };
+      }
+    }
+  } catch {
+    // daemon not running / unreachable — fall through to the minimal spec
+  }
+  return {
+    command: 'od',
+    args: ['mcp', '--daemon-url', base],
+    env: {},
+  };
+}
+
+function emitInstallResult(useJson, result) {
+  if (useJson) {
+    console.log(JSON.stringify(result));
+    return;
+  }
+  if (result.ok) {
+    console.log(`✓ ${result.message}`);
+  } else {
+    console.error(`✗ ${result.message}`);
+  }
+}
+
+async function runMcpInstall(args) {
+  let flags;
+  try {
+    flags = parseFlags(args, {
+      string: MCP_INSTALL_STRING_FLAGS,
+      boolean: MCP_INSTALL_BOOLEAN_FLAGS,
+    });
+  } catch (err) {
+    console.error(err.message);
+    printMcpInstallHelp();
+    process.exit(2);
+  }
+  if (flags[MCP_INSTALL_CLI_PROBE_FLAG]) {
+    console.log(MCP_INSTALL_CLI_PROBE_TOKEN);
+    return;
+  }
+  if (flags.help || flags.h) {
+    printMcpInstallHelp();
+    return;
+  }
+
+  const slug = positionalArgs(args, MCP_INSTALL_STRING_FLAGS)[0];
+  const useJson = Boolean(flags.json);
+  if (!slug) {
+    console.error('missing agent slug');
+    printMcpInstallHelp();
+    process.exit(2);
+  }
+  if (!isAgentSlug(slug)) {
+    const msg = `unknown agent: ${slug} (expected one of: ${AGENT_SLUGS.join(' ')})`;
+    emitInstallResult(useJson, { ok: false, agent: slug, message: msg });
+    process.exit(2);
+  }
+
+  const uninstall = Boolean(flags.uninstall || flags.remove);
+  const dryRun = Boolean(flags.print || flags['dry-run']);
+  const serverName = flags.name || 'open-design';
+
+  const os = await import('node:os');
+  const spec = await resolveMcpLaunchSpec(flags);
+  const plan = planAgentInstall(slug, spec, {
+    home: os.homedir(),
+    platform: process.platform,
+    serverName,
+  });
+
+  if (plan.kind === 'manual') {
+    const result = {
+      ok: false,
+      agent: slug,
+      kind: 'manual',
+      ...(dryRun ? { launchSpec: spec } : {}),
+      configPath: plan.configPath,
+      format: plan.format,
+      snippet: plan.snippet,
+      message: `${slug}: manual setup required. ${plan.reason}`,
+    };
+    if (useJson) {
+      console.log(JSON.stringify(result));
+    } else {
+      console.error(`› ${result.message}`);
+      if (plan.configPath) console.error(`  Config: ${plan.configPath}`);
+      console.error(`  Add this ${plan.format} block:\n`);
+      console.log(plan.snippet);
+    }
+    return;
+  }
+
+  if (plan.kind === 'cli') {
+    const argv = uninstall ? plan.removeArgv : plan.addArgv;
+    if (dryRun) {
+      emitInstallResult(useJson, {
+        ok: true,
+        agent: slug,
+        kind: 'cli',
+        launchSpec: spec,
+        command: `${plan.bin} ${argv.join(' ')}`,
+        message: `would run: ${plan.bin} ${argv.join(' ')}`,
+      });
+      return;
+    }
+    const { spawn } = await import('node:child_process');
+    const code = await new Promise((resolve) => {
+      const child = spawn(plan.bin, argv, { stdio: 'inherit' });
+      child.on('error', (err) => {
+        console.error(`✗ failed to run ${plan.bin}: ${err.message}`);
+        resolve(127);
+      });
+      child.on('exit', (c) => resolve(c ?? 0));
+    });
+    if (code !== 0) {
+      emitInstallResult(useJson, {
+        ok: false,
+        agent: slug,
+        kind: 'cli',
+        message: `${plan.bin} exited with code ${code}`,
+      });
+      process.exit(code || 1);
+    }
+    emitInstallResult(useJson, {
+      ok: true,
+      agent: slug,
+      kind: 'cli',
+      message: uninstall
+        ? `removed ${serverName} from ${slug}`
+        : `installed ${serverName} into ${slug}`,
+    });
+    return;
+  }
+
+  // plan.kind === 'json'
+  const fs = await import('node:fs/promises');
+  const path = await import('node:path');
+  let existing = null;
+  try {
+    existing = await fs.readFile(plan.configPath, 'utf8');
+  } catch (err) {
+    if (err && err.code !== 'ENOENT') throw err;
+  }
+
+  if (uninstall) {
+    const next = removeJsonInstall(existing, plan);
+    if (next == null) {
+      emitInstallResult(useJson, {
+        ok: true,
+        agent: slug,
+        kind: 'json',
+        configPath: plan.configPath,
+        message: `${serverName} not present in ${plan.configPath} — nothing to remove`,
+      });
+      return;
+    }
+    if (dryRun) {
+      emitInstallResult(useJson, {
+        ok: true,
+        agent: slug,
+        kind: 'json',
+        configPath: plan.configPath,
+        preview: next,
+        message: `would update ${plan.configPath}`,
+      });
+      return;
+    }
+    await fs.writeFile(plan.configPath, next, 'utf8');
+    emitInstallResult(useJson, {
+      ok: true,
+      agent: slug,
+      kind: 'json',
+      configPath: plan.configPath,
+      message: `removed ${serverName} from ${plan.configPath}`,
+    });
+    return;
+  }
+
+  const next = applyJsonInstall(existing, plan);
+  if (dryRun) {
+    emitInstallResult(useJson, {
+      ok: true,
+      agent: slug,
+      kind: 'json',
+      launchSpec: spec,
+      configPath: plan.configPath,
+      preview: next,
+      message: `would write ${plan.configPath}`,
+    });
+    return;
+  }
+  await fs.mkdir(path.dirname(plan.configPath), { recursive: true });
+  await fs.writeFile(plan.configPath, next, 'utf8');
+  emitInstallResult(useJson, {
+    ok: true,
+    agent: slug,
+    kind: 'json',
+    configPath: plan.configPath,
+    message: `installed ${serverName} into ${plan.configPath}`,
+  });
+}
+
+function printMcpInstallHelp() {
+  console.log(`Usage: od mcp install <agent> [options]
+
+Register OpenDesign's stdio MCP server into a coding agent's own config.
+
+Agents:
+  ${AGENT_SLUGS.join(' ')}
+
+Options:
+  --uninstall, --remove   Remove the OpenDesign MCP server instead.
+  --print, --dry-run      Show what would change; write nothing.
+  --json                  Machine-readable result (dry runs include launchSpec).
+  --name <name>           MCP server name in the agent config (default: open-design).
+  --daemon-url <url>      Daemon URL used to resolve the launch command.
+
+The launch command is resolved from the running daemon's
+/api/mcp/install-info, so the installed entry matches the Settings → MCP
+panel snippet byte-for-byte. Start the daemon first for an exact match;
+otherwise a minimal \`od mcp --daemon-url <url>\` command is used.`);
 }
 
 // ---------------------------------------------------------------------------
@@ -868,22 +2566,59 @@ function exitWithStructuredError({ code, message, data }) {
 
 // Map a daemon HTTP response into the exit-code envelope. Returns the
 // parsed body (so the caller can keep going if it doesn't want to exit).
+//
+// Daemon error envelopes come in two shapes in practice:
+//   { error: { code, message, ... } }  — newer routes using sendApiError
+//   { error: '<message>' }             — older flat-string routes
+//                                         (e.g. POST /api/templates at
+//                                         routes/project/index.ts)
+// Normalize so a flat-string body still surfaces its message to the
+// structured envelope instead of collapsing to `HTTP <status>: `, which
+// would drop the only diagnostic the daemon actually returned to a
+// headless caller.
 async function structuredHttpFailure(resp, fallbackCode = 'daemon-not-running') {
+  let raw = '';
   let parsed;
-  try { parsed = await resp.json(); } catch { parsed = {}; }
-  const errCode = parsed?.error?.code;
-  if (errCode && errCode in RECOVERABLE_EXIT_CODES) {
+  try {
+    raw = await resp.text();
+    parsed = raw ? JSON.parse(raw) : {};
+  } catch {
+    parsed = {};
+  }
+  const errorObj =
+    typeof parsed?.error === 'string'
+      ? { message: parsed.error }
+      : parsed?.error;
+  const errCode = normalizeRecoverableErrorCode(errorObj?.code, errorObj?.message);
+  if (errCode) {
     exitWithStructuredError({
       code:    errCode,
-      message: parsed.error.message ?? `HTTP ${resp.status}`,
-      data:    parsed.error.data,
+      message: errorObj?.message ?? `HTTP ${resp.status}`,
+      data:    structuredErrorData(errorObj),
     });
   }
   exitWithStructuredError({
     code:    fallbackCode,
-    message: parsed?.error?.message ?? `HTTP ${resp.status}: ${await resp.text().catch(() => '')}`,
-    data:    parsed?.error?.data,
+    message: errorObj?.message ?? `HTTP ${resp.status}${raw ? `: ${raw}` : ''}`,
+    data:    structuredErrorData(errorObj),
   });
+}
+
+function normalizeRecoverableErrorCode(code, message) {
+  if (code === 'DESKTOP_AUTH_PENDING') return 'desktop-auth-pending';
+  if (code === 'FORBIDDEN' && /desktop import token rejected/i.test(String(message ?? ''))) {
+    return 'desktop-import-token-rejected';
+  }
+  return code;
+}
+
+function structuredErrorData(error) {
+  if (!error || typeof error !== 'object') return undefined;
+  const data = {};
+  if ('data' in error && error.data !== undefined) Object.assign(data, error.data);
+  if ('details' in error && error.details !== undefined) data.details = error.details;
+  if (typeof error.retryable === 'boolean') data.retryable = error.retryable;
+  return Object.keys(data).length > 0 ? data : undefined;
 }
 
 async function runPlugin(args) {
@@ -904,6 +2639,7 @@ async function runPlugin(args) {
     case 'upgrade':   return runPluginUpgrade(rest);
     case 'uninstall': return runPluginUninstall(rest);
     case 'apply':     return runPluginApply(rest);
+    case 'duplicate': return runPluginDuplicate(rest);
     case 'canon':     return runPluginCanon(rest);
     case 'diff':      return runPluginDiff(rest);
     case 'doctor':    return runPluginDoctor(rest);
@@ -917,10 +2653,13 @@ async function runPlugin(args) {
     case 'scaffold': return runPluginScaffold(rest);
     case 'validate': return runPluginValidate(rest);
     case 'pack':     return runPluginPack(rest);
+    case 'candidates': return runPluginCandidates(rest);
     case 'login':    return runPluginLogin(rest);
     case 'whoami':   return runPluginWhoami(rest);
     case 'export':   return runPluginExport(rest);
     case 'publish':  return runPluginPublish(rest);
+    case 'publish-repo': return runPluginPublishRepo(rest);
+    case 'open-design-pr': return runPluginOpenDesignPr(rest);
     case 'yank':     return runPluginYank(rest);
     default:
       console.error(`unknown subcommand: od plugin ${sub}`);
@@ -1023,9 +2762,15 @@ Exit codes:
   if (!flags['no-daemon']) {
     const base = (await libraryDaemonUrl(flags)).replace(/\/$/, '');
     try {
+      const designSystemWorkspaceHeaders =
+        workspaceHeadersFromExplicitFlags(flags);
       const [skillsResp, dsResp, atomsResp] = await Promise.all([
         fetch(`${base}/api/skills`).catch(() => null),
-        fetch(`${base}/api/design-systems`).catch(() => null),
+        fetch(`${base}/api/design-systems`, {
+          ...(designSystemWorkspaceHeaders
+            ? { headers: designSystemWorkspaceHeaders }
+            : {}),
+        }).catch(() => null),
         fetch(`${base}/api/atoms`).catch(() => null),
       ]);
       const skills = (skillsResp?.ok ? (await skillsResp.json())?.skills : []) ?? [];
@@ -1165,16 +2910,16 @@ async function runPluginLogin(rest) {
     console.log(`Usage:
   od plugin login [--host github.com]
 
-Wraps GitHub CLI auth for Open Design registry publishing. The token stays in gh.`);
+Wraps GitHub CLI auth for OpenDesign registry publishing. The token stays in gh.`);
     return;
   }
   const host = typeof flags.host === 'string' ? flags.host : 'github.com';
-  const version = await execFileBuffered('gh', ['--version'], { timeout: 10_000 });
+  const version = await execGhBuffered(['--version'], { timeout: 10_000 });
   if (!version.ok) {
     console.error('[plugin login] GitHub CLI is required. Install gh from https://cli.github.com/ and retry.');
     process.exit(1);
   }
-  const result = await spawnPassthrough('gh', ['auth', 'login', '--hostname', host, '--web']);
+  const result = await spawnGhPassthrough(['auth', 'login', '--hostname', host, '--web']);
   process.exit(result.code ?? 0);
 }
 
@@ -1187,11 +2932,11 @@ async function runPluginWhoami(rest) {
     console.log(`Usage:
   od plugin whoami [--host github.com] [--json]
 
-Shows the GitHub account gh will use for Open Design registry publishing.`);
+Shows the GitHub account gh will use for OpenDesign registry publishing.`);
     return;
   }
   const host = typeof flags.host === 'string' ? flags.host : 'github.com';
-  const auth = await execFileBuffered('gh', ['auth', 'status', '--hostname', host], { timeout: 10_000 });
+  const auth = await execGhBuffered(['auth', 'status', '--hostname', host], { timeout: 10_000 });
   if (!auth.ok) {
     if (flags.json) {
       process.stdout.write(JSON.stringify({
@@ -1206,7 +2951,7 @@ Shows the GitHub account gh will use for Open Design registry publishing.`);
     if (auth.stderr || auth.stdout) console.error(auth.stderr || auth.stdout);
     process.exit(1);
   }
-  const user = await execFileBuffered('gh', ['api', 'user', '--hostname', host], { timeout: 10_000 });
+  const user = await execGhBuffered(['api', 'user', '--hostname', host], { timeout: 10_000 });
   let login = '';
   let name = '';
   try {
@@ -1249,12 +2994,42 @@ async function execFileBuffered(command, args, opts = {}) {
   });
 }
 
-async function spawnPassthrough(command, args) {
+function quotePosixShellArg(value) {
+  const text = String(value ?? '');
+  return `'${text.replace(/'/g, `'\\''`)}'`;
+}
+
+function buildGhShellCommand(args) {
+  return ['gh', ...args].map(quotePosixShellArg).join(' ');
+}
+
+function buildLoginShellCommand(innerCommand) {
+  return `export PATH=${quotePosixShellArg(process.env.PATH ?? '')}; ${innerCommand}`;
+}
+
+async function execGhBuffered(args, opts = {}) {
+  if (process.platform === 'win32') return execFileBuffered('gh', args, opts);
+  const shell = process.env.SHELL && process.env.SHELL.trim() ? process.env.SHELL.trim() : '/bin/zsh';
+  return execFileBuffered(shell, ['-c', buildLoginShellCommand(buildGhShellCommand(args))], {
+    env: process.env,
+    ...opts,
+  });
+}
+
+async function spawnPassthrough(command, args, opts = {}) {
   const { spawn } = await import('node:child_process');
   return await new Promise((resolve) => {
-    const child = spawn(command, args, { stdio: 'inherit' });
+    const child = spawn(command, args, { stdio: 'inherit', ...opts });
     child.on('error', (error) => resolve({ code: 1, error }));
     child.on('close', (code) => resolve({ code }));
+  });
+}
+
+async function spawnGhPassthrough(args) {
+  if (process.platform === 'win32') return spawnPassthrough('gh', args);
+  const shell = process.env.SHELL && process.env.SHELL.trim() ? process.env.SHELL.trim() : '/bin/zsh';
+  return spawnPassthrough(shell, ['-c', buildLoginShellCommand(buildGhShellCommand(args))], {
+    env: process.env,
   });
 }
 
@@ -1276,7 +3051,15 @@ function inferGithubHost(target) {
 // targets: 'od', 'claude-plugin', 'agent-skill'.
 async function runPluginExport(rest) {
   const flags = parseFlags(rest, {
-    string: new Set(['daemon-url', 'as', 'out', 'snapshot-id', 'project']),
+    string: new Set([
+      'daemon-url',
+      'as',
+      'out',
+      'snapshot-id',
+      'project',
+      'workspace',
+      'workspace-member',
+    ]),
     boolean: new Set(['help', 'h', 'json']),
   });
   if (rest.length === 0 || flags.help || flags.h) {
@@ -1305,7 +3088,7 @@ view is the single source of truth.`);
     ? flags.out
     : process.cwd();
   const base = (await pluginDaemonUrl(flags)).replace(/\/$/, '');
-  const resp = await fetch(`${base}/api/applied-plugins/export`, {
+  const resp = await pluginFetch(flags, `${base}/api/applied-plugins/export`, {
     method:  'POST',
     headers: { 'content-type': 'application/json' },
     body:    JSON.stringify({
@@ -1343,7 +3126,7 @@ async function runMarketplace(args) {
                                                               Update the marketplace trust tier.
 
 Common options:
-  --daemon-url <url>   Open Design daemon HTTP base (default OD_DAEMON_URL, OD_SIDECAR_IPC_PATH discovery, or http://127.0.0.1:7456).
+  --daemon-url <url>   OpenDesign daemon HTTP base (default OD_DAEMON_URL, OD_SIDECAR_IPC_PATH discovery, or http://127.0.0.1:7456).
   --json               Emit raw JSON (suitable for scripts).`);
     process.exit(args.length === 0 ? 2 : 0);
   }
@@ -1490,7 +3273,7 @@ Common options:
         console.error('[marketplace login] GitHub CLI is required. Install gh from https://cli.github.com/ and retry.');
         process.exit(1);
       }
-      console.log(`[marketplace login] authenticating gh for ${host}. Tokens stay in gh, not Open Design.`);
+      console.log(`[marketplace login] authenticating gh for ${host}. Tokens stay in gh, not OpenDesign.`);
       const result = await spawnPassthrough('gh', ['auth', 'login', '--hostname', host, '--web']);
       process.exit(result.code ?? 0);
     }
@@ -1563,14 +3346,21 @@ async function runPluginSnapshots(args) {
   const sub = args[0];
   if (!sub || sub === 'help' || args.includes('--help') || args.includes('-h')) {
     console.log(`Usage:
-  od plugin snapshots list  [--project <id>]               List applied plugin snapshots.
+  od plugin snapshots list  [--project <id>] [--workspace <id> --workspace-member <id>]
+                                                               List applied plugin snapshots.
   od plugin snapshots show  <snapshotId> [--json]          Print one snapshot's full contents.
   od plugin snapshots diff  <id-a> <id-b> [--json]         Compare two snapshots field-by-field.
   od plugin snapshots prune [--before <unix-ms>]           Delete expired (or older-than-cutoff) snapshots.`);
     process.exit(args.length === 0 ? 2 : 0);
   }
-  const flags = parseFlags(args.slice(1), { string: PLUGIN_STRING_FLAGS, boolean: PLUGIN_BOOLEAN_FLAGS });
+  const snapshotStringFlags =
+    sub === 'list' ? PLUGIN_PROJECT_RESOURCE_STRING_FLAGS : PLUGIN_STRING_FLAGS;
+  const flags = parseFlags(args.slice(1), {
+    string: snapshotStringFlags,
+    boolean: PLUGIN_BOOLEAN_FLAGS,
+  });
   const base = (await pluginDaemonUrl(flags)).replace(/\/$/, '');
+  const workspaceHeaders = workspaceHeadersFromExplicitFlags(flags) ?? {};
   if (sub === 'show') {
     const positional = args.slice(1).filter((a) => !a.startsWith('-'));
     const id = positional[0];
@@ -1579,7 +3369,7 @@ async function runPluginSnapshots(args) {
       process.exit(2);
     }
     const url = `${base}/api/applied-plugins/${encodeURIComponent(id)}`;
-    const resp = await fetch(url);
+    const resp = await pluginFetch(flags, url);
     if (resp.status === 404) {
       console.error(`snapshot ${id} not found`);
       process.exit(72);
@@ -1600,8 +3390,8 @@ async function runPluginSnapshots(args) {
     }
     const [idA, idB] = positional;
     const [respA, respB] = await Promise.all([
-      fetch(`${base}/api/applied-plugins/${encodeURIComponent(idA)}`),
-      fetch(`${base}/api/applied-plugins/${encodeURIComponent(idB)}`),
+      pluginFetch(flags, `${base}/api/applied-plugins/${encodeURIComponent(idA)}`),
+      pluginFetch(flags, `${base}/api/applied-plugins/${encodeURIComponent(idB)}`),
     ]);
     if (respA.status === 404) { console.error(`snapshot ${idA} not found`); process.exit(72); }
     if (respB.status === 404) { console.error(`snapshot ${idB} not found`); process.exit(72); }
@@ -1645,7 +3435,7 @@ async function runPluginSnapshots(args) {
     const url = flags.project
       ? `${base}/api/projects/${encodeURIComponent(flags.project)}/applied-plugins`
       : `${base}/api/applied-plugins`;
-    const resp = await fetch(url);
+    const resp = await fetch(url, { headers: workspaceHeaders });
     if (!resp.ok) {
       console.error(`GET ${url} failed: ${resp.status} ${await resp.text()}`);
       process.exit(1);
@@ -1682,19 +3472,11 @@ async function runPluginSnapshots(args) {
 // wrapper around `od plugin apply` + `POST /api/runs` so a code agent
 // can drive the apply→start→follow loop without two hops.
 async function runPluginRun(rest) {
-  const flags = parseFlags(rest, { string: PLUGIN_STRING_FLAGS, boolean: PLUGIN_BOOLEAN_FLAGS });
-  const id = rest.find((a) => !a.startsWith('-')
-    && a !== flags['daemon-url']
-    && a !== flags.source
-    && a !== flags.inputs
-    && a !== flags.project
-    && a !== flags.conversation
-    && a !== flags.message
-    && a !== flags.agent
-    && a !== flags.model
-    && a !== flags['snapshot-id']
-    && a !== flags.capabilities
-    && a !== flags['grant-caps']);
+  const flags = parseFlags(rest, {
+    string: PLUGIN_PROJECT_RESOURCE_STRING_FLAGS,
+    boolean: PLUGIN_BOOLEAN_FLAGS,
+  });
+  const id = positionalArgs(rest, PLUGIN_PROJECT_RESOURCE_STRING_FLAGS)[0];
   if (!id) {
     console.error('Usage: od plugin run <id> --project <projectId> [--inputs <json>] [--agent <id>] [--message "<text>"] [--grant-caps a,b] [--follow]');
     process.exit(2);
@@ -1708,10 +3490,11 @@ async function runPluginRun(rest) {
     ? flags['grant-caps'].split(',').map((c) => c.trim()).filter(Boolean)
     : [];
   const base = (await pluginDaemonUrl(flags)).replace(/\/$/, '');
+  const workspaceHeaders = workspaceHeadersFromExplicitFlags(flags) ?? {};
   // 1. Apply (returns ApplyResult + manifestSourceDigest).
   const applyResp = await fetch(`${base}/api/plugins/${encodeURIComponent(id)}/apply`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', ...workspaceHeaders },
     body: JSON.stringify({ inputs, grantCaps, projectId: flags.project }),
   });
   const applyData = await applyResp.json().catch(() => ({}));
@@ -1723,7 +3506,7 @@ async function runPluginRun(rest) {
   //    snapshot to the run object.
   const runResp = await fetch(`${base}/api/runs`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', ...workspaceHeaders },
     body: JSON.stringify({
       projectId:        flags.project,
       pluginId:         id,
@@ -1749,17 +3532,26 @@ async function runPluginRun(rest) {
   }
   if (flags.json) {
     process.stdout.write(JSON.stringify({ apply: applyData, run: runData }, null, 2) + '\n');
-    if (flags.follow) await streamRunEvents(base, runData.runId);
+    if (flags.follow) await streamRunEvents(base, runData.runId, workspaceHeaders);
     return;
   }
   console.log(`[run] started run ${runData.runId} (snapshot ${runData.appliedPluginSnapshotId ?? applyData?.appliedPlugin?.snapshotId ?? 'n/a'})`);
   if (flags.follow) {
-    await streamRunEvents(base, runData.runId);
+    await streamRunEvents(base, runData.runId, workspaceHeaders);
   }
 }
 
 async function pluginDaemonUrl(flags) {
   return cliDaemonUrl(flags);
+}
+
+function pluginFetch(flags, input, init = {}) {
+  const scoped = workspaceHeadersFromExplicitFlags(flags) ?? {};
+  const headers = {
+    ...scoped,
+    ...(init.headers ?? {}),
+  };
+  return fetch(input, { ...init, headers });
 }
 
 // Plan §3.Y1 — filter knobs on `od plugin list` (and feeds
@@ -1846,7 +3638,7 @@ Prints an at-a-glance plugin + snapshot inventory:
   }
   const base = (await pluginDaemonUrl(flags)).replace(/\/$/, '');
   const url = `${base}/api/plugins/stats`;
-  const resp = await fetch(url);
+  const resp = await pluginFetch(flags, url);
   if (!resp.ok) {
     console.error(`GET ${url} failed: ${resp.status} ${await resp.text()}`);
     process.exit(1);
@@ -1896,7 +3688,7 @@ function formatTimestamp(ts) {
 
 async function fetchPluginList(flags) {
   const url = `${(await pluginDaemonUrl(flags)).replace(/\/$/, '')}/api/plugins`;
-  const resp = await fetch(url);
+  const resp = await pluginFetch(flags, url);
   if (!resp.ok) {
     console.error(`GET /api/plugins failed: ${resp.status} ${await resp.text()}`);
     process.exit(1);
@@ -1963,13 +3755,13 @@ async function runPluginInfo(rest) {
   }
   const base = (await pluginDaemonUrl(flags)).replace(/\/$/, '');
   const url = `${base}/api/plugins/${encodeURIComponent(id)}`;
-  const resp = await fetch(url);
+  const resp = await pluginFetch(flags, url);
   if (resp.ok && !flags.version) {
     const data = await resp.json();
     process.stdout.write(JSON.stringify(data, null, 2) + '\n');
     return;
   }
-  const mpResp = await fetch(`${base}/api/marketplaces`);
+  const mpResp = await pluginFetch(flags, `${base}/api/marketplaces`);
   if (mpResp.ok) {
     const mpData = await mpResp.json().catch(() => ({}));
     const resolved = resolveMarketplacePluginFromList(
@@ -2053,7 +3845,7 @@ async function runPluginManifest(rest) {
     process.exit(2);
   }
   const url = `${(await pluginDaemonUrl(flags)).replace(/\/$/, '')}/api/plugins/${encodeURIComponent(id)}`;
-  const resp = await fetch(url);
+  const resp = await pluginFetch(flags, url);
   if (resp.status === 404) {
     console.error(`plugin ${id} not found`);
     process.exit(65);
@@ -2078,7 +3870,7 @@ async function runPluginManifest(rest) {
 async function runPluginSources(rest) {
   const flags = parseFlags(rest, { string: PLUGIN_STRING_FLAGS, boolean: PLUGIN_BOOLEAN_FLAGS });
   const url = `${(await pluginDaemonUrl(flags)).replace(/\/$/, '')}/api/plugins`;
-  const resp = await fetch(url);
+  const resp = await pluginFetch(flags, url);
   if (!resp.ok) {
     console.error(`GET /api/plugins failed: ${resp.status} ${await resp.text()}`);
     process.exit(1);
@@ -2127,7 +3919,7 @@ async function runPluginInstall(rest) {
     process.exit(2);
   }
   const url = `${(await pluginDaemonUrl(flags)).replace(/\/$/, '')}/api/plugins/install`;
-  const resp = await fetch(url, {
+  const resp = await pluginFetch(flags, url, {
     method: 'POST',
     headers: { 'content-type': 'application/json', accept: 'text/event-stream' },
     body: JSON.stringify({ source }),
@@ -2440,7 +4232,7 @@ Exit codes:
   const base = (await pluginDaemonUrl(flags)).replace(/\/$/, '');
 
   // 1. Resolve the plugin record (fsPath + manifest).
-  const pluginResp = await fetch(`${base}/api/plugins/${encodeURIComponent(id)}`);
+  const pluginResp = await pluginFetch(flags, `${base}/api/plugins/${encodeURIComponent(id)}`);
   if (pluginResp.status === 404) {
     console.error(`plugin ${id} not found`);
     process.exit(65);
@@ -2478,7 +4270,7 @@ Exit codes:
     c === 'doctor' || c === 'simulate' || c === 'canon'));
   let doctorReport = null;
   if (enabledSet.has('doctor')) {
-    const doctorResp = await fetch(`${base}/api/plugins/${encodeURIComponent(id)}/doctor`);
+    const doctorResp = await pluginFetch(flags, `${base}/api/plugins/${encodeURIComponent(id)}/doctor`);
     if (doctorResp.ok) {
       doctorReport = await doctorResp.json();
     }
@@ -2516,7 +4308,8 @@ Exit codes:
       canonExpected = null;
     }
     if (canonExpected !== null) {
-      const canonResp = await fetch(
+      const canonResp = await pluginFetch(
+        flags,
         `${base}/api/applied-plugins/${encodeURIComponent(config.canon.snapshotId)}/canon`,
         { headers: { accept: 'text/plain' } },
       );
@@ -2610,7 +4403,7 @@ Closed signal vocabulary:
   // Fetch the plugin from the daemon so we get the resolved
   // manifest (including pipeline).
   const base = (await pluginDaemonUrl(flags)).replace(/\/$/, '');
-  const resp = await fetch(`${base}/api/plugins/${encodeURIComponent(id)}`);
+  const resp = await pluginFetch(flags, `${base}/api/plugins/${encodeURIComponent(id)}`);
   if (resp.status === 404) {
     console.error(`plugin ${id} not found`);
     process.exit(65);
@@ -2697,7 +4490,7 @@ fixtures into a plugin's own tests/.`);
   // --check always wants the raw text output; force text/plain.
   const wantsText = !flags.json || checkPath !== null;
   const headers = { accept: wantsText ? 'text/plain' : 'application/json' };
-  const resp = await fetch(url, { headers });
+  const resp = await pluginFetch(flags, url, { headers });
   if (resp.status === 404) {
     console.error(`snapshot ${id} not found`);
     process.exit(72);
@@ -2765,8 +4558,8 @@ into 'added' / 'removed' / 'changed' with one line per field.`);
   const [idA, idB] = positional;
   const base = (await pluginDaemonUrl(flags)).replace(/\/$/, '');
   const [respA, respB] = await Promise.all([
-    fetch(`${base}/api/plugins/${encodeURIComponent(idA)}`),
-    fetch(`${base}/api/plugins/${encodeURIComponent(idB)}`),
+    pluginFetch(flags, `${base}/api/plugins/${encodeURIComponent(idA)}`),
+    pluginFetch(flags, `${base}/api/plugins/${encodeURIComponent(idB)}`),
   ]);
   if (!respA.ok) {
     console.error(`GET /api/plugins/${idA} failed: ${respA.status}`);
@@ -2813,7 +4606,7 @@ async function runPluginUpgrade(rest) {
     process.exit(2);
   }
   const url = `${(await pluginDaemonUrl(flags)).replace(/\/$/, '')}/api/plugins/${encodeURIComponent(id)}/upgrade`;
-  const resp = await fetch(url, {
+  const resp = await pluginFetch(flags, url, {
     method: 'POST',
     headers: { 'content-type': 'application/json', accept: 'text/event-stream' },
     body: JSON.stringify({
@@ -2879,7 +4672,7 @@ async function runPluginUninstall(rest) {
     process.exit(2);
   }
   const url = `${(await pluginDaemonUrl(flags)).replace(/\/$/, '')}/api/plugins/${encodeURIComponent(id)}/uninstall`;
-  const resp = await fetch(url, { method: 'POST' });
+  const resp = await pluginFetch(flags, url, { method: 'POST' });
   if (!resp.ok) {
     console.error(`POST /api/plugins/${id}/uninstall failed: ${resp.status} ${await resp.text()}`);
     process.exit(1);
@@ -2928,7 +4721,7 @@ async function runPluginApply(rest) {
   const url = `${(await pluginDaemonUrl(flags)).replace(/\/$/, '')}/api/plugins/${encodeURIComponent(id)}/apply`;
   let resp;
   try {
-    resp = await fetch(url, {
+    resp = await pluginFetch(flags, url, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ inputs, projectId: flags.project, grantCaps }),
@@ -2966,11 +4759,142 @@ async function runPluginApply(rest) {
   }
 }
 
+async function runPluginDuplicate(rest) {
+  const flags = parseFlags(rest, { string: PLUGIN_STRING_FLAGS, boolean: PLUGIN_BOOLEAN_FLAGS });
+  const id = rest.find((a) => !a.startsWith('-')
+    && a !== flags['daemon-url']
+    && a !== flags.name);
+  if (!id) {
+    console.error('Usage: od plugin duplicate <id> [--name "<project name>"] [--json]');
+    process.exit(2);
+  }
+  const url = `${(await pluginDaemonUrl(flags)).replace(/\/$/, '')}/api/plugins/${encodeURIComponent(id)}/duplicate-project`;
+  const body = typeof flags.name === 'string' && flags.name.trim().length > 0
+    ? { name: flags.name.trim() }
+    : {};
+  let resp;
+  try {
+    resp = await pluginFetch(flags, url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  } catch (err) {
+    return exitWithStructuredError({
+      code: 'daemon-not-running',
+      message: `Cannot reach daemon at ${await pluginDaemonUrl(flags)}: ${err?.message ?? err}`,
+    });
+  }
+  if (!resp.ok) return structuredHttpFailure(resp);
+  const data = await resp.json().catch(() => ({}));
+  if (flags.json) {
+    process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+    return;
+  }
+  console.log(`[duplicate] created project ${data.projectId} from ${data.sourcePluginId} -> ${data.relPath}`);
+  if (Array.isArray(data.warnings) && data.warnings.length > 0) {
+    for (const warning of data.warnings) console.log(`[duplicate] warn: ${warning}`);
+  }
+}
+
 function coerceCliValue(raw) {
   if (raw === 'true') return true;
   if (raw === 'false') return false;
   if (/^-?\d+(\.\d+)?$/.test(raw)) return Number(raw);
   return raw;
+}
+
+async function runPluginCandidates(rest) {
+  const sub = rest[0];
+  const args = rest.slice(1);
+  const candidateStringFlags = new Set([
+    'daemon-url',
+    'project',
+    'action',
+    'workspace',
+    'workspace-member',
+  ]);
+  const flags = parseFlags(args, {
+    string: candidateStringFlags,
+    boolean: new Set(['help', 'h', 'json', 'include-dismissed']),
+  });
+  if (!sub || sub === 'help' || flags.help || flags.h) {
+    console.log(`Usage:
+  od plugin candidates list --project <projectId> [--json] [--include-dismissed]
+       --workspace <id> --workspace-member <id>
+  od plugin candidates draft <candidateId> --project <projectId> [--json]
+       --workspace <id> --workspace-member <id>
+  od plugin candidates dismiss <candidateId> --project <projectId> [--json]
+       --workspace <id> --workspace-member <id>
+
+Lists and formalizes persisted skill-to-plugin candidates.`);
+    process.exit(!sub ? 2 : 0);
+  }
+  const projectId = typeof flags.project === 'string' && flags.project.length > 0 ? flags.project : '';
+  if (!projectId) {
+    console.error('--project <projectId> is required');
+    process.exit(2);
+  }
+  const base = (await pluginDaemonUrl(flags)).replace(/\/$/, '');
+  const workspaceHeaders = workspaceHeadersFromExplicitFlags(flags) ?? {};
+  if (sub === 'list') {
+    const qs = flags['include-dismissed'] ? '?includeDismissed=true' : '';
+    const resp = await fetch(
+      `${base}/api/projects/${encodeURIComponent(projectId)}/plugin-candidates${qs}`,
+      { headers: workspaceHeaders },
+    );
+    const data = await resp.json().catch(() => null);
+    if (!resp.ok) {
+      console.error(`GET plugin candidates failed: ${resp.status} ${JSON.stringify(data)}`);
+      process.exit(1);
+    }
+    if (flags.json) return process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+    const candidates = Array.isArray(data?.candidates) ? data.candidates : [];
+    if (candidates.length === 0) {
+      console.log('No plugin candidates.');
+      return;
+    }
+    for (const candidate of candidates) {
+      console.log(`${candidate.id}\t${candidate.status}\t${candidate.title}\t${candidate.draftPath ?? ''}`);
+    }
+    return;
+  }
+  const candidateId = positionalArgs(args, candidateStringFlags)[0];
+  if (!candidateId) {
+    console.error(`candidate id is required for ${sub}`);
+    process.exit(2);
+  }
+  if (sub === 'draft') {
+    const resp = await fetch(`${base}/api/projects/${encodeURIComponent(projectId)}/plugin-candidates/${encodeURIComponent(candidateId)}/draft`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...workspaceHeaders },
+      body: '{}',
+    });
+    const data = await resp.json().catch(() => null);
+    if (flags.json) {
+      process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+    } else if (resp.ok) {
+      console.log(`[candidate] draft: ${data.draftPath}`);
+      console.log(`[candidate] validation ok=${data.validation?.ok}`);
+    } else {
+      console.error(`[candidate] draft failed: ${data?.message ?? JSON.stringify(data)}`);
+    }
+    process.exit(resp.ok ? 0 : resp.status === 422 ? 4 : 1);
+  }
+  if (sub === 'dismiss') {
+    const resp = await fetch(`${base}/api/projects/${encodeURIComponent(projectId)}/plugin-candidates/${encodeURIComponent(candidateId)}/dismiss`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...workspaceHeaders },
+      body: '{}',
+    });
+    const data = await resp.json().catch(() => null);
+    if (flags.json) process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+    else if (resp.ok) console.log(`[candidate] dismissed ${candidateId}`);
+    else console.error(`[candidate] dismiss failed: ${data?.message ?? JSON.stringify(data)}`);
+    process.exit(resp.ok ? 0 : 1);
+  }
+  console.error(`unknown subcommand: od plugin candidates ${sub}`);
+  process.exit(2);
 }
 
 // Phase 4 / spec §14.1 — `od plugin publish --to <catalog>`.
@@ -2983,7 +4907,15 @@ function coerceCliValue(raw) {
 // always under the author's control.
 async function runPluginPublish(rest) {
   const flags = parseFlags(rest, {
-    string: new Set(['daemon-url', 'to', 'snapshot-id', 'repo', 'catalog']),
+    string: new Set([
+      'daemon-url',
+      'to',
+      'snapshot-id',
+      'repo',
+      'catalog',
+      'workspace',
+      'workspace-member',
+    ]),
     boolean: new Set(['help', 'h', 'json', 'open']),
   });
   if (rest.length === 0 || flags.help || flags.h) {
@@ -3016,7 +4948,7 @@ publish from a frozen run snapshot rather than the live installed copy.`);
   // SQLite handle; everything stays loopback-mediated.
   let meta = { pluginId: id, pluginVersion: '0.0.0' };
   try {
-    const resp = await fetch(`${base}/api/plugins/${encodeURIComponent(id)}`);
+    const resp = await pluginFetch(flags, `${base}/api/plugins/${encodeURIComponent(id)}`);
     if (resp.ok) {
       const row = await resp.json();
       // The daemon's plugin row carries a stored `version` plus the full
@@ -3099,6 +5031,288 @@ publish from a frozen run snapshot rather than the live installed copy.`);
   }
 }
 
+async function runPluginPublishRepo(rest) {
+  const flags = parseFlags(rest, {
+    string: new Set(['host', 'owner']),
+    boolean: new Set(['help', 'h', 'json', 'dry-run']),
+  });
+  if (rest.length === 0 || flags.help || flags.h) {
+    console.log(`Usage:
+  od plugin publish-repo <folder> [--host github.com] [--owner github-login-or-org] [--dry-run] [--json]
+
+Creates or updates the public GitHub repository named by the plugin manifest.
+If plugin.repo is missing or uses a placeholder owner, the CLI resolves the
+target from --owner, a trusted manifest owner, local gh auth status, then the
+GitHub API as a last resort. It never publishes to placeholder owners.`);
+    process.exit(rest.length === 0 ? 2 : 0);
+  }
+  const folder = rest.find((a) => !a.startsWith('-') && a !== flags.host && a !== flags.owner);
+  if (!folder) {
+    console.error('Usage: od plugin publish-repo <folder>');
+    process.exit(2);
+  }
+
+  const [{ resolve, join }, { readFile, writeFile, stat, mkdtemp, readdir, rm, mkdir, cp }, { pathToFileURL }, os] = await Promise.all([
+    import('node:path'),
+    import('node:fs/promises'),
+    import('node:url'),
+    import('node:os'),
+  ]);
+  const absFolder = resolve(process.cwd(), folder);
+  const manifestPath = resolve(absFolder, 'open-design.json');
+  const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+  const host = typeof flags.host === 'string' ? flags.host : 'github.com';
+  const target = await resolvePluginGithubTarget({ host, owner: flags.owner, manifest, purpose: 'publish-repo' });
+  const normalized = normalizeManifestRepoForOwner(manifest, target.owner);
+  if (normalized.changed && !flags['dry-run']) {
+    await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
+    await pluginCliValidateFolder(absFolder);
+  }
+
+  const repo = parseGithubRepoUrl(normalized.repoUrl);
+  if (!repo) {
+    console.error(`[publish-repo] invalid plugin.repo after normalization: ${normalized.repoUrl}`);
+    process.exit(2);
+  }
+  const steps = [];
+  const run = async (label, command, args, opts = {}) => {
+    steps.push({ label, command: [command, ...args].join(' ') });
+    if (flags['dry-run']) return { ok: true, stdout: '', stderr: '' };
+    const result = await (command === 'gh'
+      ? execGhBuffered(args, { cwd: opts.cwd ?? absFolder, timeout: opts.timeout ?? 120_000 })
+      : execFileBuffered(command, args, { cwd: opts.cwd ?? absFolder, timeout: opts.timeout ?? 120_000 }));
+    steps[steps.length - 1].ok = result.ok;
+    steps[steps.length - 1].stdout = result.stdout;
+    steps[steps.length - 1].stderr = result.stderr;
+    if (!result.ok) {
+      emitPluginWorkflowResult(flags, {
+        ok: false,
+        action: 'publish-repo',
+        folder: absFolder,
+        repoUrl: normalized.repoUrl,
+        login: target.login,
+        owner: target.owner,
+        ownerSource: target.ownerSource,
+        apiRateLimited: target.apiRateLimited,
+        steps,
+        error: { label, stdout: result.stdout, stderr: result.stderr, code: result.code },
+      });
+      process.exit(1);
+    }
+    return result;
+  };
+
+  let exists = false;
+  const view = flags['dry-run']
+    ? { ok: false, stderr: 'dry-run' }
+    : await execGhBuffered(['repo', 'view', repo.fullName], { cwd: absFolder, timeout: 30_000 });
+  steps.push({ label: 'check repo', command: `gh repo view ${repo.fullName}`, ok: view.ok, stdout: view.stdout, stderr: view.stderr });
+  if (view.ok) {
+    exists = true;
+  } else if (!flags['dry-run'] && !isRepoNotFound(view)) {
+    emitPluginWorkflowResult(flags, {
+      ok: false,
+      action: 'publish-repo',
+      folder: absFolder,
+      repoUrl: normalized.repoUrl,
+      login: target.login,
+      owner: target.owner,
+      ownerSource: target.ownerSource,
+      apiRateLimited: target.apiRateLimited,
+      steps,
+      error: { label: 'check repo', stdout: view.stdout, stderr: view.stderr, code: view.code },
+    });
+    process.exit(1);
+  }
+
+  let workdir = absFolder;
+  let cleanupDir = null;
+  if (exists && !flags['dry-run']) {
+    cleanupDir = await mkdtemp(join(os.tmpdir(), 'od-plugin-publish-sync-'));
+    workdir = join(cleanupDir, repo.name);
+    await run('clone repo', 'gh', ['repo', 'clone', repo.fullName, workdir], { cwd: cleanupDir, timeout: 240_000 });
+    for (const entry of await readdir(workdir)) {
+      if (entry === '.git') continue;
+      await rm(join(workdir, entry), { recursive: true, force: true });
+    }
+    await mkdir(workdir, { recursive: true });
+    for (const entry of await readdir(absFolder)) {
+      if (entry === '.git') continue;
+      await cp(join(absFolder, entry), join(workdir, entry), { recursive: true, force: true });
+    }
+  } else if (!flags['dry-run']) {
+    let hasGit = false;
+    try { await stat(resolve(absFolder, '.git')); hasGit = true; } catch {}
+    if (!hasGit) await run('git init', 'git', ['init']);
+  }
+
+  await run('git add', 'git', ['add', '-A'], { cwd: workdir });
+  const status = flags['dry-run']
+    ? { stdout: 'dry-run' }
+    : await execFileBuffered('git', ['status', '--porcelain'], { cwd: workdir });
+  if (status.stdout.trim().length > 0 || !exists) {
+    const commitMessage = exists
+      ? `Update: ${manifest.name} v${manifest.version ?? '0.0.0'}`
+      : `Initial commit: ${manifest.name} v${manifest.version ?? '0.0.0'}`;
+    await run('git commit', 'git', ['commit', '-m', commitMessage], { cwd: workdir });
+  }
+  const tag = `v${manifest.version ?? '0.0.0'}`;
+  if (!flags['dry-run']) {
+    const localTag = await execFileBuffered('git', ['rev-parse', '-q', '--verify', `refs/tags/${tag}`], { cwd: workdir });
+    if (!localTag.ok) await run('git tag', 'git', ['tag', tag], { cwd: workdir });
+  }
+
+  if (exists) {
+    await run('git push', 'git', ['push', 'origin', 'HEAD'], { cwd: workdir });
+  } else {
+    await run('gh repo create', 'gh', [
+      'repo', 'create', repo.fullName, '--public', '--source', '.', '--push',
+      '--description', String(manifest.description ?? ''),
+    ], { cwd: workdir });
+  }
+  await run('git push tags', 'git', ['push', '--tags'], { cwd: workdir });
+  const verify = flags['dry-run']
+    ? { ok: true, stdout: JSON.stringify({ nameWithOwner: repo.fullName, url: normalized.repoUrl }) }
+    : await run('verify repo', 'gh', ['repo', 'view', repo.fullName, '--json', 'url,nameWithOwner'], { cwd: workdir });
+  const parsedVerify = safeJson(verify.stdout);
+  if (cleanupDir && !flags['dry-run']) {
+    await rm(cleanupDir, { recursive: true, force: true }).catch(() => undefined);
+  }
+  emitPluginWorkflowResult(flags, {
+    ok: true,
+    action: 'publish-repo',
+    folder: absFolder,
+    login: target.login,
+    owner: target.owner,
+    ownerSource: target.ownerSource,
+    apiRateLimited: target.apiRateLimited,
+    repoUrl: parsedVerify?.url ?? normalized.repoUrl,
+    manifestRewritten: normalized.changed,
+    manifestPath: pathToFileURL(manifestPath).pathname,
+    steps,
+  });
+}
+
+async function runPluginOpenDesignPr(rest) {
+  const flags = parseFlags(rest, {
+    string: new Set(['host', 'owner']),
+    boolean: new Set(['help', 'h', 'json', 'dry-run']),
+  });
+  if (rest.length === 0 || flags.help || flags.h) {
+    console.log(`Usage:
+  od plugin open-design-pr <folder> [--host github.com] [--owner github-login-or-fork-owner] [--dry-run] [--json]
+
+Copies a local plugin folder into plugins/community/<name>/ on the author's
+fork of nexu-io/open-design, pushes a branch, and opens the PR form with --web.`);
+    process.exit(rest.length === 0 ? 2 : 0);
+  }
+  const folder = rest.find((a) => !a.startsWith('-') && a !== flags.host && a !== flags.owner);
+  if (!folder) {
+    console.error('Usage: od plugin open-design-pr <folder>');
+    process.exit(2);
+  }
+  const [{ resolve, join }, fsp, os] = await Promise.all([
+    import('node:path'),
+    import('node:fs/promises'),
+    import('node:os'),
+  ]);
+  const absFolder = resolve(process.cwd(), folder);
+  const manifestPath = resolve(absFolder, 'open-design.json');
+  const manifest = JSON.parse(await fsp.readFile(manifestPath, 'utf8'));
+  const host = typeof flags.host === 'string' ? flags.host : 'github.com';
+  const target = await resolvePluginGithubTarget({ host, owner: flags.owner, manifest, purpose: 'open-design-pr' });
+  const name = String(manifest.name ?? '').trim();
+  if (!name) {
+    console.error('[open-design-pr] manifest.name is required');
+    process.exit(2);
+  }
+  const title = String(manifest.title ?? name).trim();
+  const branch = `plugin/${name}-${Math.floor(Date.now() / 1000)}`;
+  const tmpRoot = await fsp.mkdtemp(join(os.tmpdir(), 'od-open-design-pr-'));
+  const checkout = join(tmpRoot, 'open-design');
+  const steps = [];
+  const run = async (label, command, args, opts = {}) => {
+    steps.push({ label, command: [command, ...args].join(' ') });
+    if (flags['dry-run']) return { ok: true, stdout: '', stderr: '' };
+    const result = await (command === 'gh'
+      ? execGhBuffered(args, { cwd: opts.cwd ?? process.cwd(), timeout: opts.timeout ?? 180_000 })
+      : execFileBuffered(command, args, { cwd: opts.cwd ?? process.cwd(), timeout: opts.timeout ?? 180_000 }));
+    steps[steps.length - 1].ok = result.ok;
+    steps[steps.length - 1].stdout = result.stdout;
+    steps[steps.length - 1].stderr = result.stderr;
+    if (!result.ok && !opts.tolerate?.(result)) {
+      emitPluginWorkflowResult(flags, {
+        ok: false,
+        action: 'open-design-pr',
+        folder: absFolder,
+        login: target.login,
+        owner: target.owner,
+        ownerSource: target.ownerSource,
+        apiRateLimited: target.apiRateLimited,
+        branch,
+        steps,
+        error: { label, stdout: result.stdout, stderr: result.stderr, code: result.code },
+      });
+      process.exit(1);
+    }
+    return result;
+  };
+
+  await run('fork', 'gh', ['repo', 'fork', 'nexu-io/open-design'], {
+    tolerate: (r) => /already exists|existing fork/i.test(`${r.stdout}\n${r.stderr}`),
+  });
+  await run('clone fork', 'git', [
+    'clone',
+    '--depth', '1',
+    '--single-branch',
+    '--branch', 'main',
+    '--filter=blob:none',
+    '--sparse',
+    `https://github.com/${target.owner}/open-design.git`,
+    checkout,
+  ], { timeout: 240_000 });
+  await run('sparse checkout', 'git', ['sparse-checkout', 'set', 'plugins/community'], { cwd: checkout });
+  await run('checkout branch', 'git', ['checkout', '-b', branch], { cwd: checkout });
+  const dest = join(checkout, 'plugins', 'community', name);
+  if (!flags['dry-run']) {
+    await fsp.rm(dest, { recursive: true, force: true });
+    await fsp.mkdir(dest, { recursive: true });
+    await fsp.cp(absFolder, dest, { recursive: true, force: true, filter: (src) => !src.includes(`${absFolder}/.git`) });
+  }
+  await run('git add', 'git', ['add', `plugins/community/${name}`], { cwd: checkout });
+  await run('git commit', 'git', ['commit', '-m', `Add ${title} plugin`], { cwd: checkout });
+  await run('git push branch', 'git', ['push', '-u', 'origin', branch], { cwd: checkout });
+  const body = [
+    `Add ${title} (${name}) plugin.`,
+    '',
+    `Version: ${manifest.version ?? '0.0.0'}`,
+    manifest.description ? `Description: ${manifest.description}` : '',
+  ].filter(Boolean).join('\n');
+  const pr = await run('open PR form', 'gh', [
+    'pr', 'create',
+    '--repo', 'nexu-io/open-design',
+    '--head', `${target.owner}:${branch}`,
+    '--base', 'main',
+    '--title', `Add ${title} plugin`,
+    '--body', body,
+    '--web',
+  ], { cwd: checkout });
+  const prUrl = extractFirstUrl(pr.stdout || pr.stderr) ?? `https://github.com/${target.owner}/open-design/pull/new/${branch}`;
+  emitPluginWorkflowResult(flags, {
+    ok: true,
+    action: 'open-design-pr',
+    folder: absFolder,
+    login: target.login,
+    owner: target.owner,
+    ownerSource: target.ownerSource,
+    apiRateLimited: target.apiRateLimited,
+    branch,
+    prUrl,
+    checkout,
+    steps,
+  });
+}
+
 async function publishToMarketplaceJson({ catalogPath, meta }) {
   const [{ dirname, resolve }, { mkdir, readFile, writeFile }, { PublishError, upsertMarketplaceJsonEntry }] = await Promise.all([
     import('node:path'),
@@ -3136,6 +5350,202 @@ async function publishToMarketplaceJson({ catalogPath, meta }) {
       plugins: outcome.manifest.plugins.length,
     },
   };
+}
+
+async function resolvePluginGithubTarget({ host = 'github.com', owner, manifest, purpose }) {
+  const version = await execGhBuffered(['--version'], { timeout: 10_000 });
+  if (!version.ok) {
+    console.error('[plugin github] GitHub CLI is required. Install gh from https://cli.github.com/ and retry.');
+    process.exit(1);
+  }
+  let status = await execGhBuffered(['auth', 'status', '--hostname', host, '--active'], { timeout: 10_000 });
+  if (!status.ok && /unknown flag: --active/i.test(`${status.stdout}\n${status.stderr}`)) {
+    status = await execGhBuffered(['auth', 'status', '--hostname', host], { timeout: 10_000 });
+  }
+  if (!status.ok) {
+    console.error(`[plugin github] gh is not authenticated for ${host}.`);
+    if (status.stderr || status.stdout) console.error(status.stderr || status.stdout);
+    console.error('Run: gh auth login -h github.com -s repo,workflow');
+    process.exit(1);
+  }
+  const manifestRepo = parseGithubRepoUrl(typeof manifest?.plugin?.repo === 'string' ? manifest.plugin.repo.trim() : '');
+  const trustedManifestOwner = purpose === 'publish-repo' && manifestRepo && !isPlaceholderRepoOwner(manifestRepo.owner) ? manifestRepo.owner : '';
+  const explicitOwner = typeof owner === 'string' ? owner.trim() : '';
+  if (explicitOwner && isPlaceholderRepoOwner(explicitOwner)) {
+    console.error(`[plugin github] refusing placeholder owner "${explicitOwner}". Pass a real GitHub login or org.`);
+    process.exit(2);
+  }
+  const statusLogin = parseGhAuthStatusLogin(status.stderr || status.stdout);
+  let login = statusLogin;
+  let resolvedOwner = explicitOwner || trustedManifestOwner || statusLogin;
+  let source = explicitOwner ? '--owner' : trustedManifestOwner ? 'plugin.repo' : statusLogin ? 'gh auth status' : '';
+  let apiError = null;
+  if (!resolvedOwner || !login) {
+    const user = await execGhBuffered(['api', 'user', '--hostname', host, '--jq', '.login'], { timeout: 20_000 });
+    if (user.ok && user.stdout.trim()) {
+      login = user.stdout.trim();
+      if (!resolvedOwner) {
+        resolvedOwner = login;
+        source = 'gh api user';
+      }
+    } else {
+      apiError = user;
+    }
+  }
+  if (!resolvedOwner) {
+    console.error(`[plugin github] could not resolve the GitHub owner for ${purpose}.`);
+    if (apiError?.stderr || apiError?.stdout) console.error(apiError.stderr || apiError.stdout);
+    if (apiError && isGhApiRateLimit(apiError)) {
+      const ownerHint = purpose === 'open-design-pr' ? '<github-login-or-fork-owner>' : '<github-login-or-org>';
+      console.error(`GitHub API is rate limited. Re-run with --owner ${ownerHint}, or authenticate/refresh gh and retry.`);
+    } else {
+      console.error('Run: gh auth refresh -h github.com -s repo,workflow');
+      console.error('Or:  gh auth login -h github.com -s repo,workflow');
+      console.error(purpose === 'open-design-pr'
+        ? 'If the fork owner differs from your auth login, pass --owner <github-login-or-fork-owner>.'
+        : 'If this is an org-owned plugin, pass --owner <github-org>.');
+    }
+    process.exit(1);
+  }
+  if (apiError && isGhApiRateLimit(apiError)) {
+    console.warn('[plugin github] GitHub API is rate limited; continuing with the owner resolved locally.');
+  }
+  if (isPlaceholderRepoOwner(resolvedOwner)) {
+    console.error(`[plugin github] refusing placeholder owner "${resolvedOwner}". Pass --owner <github-login-or-org>.`);
+    process.exit(2);
+  }
+  return {
+    host,
+    login: login || resolvedOwner,
+    owner: resolvedOwner,
+    ownerSource: source,
+    apiRateLimited: Boolean(apiError && isGhApiRateLimit(apiError)),
+    version: version.stdout,
+    status: status.stderr || status.stdout,
+  };
+}
+
+function parseGhAuthStatusLogin(output) {
+  const text = String(output ?? '');
+  const activeAccount = /Logged in to [^\s]+ account ([^\s()]+)/i.exec(text);
+  if (activeAccount?.[1]) return activeAccount[1].trim();
+  const tokenAccount = /Token account:\s*([^\s()]+)/i.exec(text);
+  if (tokenAccount?.[1]) return tokenAccount[1].trim();
+  return '';
+}
+
+function isGhApiRateLimit(result) {
+  const text = `${result?.stdout ?? ''}\n${result?.stderr ?? ''}`;
+  return /rate limit exceeded|authenticated requests get a higher rate limit/i.test(text);
+}
+
+function normalizeManifestRepoForOwner(manifest, owner) {
+  const name = String(manifest?.name ?? '').trim();
+  if (!name) {
+    console.error('[plugin repo] manifest.name is required');
+    process.exit(2);
+  }
+  const rawRepo = typeof manifest?.plugin?.repo === 'string' ? manifest.plugin.repo.trim() : '';
+  const parsed = parseGithubRepoUrl(rawRepo);
+  const placeholder = parsed ? isPlaceholderRepoOwner(parsed.owner) : false;
+  const shouldRewrite = !parsed || placeholder || parsed.name.toLowerCase() !== name.toLowerCase() || parsed.owner.toLowerCase() !== owner.toLowerCase();
+  const repoUrl = shouldRewrite ? `https://github.com/${owner}/${name}` : parsed.url;
+  if (shouldRewrite) {
+    if (!manifest.plugin || typeof manifest.plugin !== 'object') manifest.plugin = {};
+    manifest.plugin.repo = repoUrl;
+    manifest.homepage = repoUrl;
+    if (!manifest.author || typeof manifest.author !== 'object') manifest.author = {};
+    manifest.author.url = `https://github.com/${owner}`;
+  }
+  return {
+    changed: shouldRewrite,
+    repoUrl,
+    previousRepoUrl: rawRepo || null,
+  };
+}
+
+function parseGithubRepoUrl(raw) {
+  if (!raw || typeof raw !== 'string') return null;
+  const trimmed = raw.trim().replace(/\.git$/i, '');
+  let owner = '';
+  let name = '';
+  try {
+    const url = new URL(trimmed);
+    if (!/^github\.com$/i.test(url.hostname)) return null;
+    const parts = url.pathname.split('/').filter(Boolean);
+    owner = parts[0] ?? '';
+    name = parts[1] ?? '';
+  } catch {
+    const match = /^([^/\s]+)\/([^/\s]+)$/.exec(trimmed);
+    if (!match) return null;
+    owner = match[1];
+    name = match[2];
+  }
+  if (!owner || !name) return null;
+  return {
+    owner,
+    name,
+    fullName: `${owner}/${name}`,
+    url: `https://github.com/${owner}/${name}`,
+  };
+}
+
+function isPlaceholderRepoOwner(owner) {
+  return /^(open-design-user|<vendor>|vendor|example-user|your-org|your-username|owner|user|username)$/i.test(String(owner ?? '').trim());
+}
+
+function isRepoNotFound(result) {
+  const text = `${result?.stdout ?? ''}\n${result?.stderr ?? ''}`;
+  return /could not resolve to a repository|not found|repository not found/i.test(text);
+}
+
+async function pluginCliValidateFolder(folder) {
+  const result = await execFileBuffered(process.execPath, [process.argv[1], 'plugin', 'validate', folder], {
+    timeout: 120_000,
+  });
+  if (!result.ok) {
+    console.error('[plugin validate] failed after manifest normalization');
+    if (result.stdout) console.error(result.stdout);
+    if (result.stderr) console.error(result.stderr);
+    process.exit(1);
+  }
+  return result;
+}
+
+function emitPluginWorkflowResult(flags, payload) {
+  if (flags.json) {
+    process.stdout.write(JSON.stringify(payload, null, 2) + '\n');
+    return;
+  }
+  if (!payload.ok) {
+    console.error(`[${payload.action}] failed${payload.error?.label ? ` at ${payload.error.label}` : ''}`);
+    if (payload.error?.stderr) console.error(payload.error.stderr);
+    if (payload.error?.stdout) console.error(payload.error.stdout);
+    return;
+  }
+  if (payload.action === 'publish-repo') {
+    console.log(`Plugin published: ${payload.repoUrl}`);
+    if (payload.ownerSource) console.log(`[publish-repo] owner resolved from ${payload.ownerSource}: ${payload.owner}`);
+    if (payload.apiRateLimited) console.log('[publish-repo] GitHub API was rate limited; continued with the locally resolved owner.');
+    if (payload.manifestRewritten) console.log('[publish-repo] manifest repo fields were normalized before publishing.');
+    return;
+  }
+  if (payload.action === 'open-design-pr') {
+    if (payload.ownerSource) console.log(`[open-design-pr] owner resolved from ${payload.ownerSource}: ${payload.owner}`);
+    if (payload.apiRateLimited) console.log('[open-design-pr] GitHub API was rate limited; continued with the locally resolved owner.');
+    console.log(`Open this URL and click Create to file the PR: ${payload.prUrl}`);
+    return;
+  }
+  console.log(JSON.stringify(payload, null, 2));
+}
+
+function safeJson(raw) {
+  try { return JSON.parse(raw); } catch { return null; }
+}
+
+function extractFirstUrl(text) {
+  const match = /https?:\/\/\S+/i.exec(String(text ?? ''));
+  return match ? match[0].replace(/[)\].,]+$/, '') : null;
 }
 
 async function runPluginYank(rest) {
@@ -3225,7 +5635,7 @@ async function runPluginDoctor(rest) {
     process.exit(2);
   }
   const url = `${(await pluginDaemonUrl(flags)).replace(/\/$/, '')}/api/plugins/${encodeURIComponent(id)}/doctor`;
-  const resp = await fetch(url, { method: 'POST' });
+  const resp = await pluginFetch(flags, url, { method: 'POST' });
   if (!resp.ok) {
     console.error(`POST /api/plugins/${id}/doctor failed: ${resp.status} ${await resp.text()}`);
     process.exit(1);
@@ -3283,7 +5693,7 @@ async function runPluginReplay(rest) {
     process.exit(2);
   }
   const url = `${(await pluginDaemonUrl(flags)).replace(/\/$/, '')}/api/runs/${encodeURIComponent(runId)}/replay`;
-  const resp = await fetch(url, {
+  const resp = await pluginFetch(flags, url, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ snapshotId }),
@@ -3328,7 +5738,7 @@ async function runPluginTrust(rest) {
   }
   const action = flags.revoke ? 'revoke' : 'grant';
   const url = `${(await pluginDaemonUrl(flags)).replace(/\/$/, '')}/api/plugins/${encodeURIComponent(id)}/trust`;
-  const resp = await fetch(url, {
+  const resp = await pluginFetch(flags, url, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ capabilities: caps, action }),
@@ -3381,6 +5791,13 @@ async function uiDaemonUrl(flags) {
   return cliDaemonUrl(flags);
 }
 
+function uiRequestHeaders(flags, json = false) {
+  return {
+    ...(json ? { 'content-type': 'application/json' } : {}),
+    ...(workspaceHeadersFromExplicitFlags(flags) ?? {}),
+  };
+}
+
 async function runUiList(rest) {
   const flags = parseFlags(rest, { string: UI_STRING_FLAGS, boolean: UI_BOOLEAN_FLAGS });
   const base = (await uiDaemonUrl(flags)).replace(/\/$/, '');
@@ -3391,7 +5808,7 @@ async function runUiList(rest) {
     console.error('Usage: od ui list --run <runId> | --project <projectId>');
     process.exit(2);
   }
-  const resp = await fetch(url);
+  const resp = await fetch(url, { headers: uiRequestHeaders(flags) });
   if (!resp.ok) {
     console.error(`GET ${url} failed: ${resp.status} ${await resp.text()}`);
     process.exit(1);
@@ -3417,6 +5834,8 @@ async function runUiShow(rest) {
     && a !== flags['daemon-url']
     && a !== flags.run
     && a !== flags.project
+    && a !== flags.workspace
+    && a !== flags['workspace-member']
     && a !== flags.value
     && a !== flags['value-json']
     && a !== flags.plugin
@@ -3430,7 +5849,7 @@ async function runUiShow(rest) {
     process.exit(2);
   }
   const url = `${(await uiDaemonUrl(flags)).replace(/\/$/, '')}/api/runs/${encodeURIComponent(runId)}/genui/${encodeURIComponent(surfaceId)}`;
-  const resp = await fetch(url);
+  const resp = await fetch(url, { headers: uiRequestHeaders(flags) });
   if (!resp.ok) {
     console.error(`GET ${url} failed: ${resp.status} ${await resp.text()}`);
     process.exit(1);
@@ -3453,6 +5872,8 @@ async function runUiRespond(rest) {
     && a !== flags['daemon-url']
     && a !== flags.run
     && a !== flags.project
+    && a !== flags.workspace
+    && a !== flags['workspace-member']
     && a !== flags.value
     && a !== flags['value-json']
     && a !== flags.plugin
@@ -3482,7 +5903,7 @@ async function runUiRespond(rest) {
   const url = `${(await uiDaemonUrl(flags)).replace(/\/$/, '')}/api/runs/${encodeURIComponent(runId)}/genui/${encodeURIComponent(surfaceId)}/respond`;
   const resp = await fetch(url, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: uiRequestHeaders(flags, true),
     body: JSON.stringify({ value, respondedBy: 'user' }),
   });
   const data = await resp.json().catch(() => ({}));
@@ -3503,6 +5924,8 @@ async function runUiRevoke(rest) {
     && a !== flags['daemon-url']
     && a !== flags.run
     && a !== flags.project
+    && a !== flags.workspace
+    && a !== flags['workspace-member']
     && a !== flags.value
     && a !== flags['value-json']
     && a !== flags.plugin
@@ -3516,7 +5939,10 @@ async function runUiRevoke(rest) {
     process.exit(2);
   }
   const url = `${(await uiDaemonUrl(flags)).replace(/\/$/, '')}/api/projects/${encodeURIComponent(projectId)}/genui/${encodeURIComponent(surfaceId)}/revoke`;
-  const resp = await fetch(url, { method: 'POST' });
+  const resp = await fetch(url, {
+    method: 'POST',
+    headers: uiRequestHeaders(flags),
+  });
   const data = await resp.json().catch(() => ({}));
   if (!resp.ok) {
     console.error(`POST ${url} failed: ${resp.status} ${JSON.stringify(data)}`);
@@ -3535,6 +5961,8 @@ async function runUiPrefill(rest) {
     && a !== flags['daemon-url']
     && a !== flags.run
     && a !== flags.project
+    && a !== flags.workspace
+    && a !== flags['workspace-member']
     && a !== flags.value
     && a !== flags['value-json']
     && a !== flags.plugin
@@ -3560,7 +5988,7 @@ async function runUiPrefill(rest) {
   const url = `${(await uiDaemonUrl(flags)).replace(/\/$/, '')}/api/projects/${encodeURIComponent(projectId)}/genui/prefill`;
   const resp = await fetch(url, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: uiRequestHeaders(flags, true),
     body: JSON.stringify({
       snapshotId,
       surfaceId,
@@ -3594,7 +6022,10 @@ function printUiHelp() {
                                                      Pre-answer a surface so the run never broadcasts it.
 
 Common options:
-  --daemon-url <url>   Open Design daemon HTTP base (default OD_DAEMON_URL, OD_SIDECAR_IPC_PATH discovery, or http://127.0.0.1:7456).
+  --daemon-url <url>   OpenDesign daemon HTTP base (default OD_DAEMON_URL, OD_SIDECAR_IPC_PATH discovery, or http://127.0.0.1:7456).
+  --workspace <id>     Explicit Workspace id for a bound project or run.
+  --workspace-member <id>
+                       Explicit Workspace member id for a bound project or run.
   --json               Emit raw JSON (suitable for scripts) instead of human-readable output.`);
 }
 
@@ -3610,6 +6041,8 @@ function printPluginHelp() {
   od plugin upgrade <id>                  Re-install a plugin from its recorded source.
   od plugin uninstall <id>                Remove a plugin from the registry + on-disk staging.
   od plugin apply <id> [--inputs <json>]  Compute an ApplyResult (preview) for a plugin.
+  od plugin duplicate <id> [--name <n>]   Copy a plugin HTML example into a new project
+                                          without starting an agent run.
   od plugin doctor <id>                   Lint a plugin's manifest, atoms and resolved refs.
   od plugin canon <snapshotId>            Print the canonical system-prompt block for a snapshot.
                                           (--check <file> for byte-equality fixtures.)
@@ -3625,19 +6058,29 @@ function printPluginHelp() {
   od plugin diff <a> <b> [--json]         Compare two installed plugins by id.
   od plugin replay <runId> --snapshot-id <id>
                                           Re-emit the immutable snapshot a run launched against.
+  od plugin run <id> --project <id> [--workspace <id> --workspace-member <id>]
+                                          Apply a plugin and start a project run.
+  od plugin snapshots list --project <id> [--workspace <id> --workspace-member <id>]
+                                          List snapshots applied to a project.
   od plugin trust <id> --capabilities a,b
                                           Stage a capability grant (full mutation lands Phase 3).
   od plugin validate <folder> [--json]    Lint a plugin folder before installing
                                           (manifest parse + atom + ref checks).
   od plugin pack <folder> [--out <path>]  Build a .tgz archive of a plugin
                                           folder for distribution.
+  od plugin candidates list --project <id> [--workspace <id> --workspace-member <id>]
+                                          List persisted skill-to-plugin candidates.
+  od plugin publish-repo <folder>         Create/update the author's public
+                                          GitHub repo for a plugin folder.
+  od plugin open-design-pr <folder>       Push a community-catalog branch and
+                                          open the nexu-io/open-design PR form.
   od plugin publish <folder> --to open-design|anthropics-skills|awesome-agent-skills|clawhub|skills-sh
                                           Prepare a registry submission link.
   od plugin login [--host github.com]      Authenticate registry publishing via gh.
   od plugin whoami [--host github.com]     Show the gh account used for publishing.
 
 Common options:
-  --daemon-url <url>   Open Design daemon HTTP base (default OD_DAEMON_URL, OD_SIDECAR_IPC_PATH discovery, or http://127.0.0.1:7456).
+  --daemon-url <url>   OpenDesign daemon HTTP base (default OD_DAEMON_URL, OD_SIDECAR_IPC_PATH discovery, or http://127.0.0.1:7456).
   --json               Emit raw JSON (suitable for scripts) instead of human-readable output.
 
 Installs support local folders, github:owner/repo refs, HTTPS .tgz archives,
@@ -3650,7 +6093,7 @@ and bare marketplace names resolved through configured registry sources.`);
 // Plan §6 Phase 1 follow-up + Phase 2C: thin CLI wrappers over the
 // existing daemon HTTP endpoints (POST /api/projects, POST /api/runs,
 // GET /api/projects/:id/files, …). The §12.5 walkthrough relies on
-// these so a code agent can drive Open Design end-to-end without
+// these so a code agent can drive OpenDesign end-to-end without
 // hitting `/api/*` directly. Spec §11.7 invariant: every UI feature is
 // reachable via the CLI; we wrap rather than duplicate.
 // ---------------------------------------------------------------------------
@@ -3659,15 +6102,771 @@ async function projectDaemonUrl(flags) {
   return cliDaemonUrl(flags);
 }
 
+function printShareUsage() {
+  console.log(`Usage:
+  od share open-design [--locale <locale>] [--platform <id>] [--json]
+  od share url --url <https-url> [--title <title>] [--text <text>]
+               [--copy-text <text>] [--locale <locale>] [--platform <id>] [--json]
+
+Platforms:
+  x, linkedin, facebook, reddit, telegram, whatsapp, weibo, line, instagram, xiaohongshu
+
+Common options:
+  --daemon-url <url>   OpenDesign daemon HTTP base.
+  --json               Emit raw JSON.`);
+}
+
+async function runShare(args) {
+  const wantsHelp = args.length === 0
+    || args[0] === 'help'
+    || args.includes('--help')
+    || args.includes('-h');
+  if (wantsHelp) {
+    printShareUsage();
+    process.exit(args.length === 0 ? 2 : 0);
+  }
+
+  const sub = args[0] && !args[0].startsWith('-') ? args[0] : 'open-design';
+  const rest = sub === args[0] ? args.slice(1) : args;
+  const flags = parseFlags(rest, {
+    string: SHARE_STRING_FLAGS,
+    boolean: SHARE_BOOLEAN_FLAGS,
+  });
+  const base = (await cliDaemonUrl(flags)).replace(/\/$/, '');
+  const positional = positionalArgs(rest, SHARE_STRING_FLAGS);
+  const url = flags.url ?? positional[0];
+  const body = sub === 'url'
+    ? {
+        kind: 'project-html',
+        url,
+        title: flags.title,
+        text: flags.text,
+        copyText: flags['copy-text'],
+        locale: flags.locale,
+      }
+    : {
+        kind: 'open-design-repo',
+        title: flags.title,
+        text: flags.text,
+        copyText: flags['copy-text'],
+        locale: flags.locale,
+      };
+
+  if (sub !== 'open-design' && sub !== 'url') {
+    console.error(`unknown share target: ${sub}`);
+    printShareUsage();
+    process.exit(2);
+  }
+  if (body.kind === 'project-html' && !body.url) {
+    console.error('Usage: od share url --url <https-url>');
+    process.exit(2);
+  }
+
+  const resp = await fetch(`${base}/api/social-share`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) return structuredHttpFailure(resp);
+  const data = await resp.json();
+  if (flags.platform) {
+    const target = (data.platforms ?? []).find((item) => item.platform === flags.platform);
+    if (!target) {
+      console.error(`unknown platform: ${flags.platform}`);
+      process.exit(2);
+    }
+    if (flags.json) return process.stdout.write(JSON.stringify(target, null, 2) + '\n');
+    if (target.shareUrl) {
+      console.log(target.shareUrl);
+      return;
+    }
+    console.log(data.copyText);
+    if (target.entryUrl) console.log(target.entryUrl);
+    return;
+  }
+  if (flags.json) return process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+  console.log(data.copyText);
+  for (const target of data.platforms ?? []) {
+    console.log(`${target.platform}\t${target.shareUrl ?? target.entryUrl ?? '-'}`);
+  }
+}
+
+function printFigmaUsage() {
+  console.log(`Usage:
+  od figma import --project <id> --file <path.fig> [--notes "<text>"]
+                  [--build] [--prompt "<text>" | --prompt-file <path|->] [--json]
+  od figma import --project <id> --figma-url <url> [--notes "<text>"] [--json]
+
+Imports a Figma design into a project. A .fig file is decoded fully offline
+(no Figma account); a Figma URL runs through the od-figma-migration scenario
+(OAuth). Either way it stages a figma/ snapshot the agent reshapes into a
+webpage.
+
+Flags:
+  --project <id>       Target project id (required).
+  --file <path.fig>    Local .fig to decode offline.
+  --figma-url <url>    Figma file URL (https://figma.com/(file|design)/<key>).
+  --notes "<text>"     Design brief folded into the reshape prompt.
+  --build              After import, start a run that builds the webpage.
+  --prompt / --prompt-file   Override the build prompt (file or - for stdin).
+  --daemon-url <url>   OpenDesign daemon HTTP base.
+  --workspace <id>     Explicit Workspace id for the bound project.
+  --workspace-member <id>
+                       Explicit Workspace member id for the bound project.
+  --json               Emit raw JSON.`);
+}
+
+async function runFigma(args) {
+  const sub = args.find((a) => !a.startsWith('-'));
+  if (!sub || sub === 'help' || args.includes('--help') || args.includes('-h')) {
+    printFigmaUsage();
+    process.exit(sub ? 0 : 2);
+  }
+  if (sub !== 'import') {
+    console.error(`unknown subcommand: od figma ${sub}`);
+    printFigmaUsage();
+    process.exit(2);
+  }
+  const idx = args.indexOf(sub);
+  const rest = [...args.slice(0, idx), ...args.slice(idx + 1)];
+  const flags = parseFlags(rest, {
+    string: FIGMA_PROJECT_RESOURCE_STRING_FLAGS,
+    boolean: FIGMA_BOOLEAN_FLAGS,
+  });
+  const base = (await cliDaemonUrl(flags)).replace(/\/$/, '');
+  const workspaceHeaders = workspaceHeadersFromExplicitFlags(flags) ?? {};
+
+  if (!flags.project) {
+    console.error('--project <id> is required');
+    process.exit(2);
+  }
+  const file = flags.file;
+  const figmaUrl = flags['figma-url'];
+  if (!file && !figmaUrl) {
+    console.error('one of --file <path.fig> or --figma-url <url> is required');
+    process.exit(2);
+  }
+
+  // Figma URL → the existing migration scenario (OAuth lives in the run
+  // pipeline). Start it through the same /api/runs path `od run start` uses.
+  if (figmaUrl && !file) {
+    const runBody = {
+      projectId: flags.project,
+      pluginId: 'od-figma-migration',
+      pluginInputs: { figmaUrl, ...(flags.notes ? { notes: flags.notes } : {}) },
+    };
+    const runResp = await fetch(`${base}/api/runs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...workspaceHeaders },
+      body: JSON.stringify(runBody),
+    });
+    const runData = await runResp.json().catch(() => ({}));
+    if (!runResp.ok) {
+      console.error(`POST /api/runs failed: ${runResp.status} ${JSON.stringify(runData)}`);
+      process.exit(1);
+    }
+    if (flags.json) return process.stdout.write(JSON.stringify(runData, null, 2) + '\n');
+    console.log(`[figma] migration run started ${runData.runId}`);
+    return;
+  }
+
+  // Offline .fig path → multipart upload to the import endpoint.
+  let bytes;
+  try {
+    bytes = readFileSync(file);
+  } catch (err) {
+    console.error(`cannot read ${file}: ${err.message}`);
+    process.exit(2);
+  }
+  const form = new FormData();
+  form.append('file', new Blob([bytes]), basename(file));
+  if (flags.notes) form.append('notes', String(flags.notes));
+  const resp = await fetch(`${base}/api/projects/${encodeURIComponent(flags.project)}/figma/import`, {
+    method: 'POST',
+    headers: workspaceHeaders,
+    body: form,
+  });
+  if (!resp.ok) return structuredHttpFailure(resp);
+  const data = await resp.json();
+
+  if (flags.json && !flags.build) {
+    return process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+  }
+  const inv = data.inventory ?? {};
+  if (!flags.json) {
+    console.log(`[figma] imported "${data.label}" → ${data.snapshotDir}/`);
+    console.log(`  ${inv.decoded ? 'decoded' : 'assets-only'}: ${inv.nodeCount} nodes, ${inv.pageCount} pages, ${inv.frameCount} frames, ${inv.componentCount} components`);
+    console.log(`  ${(inv.colors ?? []).length} colors, ${(inv.fonts ?? []).length} fonts, ${inv.assetCount} assets${inv.hasThumbnail ? ', + preview' : ''}`);
+    for (const w of inv.warnings ?? []) console.log(`  ! ${w}`);
+  }
+
+  if (flags.build) {
+    const override = await readPromptFromFlags(flags);
+    const message = override || data.suggestedPrompt;
+    const runResp = await fetch(`${base}/api/runs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...workspaceHeaders },
+      body: JSON.stringify({ projectId: flags.project, message }),
+    });
+    const runData = await runResp.json().catch(() => ({}));
+    if (!runResp.ok) {
+      console.error(`build run failed: ${runResp.status} ${JSON.stringify(runData)}`);
+      process.exit(1);
+    }
+    if (flags.json) return process.stdout.write(JSON.stringify({ ...data, build: runData }, null, 2) + '\n');
+    console.log(`[figma] build run started ${runData.runId}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Subcommand: od brand …
+//
+// Headless surface for the Brands library. This is the dual-track contract:
+// every capability the Brands UI exposes (extract from a URL, list, inspect,
+// delete) is reachable here so an external agent (hermes-agent, openclaw,
+// scripted job) can drive the brand lifecycle without rendering a page.
+// Storage is /api/brands on the local daemon; a "brand" registers a `user:<id>`
+// design system under the hood, so applying a brand reuses the existing
+// design-system apply flow — there is no separate brandId apply path.
+// ---------------------------------------------------------------------------
+
+// Derive a short domain for list output from a brand's source URL.
+function brandDomainForCli(sourceUrl) {
+  if (typeof sourceUrl !== 'string' || sourceUrl.trim().length === 0) return '-';
+  try {
+    const u = new URL(/^[a-z]+:\/\//i.test(sourceUrl) ? sourceUrl : `https://${sourceUrl}`);
+    return u.hostname.replace(/^www\./, '') || '-';
+  } catch {
+    return sourceUrl;
+  }
+}
+
+function formatBrandRow(summary) {
+  const meta = summary?.meta ?? {};
+  const name = summary?.brand?.name || meta.id || '-';
+  return [
+    meta.id ?? '-',
+    name,
+    brandDomainForCli(meta.sourceUrl),
+    meta.status ?? '-',
+  ].join('\t');
+}
+
+async function runBrand(args) {
+  if (args.length === 0 || isBrandHelpArg(args[0])
+      || args.includes('--help') || args.includes('-h')) {
+    console.log(BRAND_USAGE);
+    process.exit(args.length === 0 ? 2 : 0);
+  }
+  const sub = args[0];
+  const rest = args.slice(1);
+  switch (sub) {
+    case 'list':     return runBrandList(rest);
+    case 'create':   return runBrandCreate(rest);
+    case 'extract':  return runBrandCreate(rest);
+    case 'continue': return runBrandContinue(rest);
+    case 'preview':  return runBrandPreview(rest);
+    case 'finalize': return runBrandFinalize(rest);
+    case 'extract-from-html': return runBrandExtractFromHtml(rest);
+    case 'get':      return runBrandGet(rest);
+    case 'show':     return runBrandGet(rest);
+    case 'delete':   return runBrandDelete(rest);
+    case 'remove':   return runBrandDelete(rest);
+    default:
+      console.error(`unknown subcommand: od brand ${sub}`);
+      console.log(BRAND_USAGE);
+      process.exit(2);
+  }
+}
+
+async function runBrandList(rest) {
+  let flags;
+  try {
+    flags = parseFlags(rest, { string: BRAND_STRING_FLAGS, boolean: BRAND_BOOLEAN_FLAGS });
+  } catch (err) {
+    console.error(err.message);
+    process.exit(2);
+  }
+  const base = await cliDaemonBaseUrl(flags);
+  let resp;
+  try {
+    resp = await fetch(`${base}/api/brands`);
+  } catch (err) {
+    surfaceFetchError(err, base);
+    process.exit(3);
+  }
+  if (!resp.ok) return structuredHttpFailure(resp);
+  const data = await resp.json();
+  if (flags.json) {
+    process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+    return;
+  }
+  const brands = Array.isArray(data?.brands) ? data.brands : [];
+  if (brands.length === 0) {
+    console.log('No brands yet. Extract one with: od brand create <url>');
+    return;
+  }
+  console.log('# id\tname\tdomain\tstatus');
+  for (const summary of brands) console.log(formatBrandRow(summary));
+}
+
+async function runBrandCreate(rest) {
+  let flags;
+  try {
+    flags = parseFlags(rest, { string: BRAND_STRING_FLAGS, boolean: BRAND_BOOLEAN_FLAGS });
+  } catch (err) {
+    console.error(err.message);
+    process.exit(2);
+  }
+  const positional = positionalArgs(rest, BRAND_STRING_FLAGS);
+  // The URL may arrive as a positional, or — for parity with other long-input
+  // subcommands — via --prompt-file <path|-> (a file or stdin). The positional
+  // wins when both are present.
+  let url = positional[0];
+  if (!url) {
+    const fromFile = await readPromptFromFlags(flags);
+    if (typeof fromFile === 'string') url = fromFile.trim();
+  }
+  if (!url) {
+    console.error('Usage: od brand create <url> [--json]\n' +
+      '       od brand create --prompt-file <path|-> [--json]');
+    process.exit(2);
+  }
+
+  const base = await cliDaemonBaseUrl(flags);
+  let resp;
+  try {
+    resp = await fetch(`${base}/api/brands`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json' },
+      body: JSON.stringify({
+        url,
+        ...(typeof flags.locale === 'string' && flags.locale.trim()
+          ? { locale: flags.locale.trim() }
+          : {}),
+      }),
+    });
+  } catch (err) {
+    surfaceFetchError(err, base);
+    process.exit(3);
+  }
+  if (!resp.ok) {
+    return structuredHttpFailure(resp);
+  }
+
+  // Extraction is agent-driven: this kickoff reserves the brand + a backing
+  // project with the target site open in a browser tab and a seeded prompt.
+  // The agent then runs the chain (measure → synthesize → `od brand finalize`).
+  const data = await resp.json();
+  if (flags.json) {
+    process.stdout.write(JSON.stringify({ ok: true, ...data }, null, 2) + '\n');
+    return;
+  }
+  process.stderr.write(
+    '[brand] extraction project created — open it to run the agent, ' +
+    `then it self-finalizes with: od brand finalize ${data?.id ?? ''}\n`,
+  );
+  // Clean stdout result: "<id>\t<projectId>" so jq / cut / xargs can chain.
+  console.log(`${data?.id ?? ''}\t${data?.projectId ?? ''}`);
+}
+
+async function runBrandFinalize(rest) {
+  let flags;
+  try {
+    flags = parseFlags(rest, { string: BRAND_STRING_FLAGS, boolean: BRAND_BOOLEAN_FLAGS });
+  } catch (err) {
+    console.error(err.message);
+    process.exit(2);
+  }
+  const id = positionalArgs(rest, BRAND_STRING_FLAGS)[0];
+  if (!id) {
+    console.error('Usage: od brand finalize <id> [--project <projectId>] [--json]');
+    process.exit(2);
+  }
+  const base = await cliDaemonBaseUrl(flags);
+  const body = {};
+  if (typeof flags.project === 'string' && flags.project.trim()) body.projectId = flags.project.trim();
+  if (typeof flags.locale === 'string' && flags.locale.trim()) body.locale = flags.locale.trim();
+  let resp;
+  try {
+    resp = await fetch(`${base}/api/brands/${encodeURIComponent(id)}/finalize`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json' },
+      body: JSON.stringify(body),
+    });
+  } catch (err) {
+    surfaceFetchError(err, base);
+    process.exit(3);
+  }
+  if (resp.status === 404) {
+    console.error(`brand not found: ${id}`);
+    process.exit(4);
+  }
+  if (!resp.ok) return structuredHttpFailure(resp);
+  const data = await resp.json();
+  if (flags.json) {
+    process.stdout.write(JSON.stringify({ ok: true, ...data }, null, 2) + '\n');
+    return;
+  }
+  const name = data?.brand?.name ?? data?.id ?? id;
+  console.log(`${data?.id ?? id}\t${name}`);
+  if (data?.designSystemId) process.stderr.write(`[brand] registered design system ${data.designSystemId}\n`);
+}
+
+async function runBrandContinue(rest) {
+  let flags;
+  try {
+    flags = parseFlags(rest, { string: BRAND_STRING_FLAGS, boolean: BRAND_BOOLEAN_FLAGS });
+  } catch (err) {
+    console.error(err.message);
+    process.exit(2);
+  }
+  const id = positionalArgs(rest, BRAND_STRING_FLAGS)[0];
+  if (!id) {
+    console.error('Usage: od brand continue <id> [--json]');
+    process.exit(2);
+  }
+  const base = await cliDaemonBaseUrl(flags);
+  let resp;
+  try {
+    resp = await fetch(`${base}/api/brands/${encodeURIComponent(id)}/continue-extraction`, {
+      method: 'POST',
+      headers: { accept: 'application/json' },
+    });
+  } catch (err) {
+    surfaceFetchError(err, base);
+    process.exit(3);
+  }
+  if (resp.status === 404) {
+    console.error(`brand not found: ${id}`);
+    process.exit(4);
+  }
+  if (!resp.ok) return structuredHttpFailure(resp);
+  const data = await resp.json();
+  if (flags.json) {
+    process.stdout.write(JSON.stringify({ ok: true, ...data }, null, 2) + '\n');
+    return;
+  }
+  console.log([
+    data?.id ?? id,
+    data?.status ?? '-',
+    data?.projectId ?? '',
+    data?.conversationId ?? '',
+  ].join('\t'));
+}
+
+// Read a flag value as file content (or stdin when the value is "-"). Returns
+// null when the flag is unset. Mirrors readPromptFromFlags' file/stdin handling
+// but for an arbitrary flag name (--html-file / --css-file).
+async function readFileFlagOrStdin(value) {
+  if (typeof value !== 'string' || value.length === 0) return null;
+  if (value === '-') {
+    return await new Promise((resolve, reject) => {
+      let buf = '';
+      process.stdin.setEncoding('utf8');
+      process.stdin.on('data', (chunk) => { buf += chunk; });
+      process.stdin.on('end', () => resolve(buf));
+      process.stdin.on('error', reject);
+    });
+  }
+  const { readFile } = await import('node:fs/promises');
+  return await readFile(value, 'utf8');
+}
+
+// od brand extract-from-html <id> --html-file <path|-> [--css-file <path>]
+//   [--base-url <url>] [--json]
+// Re-runs extraction against pre-captured rendered HTML (e.g. a page an external
+// agent already loaded past an anti-bot wall), mirroring the UI's browser-assist
+// confirm path so the capability is reachable from the CLI too.
+async function runBrandExtractFromHtml(rest) {
+  let flags;
+  try {
+    flags = parseFlags(rest, { string: BRAND_STRING_FLAGS, boolean: BRAND_BOOLEAN_FLAGS });
+  } catch (err) {
+    console.error(err.message);
+    process.exit(2);
+  }
+  const id = positionalArgs(rest, BRAND_STRING_FLAGS)[0];
+  if (!id) {
+    console.error('Usage: od brand extract-from-html <id> --html-file <path|-> '
+      + '[--css-file <path>] [--base-url <url>] [--json]');
+    process.exit(2);
+  }
+  let html;
+  try {
+    html = await readFileFlagOrStdin(flags['html-file']);
+  } catch (err) {
+    console.error(`could not read --html-file: ${err.message}`);
+    process.exit(2);
+  }
+  if (!html || !html.trim()) {
+    console.error('--html-file <path|-> is required (the rendered page HTML)');
+    process.exit(2);
+  }
+  let css = '';
+  if (typeof flags['css-file'] === 'string' && flags['css-file'].length > 0) {
+    try {
+      css = (await readFileFlagOrStdin(flags['css-file'])) ?? '';
+    } catch (err) {
+      console.error(`could not read --css-file: ${err.message}`);
+      process.exit(2);
+    }
+  }
+  const body = { html };
+  if (css.trim()) body.css = css;
+  if (typeof flags['base-url'] === 'string' && flags['base-url'].trim()) {
+    body.baseUrl = flags['base-url'].trim();
+  }
+
+  const base = await cliDaemonBaseUrl(flags);
+  let resp;
+  try {
+    resp = await fetch(`${base}/api/brands/${encodeURIComponent(id)}/extract-from-html`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json' },
+      body: JSON.stringify(body),
+    });
+  } catch (err) {
+    surfaceFetchError(err, base);
+    process.exit(3);
+  }
+  if (resp.status === 404) {
+    console.error(`brand not found: ${id}`);
+    process.exit(4);
+  }
+  if (!resp.ok) return structuredHttpFailure(resp);
+  const data = await resp.json();
+  if (flags.json) {
+    process.stdout.write(JSON.stringify({ ok: true, ...data }, null, 2) + '\n');
+    return;
+  }
+  const name = data?.brand?.name ?? data?.id ?? id;
+  console.log(`${data?.id ?? id}\t${name}`);
+  if (data?.designSystemId) {
+    process.stderr.write(`[brand] registered design system ${data.designSystemId}\n`);
+  }
+}
+
+async function runBrandPreview(rest) {
+  let flags;
+  try {
+    flags = parseFlags(rest, { string: BRAND_STRING_FLAGS, boolean: BRAND_BOOLEAN_FLAGS });
+  } catch (err) {
+    console.error(err.message);
+    process.exit(2);
+  }
+  const id = positionalArgs(rest, BRAND_STRING_FLAGS)[0];
+  if (!id) {
+    console.error('Usage: od brand preview <id> [--project <projectId>] [--json]');
+    process.exit(2);
+  }
+  const base = await cliDaemonBaseUrl(flags);
+  const body = {};
+  if (typeof flags.project === 'string' && flags.project.trim()) body.projectId = flags.project.trim();
+  if (typeof flags.locale === 'string' && flags.locale.trim()) body.locale = flags.locale.trim();
+  let resp;
+  try {
+    resp = await fetch(`${base}/api/brands/${encodeURIComponent(id)}/preview`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json' },
+      body: JSON.stringify(body),
+    });
+  } catch (err) {
+    surfaceFetchError(err, base);
+    process.exit(3);
+  }
+  if (resp.status === 404) {
+    console.error(`brand not found: ${id}`);
+    process.exit(4);
+  }
+  if (!resp.ok) return structuredHttpFailure(resp);
+  const data = await resp.json();
+  if (flags.json) {
+    process.stdout.write(JSON.stringify({ ok: true, ...data }, null, 2) + '\n');
+    return;
+  }
+  // Clean stdout result: "<id>\t<file>" so the agent can confirm the path.
+  console.log(`${data?.id ?? id}\t${data?.file ?? 'brand.html'}`);
+}
+
+async function runBrandGet(rest) {
+  let flags;
+  try {
+    flags = parseFlags(rest, { string: BRAND_STRING_FLAGS, boolean: BRAND_BOOLEAN_FLAGS });
+  } catch (err) {
+    console.error(err.message);
+    process.exit(2);
+  }
+  const id = positionalArgs(rest, BRAND_STRING_FLAGS)[0];
+  if (!id) {
+    console.error('Usage: od brand get <id> [--json]');
+    process.exit(2);
+  }
+  const base = await cliDaemonBaseUrl(flags);
+  let resp;
+  try {
+    resp = await fetch(`${base}/api/brands/${encodeURIComponent(id)}`);
+  } catch (err) {
+    surfaceFetchError(err, base);
+    process.exit(3);
+  }
+  if (resp.status === 404) {
+    console.error(`brand not found: ${id}`);
+    process.exit(4);
+  }
+  if (!resp.ok) return structuredHttpFailure(resp);
+  const data = await resp.json();
+  if (flags.json) {
+    process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+    return;
+  }
+  const meta = data?.meta ?? {};
+  const brand = data?.brand ?? null;
+  console.log(`id\t${meta.id ?? id}`);
+  console.log(`name\t${brand?.name ?? '-'}`);
+  console.log(`domain\t${brandDomainForCli(meta.sourceUrl)}`);
+  console.log(`status\t${meta.status ?? '-'}`);
+  if (meta.designSystemId) console.log(`designSystem\t${meta.designSystemId}`);
+  if (meta.projectId) console.log(`project\t${meta.projectId}`);
+  if (Array.isArray(meta.systemFiles) && meta.systemFiles.length > 0) {
+    console.log(`files\t${meta.systemFiles.join(' ')}`);
+  }
+  if (brand?.tagline) console.log(`tagline\t${brand.tagline}`);
+  if (Array.isArray(brand?.colors) && brand.colors.length > 0) {
+    console.log(`colors\t${brand.colors.map((c) => c.hex).join(' ')}`);
+  }
+  if (meta.error) console.log(`error\t${meta.error}`);
+}
+
+async function runBrandDelete(rest) {
+  let flags;
+  try {
+    flags = parseFlags(rest, { string: BRAND_STRING_FLAGS, boolean: BRAND_BOOLEAN_FLAGS });
+  } catch (err) {
+    console.error(err.message);
+    process.exit(2);
+  }
+  const id = positionalArgs(rest, BRAND_STRING_FLAGS)[0];
+  if (!id) {
+    console.error('Usage: od brand delete <id> [--json]');
+    process.exit(2);
+  }
+  const base = await cliDaemonBaseUrl(flags);
+  let resp;
+  try {
+    resp = await fetch(`${base}/api/brands/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  } catch (err) {
+    surfaceFetchError(err, base);
+    process.exit(3);
+  }
+  if (!resp.ok) return structuredHttpFailure(resp);
+  const data = await resp.json().catch(() => ({ ok: true }));
+  if (flags.json) {
+    process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+    return;
+  }
+  console.log(`[brand] deleted ${id}`);
+}
+
+function normalizeChatSessionModeFlag(value) {
+  if (value == null) return undefined;
+  const mode = String(value).trim().toLowerCase();
+  if (mode === 'design' || mode === 'chat' || mode === 'plan') return mode;
+  console.error('--mode must be one of: design, chat, plan');
+  process.exit(2);
+}
+
 function safeReadJsonFile(p) {
   try {
-    const fs = (require ? require('node:fs') : null);
-    if (!fs) return null;
-    if (p === '-') return JSON.parse(fs.readFileSync(0, 'utf8'));
-    return JSON.parse(fs.readFileSync(p, 'utf8'));
+    if (p === '-') return JSON.parse(readFileSync(0, 'utf8'));
+    return JSON.parse(readFileSync(p, 'utf8'));
   } catch {
     return null;
   }
+}
+
+function collectCliPositionals(argv, stringFlags = new Set()) {
+  const out = [];
+  for (let i = 0; i < argv.length; i++) {
+    const value = argv[i];
+    if (value === '--') {
+      out.push(...argv.slice(i + 1));
+      break;
+    }
+    if (typeof value === 'string' && value.startsWith('--')) {
+      const eq = value.indexOf('=');
+      const key = eq >= 0 ? value.slice(2, eq) : value.slice(2);
+      if (eq < 0 && stringFlags.has(key)) i++;
+      continue;
+    }
+    out.push(value);
+  }
+  return out;
+}
+
+async function resolveFolderPathForCli(rawPath) {
+  const path = await import('node:path');
+  const os = await import('node:os');
+  const raw = typeof rawPath === 'string' && rawPath.trim().length > 0
+    ? rawPath.trim()
+    : (process.env.INIT_CWD || process.cwd());
+  const expanded = raw === '~'
+    ? os.homedir()
+    : raw.startsWith(`~${path.sep}`)
+      ? path.join(os.homedir(), raw.slice(2))
+      : raw;
+  return path.resolve(expanded);
+}
+
+async function basenameForCli(folderPath) {
+  const path = await import('node:path');
+  return path.basename(folderPath) || 'Imported project';
+}
+
+async function readRunMessageFromFlags(flags, fallback = null) {
+  if (typeof flags.message === 'string' && flags.message.length > 0) {
+    return flags.message;
+  }
+  const prompt = await readPromptFromFlags(flags);
+  if (typeof prompt === 'string' && prompt.length > 0) return prompt;
+  return fallback;
+}
+
+async function postJsonToDaemon(base, route, body, headers = {}) {
+  let resp;
+  try {
+    resp = await fetch(`${base}${route}`, {
+      method:  'POST',
+      headers: { 'content-type': 'application/json', ...headers },
+      body:    JSON.stringify(body),
+    });
+  } catch (err) {
+    surfaceFetchError(err, base);
+    process.exit(3);
+  }
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    const errCode = data?.error?.code;
+    if (errCode && errCode in RECOVERABLE_EXIT_CODES) {
+      return exitWithStructuredError({
+        code:    errCode,
+        message: data.error.message ?? `HTTP ${resp.status}`,
+        data:    data.error.data,
+      });
+    }
+    console.error(`POST ${route} failed: ${resp.status} ${JSON.stringify(data)}`);
+    process.exit(1);
+  }
+  return data;
+}
+
+async function postImportFolderToDaemon(base, body, baseDir, workspaceHeaders = {}) {
+  const headers = { ...workspaceHeaders };
+  const importToken = await mintCliImportToken(baseDir);
+  if (importToken != null) {
+    headers['x-od-desktop-import-token'] = importToken;
+  }
+  return postJsonToDaemon(base, '/api/import/folder', body, headers);
 }
 
 async function runProject(args) {
@@ -3675,24 +6874,98 @@ async function runProject(args) {
     console.log(`Usage:
   od project create [--name "<title>"] [--skill <id>] [--design-system <id>]
                     [--plugin <id>] [--inputs <json>] [--metadata-json <path|->]
+                    [--mode design|chat|plan]
+  od project create-design-system <id> [--name "<title>"]
+                    [--prompt "<text>" | --prompt-file <path|->] [--json]
+                    Duplicate a project as a design-system workspace and seed
+                    the design-system generation prompt.
+  od project duplicate <id> [--name "<title>"] [--json]
+                    Duplicate a project and copy its Design Files.
+  od project import <baseDir> [--name "<title>"]
+  od project import-folder <path> [--name "<title>"] [--skill <id>]
+                    [--design-system <id>] [--json]
   od project list                         List projects.
   od project info <id>                    Print one project.
   od project delete <id>                  Delete a project.
+  od project revoke-public-link <id> --path <file> --url <public-url>
+                    Revoke a public file link whose local publication record
+                    was lost during an older daemon restart or upgrade.
+  od project editors                      List locally-installed editors that
+                                          can open a project (hand-off targets).
+  od project open-in <id> --editor <slug> Open the project's working directory
+                                          in the chosen editor (cursor, zed,
+                                          vscode, finder, terminal, …).
+  od project handoff <id> --conversation <id> --api-key <key> --model <model>
+                    [--base-url <url>] [--max-tokens <n>]
+                    Synthesize a resume-conversation handoff prompt.
 
 Common options:
-  --daemon-url <url>   Open Design daemon HTTP base.
+  --daemon-url <url>   OpenDesign daemon HTTP base.
+  --workspace <id>     Exact Workspace for bound project requests.
+  --workspace-member <id>
+                       Exact caller membership for bound project requests.
   --json               Emit raw JSON.`);
     process.exit(args.length === 0 ? 2 : 0);
   }
   const sub = args[0];
   const rest = args.slice(1);
-  const flags = parseFlags(rest, { string: PROJECT_STRING_FLAGS, boolean: PROJECT_BOOLEAN_FLAGS });
+  // Handoff owns its own flag parsing, daemon-URL resolution, and
+  // structured fail() output. Dispatch it before the generic project
+  // parser below so a malformed `od project handoff` invocation
+  // (`--unknown`, `--max-tokens` with no value) hits handoff-cli's
+  // machine-readable fail() path instead of throwing out of parseFlags.
+  if (sub === 'handoff') {
+    const { exitCode } = await runProjectHandoff(rest);
+    if (exitCode !== 0) process.exit(exitCode);
+    return;
+  }
+  const flags = parseFlags(rest, {
+    string: PROJECT_RESOURCE_STRING_FLAGS,
+    boolean: PROJECT_BOOLEAN_FLAGS,
+  });
   const base = (await projectDaemonUrl(flags)).replace(/\/$/, '');
+  const explicitWorkspaceHeaders = workspaceHeadersFromExplicitFlags(flags);
+  const workspaceHeaders = explicitWorkspaceHeaders ?? {};
   switch (sub) {
     case 'list': {
-      const resp = await fetch(`${base}/api/projects`);
-      if (!resp.ok) return structuredHttpFailure(resp);
-      const data = await resp.json();
+      // After 0.18.0's workspace isolation, GET /api/projects is the NO-SCOPE
+      // catalog: it only returns projects that were never adopted into a
+      // workspace. Every project `od project import-folder` creates is
+      // immediately workspace-bound, so a headerless `od project list` shows
+      // an empty list while the UI keeps listing them (#6679). #6595 fixed
+      // this for the MCP bridge by resolving the signed-in workspace once
+      // and routing to GET /api/workspaces/:id/projects; mirror that here.
+      // BOTH the implicit signed-in path AND an explicit
+      // --workspace/--workspace-member pair route to the workspace-scoped
+      // catalog. The signed-out / non-vela / no-directory cases fall back to
+      // the original headerless catalog so `od project list` still returns
+      // unbound projects there. Passing --workspace to /api/projects does
+      // NOT scope it (#6679 repro), so the explicit path needs the same
+      // workspace-scoped endpoint as the implicit path.
+      let listResp: any = null;
+      let scopeHeaders: Record<string, string> = {};
+      if (explicitWorkspaceHeaders) {
+        const workspaceId = String(flags.workspace).trim();
+        scopeHeaders = explicitWorkspaceHeaders;
+        listResp = await fetch(
+          `${base}/api/workspaces/${encodeURIComponent(workspaceId)}/projects`,
+          { headers: scopeHeaders },
+        );
+      } else {
+        const ctx = await resolveMcpWorkspaceContext(base);
+        if (ctx) {
+          scopeHeaders = ctx.headers;
+          listResp = await fetch(
+            `${base}/api/workspaces/${encodeURIComponent(ctx.workspaceId)}/projects`,
+            { headers: scopeHeaders },
+          );
+        }
+      }
+      if (!listResp) {
+        listResp = await fetch(`${base}/api/projects`, { headers: workspaceHeaders });
+      }
+      if (!listResp.ok) return structuredHttpFailure(listResp);
+      const data = await listResp.json();
       if (flags.json) return process.stdout.write(JSON.stringify(data, null, 2) + '\n');
       const projects = data?.projects ?? [];
       if (projects.length === 0) {
@@ -3703,15 +6976,51 @@ Common options:
       return;
     }
     case 'info': {
-      const id = rest.find((a) => !a.startsWith('-'));
+      const id = positionalArgs(rest, PROJECT_RESOURCE_STRING_FLAGS)[0];
       if (!id) {
         console.error('Usage: od project info <id>');
         process.exit(2);
       }
-      const resp = await fetch(`${base}/api/projects/${encodeURIComponent(id)}`);
+      const resp = await fetch(`${base}/api/projects/${encodeURIComponent(id)}`, {
+        headers: workspaceHeaders,
+      });
       if (!resp.ok) return structuredHttpFailure(resp, 'project-not-found');
       const data = await resp.json();
       process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+      return;
+    }
+    case 'revoke-public-link': {
+      const id = positionalArgs(rest, PROJECT_RESOURCE_STRING_FLAGS)[0];
+      const filePath = typeof flags.path === 'string' ? flags.path.trim() : '';
+      const publicUrl = typeof flags.url === 'string' ? flags.url.trim() : '';
+      let slug = '';
+      try {
+        const parsed = new URL(publicUrl);
+        const match = parsed.pathname.match(
+          /^\/api\/v1\/public\/snapshots\/([^/]+)(?:\/|$)/u,
+        );
+        slug = match?.[1] ? decodeURIComponent(match[1]) : '';
+      } catch {
+        slug = '';
+      }
+      if (!id || !filePath || !slug) {
+        console.error(
+          'Usage: od project revoke-public-link <id> --path <file> --url <public-url> [--json]',
+        );
+        process.exit(2);
+      }
+      const resp = await fetch(
+        `${base}/api/projects/${encodeURIComponent(id)}/files/${encodeURIComponent(filePath)}/publish-public`,
+        {
+          method: 'DELETE',
+          headers: { 'content-type': 'application/json', ...workspaceHeaders },
+          body: JSON.stringify({ slug }),
+        },
+      );
+      if (!resp.ok) return structuredHttpFailure(resp);
+      const data = await resp.json();
+      if (flags.json) return process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+      console.log(`[project] revoked public link ${slug} for ${filePath}`);
       return;
     }
     case 'create': {
@@ -3727,6 +7036,8 @@ Common options:
         skillId:        flags.skill ?? null,
         designSystemId: flags['design-system'] ?? null,
       };
+      const conversationMode = normalizeChatSessionModeFlag(flags.mode);
+      if (conversationMode) body.conversationMode = conversationMode;
       if (flags['pending-prompt']) body.pendingPrompt = flags['pending-prompt'];
       if (flags['metadata-json']) {
         const mj = safeReadJsonFile(flags['metadata-json']);
@@ -3744,7 +7055,7 @@ Common options:
       }
       const resp = await fetch(`${base}/api/projects`, {
         method:  'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', ...workspaceHeaders },
         body:    JSON.stringify(body),
       });
       const data = await resp.json().catch(() => ({}));
@@ -3763,19 +7074,440 @@ Common options:
       console.log(`[project] created ${data.project?.id ?? id} (conversation ${data.conversationId})`);
       return;
     }
+    case 'create-design-system': {
+      const sourceProjectId = positionalArgs(rest, PROJECT_RESOURCE_STRING_FLAGS)[0];
+      if (!sourceProjectId) {
+        console.error('Usage: od project create-design-system <id> [--name "<title>"] [--prompt-file <path|->] [--json]');
+        process.exit(2);
+      }
+      const prompt = await readPromptFromFlags(flags);
+      const body = {};
+      if (typeof flags.name === 'string' && flags.name.length > 0) body.name = flags.name;
+      if (typeof prompt === 'string' && prompt.trim().length > 0) body.pendingPrompt = prompt;
+      const data = await postJsonToDaemon(
+        base,
+        `/api/projects/${encodeURIComponent(sourceProjectId)}/design-system-copy`,
+        body,
+        workspaceHeaders,
+      );
+      if (flags.json) return process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+      console.log(
+        `[project] created design system project ${data.project?.id ?? '-'} from ${sourceProjectId} `
+        + `(design system ${data.designSystemId ?? '-'}, conversation ${data.conversationId ?? '-'})`,
+      );
+      return;
+    }
+    case 'duplicate': {
+      const sourceProjectId = positionalArgs(rest, PROJECT_RESOURCE_STRING_FLAGS)[0];
+      if (!sourceProjectId) {
+        console.error('Usage: od project duplicate <id> [--name "<title>"] [--json]');
+        process.exit(2);
+      }
+      const body = {};
+      if (typeof flags.name === 'string' && flags.name.length > 0) body.name = flags.name;
+      const data = await postJsonToDaemon(
+        base,
+        `/api/projects/${encodeURIComponent(sourceProjectId)}/duplicate`,
+        body,
+        workspaceHeaders,
+      );
+      if (flags.json) return process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+      console.log(
+        `[project] duplicated ${sourceProjectId} as ${data.project?.id ?? '-'} `
+        + `(conversation ${data.conversationId ?? '-'})`,
+      );
+      return;
+    }
+    case 'import': {
+      const [baseDir] = positionalArgs(rest, PROJECT_RESOURCE_STRING_FLAGS);
+      const importBaseDir = typeof baseDir === 'string' ? baseDir.trim() : '';
+      if (!importBaseDir) {
+        console.error('Usage: od project import <baseDir> [--name "<title>"]');
+        process.exit(2);
+      }
+      const body = { baseDir: importBaseDir };
+      if (typeof flags.name === 'string' && flags.name.length > 0) body.name = flags.name;
+      if (typeof flags.skill === 'string' && flags.skill.length > 0) body.skillId = flags.skill;
+      if (typeof flags['design-system'] === 'string' && flags['design-system'].length > 0) {
+        body.designSystemId = flags['design-system'];
+      }
+      const headers = { 'content-type': 'application/json', ...workspaceHeaders };
+      const importToken = await mintCliImportToken(importBaseDir);
+      if (importToken != null) {
+        headers['x-od-desktop-import-token'] = importToken;
+      }
+      const resp = await fetch(`${base}/api/import/folder`, {
+        method:  'POST',
+        headers,
+        body:    JSON.stringify(body),
+      });
+      if (!resp.ok) return structuredHttpFailure(resp);
+      const data = await resp.json();
+      if (flags.json) return process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+      console.log(`[project] imported ${data.project?.id ?? '-'} (conversation ${data.conversationId ?? '-'})`);
+      return;
+    }
+    case 'import-folder': {
+      const parts = collectCliPositionals(rest, PROJECT_RESOURCE_STRING_FLAGS);
+      const folderArg = flags.path ?? flags.dir ?? parts[0];
+      if (!folderArg) {
+        console.error('Usage: od project import-folder <path> [--skill <id>] [--design-system <id>]');
+        process.exit(2);
+      }
+      const folderPath = await resolveFolderPathForCli(folderArg);
+      const body = {
+        baseDir:        folderPath,
+        name:           typeof flags.name === 'string' && flags.name.length > 0
+          ? flags.name
+          : await basenameForCli(folderPath),
+        skillId:        flags.skill ?? null,
+        designSystemId: flags['design-system'] ?? null,
+      };
+      const data = await postImportFolderToDaemon(
+        base,
+        body,
+        folderPath,
+        workspaceHeaders,
+      );
+      if (flags.json) return process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+      console.log(`[project] imported ${data.project?.id ?? '-'} from ${folderPath} (conversation ${data.conversationId ?? '-'})`);
+      return;
+    }
     case 'delete': {
-      const id = rest.find((a) => !a.startsWith('-'));
+      const id = positionalArgs(rest, PROJECT_RESOURCE_STRING_FLAGS)[0];
       if (!id) {
         console.error('Usage: od project delete <id>');
         process.exit(2);
       }
-      const resp = await fetch(`${base}/api/projects/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      const resp = await fetch(`${base}/api/projects/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+        headers: workspaceHeaders,
+      });
       if (!resp.ok) return structuredHttpFailure(resp, 'project-not-found');
       console.log(`[project] deleted ${id}`);
       return;
     }
+    case 'editors': {
+      const resp = await fetch(`${base}/api/editors`);
+      if (!resp.ok) return structuredHttpFailure(resp);
+      const data = await resp.json();
+      if (flags.json) return process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+      const editors = data?.editors ?? [];
+      for (const ed of editors) {
+        const status = ed.available ? 'available' : 'missing';
+        console.log(`${ed.id}\t${ed.label}\t${status}`);
+      }
+      return;
+    }
+    case 'open-in': {
+      const id = positionalArgs(rest, PROJECT_RESOURCE_STRING_FLAGS)[0];
+      if (!id) {
+        console.error('Usage: od project open-in <id> --editor <slug>');
+        process.exit(2);
+      }
+      const editor = typeof flags.editor === 'string' ? flags.editor : '';
+      if (!editor) {
+        console.error('--editor <slug> is required. Run `od project editors` to list options.');
+        process.exit(2);
+      }
+      const resp = await fetch(`${base}/api/projects/${encodeURIComponent(id)}/open-in`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...workspaceHeaders },
+        body: JSON.stringify({ editorId: editor }),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        if (flags.json) process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+        else console.error(`POST /api/projects/${id}/open-in failed: ${resp.status} ${JSON.stringify(data)}`);
+        process.exit(1);
+      }
+      if (flags.json) return process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+      console.log(`[project] opened ${id} in ${editor} (${data.path ?? ''})`);
+      return;
+    }
     default:
       console.error(`unknown subcommand: od project ${sub}`);
+      process.exit(2);
+  }
+}
+
+async function runWorkspace(args) {
+  if (args.length === 0 || args[0] === 'help' || args.includes('--help') || args.includes('-h')) {
+    console.log(`Usage:
+  od workspace invite --workspace <id> --member <id> --email <addr> [--role admin|member] [--json]
+  od workspace projects team --workspace <id> --member <id> [--json]
+  od workspace projects list --workspace <id> --member <id> [--view recent|drafts|team|all] [--json]
+  od workspace projects move <projectId> --workspace <id> --member <id> --visibility personal|team [--json]
+  od workspace projects batch-delete --workspace <id> --member <id> --project <id> [--project <id> ...] [--json]
+  od workspace projects batch-move --workspace <id> --member <id> --visibility personal|team --project <id> [--project <id> ...] [--json]
+  od workspace members list --workspace <id> --member <id> [--json]
+  od workspace billing [--workspace-type personal|team --workspace <id>] [--json]
+
+Common options:
+  --daemon-url <url>   OpenDesign daemon HTTP base.
+  --member <id>        Workspace member id for route-level authorization.
+  --role <role>        Workspace role: owner, admin, or member.
+  --workspace-type <t> personal or team. A team share is refused in a personal
+                       workspace, which has no team plane to share into.
+  --json               Emit raw JSON.`);
+    process.exit(args.length === 0 ? 2 : 0);
+  }
+  const area = args[0];
+  if (!['invite', 'projects', 'members', 'billing'].includes(area)) {
+    console.error(`unknown subcommand: od workspace ${area}`);
+    process.exit(2);
+  }
+  const sub = args[1] ?? 'list';
+  const rest = area === 'invite' || area === 'billing' ? args.slice(1) : args.slice(2);
+  const flags = parseFlags(rest, { string: WORKSPACE_STRING_FLAGS, boolean: WORKSPACE_BOOLEAN_FLAGS });
+  const base = (await projectDaemonUrl(flags)).replace(/\/$/, '');
+
+  async function workspaceContextRequest(path, init) {
+    const needsExplicitWorkspace =
+      path === '/api/workspace/invite'
+      || path === '/api/workspace/members'
+      || path === '/api/workspace/projects/team';
+    const workspaceHeaders = needsExplicitWorkspace
+      ? workspaceHeadersFromExplicitFlags(flags, true)
+      : {};
+    const resp = await fetch(`${base}${path}`, {
+      ...init,
+      headers: {
+        ...workspaceHeaders,
+        ...(init?.headers ?? {}),
+      },
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      console.error(`${init?.method ?? 'GET'} ${path} failed: ${resp.status} ${JSON.stringify(data)}`);
+      process.exit(1);
+    }
+    return data;
+  }
+
+  if (area === 'invite') {
+    const emails = repeatableFlagValues(rest, 'email');
+    const role = String(flags.role ?? 'member');
+    if (emails.length === 0 || !['admin', 'member'].includes(role)) {
+      console.error('Usage: od workspace invite --email <addr> [--role admin|member] [--json]');
+      process.exit(2);
+    }
+    const body = emails.length === 1
+      ? { email: emails[0], role }
+      : { invites: emails.map((email) => ({ email, role })) };
+    const data = await workspaceContextRequest('/api/workspace/invite', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (flags.json) return process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+    const results = Array.isArray(data?.results) ? data.results : [];
+    for (const result of results) {
+      console.log(`${result.email}\t${result.ok ? 'invited' : `failed:${result.error ?? 'unknown'}`}`);
+    }
+    return;
+  }
+
+  // Dual-track parity for the account menu's credits card. Billing scope is an
+  // explicit CLI argument, never daemon active-workspace state: account is the
+  // compatibility default; team requires both type + workspace id.
+  if (area === 'billing') {
+    const workspaceType =
+      typeof flags['workspace-type'] === 'string'
+        ? flags['workspace-type'].trim().toLowerCase()
+        : '';
+    const workspaceId =
+      typeof flags.workspace === 'string' ? flags.workspace.trim() : '';
+    if (
+      (workspaceType && workspaceType !== 'personal' && workspaceType !== 'team') ||
+      (workspaceType && !workspaceId) ||
+      (!workspaceType && workspaceId)
+    ) {
+      console.error(
+        'Usage: od workspace billing [--workspace-type personal|team --workspace <id>] [--json]',
+      );
+      process.exit(2);
+    }
+    const billingPath =
+      workspaceType
+        ? `/api/workspace/billing?scope=workspace&workspaceId=${encodeURIComponent(workspaceId)}`
+        : '/api/workspace/billing?scope=account';
+    const data = await workspaceContextRequest(billingPath);
+    if (flags.json) return process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+    const summary = data?.summary ?? null;
+    const workspaceBalance = data?.workspaceBalance ?? null;
+    if (!summary && !workspaceBalance) {
+      console.log('No billing summary (no vela session or CLI unavailable).');
+      return;
+    }
+    if (workspaceBalance) {
+      console.log(`Workspace:\t${workspaceBalance.workspaceId}`);
+    }
+    if (summary) {
+      console.log(`Account plan:\t${summary.membershipTier || 'free'}`);
+      console.log(`Subscription:\t${summary.subscriptionStatus || 'none'}`);
+      console.log(`Account credits:\t${summary.totalAvailableCredits}`);
+      console.log(`  Account plan credits:\t${summary.subscriptionCredits}`);
+      console.log(`  Account top-up credits:\t${summary.rechargeCredits}`);
+    }
+    const balanceUsd = workspaceBalance?.balanceUsd ?? summary?.balanceUsd;
+    if (balanceUsd != null) {
+      console.log(`${workspaceBalance ? 'Workspace' : 'Account'} balance (USD):\t${balanceUsd}`);
+    }
+    return;
+  }
+
+  if (area === 'members') {
+    if (sub !== 'list') {
+      console.error(`unknown subcommand: od workspace members ${sub}`);
+      process.exit(2);
+    }
+    const data = await workspaceContextRequest('/api/workspace/members');
+    if (flags.json) return process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+    const members = Array.isArray(data?.members) ? data.members : [];
+    if (members.length === 0) {
+      console.log('No workspace members.');
+      return;
+    }
+    for (const member of members) {
+      console.log(`${member.memberId}\t${member.displayName ?? '-'}\t${member.role ?? '-'}`);
+    }
+    return;
+  }
+
+  if (sub === 'team') {
+    const data = await workspaceContextRequest('/api/workspace/projects/team');
+    if (flags.json) return process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+    const projects = Array.isArray(data?.projects) ? data.projects : [];
+    if (projects.length === 0) {
+      console.log('No shared team projects.');
+      return;
+    }
+    for (const project of projects) {
+      console.log(`${project.projectId ?? project.id}\t${project.displayName ?? project.name ?? '-'}`);
+    }
+    return;
+  }
+
+  const workspaceId = typeof flags.workspace === 'string' && flags.workspace.trim() ? flags.workspace.trim() : '';
+  if (!workspaceId) {
+    console.error('--workspace <id> is required');
+    process.exit(2);
+  }
+  const projectIds = repeatableFlagValues(rest, 'project');
+  const workspaceMemberId = typeof flags.member === 'string' && flags.member.trim() ? flags.member.trim() : '';
+  if (!workspaceMemberId) {
+    console.error('--member <id> is required');
+    process.exit(2);
+  }
+  const workspaceHeaders = {
+    'x-od-workspace-id': workspaceId,
+    // Only sent when the caller actually says which kind of workspace this is.
+    // The daemon reads an explicit `personal` as the caller ASSERTING there is
+    // no team plane here and refuses a team share on the strength of it (see
+    // collab/team-share-scope.ts), so defaulting the header to 'personal' would
+    // have made `--visibility team` impossible from the CLI. Absent still reads
+    // as personal everywhere it only affects view filtering.
+    ...(typeof flags['workspace-type'] === 'string' && flags['workspace-type'].trim()
+      ? { 'x-od-workspace-type': flags['workspace-type'].trim() }
+      : {}),
+    'x-od-workspace-member-id': workspaceMemberId,
+    ...(typeof flags.role === 'string' && flags.role.trim() ? { 'x-od-workspace-role': flags.role.trim() } : {}),
+    ...(typeof flags['app-user'] === 'string' && flags['app-user'].trim() ? { 'x-od-app-user-id': flags['app-user'].trim() } : {}),
+    ...(typeof flags['lifecycle-state'] === 'string' && flags['lifecycle-state'].trim()
+      ? { 'x-od-workspace-lifecycle-state': flags['lifecycle-state'].trim() }
+      : {}),
+    ...(typeof flags['member-status'] === 'string' && flags['member-status'].trim()
+      ? { 'x-od-workspace-member-status': flags['member-status'].trim() }
+      : {}),
+    ...(typeof flags['can-share-projects'] === 'string' && flags['can-share-projects'].trim()
+      ? { 'x-od-workspace-can-share-projects': flags['can-share-projects'].trim() }
+      : {}),
+    ...(typeof flags['can-write-synced-files'] === 'string' && flags['can-write-synced-files'].trim()
+      ? { 'x-od-workspace-can-write-synced-files': flags['can-write-synced-files'].trim() }
+      : {}),
+  };
+  async function request(path, init) {
+    const resp = await fetch(`${base}${path}`, {
+      ...init,
+      headers: {
+        ...workspaceHeaders,
+        ...(init?.headers ?? {}),
+      },
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      console.error(`${init?.method ?? 'GET'} ${path} failed: ${resp.status} ${JSON.stringify(data)}`);
+      process.exit(1);
+    }
+    return data;
+  }
+  switch (sub) {
+    case 'list': {
+      const params = new URLSearchParams();
+      if (flags.view) params.set('view', String(flags.view));
+      if (flags.visibility) params.set('visibility', String(flags.visibility));
+      if (flags.owner) params.set('owner', String(flags.owner));
+      const suffix = params.toString() ? `?${params}` : '';
+      const data = await request(`/api/workspaces/${encodeURIComponent(workspaceId)}/projects${suffix}`);
+      if (flags.json) return process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+      const projects = data?.projects ?? [];
+      if (projects.length === 0) {
+        console.log('No workspace projects.');
+        return;
+      }
+      for (const p of projects) {
+        console.log(`${p.id}\t${p.visibility}\t${p.resourceState}\t${p.name}`);
+      }
+      return;
+    }
+    case 'move': {
+      const projectId = positionalArgs(rest, WORKSPACE_STRING_FLAGS)[0];
+      const visibility = String(flags.visibility ?? '');
+      if (!projectId || !['personal', 'team'].includes(visibility)) {
+        console.error('Usage: od workspace projects move <projectId> --workspace <id> --visibility personal|team [--json]');
+        process.exit(2);
+      }
+      const data = await request(`/api/workspaces/${encodeURIComponent(workspaceId)}/projects/${encodeURIComponent(projectId)}/move`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ visibility }),
+      });
+      if (flags.json) return process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+      console.log(`[workspace] moved ${projectId} to ${visibility}`);
+      return;
+    }
+    case 'batch-delete': {
+      if (projectIds.length === 0) {
+        console.error('Usage: od workspace projects batch-delete --workspace <id> --project <id> [--project <id> ...] [--json]');
+        process.exit(2);
+      }
+      const data = await request(`/api/workspaces/${encodeURIComponent(workspaceId)}/projects/batch-delete`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ projectIds }),
+      });
+      if (flags.json) return process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+      console.log(`[workspace] deleted ${projectIds.length} project(s)`);
+      return;
+    }
+    case 'batch-move': {
+      const visibility = String(flags.visibility ?? '');
+      if (projectIds.length === 0 || !['personal', 'team'].includes(visibility)) {
+        console.error('Usage: od workspace projects batch-move --workspace <id> --visibility personal|team --project <id> [--project <id> ...] [--json]');
+        process.exit(2);
+      }
+      const data = await request(`/api/workspaces/${encodeURIComponent(workspaceId)}/projects/batch-move`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ projectIds, visibility }),
+      });
+      if (flags.json) return process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+      console.log(`[workspace] moved ${projectIds.length} project(s) to ${visibility}`);
+      return;
+    }
+    default:
+      console.error(`unknown subcommand: od workspace projects ${sub}`);
       process.exit(2);
   }
 }
@@ -3785,27 +7517,39 @@ async function runRun(args) {
     console.log(`Usage:
   od run start --project <projectId> [--conversation <id>] [--message "<text>"]
                [--plugin <id>] [--inputs <json>] [--grant-caps a,b]
-               [--agent claude|codex|gemini] [--model <id>] [--follow] [--json]
+               [--agent claude|codex|opencode] [--model <id>] [--service-tier <id>]
+               [--workspace <id> --workspace-member <id>] [--follow] [--json]
+  od run redesign [--path <folder>] [--message "<text>" | --prompt-file <path|->]
+               [--agent claude] [--model <id>] [--service-tier <id>] [--follow] [--json]
   od run watch  <runId>                     ND-JSON event stream on stdout.
   od run cancel <runId>                     Request cancellation.
+  od run continue <runId> [--follow]        Continue a resumable failed run.
   od run list   [--project <id>]            List recent runs.
   od run info   <runId>                     One run's status.
+  od run result-package <runId> [--json]    Inspect run outputs and workspace
+                                            provenance without applying them.
 
 Common options:
-  --daemon-url <url>   Open Design daemon HTTP base.
-  --json               Emit raw JSON.`);
+  --daemon-url <url>         OpenDesign daemon HTTP base.
+  --workspace <id>           Explicit Workspace id for a bound project.
+  --workspace-member <id>    Explicit Workspace member id for a bound project.
+  --json                     Emit raw JSON.`);
     process.exit(args.length === 0 ? 2 : 0);
   }
   const sub = args[0];
   const rest = args.slice(1);
-  const flags = parseFlags(rest, { string: PROJECT_STRING_FLAGS, boolean: PROJECT_BOOLEAN_FLAGS });
+  const flags = parseFlags(rest, {
+    string: PROJECT_RESOURCE_STRING_FLAGS,
+    boolean: PROJECT_BOOLEAN_FLAGS,
+  });
   const base = (await projectDaemonUrl(flags)).replace(/\/$/, '');
+  const workspaceHeaders = workspaceHeadersFromExplicitFlags(flags) ?? {};
   switch (sub) {
     case 'list': {
       const url = flags.project
         ? `${base}/api/runs?projectId=${encodeURIComponent(flags.project)}`
         : `${base}/api/runs`;
-      const resp = await fetch(url);
+      const resp = await fetch(url, { headers: workspaceHeaders });
       if (!resp.ok) return structuredHttpFailure(resp);
       const data = await resp.json();
       if (flags.json) return process.stdout.write(JSON.stringify(data, null, 2) + '\n');
@@ -3816,35 +7560,176 @@ Common options:
       return;
     }
     case 'info': {
-      const id = rest.find((a) => !a.startsWith('-'));
+      const id = positionalArgs(rest, PROJECT_RESOURCE_STRING_FLAGS)[0];
       if (!id) {
         console.error('Usage: od run info <runId>');
         process.exit(2);
       }
-      const resp = await fetch(`${base}/api/runs/${encodeURIComponent(id)}`);
+      const resp = await fetch(`${base}/api/runs/${encodeURIComponent(id)}`, {
+        headers: workspaceHeaders,
+      });
       if (!resp.ok) return structuredHttpFailure(resp, 'run-not-found');
       const data = await resp.json();
       process.stdout.write(JSON.stringify(data, null, 2) + '\n');
       return;
     }
+    case 'result-package': {
+      const id = positionalArgs(rest, PROJECT_RESOURCE_STRING_FLAGS)[0];
+      if (!id) {
+        console.error('Usage: od run result-package <runId> [--json]');
+        process.exit(2);
+      }
+      const resp = await fetch(`${base}/api/runs/${encodeURIComponent(id)}/result-package`, {
+        headers: workspaceHeaders,
+      });
+      if (!resp.ok) return structuredHttpFailure(resp, 'run-not-found');
+      const data = await resp.json();
+      if (flags.json) return process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+      const run = data?.run ?? {};
+      const workspace = data?.workspace ?? {};
+      const storage = workspace.storage ?? {};
+      const provenance = workspace.provenance ?? null;
+      console.log(`run\t${run.id ?? id}\t${run.status ?? '-'}`);
+      console.log(`workspace\t${storage.kind ?? '-'}\t${storage.baseDir ?? '-'}`);
+      console.log(`provenance\t${provenance?.kind ?? '-'}\twriteback=${provenance?.writeback ?? '-'}`);
+      console.log(`project\t${data?.project?.id ?? '-'}\tfiles=${data?.project?.fileCount ?? 0}`);
+      const artifacts = Array.isArray(data?.artifacts) ? data.artifacts : [];
+      for (const artifact of artifacts) {
+        console.log(`artifact\t${artifact.file ?? '-'}\t${artifact.kind ?? '-'}\t${artifact.title ?? '-'}`);
+      }
+      return;
+    }
     case 'cancel': {
-      const id = rest.find((a) => !a.startsWith('-'));
+      const id = positionalArgs(rest, PROJECT_RESOURCE_STRING_FLAGS)[0];
       if (!id) {
         console.error('Usage: od run cancel <runId>');
         process.exit(2);
       }
-      const resp = await fetch(`${base}/api/runs/${encodeURIComponent(id)}/cancel`, { method: 'POST' });
+      const resp = await fetch(`${base}/api/runs/${encodeURIComponent(id)}/cancel`, {
+        method: 'POST',
+        headers: workspaceHeaders,
+      });
       if (!resp.ok) return structuredHttpFailure(resp, 'run-not-found');
       console.log(`[run] cancelled ${id}`);
       return;
     }
+    case 'continue': {
+      const id = positionalArgs(rest, PROJECT_RESOURCE_STRING_FLAGS)[0];
+      if (!id) {
+        console.error('Usage: od run continue <runId> [--message "<text>"] [--follow] [--json]');
+        process.exit(2);
+      }
+      const statusResp = await fetch(`${base}/api/runs/${encodeURIComponent(id)}`, {
+        headers: workspaceHeaders,
+      });
+      if (!statusResp.ok) return structuredHttpFailure(statusResp, 'run-not-found');
+      const status = await statusResp.json();
+      if (status?.resumable !== true) {
+        const payload = {
+          error: {
+            code: 'run-not-resumable',
+            message: `Run ${id} does not have a safe recoverable native session.`,
+          },
+        };
+        if (flags.json) process.stdout.write(JSON.stringify(payload, null, 2) + '\n');
+        else console.error(payload.error.message);
+        process.exit(1);
+      }
+      if (!status.projectId || !status.conversationId) {
+        const payload = {
+          error: {
+            code: 'run-missing-context',
+            message: `Run ${id} is missing project or conversation context.`,
+          },
+        };
+        if (flags.json) process.stdout.write(JSON.stringify(payload, null, 2) + '\n');
+        else console.error(payload.error.message);
+        process.exit(1);
+      }
+      const message = await readRunMessageFromFlags(flags, RESUME_CONTINUE_PROMPT);
+      const body = {
+        projectId: status.projectId,
+        conversationId: status.conversationId,
+        message,
+        analyticsHints: { entryFrom: 'resume_continue' },
+        ...(status.agentId ? { agentId: status.agentId } : {}),
+      };
+      const data = await postJsonToDaemon(base, '/api/runs', body, workspaceHeaders);
+      if (flags.json && !flags.follow) {
+        return process.stdout.write(JSON.stringify({
+          ...data,
+          continuedFromRunId: id,
+        }, null, 2) + '\n');
+      }
+      console.log(`[run] continued ${id} as ${data.runId}`);
+      if (flags.follow) await streamRunEvents(base, data.runId, workspaceHeaders);
+      return;
+    }
     case 'watch': {
-      const id = rest.find((a) => !a.startsWith('-'));
+      const id = positionalArgs(rest, PROJECT_RESOURCE_STRING_FLAGS)[0];
       if (!id) {
         console.error('Usage: od run watch <runId>');
         process.exit(2);
       }
-      await streamRunEvents(base, id);
+      await streamRunEvents(base, id, workspaceHeaders);
+      return;
+    }
+    case 'redesign': {
+      const parts = collectCliPositionals(rest, PROJECT_RESOURCE_STRING_FLAGS);
+      const promptFromArgs = parts.join(' ').trim();
+      const defaultMessage =
+        'Use the redesign-existing-projects skill. Audit the current UI first, then redesign it to premium quality without breaking functionality. Preserve the existing product structure, routes, and behavior.';
+      const message = await readRunMessageFromFlags(
+        flags,
+        promptFromArgs || defaultMessage,
+      );
+      const skillId = flags.skill ?? 'redesign-existing-projects';
+      const designSystemId = flags['design-system'] ?? 'default';
+      let projectId = flags.project;
+      let conversationId = flags.conversation;
+      let imported = null;
+
+      if (!projectId) {
+        const folderPath = await resolveFolderPathForCli(flags.path ?? flags.dir);
+        imported = await postImportFolderToDaemon(base, {
+          baseDir:        folderPath,
+          name:           typeof flags.name === 'string' && flags.name.length > 0
+            ? flags.name
+            : await basenameForCli(folderPath),
+          skillId,
+          designSystemId,
+        }, folderPath, workspaceHeaders);
+        projectId = imported.project?.id;
+        conversationId = conversationId ?? imported.conversationId;
+        if (!projectId) {
+          console.error('POST /api/import/folder did not return project.id');
+          process.exit(1);
+        }
+        if (!flags.json || flags.follow) {
+          console.log(`[project] imported ${projectId} from ${folderPath} (conversation ${conversationId ?? '-'})`);
+        }
+      }
+
+      const body = {
+        projectId,
+        ...(conversationId ? { conversationId } : {}),
+        ...(message ? { message } : {}),
+        skillId,
+        designSystemId,
+        ...(flags.agent ? { agentId: flags.agent } : {}),
+        ...(flags.model ? { model: flags.model } : {}),
+        ...(flags['service-tier'] ? { serviceTier: flags['service-tier'] } : {}),
+      };
+      const data = await postJsonToDaemon(base, '/api/runs', body, workspaceHeaders);
+      if (flags.json && !flags.follow) {
+        return process.stdout.write(JSON.stringify({
+          ...data,
+          project: imported?.project ?? null,
+          conversationId: conversationId ?? null,
+        }, null, 2) + '\n');
+      }
+      console.log(`[run] started ${data.runId}`);
+      if (flags.follow) await streamRunEvents(base, data.runId, workspaceHeaders);
       return;
     }
     case 'start': {
@@ -3854,10 +7739,14 @@ Common options:
       }
       const body = { projectId: flags.project };
       if (flags.conversation) body.conversationId = flags.conversation;
-      if (flags.message) body.message = flags.message;
+      const message = await readRunMessageFromFlags(flags);
+      if (message) body.message = message;
       if (flags.plugin) body.pluginId = flags.plugin;
+      if (flags.skill) body.skillId = flags.skill;
+      if (flags['design-system']) body.designSystemId = flags['design-system'];
       if (flags.agent) body.agentId = flags.agent;
       if (flags.model) body.model = flags.model;
+      if (flags['service-tier']) body.serviceTier = flags['service-tier'];
       if (flags.inputs) {
         try { body.pluginInputs = JSON.parse(flags.inputs); } catch (err) {
           console.error(`--inputs must be valid JSON: ${err.message}`);
@@ -3870,7 +7759,7 @@ Common options:
       if (flags['snapshot-id']) body.appliedPluginSnapshotId = flags['snapshot-id'];
       const resp = await fetch(`${base}/api/runs`, {
         method:  'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', ...workspaceHeaders },
         body:    JSON.stringify(body),
       });
       const data = await resp.json().catch(() => ({}));
@@ -3896,7 +7785,7 @@ Common options:
         return process.stdout.write(JSON.stringify(data, null, 2) + '\n');
       }
       console.log(`[run] started ${data.runId}`);
-      if (flags.follow) await streamRunEvents(base, data.runId);
+      if (flags.follow) await streamRunEvents(base, data.runId, workspaceHeaders);
       return;
     }
     default:
@@ -3908,9 +7797,9 @@ Common options:
 // Stream the SSE events at /api/runs/:id/events as ND-JSON on stdout.
 // Each line is one event: { event, data } so a code agent can parse it
 // without needing an SSE library.
-async function streamRunEvents(base, runId) {
+async function streamRunEvents(base, runId, workspaceHeaders = {}) {
   const resp = await fetch(`${base}/api/runs/${encodeURIComponent(runId)}/events`, {
-    headers: { accept: 'text/event-stream' },
+    headers: { accept: 'text/event-stream', ...workspaceHeaders },
   });
   if (!resp.ok || !resp.body) {
     console.error(`run watch failed: ${resp.status}`);
@@ -3941,6 +7830,141 @@ async function streamRunEvents(base, runId) {
   }
 }
 
+// `od shell --project <id>` opens an interactive PTY rooted at the project's
+// working directory and attaches to it. This is the CLI parity for the web
+// Terminal tab — both surfaces drive `/api/projects/:id/terminals`. Output
+// streams down over SSE; local keystrokes are POSTed back up to /stdin. When
+// stdin is a TTY we flip it into raw mode so the remote shell sees per-key
+// bytes (ctrl-c, arrows, tab) instead of line-buffered input.
+async function runShell(args) {
+  if (args.length === 0 || args[0] === 'help' || args.includes('--help') || args.includes('-h')) {
+    console.log(`Usage:
+  od shell --project <projectId> [--shell <path>] [--json]
+                                  Open an interactive shell in the project's
+                                  working directory and attach to it.
+
+Common options:
+  --daemon-url <url>   OpenDesign daemon HTTP base.
+  --json               Print the created terminal session as JSON and exit
+                       (does not attach).`);
+    process.exit(args.length === 0 ? 2 : 0);
+  }
+  const flags = parseFlags(args, {
+    string: PROJECT_RESOURCE_STRING_FLAGS,
+    boolean: PROJECT_BOOLEAN_FLAGS,
+  });
+  if (!flags.project) {
+    console.error('--project <projectId> is required');
+    process.exit(2);
+  }
+  const base = (await projectDaemonUrl(flags)).replace(/\/$/, '');
+  const workspaceHeaders = workspaceHeadersFromExplicitFlags(flags) ?? {};
+  const body = {};
+  if (flags.shell) body.shell = flags.shell;
+  if (process.stdout.columns) body.cols = process.stdout.columns;
+  if (process.stdout.rows) body.rows = process.stdout.rows;
+  const createResp = await fetch(
+    `${base}/api/projects/${encodeURIComponent(flags.project)}/terminals`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...workspaceHeaders },
+      body: JSON.stringify(body),
+    },
+  );
+  if (!createResp.ok) return structuredHttpFailure(createResp, 'project-not-found');
+  const created = await createResp.json();
+  if (flags.json) {
+    return process.stdout.write(JSON.stringify(created, null, 2) + '\n');
+  }
+  const terminalId = created?.terminal?.id;
+  if (!terminalId) {
+    console.error('terminal create returned no id');
+    process.exit(1);
+  }
+  await attachTerminal(base, flags.project, terminalId, workspaceHeaders);
+}
+
+// Bridge a local TTY to a remote PTY session: SSE `data` events → stdout,
+// local stdin bytes → POST /stdin, terminal resize → POST /resize. Resolves
+// when the remote shell emits its `exit` event.
+async function attachTerminal(base, projectId, terminalId, workspaceHeaders = {}) {
+  const termPath = `${base}/api/projects/${encodeURIComponent(projectId)}/terminals/${encodeURIComponent(terminalId)}`;
+  const isRawTty = Boolean(process.stdin.isTTY && process.stdin.setRawMode);
+  if (isRawTty) process.stdin.setRawMode(true);
+  process.stdin.resume();
+
+  const onInput = (chunk) => {
+    fetch(`${termPath}/stdin`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...workspaceHeaders },
+      body: JSON.stringify({ data: chunk.toString('utf8') }),
+    }).catch(() => {});
+  };
+  process.stdin.on('data', onInput);
+
+  const onResize = () => {
+    fetch(`${termPath}/resize`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...workspaceHeaders },
+      body: JSON.stringify({ cols: process.stdout.columns, rows: process.stdout.rows }),
+    }).catch(() => {});
+  };
+  process.stdout.on('resize', onResize);
+
+  const restore = () => {
+    process.stdin.off('data', onInput);
+    process.stdout.off('resize', onResize);
+    if (isRawTty) {
+      try { process.stdin.setRawMode(false); } catch { /* ignore */ }
+    }
+    process.stdin.pause();
+  };
+
+  try {
+    const resp = await fetch(`${termPath}/stream`, {
+      headers: { accept: 'text/event-stream', ...workspaceHeaders },
+    });
+    if (!resp.ok || !resp.body) {
+      console.error(`shell attach failed: ${resp.status}`);
+      process.exit(1);
+    }
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const blocks = buffer.split('\n\n');
+      buffer = blocks.pop() ?? '';
+      for (const block of blocks) {
+        const lines = block.split('\n');
+        const eventLine = lines.find((l) => l.startsWith('event: '));
+        const dataLine = lines.find((l) => l.startsWith('data: '));
+        const event = eventLine ? eventLine.slice('event: '.length) : 'message';
+        const dataRaw = dataLine ? dataLine.slice('data: '.length) : '';
+        let parsed;
+        try { parsed = JSON.parse(dataRaw); } catch { parsed = dataRaw; }
+        if (event === 'data' && parsed && typeof parsed.data === 'string') {
+          process.stdout.write(parsed.data);
+        } else if (event === 'exit') {
+          restore();
+          process.exit(typeof parsed?.code === 'number' ? parsed.code : 0);
+        }
+      }
+    }
+  } finally {
+    restore();
+  }
+}
+
+function parseProjectFileVersionSourceFlag(raw) {
+  if (raw == null) return null;
+  if (raw === 'ai' || raw === 'manual' || raw === 'restore') return raw;
+  console.error(`Invalid --source "${String(raw)}". Expected one of: ai, manual, restore.`);
+  process.exit(2);
+}
+
 async function runFiles(args) {
   if (args.length === 0 || args[0] === 'help' || args.includes('--help') || args.includes('-h')) {
     console.log(`Usage:
@@ -3951,24 +7975,46 @@ async function runFiles(args) {
   od files upload <projectId> <localpath> [--as <relpath>]
                                                Upload a local file.
   od files delete <projectId> <name>           Delete a project file.
+  od files diff   <projectId> <relpathA> [<relpathB> | --against -]
+                                               Print a unified diff.
+  od files versions <projectId> <relpath>      List saved HTML versions.
+  od files version-read <projectId> <relpath> <versionId>
+                                               Stream one saved HTML version.
+  od files version-create <projectId> <relpath>
+                                               Save the current HTML as a version.
+  od files version-restore <projectId> <relpath> <versionId>
+                                               Restore a saved HTML as a new current version.
 
 Common options:
-  --daemon-url <url>   Open Design daemon HTTP base.
+  --daemon-url <url>   OpenDesign daemon HTTP base.
+  --workspace <id>     Exact Workspace for bound project requests.
+  --workspace-member <id>
+                       Exact caller membership for bound project requests.
+  --prompt-file <path|->  Read a version prompt from file/stdin where supported.
+  --source <ai|manual|restore>
+                       Version provenance where supported.
   --json               Emit raw JSON.`);
     process.exit(args.length === 0 ? 2 : 0);
   }
   const sub = args[0];
   const rest = args.slice(1);
-  const flags = parseFlags(rest, { string: PROJECT_STRING_FLAGS, boolean: PROJECT_BOOLEAN_FLAGS });
+  const flags = parseFlags(rest, {
+    string: PROJECT_RESOURCE_STRING_FLAGS,
+    boolean: PROJECT_BOOLEAN_FLAGS,
+  });
   const base = (await projectDaemonUrl(flags)).replace(/\/$/, '');
+  const workspaceHeaders =
+    workspaceHeadersFromExplicitFlags(flags) ?? {};
   switch (sub) {
     case 'list': {
-      const id = rest.find((a) => !a.startsWith('-'));
+      const id = positionalArgs(rest, PROJECT_RESOURCE_STRING_FLAGS)[0];
       if (!id) {
         console.error('Usage: od files list <projectId>');
         process.exit(2);
       }
-      const resp = await fetch(`${base}/api/projects/${encodeURIComponent(id)}/files`);
+      const resp = await fetch(`${base}/api/projects/${encodeURIComponent(id)}/files`, {
+        headers: workspaceHeaders,
+      });
       if (!resp.ok) return structuredHttpFailure(resp, 'project-not-found');
       const data = await resp.json();
       if (flags.json) return process.stdout.write(JSON.stringify(data, null, 2) + '\n');
@@ -3977,35 +8023,35 @@ Common options:
       return;
     }
     case 'read': {
-      const positional = rest.filter((a) => !a.startsWith('-'));
+      const positional = positionalArgs(rest, PROJECT_RESOURCE_STRING_FLAGS);
       const [id, rel] = positional;
       if (!id || !rel) {
         console.error('Usage: od files read <projectId> <relpath>');
         process.exit(2);
       }
-      const resp = await fetch(`${base}/api/projects/${encodeURIComponent(id)}/files/${rel.split('/').map(encodeURIComponent).join('/')}`);
+      const resp = await fetch(
+        `${base}/api/projects/${encodeURIComponent(id)}/files/${rel.split('/').map(encodeURIComponent).join('/')}`,
+        { headers: workspaceHeaders },
+      );
       if (!resp.ok) return structuredHttpFailure(resp, 'project-not-found');
       const buf = Buffer.from(await resp.arrayBuffer());
       process.stdout.write(buf);
       return;
     }
     case 'upload': {
-      const positional = rest.filter((a) => !a.startsWith('-')
-        && a !== flags.as);
+      const positional = positionalArgs(rest, PROJECT_RESOURCE_STRING_FLAGS);
       const [id, localPath] = positional;
       if (!id || !localPath) {
         console.error('Usage: od files upload <projectId> <localpath> [--as <relpath>]');
         process.exit(2);
       }
-      const fs = require('node:fs');
-      const path = require('node:path');
-      const buf = fs.readFileSync(localPath);
+      const buf = readFileSync(localPath);
       const desiredName = typeof flags.as === 'string' && flags.as.length > 0
         ? flags.as
-        : path.basename(localPath);
+        : basename(localPath);
       const resp = await fetch(`${base}/api/projects/${encodeURIComponent(id)}/files`, {
         method:  'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', ...workspaceHeaders },
         body:    JSON.stringify({
           name: desiredName,
           content: buf.toString('base64'),
@@ -4015,21 +8061,21 @@ Common options:
       if (!resp.ok) return structuredHttpFailure(resp);
       const data = await resp.json();
       if (flags.json) return process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+      if (data?.versionWarning?.message) console.error(`[files] warning: ${data.versionWarning.message}`);
       console.log(`[files] uploaded ${data?.file?.name ?? desiredName}`);
       return;
     }
     case 'write': {
-      const positional = rest.filter((a) => !a.startsWith('-'));
+      const positional = positionalArgs(rest, PROJECT_RESOURCE_STRING_FLAGS);
       const [id, rel] = positional;
       if (!id || !rel) {
         console.error('Usage: od files write <projectId> <relpath> [< stdin]');
         process.exit(2);
       }
       // Read stdin synchronously into a buffer.
-      const fs = require('node:fs');
       let chunks = [];
       try {
-        const stdin = fs.readFileSync(0);
+        const stdin = readFileSync(0);
         chunks = [stdin];
       } catch (err) {
         console.error(`stdin read failed: ${err.message ?? err}`);
@@ -4038,7 +8084,7 @@ Common options:
       const body = Buffer.concat(chunks);
       const resp = await fetch(`${base}/api/projects/${encodeURIComponent(id)}/files`, {
         method:  'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', ...workspaceHeaders },
         body:    JSON.stringify({
           name: rel,
           content: body.toString('utf8'),
@@ -4048,19 +8094,137 @@ Common options:
       if (!resp.ok) return structuredHttpFailure(resp);
       const data = await resp.json();
       if (flags.json) return process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+      if (data?.versionWarning?.message) console.error(`[files] warning: ${data.versionWarning.message}`);
       console.log(`[files] wrote ${data?.file?.name ?? rel}`);
       return;
     }
     case 'delete': {
-      const positional = rest.filter((a) => !a.startsWith('-'));
+      const positional = positionalArgs(rest, PROJECT_RESOURCE_STRING_FLAGS);
       const [id, name] = positional;
       if (!id || !name) {
         console.error('Usage: od files delete <projectId> <name>');
         process.exit(2);
       }
-      const resp = await fetch(`${base}/api/projects/${encodeURIComponent(id)}/files/${encodeURIComponent(name)}`, { method: 'DELETE' });
+      const resp = await fetch(
+        `${base}/api/projects/${encodeURIComponent(id)}/files/${encodeURIComponent(name)}`,
+        { method: 'DELETE', headers: workspaceHeaders },
+      );
       if (!resp.ok) return structuredHttpFailure(resp);
       console.log(`[files] deleted ${name}`);
+      return;
+    }
+    case 'diff': {
+      const positional = positionalArgs(rest, PROJECT_RESOURCE_STRING_FLAGS);
+      const [id, relA, relB] = positional;
+      const against = typeof flags.against === 'string' ? flags.against : null;
+      if (!id || !relA || (!relB && !against) || (relB && against)) {
+        console.error('Usage: od files diff <projectId> <relpathA> [<relpathB> | --against -]');
+        process.exit(2);
+      }
+      const left = await fetchProjectFileText(base, id, relA, workspaceHeaders);
+      const rightLabel = against ?? relB;
+      const right = against === '-'
+        ? await readStdinUtf8()
+        : await fetchProjectFileText(base, id, rightLabel, workspaceHeaders);
+      const diff = createUnifiedDiff(`a/${relA}`, `b/${rightLabel}`, left, right);
+      if (flags.json) return process.stdout.write(JSON.stringify({ diff }, null, 2) + '\n');
+      process.stdout.write(diff);
+      return;
+    }
+    case 'versions': {
+      const positional = positionalArgs(rest, PROJECT_RESOURCE_STRING_FLAGS);
+      const [id, rel] = positional;
+      if (!id || !rel) {
+        console.error('Usage: od files versions <projectId> <relpath>');
+        process.exit(2);
+      }
+      const resp = await fetch(
+        `${base}/api/projects/${encodeURIComponent(id)}/files/${encodeProjectRelpath(rel)}/versions`,
+        { headers: workspaceHeaders },
+      );
+      if (!resp.ok) return structuredHttpFailure(resp, 'project-not-found');
+      const data = await resp.json();
+      if (flags.json) return process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+      const versions = Array.isArray(data?.versions) ? data.versions : [];
+      for (const version of versions) {
+        const marker = version.current ? '*' : ' ';
+        const prompt = typeof version.prompt === 'string' && version.prompt.trim()
+          ? version.prompt.trim().replace(/\s+/g, ' ').slice(0, 96)
+          : '-';
+        const createdAt = Number.isFinite(Number(version.createdAt))
+          ? new Date(Number(version.createdAt)).toISOString()
+          : '-';
+        console.log(`${marker}\tv${version.version ?? '-'}\t${version.source ?? '-'}\t${createdAt}\t${version.id ?? '-'}\t${prompt}`);
+      }
+      return;
+    }
+    case 'version-read': {
+      const positional = positionalArgs(rest, PROJECT_RESOURCE_STRING_FLAGS);
+      const [id, rel, versionId] = positional;
+      if (!id || !rel || !versionId) {
+        console.error('Usage: od files version-read <projectId> <relpath> <versionId>');
+        process.exit(2);
+      }
+      const resp = await fetch(
+        `${base}/api/projects/${encodeURIComponent(id)}/files/${encodeProjectRelpath(rel)}/versions/${encodeURIComponent(versionId)}`,
+        { headers: workspaceHeaders },
+      );
+      if (!resp.ok) return structuredHttpFailure(resp, 'project-not-found');
+      const data = await resp.json();
+      if (flags.json) return process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+      process.stdout.write(String(data?.content ?? ''));
+      return;
+    }
+    case 'version-create': {
+      const positional = positionalArgs(rest, PROJECT_RESOURCE_STRING_FLAGS);
+      const [id, rel] = positional;
+      if (!id || !rel) {
+        console.error('Usage: od files version-create <projectId> <relpath> [--prompt <text> | --prompt-file <path|->] [--label <text>] [--source <ai|manual|restore>]');
+        process.exit(2);
+      }
+      const source = parseProjectFileVersionSourceFlag(flags.source);
+      const prompt = await readPromptFromFlags(flags);
+      const body = {};
+      if (prompt !== null) body.prompt = prompt;
+      if (typeof flags.label === 'string' && flags.label.length > 0) body.label = flags.label;
+      if (source) body.source = source;
+      const resp = await fetch(
+        `${base}/api/projects/${encodeURIComponent(id)}/files/${encodeProjectRelpath(rel)}/versions`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', ...workspaceHeaders },
+          body: JSON.stringify(body),
+        },
+      );
+      if (!resp.ok) return structuredHttpFailure(resp, 'project-not-found');
+      const data = await resp.json();
+      if (flags.json) return process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+      console.log(`[files] saved ${rel} as version ${data?.version?.version ?? data?.version?.id ?? '-'}`);
+      return;
+    }
+    case 'version-restore': {
+      const positional = positionalArgs(rest, PROJECT_RESOURCE_STRING_FLAGS);
+      const [id, rel, versionId] = positional;
+      if (!id || !rel || !versionId) {
+        console.error('Usage: od files version-restore <projectId> <relpath> <versionId> [--prompt <text> | --prompt-file <path|->]');
+        process.exit(2);
+      }
+      const prompt = await readPromptFromFlags(flags);
+      const body = {};
+      if (prompt !== null) body.prompt = prompt;
+      const resp = await fetch(
+        `${base}/api/projects/${encodeURIComponent(id)}/files/${encodeProjectRelpath(rel)}/versions/${encodeURIComponent(versionId)}/restore`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', ...workspaceHeaders },
+          body: JSON.stringify(body),
+        },
+      );
+      if (!resp.ok) return structuredHttpFailure(resp, 'project-not-found');
+      const data = await resp.json();
+      if (flags.json) return process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+      if (data?.versionWarning?.message) console.error(`[files] warning: ${data.versionWarning.message}`);
+      console.log(`[files] restored ${rel} as version ${data?.version?.version ?? data?.version?.id ?? '-'}`);
       return;
     }
     default:
@@ -4069,29 +8233,387 @@ Common options:
   }
 }
 
-async function runConversation(args) {
+function encodeProjectRelpath(rel) {
+  return String(rel).split('/').map(encodeURIComponent).join('/');
+}
+
+async function fetchProjectFileText(base, id, rel, headers = {}) {
+  const resp = await fetch(
+    `${base}/api/projects/${encodeURIComponent(id)}/files/${encodeProjectRelpath(rel)}`,
+    { headers },
+  );
+  if (!resp.ok) return structuredHttpFailure(resp, 'project-not-found');
+  const buf = Buffer.from(await resp.arrayBuffer());
+  return buf.toString('utf8');
+}
+
+async function readStdinUtf8() {
+  const fs = await import('node:fs');
+  return fs.readFileSync(0, 'utf8');
+}
+
+async function mintCliImportToken(baseDir) {
+  const socketPath = process.env[SIDECAR_ENV.IPC_PATH];
+  if (typeof socketPath !== 'string' || socketPath.length === 0) return null;
+  let result;
+  try {
+    result = await requestJsonIpc(
+      socketPath,
+      { type: SIDECAR_MESSAGES.MINT_IMPORT_TOKEN, input: { baseDir } },
+      { timeoutMs: 800 },
+    );
+  } catch {
+    return null;
+  }
+  if (result?.ok === true && typeof result.token === 'string' && result.token.length > 0) {
+    return result.token;
+  }
+  if (result?.ok === false && result.code === 'DESKTOP_AUTH_PENDING') {
+    exitWithStructuredError({
+      code: 'desktop-auth-pending',
+      message: result.message ?? 'desktop auth required but secret not yet registered',
+      data: { retryable: result.retryable === true },
+    });
+  }
+  return null;
+}
+
+function createUnifiedDiff(leftLabel, rightLabel, leftText, rightText) {
+  if (leftText === rightText) return '';
+  const leftLines = splitDiffLines(leftText);
+  const rightLines = splitDiffLines(rightText);
+  let prefix = 0;
+  while (
+    prefix < leftLines.length
+    && prefix < rightLines.length
+    && leftLines[prefix] === rightLines[prefix]
+  ) {
+    prefix++;
+  }
+  let leftEnd = leftLines.length;
+  let rightEnd = rightLines.length;
+  while (
+    leftEnd > prefix
+    && rightEnd > prefix
+    && leftLines[leftEnd - 1] === rightLines[rightEnd - 1]
+  ) {
+    leftEnd--;
+    rightEnd--;
+  }
+  const oldMid = leftLines.slice(prefix, leftEnd);
+  const newMid = rightLines.slice(prefix, rightEnd);
+  const body = diffLineBody(oldMid, newMid);
+  if (body.length === 0) {
+    body.push(...oldMid.map((line) => diffLine('-', line)), ...newMid.map((line) => diffLine('+', line)));
+  }
+  const oldStart = oldMid.length === 0 ? prefix : prefix + 1;
+  const newStart = newMid.length === 0 ? prefix : prefix + 1;
+  return [
+    `--- ${leftLabel}`,
+    `+++ ${rightLabel}`,
+    `@@ -${formatDiffRange(oldStart, oldMid.length)} +${formatDiffRange(newStart, newMid.length)} @@`,
+    ...body,
+  ].join('\n') + '\n';
+}
+
+function splitDiffLines(text) {
+  const value = String(text);
+  if (value.length === 0) return [];
+  return value.match(/.*?(?:\r\n|\n|\r|$)/gs).filter((line) => line.length > 0);
+}
+
+function formatDiffRange(start, length) {
+  return length === 1 ? String(start) : `${start},${length}`;
+}
+
+function diffLineBody(oldLines, newLines) {
+  if (oldLines.length === 0) return newLines.map((line) => diffLine('+', line));
+  if (newLines.length === 0) return oldLines.map((line) => diffLine('-', line));
+  if (oldLines.length * newLines.length > 1_000_000) {
+    return [...oldLines.map((line) => diffLine('-', line)), ...newLines.map((line) => diffLine('+', line))];
+  }
+  const width = newLines.length + 1;
+  const lcs = Array.from(
+    { length: oldLines.length + 1 },
+    () => new Uint32Array(width),
+  );
+  for (let i = oldLines.length - 1; i >= 0; i--) {
+    for (let j = newLines.length - 1; j >= 0; j--) {
+      lcs[i][j] = oldLines[i] === newLines[j]
+        ? lcs[i + 1][j + 1] + 1
+        : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
+    }
+  }
+  const out = [];
+  let i = 0;
+  let j = 0;
+  while (i < oldLines.length && j < newLines.length) {
+    if (oldLines[i] === newLines[j]) {
+      out.push(diffLine(' ', oldLines[i]));
+      i++;
+      j++;
+    } else if (lcs[i + 1][j] >= lcs[i][j + 1]) {
+      out.push(diffLine('-', oldLines[i]));
+      i++;
+    } else {
+      out.push(diffLine('+', newLines[j]));
+      j++;
+    }
+  }
+  while (i < oldLines.length) out.push(diffLine('-', oldLines[i++]));
+  while (j < newLines.length) out.push(diffLine('+', newLines[j++]));
+  return out;
+}
+
+function diffLine(prefix, line) {
+  const value = String(line);
+  if (value.endsWith('\r\n')) return `${prefix}${renderDiffLineContent(value.slice(0, -1))}`;
+  if (value.endsWith('\n')) return `${prefix}${renderDiffLineContent(value.slice(0, -1))}`;
+  if (value.endsWith('\r')) return `${prefix}${renderDiffLineContent(value)}`;
+  return `${prefix}${renderDiffLineContent(value)}\n\\ No newline at end of file`;
+}
+
+function renderDiffLineContent(value) {
+  return String(value).replace(/\r/g, '\\r');
+}
+
+// `od templates …` is the headless face of NewProjectPanel /
+// ExamplesTab — same /api/templates store, same DTO shapes. External
+// agents (hermes-agent, openclaw, custom bots) use these to snapshot a
+// project as a reusable starting point, list everything the user has
+// saved, or drop one that is no longer needed. The web UI and the CLI
+// share the daemon HTTP layer so neither can drift out of step.
+async function runTemplates(args) {
   if (args.length === 0 || args[0] === 'help' || args.includes('--help') || args.includes('-h')) {
     console.log(`Usage:
-  od conversation list <projectId>           List conversations in a project.
-  od conversation info <conversationId>      Print one conversation.
+  od templates list                                  List user-saved templates.
+  od templates save  <projectId> --name <name>      Snapshot a project's current
+                                                    files as a new template.
+                     [--description <text>]
+  od templates delete <id>                          Delete a saved template by id.
 
 Common options:
-  --daemon-url <url>   Open Design daemon HTTP base.
+  --daemon-url <url>   OpenDesign daemon HTTP base.
   --json               Emit raw JSON.`);
     process.exit(args.length === 0 ? 2 : 0);
   }
   const sub = args[0];
   const rest = args.slice(1);
-  const flags = parseFlags(rest, { string: PROJECT_STRING_FLAGS, boolean: PROJECT_BOOLEAN_FLAGS });
-  const base = (await projectDaemonUrl(flags)).replace(/\/$/, '');
+  let flags;
+  try {
+    flags = parseFlags(rest, { string: TEMPLATES_STRING_FLAGS, boolean: TEMPLATES_BOOLEAN_FLAGS });
+  } catch (err) {
+    console.error(err.message);
+    process.exit(2);
+  }
+  const base = (await cliDaemonBaseUrl(flags));
+  // Extract positional arguments while stepping past `--flag value`
+  // pairs for any string-valued template flag. Without this the id has
+  // to be the very first token after the sub-verb, so a headless caller
+  // that prefixes shared options (`od templates save --daemon-url ...
+  // proj-1 --name Cards`) would hit the missing-id usage path before
+  // ever reaching the daemon. Mirrors the `positionalArgs` helper in
+  // `runAutomation`.
+  const positionalArgs = (values) => {
+    const out = [];
+    for (let i = 0; i < values.length; i++) {
+      const value = values[i];
+      if (!value) continue;
+      if (value.startsWith('--')) {
+        const eq = value.indexOf('=');
+        const key = eq >= 0 ? value.slice(2, eq) : value.slice(2);
+        if (eq < 0 && TEMPLATES_STRING_FLAGS.has(key)) i++;
+        continue;
+      }
+      if (value.startsWith('-')) continue;
+      out.push(value);
+    }
+    return out;
+  };
   switch (sub) {
     case 'list': {
-      const id = rest.find((a) => !a.startsWith('-'));
+      // Wrap every fetch in try/catch so the user sees a clean
+      // "failed to reach daemon at <url>: <code>" error from
+      // surfaceFetchError when the daemon isn't running. Without
+      // this Node throws a raw `TypeError: fetch failed`, which
+      // matches the pattern the rest of the CLI uses
+      // (runAutomation, the project verbs, runResearch).
+      let resp;
+      try {
+        resp = await fetch(`${base}/api/templates`);
+      } catch (err) {
+        surfaceFetchError(err, base);
+        process.exit(3);
+      }
+      if (!resp.ok) return structuredHttpFailure(resp);
+      const data = await resp.json();
+      if (flags.json) return process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+      const templates = Array.isArray(data?.templates) ? data.templates : [];
+      if (templates.length === 0) {
+        console.log('No templates. Save one with `od templates save <projectId> --name "..."`.');
+        return;
+      }
+      for (const t of templates) console.log(`${t.id}\t${t.name}`);
+      return;
+    }
+    case 'save': {
+      // Pull <projectId> from anywhere among the positional args
+      // (`positionalArgs` already skipped past `--flag value` pairs)
+      // so callers can put shared options before or after the id.
+      const projectId = positionalArgs(rest)[0] ?? '';
+      if (!projectId) {
+        console.error('Usage: od templates save <projectId> --name <name> [--description <text>]');
+        process.exit(2);
+      }
+      const name = typeof flags.name === 'string' ? flags.name.trim() : '';
+      if (!name) {
+        console.error('--name required');
+        process.exit(2);
+      }
+      const body = { name, sourceProjectId: projectId };
+      if (typeof flags.description === 'string' && flags.description.length > 0) {
+        body.description = flags.description;
+      }
+      let resp;
+      try {
+        resp = await fetch(`${base}/api/templates`, {
+          method:  'POST',
+          headers: { 'content-type': 'application/json' },
+          body:    JSON.stringify(body),
+        });
+      } catch (err) {
+        surfaceFetchError(err, base);
+        process.exit(3);
+      }
+      // Templates POST returns 404 when sourceProjectId is unknown,
+      // and 400 for body validation failures (missing name, too-long
+      // fields). Both are reachable user errors with the daemon
+      // already running, so default-classifying them as
+      // `daemon-not-running` would send agents down the wrong recovery
+      // branch. Map 404 → project-not-found and 400 → missing-input,
+      // keep the default for 5xx so genuine daemon trouble still
+      // surfaces as `daemon-not-running`.
+      if (!resp.ok) {
+        if (resp.status === 404) return structuredHttpFailure(resp, 'project-not-found');
+        if (resp.status === 400) return structuredHttpFailure(resp, 'missing-input');
+        return structuredHttpFailure(resp);
+      }
+      const data = await resp.json();
+      if (flags.json) return process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+      const id = data?.template?.id ?? '';
+      const savedName = data?.template?.name ?? name;
+      console.log(`[templates] saved ${savedName}${id ? ` (${id})` : ''}`);
+      return;
+    }
+    case 'delete': {
+      const id = positionalArgs(rest)[0] ?? '';
+      if (!id) {
+        console.error('Usage: od templates delete <id>');
+        process.exit(2);
+      }
+      let resp;
+      try {
+        resp = await fetch(`${base}/api/templates/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      } catch (err) {
+        surfaceFetchError(err, base);
+        process.exit(3);
+      }
+      // The daemon route `DELETE /api/templates/:id` is intentionally
+      // idempotent (returns `{ ok: true }` for unknown ids), so this
+      // CLI verb mirrors that contract instead of inventing a
+      // template-not-found exit code the production route never emits.
+      // Any unexpected non-2xx still falls through to the generic
+      // structured-failure envelope.
+      if (!resp.ok) return structuredHttpFailure(resp);
+      if (flags.json) {
+        const data = await resp.json().catch(() => ({ ok: true }));
+        return process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+      }
+      console.log(`[templates] deleted ${id}`);
+      return;
+    }
+    default:
+      console.error(`unknown subcommand: od templates ${sub}`);
+      process.exit(2);
+  }
+}
+
+async function runConversation(args) {
+  if (args.length === 0 || args[0] === 'help' || args.includes('--help') || args.includes('-h')) {
+    console.log(`Usage:
+  od conversation new  <projectId> [--title "<title>"] [--seed-from <cid>] [--fork-after <mid>] [--mode design|chat|plan]
+                                           Create a conversation in a project.
+                                           --seed-from copies another
+                                           conversation's messages in (Side Chat).
+                                           --fork-after stops the copy at one
+                                           source message.
+  od conversation list <projectId>           List conversations in a project.
+  od conversation info <conversationId>      Print one conversation.
+
+Common options:
+  --daemon-url <url>         OpenDesign daemon HTTP base.
+  --workspace <id>           Explicit Workspace id for a bound project.
+  --workspace-member <id>    Explicit Workspace member id for a bound project.
+  --json                     Emit raw JSON.`);
+    process.exit(args.length === 0 ? 2 : 0);
+  }
+  const sub = args[0];
+  const rest = args.slice(1);
+  const conversationStringFlags =
+    sub === 'new' || sub === 'list'
+      ? PROJECT_RESOURCE_STRING_FLAGS
+      : PROJECT_STRING_FLAGS;
+  const flags = parseFlags(rest, {
+    string: conversationStringFlags,
+    boolean: PROJECT_BOOLEAN_FLAGS,
+  });
+  const base = (await projectDaemonUrl(flags)).replace(/\/$/, '');
+  const workspaceHeaders =
+    sub === 'new' || sub === 'list'
+      ? workspaceHeadersFromExplicitFlags(flags) ?? {}
+      : {};
+  switch (sub) {
+    case 'new': {
+      const [id] = positionalArgs(rest, conversationStringFlags);
+      if (!id) {
+        console.error('Usage: od conversation new <projectId> [--title "<title>"] [--seed-from <cid>] [--fork-after <mid>]');
+        process.exit(2);
+      }
+      const body = {};
+      if (typeof flags.title === 'string') body.title = flags.title;
+      const sessionMode = normalizeChatSessionModeFlag(flags.mode);
+      if (sessionMode) body.sessionMode = sessionMode;
+      if (typeof flags['seed-from'] === 'string' && flags['seed-from']) {
+        body.seedFromConversationId = flags['seed-from'];
+      }
+      if (typeof flags['fork-after'] === 'string' && flags['fork-after']) {
+        if (!body.seedFromConversationId) {
+          console.error('--fork-after requires --seed-from');
+          process.exit(2);
+        }
+        body.forkAfterMessageId = flags['fork-after'];
+      }
+      const resp = await fetch(`${base}/api/projects/${encodeURIComponent(id)}/conversations`, {
+        method:  'POST',
+        headers: { 'content-type': 'application/json', ...workspaceHeaders },
+        body:    JSON.stringify(body),
+      });
+      if (!resp.ok) return structuredHttpFailure(resp, 'project-not-found');
+      const data = await resp.json();
+      if (flags.json) return process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+      const conv = data.conversation;
+      console.log(`[conversation] created ${conv?.id ?? '-'} (mode ${conv?.sessionMode ?? sessionMode ?? 'design'})`);
+      return;
+    }
+    case 'list': {
+      const id = positionalArgs(rest, conversationStringFlags)[0];
       if (!id) {
         console.error('Usage: od conversation list <projectId>');
         process.exit(2);
       }
-      const resp = await fetch(`${base}/api/projects/${encodeURIComponent(id)}/conversations`);
+      const resp = await fetch(`${base}/api/projects/${encodeURIComponent(id)}/conversations`, {
+        headers: workspaceHeaders,
+      });
       if (!resp.ok) return structuredHttpFailure(resp);
       const data = await resp.json();
       process.stdout.write(JSON.stringify(data, null, 2) + '\n');
@@ -4111,6 +8633,91 @@ Common options:
     }
     default:
       console.error(`unknown subcommand: od conversation ${sub}`);
+      process.exit(2);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Subcommand: od chat  (Side Chat — context-seeded conversations)
+//
+// `od chat new --project <id> [--seed-from <cid>] [--fork-after <mid>] [--title "<t>"] [--json]`
+//   Creates a new conversation that inherits another conversation's context
+//   by copying its messages, optionally truncating at one source message.
+//   Mirrors the web chat fork action and POSTs to the same
+//   /api/projects/:id/conversations endpoint the UI uses. This is the CLI half
+//   of the dual-track surface for context-seeded conversations.
+// ---------------------------------------------------------------------------
+
+async function runChat(args) {
+  if (args.length === 0 || args[0] === 'help' || args.includes('--help') || args.includes('-h')) {
+    console.log(`Usage:
+  od chat new --project <id> [--seed-from <cid>] [--fork-after <mid>] [--title "<title>"] [--mode design|chat|plan] [--json]
+                                           Create a Side Chat — a new conversation
+                                           that copies in another conversation's
+                                           context (--seed-from). Use
+                                           --fork-after to stop at one source
+                                           message.
+
+Common options:
+  --daemon-url <url>         OpenDesign daemon HTTP base.
+  --workspace <id>           Explicit Workspace id for the bound project.
+  --workspace-member <id>    Explicit Workspace member id for the bound project.
+  --json                     Emit raw JSON.`);
+    process.exit(args.length === 0 ? 2 : 0);
+  }
+  const sub = args[0];
+  const rest = args.slice(1);
+  const flags = parseFlags(rest, {
+    string: PROJECT_RESOURCE_STRING_FLAGS,
+    boolean: PROJECT_BOOLEAN_FLAGS,
+  });
+  const base = (await projectDaemonUrl(flags)).replace(/\/$/, '');
+  const workspaceHeaders = workspaceHeadersFromExplicitFlags(flags) ?? {};
+  switch (sub) {
+    case 'new': {
+      // Accept --project for parity with the rest of the project-scoped CLI,
+      // or a bare positional id for convenience.
+      const id = typeof flags.project === 'string' && flags.project
+        ? flags.project
+        : positionalArgs(rest, PROJECT_RESOURCE_STRING_FLAGS)[0];
+      if (!id) {
+        console.error('Usage: od chat new --project <id> [--seed-from <cid>] [--fork-after <mid>] [--title "<title>"]');
+        process.exit(2);
+      }
+      const body = {};
+      if (typeof flags.title === 'string') body.title = flags.title;
+      const sessionMode = normalizeChatSessionModeFlag(flags.mode);
+      if (sessionMode) body.sessionMode = sessionMode;
+      if (typeof flags['seed-from'] === 'string' && flags['seed-from']) {
+        body.seedFromConversationId = flags['seed-from'];
+      }
+      if (typeof flags['fork-after'] === 'string' && flags['fork-after']) {
+        if (!body.seedFromConversationId) {
+          console.error('--fork-after requires --seed-from');
+          process.exit(2);
+        }
+        body.forkAfterMessageId = flags['fork-after'];
+      }
+      const resp = await fetch(`${base}/api/projects/${encodeURIComponent(id)}/conversations`, {
+        method:  'POST',
+        headers: { 'content-type': 'application/json', ...workspaceHeaders },
+        body:    JSON.stringify(body),
+      });
+      if (!resp.ok) return structuredHttpFailure(resp, 'project-not-found');
+      const data = await resp.json();
+      if (flags.json) return process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+      const conv = data.conversation;
+      const seeded = body.seedFromConversationId
+        ? ` (seeded from ${body.seedFromConversationId})`
+        : '';
+      const forked = body.forkAfterMessageId
+        ? ` through ${body.forkAfterMessageId}`
+        : '';
+      console.log(`[chat] created ${conv?.id ?? '-'}${conv?.title ? ` "${conv.title}"` : ''}${seeded}${forked} (mode ${conv?.sessionMode ?? sessionMode ?? 'design'})`);
+      return;
+    }
+    default:
+      console.error(`unknown subcommand: od chat ${sub}`);
       process.exit(2);
   }
 }
@@ -4144,7 +8751,7 @@ async function runDaemon(args) {
   od daemon db     vacuum                 Run SQLite VACUUM to reclaim space after deletes.
 
 Common options:
-  --daemon-url <url>   Open Design daemon HTTP base.
+  --daemon-url <url>   OpenDesign daemon HTTP base.
   --headless           No browser auto-open; aliased --no-open.
   --serve-web          Serve the web UI over the existing port (no electron).
   --json               Emit raw JSON.`);
@@ -4273,50 +8880,34 @@ function formatBytes(n) {
 }
 
 async function runDaemonStart(flags) {
-  // The headless flag implies --no-open AND auto-applies any other
-  // headless-only env defaults. Because the existing default-mode boot
-  // already handles port / host / no-open, we forward into it by
-  // mutating process.argv before re-entering the boot path.
-  // Simpler path: re-implement the boot inline, mirroring the default.
   const port = Number(flags.port ?? process.env.OD_PORT ?? 7456);
-  const host = String(flags.host ?? process.env.OD_BIND_HOST ?? '127.0.0.1');
+  const host = String(flags.host ?? process.env.OD_BIND_HOST ?? '127.0.0.1').trim() || '127.0.0.1';
   const headless = Boolean(flags.headless || flags['no-open'] || flags['serve-web']);
-  process.env.OD_BIND_HOST = host;
-  process.env.OD_PORT = String(port);
-  const { startServer: startHeadless } = await import('./server.js');
-  const started = await startHeadless({ port, host, returnServer: true });
-  const url = started.url;
-  const server = started.server;
-  const shutdown = started.shutdown;
-  const closeServer = () => new Promise((resolve) => {
-    let resolved = false;
-    const resolveOnce = () => { if (!resolved) { resolved = true; resolve(); } };
-    const idleTimer = setTimeout(() => server.closeIdleConnections?.(), 1_000);
-    const hardTimer = setTimeout(() => { server.closeAllConnections?.(); resolveOnce(); }, 5_000);
-    idleTimer.unref?.();
-    hardTimer.unref?.();
-    server.close(() => resolveOnce());
+  const runtime = await startDaemonRuntime({
+    host,
+    logListening: false,
+    openBrowser: !headless,
+    port,
   });
-  let shuttingDown = false;
-  const stop = () => {
-    if (shuttingDown) process.exit(0);
-    shuttingDown = true;
-    void Promise.allSettled([
-      Promise.resolve().then(() => shutdown?.()),
-      closeServer(),
-    ]).finally(() => process.exit(0));
-  };
-  process.on('SIGINT', stop);
-  process.on('SIGTERM', stop);
-  console.log(`[od] listening on ${url} (${headless ? 'headless' : 'desktop'})`);
-  if (!headless) {
-    const opener = process.platform === 'darwin' ? 'open'
-      : process.platform === 'win32' ? 'start'
-      : 'xdg-open';
-    import('node:child_process').then(({ spawn }) => {
-      spawn(opener, [url], { detached: true, stdio: 'ignore' }).unref();
-    });
-  }
+  console.log(`[od] listening on ${runtime.url} (${headless ? 'headless' : 'desktop'})`);
+
+  await new Promise((resolve) => {
+    let shuttingDown = false;
+    const stop = () => {
+      if (shuttingDown) process.exit(0);
+      shuttingDown = true;
+      void runtime.stop().finally(() => {
+        cleanup();
+        resolve();
+      });
+    };
+    const cleanup = () => {
+      process.off('SIGINT', stop);
+      process.off('SIGTERM', stop);
+    };
+    process.on('SIGINT', stop);
+    process.on('SIGTERM', stop);
+  });
 }
 
 async function runDaemonStatus(flags) {
@@ -4371,7 +8962,7 @@ async function runAtoms(args) {
   od atoms info <id>        Print metadata + the bundled SKILL.md body.
 
 Common options:
-  --daemon-url <url>   Open Design daemon HTTP base.
+  --daemon-url <url>   OpenDesign daemon HTTP base.
   --json               Emit raw JSON.`);
     process.exit(args.length === 0 ? 2 : 0);
   }
@@ -4442,6 +9033,257 @@ Common options:
   }
 }
 
+function printLibraryHelp() {
+  console.log(`Usage: od library <command> [options]
+
+Commands:
+  list                      List library assets. Filters: --kind --tag --source --date
+  get <id>                  Print one asset (JSON).
+  rm <id>                   Delete an asset.
+  search <query>            Keyword search across captions / tags / titles.
+  import <file|url>...      Import one or more local files / remote URLs into the library.
+                            Restricted to design formats (images, fonts, text, HTML, JSON);
+                            audio, video, and other binaries are rejected.
+  apply <id>                Copy an asset into a project's design files. Requires --project.
+  edit-as-page <id>         Turn a captured html asset into a new editable OD project (prints projectId).
+  figma <id>                Export an html asset's OD Figma capture IR (clipper-captured pages).
+  sync                      Pull design systems + agent-generated project artifacts into the Library.
+  pair                      Mint a browser-extension pairing code.
+
+Options:
+  --json                    Machine-readable output.
+  --daemon-url <url>        Override daemon URL (default: auto-discover).
+  --kind <image|design-system|video|...>
+                            Filter/declare asset kind.
+  --tag <tag>               Filter by / attach a tag.
+  --source <kind>           Filter by source (clipper|manual-upload|agent-task|design-system|generated).
+  --date <YYYY-MM-DD>       Filter by archive date.
+  --project <id>            Target project for apply.
+  --dir <subdir>            Subdirectory inside the project for apply (default: library).
+  --workspace <id>          Explicit Workspace id for a bound target project.
+  --workspace-member <id>   Explicit Workspace member id for a bound target project.
+  --out <file>              Write the figma export to a file (default: stdout).`);
+}
+
+async function runLibrary(args) {
+  const sub = args.find((a) => !a.startsWith('-')) || '';
+  if (!sub || sub === 'help' || sub === '-h' || sub === '--help') {
+    printLibraryHelp();
+    process.exit(sub ? 0 : 2);
+  }
+  const idx = args.indexOf(sub);
+  const rest = [...args.slice(0, idx), ...args.slice(idx + 1)];
+  let flags;
+  try {
+    flags = parseFlags(rest, {
+      string: LIBRARY_ASSET_STRING_FLAGS,
+      boolean: LIBRARY_ASSET_BOOLEAN_FLAGS,
+    });
+  } catch (err) {
+    console.error(err.message);
+    process.exit(2);
+  }
+  const base = await cliDaemonBaseUrl(flags);
+  const pos = positionalArgs(rest, LIBRARY_ASSET_STRING_FLAGS);
+  const writeJson = (data) => process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+
+  try {
+    switch (sub) {
+      case 'list':
+      case 'search': {
+        const params = new URLSearchParams();
+        const query = sub === 'search' ? flags.query || pos[0] : flags.query;
+        if (query) params.set('q', query);
+        if (flags.kind) params.set('kind', flags.kind);
+        if (flags.tag) params.set('tag', flags.tag);
+        if (flags.source) params.set('source', flags.source);
+        if (flags.date) params.set('date', flags.date);
+        if (flags.project) params.set('projectId', flags.project);
+        const qs = params.toString();
+        const resp = await fetch(`${base}/api/library/assets${qs ? `?${qs}` : ''}`);
+        if (!resp.ok) return structuredHttpFailure(resp);
+        const data = await resp.json();
+        if (flags.json) return writeJson(data);
+        for (const asset of data.assets ?? []) {
+          const dims = asset.width && asset.height ? `${asset.width}x${asset.height}` : '';
+          const label = asset.sourceTitle || asset.sourceUrl || asset.caption || '';
+          console.log(`${asset.id}\t${asset.kind}\t${dims}\t${label}`);
+        }
+        return;
+      }
+      case 'get': {
+        const id = pos[0];
+        if (!id) {
+          console.error('Usage: od library get <id>');
+          process.exit(2);
+        }
+        const resp = await fetch(`${base}/api/library/assets/${encodeURIComponent(id)}`);
+        if (!resp.ok) return structuredHttpFailure(resp);
+        return writeJson(await resp.json());
+      }
+      case 'rm': {
+        const id = pos[0];
+        if (!id) {
+          console.error('Usage: od library rm <id>');
+          process.exit(2);
+        }
+        const resp = await fetch(`${base}/api/library/assets/${encodeURIComponent(id)}`, {
+          method: 'DELETE',
+        });
+        if (!resp.ok) return structuredHttpFailure(resp);
+        if (flags.json) return writeJson(await resp.json());
+        console.log(`deleted ${id}`);
+        return;
+      }
+      case 'import': {
+        const sources = pos;
+        if (!sources.length) {
+          console.error('Usage: od library import <file|url> [<file|url> ...]');
+          process.exit(2);
+        }
+        const { readFile } = await import('node:fs/promises');
+        const nodePath = await import('node:path');
+        const results = [];
+        let failed = false;
+        for (const src of sources) {
+          const body = {};
+          try {
+            if (/^https?:\/\//i.test(src)) {
+              body.url = src;
+              body.sourceUrl = src;
+            } else {
+              const bytes = await readFile(src);
+              // Empty mediatype → daemon sniffs the bytes for the real mime.
+              body.dataUrl = `data:;base64,${bytes.toString('base64')}`;
+              body.filename = nodePath.basename(src);
+            }
+          } catch (err) {
+            failed = true;
+            results.push({ source: src, ok: false, error: err?.message ?? String(err) });
+            if (!flags.json) console.error(`${src}\terror\t${err?.message ?? err}`);
+            continue;
+          }
+          if (flags.kind) body.kind = flags.kind;
+          if (flags.tag) body.tags = [flags.tag];
+          const resp = await fetch(`${base}/api/library/ingest`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(body),
+          });
+          if (!resp.ok) {
+            failed = true;
+            // The daemon rejects unsupported formats (415) and oversized files
+            // (413); surface the reason per source instead of aborting the run.
+            const detail = await resp.json().catch(() => null);
+            const message = detail?.error?.message ?? `HTTP ${resp.status}`;
+            results.push({ source: src, ok: false, status: resp.status, error: message });
+            if (!flags.json) console.error(`${src}\trejected\t${message}`);
+            continue;
+          }
+          const data = await resp.json();
+          results.push({ source: src, ok: true, ...data });
+          if (!flags.json) {
+            console.log(`${data.asset.id}\t${data.deduped ? 'deduped' : 'imported'}\t${data.asset.kind}`);
+          }
+        }
+        if (flags.json) writeJson(sources.length === 1 ? results[0] : results);
+        if (failed) process.exit(1);
+        return;
+      }
+      case 'apply': {
+        const id = pos[0];
+        if (!id) {
+          console.error('Usage: od library apply <id> --project <projectId> [--dir <subdir>]');
+          process.exit(2);
+        }
+        if (!flags.project) {
+          console.error('Usage: od library apply <id> --project <projectId> [--dir <subdir>]');
+          process.exit(2);
+        }
+        const body = { projectId: flags.project };
+        if (flags.dir) body.dir = flags.dir;
+        const workspaceHeaders = workspaceHeadersFromExplicitFlags(flags) ?? {};
+        const resp = await fetch(`${base}/api/library/assets/${encodeURIComponent(id)}/apply`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', ...workspaceHeaders },
+          body: JSON.stringify(body),
+        });
+        if (!resp.ok) return structuredHttpFailure(resp);
+        const data = await resp.json();
+        if (flags.json) return writeJson(data);
+        console.log(`applied ${id} → ${data.relPath}`);
+        return;
+      }
+      case 'edit-as-page': {
+        const id = pos[0];
+        if (!id) {
+          console.error('Usage: od library edit-as-page <id>');
+          process.exit(2);
+        }
+        const resp = await fetch(`${base}/api/library/assets/${encodeURIComponent(id)}/edit-as-page`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: '{}',
+        });
+        if (!resp.ok) return structuredHttpFailure(resp);
+        const data = await resp.json();
+        if (flags.json) return writeJson(data);
+        console.log(`created project ${data.projectId} → ${data.relPath}`);
+        return;
+      }
+      case 'figma': {
+        const id = pos[0];
+        if (!id) {
+          console.error('Usage: od library figma <id> [--out <file>]');
+          process.exit(2);
+        }
+        const resp = await fetch(`${base}/api/library/assets/${encodeURIComponent(id)}/figma`);
+        if (!resp.ok) return structuredHttpFailure(resp);
+        const ir = await resp.text();
+        if (flags.out) {
+          const { writeFile } = await import('node:fs/promises');
+          await writeFile(flags.out, ir, 'utf8');
+          if (flags.json) return writeJson({ ok: true, id, out: flags.out, bytes: Buffer.byteLength(ir) });
+          console.log(`wrote ${flags.out}`);
+          return;
+        }
+        process.stdout.write(ir.endsWith('\n') ? ir : ir + '\n');
+        return;
+      }
+      case 'sync': {
+        const resp = await fetch(`${base}/api/library/sync`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: '{}',
+        });
+        if (!resp.ok) return structuredHttpFailure(resp);
+        const data = await resp.json();
+        if (flags.json) return writeJson(data);
+        console.log(
+          `Synced ${data.total} new (${data.designSystems} design systems, ${data.projectAssets} project assets; ${data.deduped} already indexed).`,
+        );
+        return;
+      }
+      case 'pair': {
+        const resp = await fetch(`${base}/api/library/pair`, { method: 'POST' });
+        if (!resp.ok) return structuredHttpFailure(resp);
+        const data = await resp.json();
+        if (flags.json) return writeJson(data);
+        console.log(`Pairing code: ${data.code}`);
+        console.log('Enter this code in the OD Clipper extension popup within 5 minutes.');
+        return;
+      }
+      default:
+        console.error(`unknown subcommand: od library ${sub}`);
+        printLibraryHelp();
+        process.exit(2);
+    }
+  } catch (err) {
+    surfaceFetchError(err, base);
+    process.exit(3);
+  }
+}
+
 async function runLibraryList(name, args) {
   if (args.length === 0 || args[0] === 'help' || args.includes('--help') || args.includes('-h')) {
     console.log(`Usage:
@@ -4454,9 +9296,16 @@ async function runLibraryList(name, args) {
   const flags = parseFlags(rest, { string: LIBRARY_STRING_FLAGS, boolean: LIBRARY_BOOLEAN_FLAGS });
   const base = (await libraryDaemonUrl(flags)).replace(/\/$/, '');
   const apiPath = name === 'design-systems' ? '/api/design-systems' : `/api/${name}`;
+  const designSystemWorkspaceHeaders = name === 'design-systems'
+    ? workspaceHeadersFromExplicitFlags(flags) ?? {}
+    : undefined;
   switch (sub) {
     case 'list': {
-      const resp = await fetch(`${base}${apiPath}`);
+      const resp = await fetch(`${base}${apiPath}`, {
+        ...(designSystemWorkspaceHeaders
+          ? { headers: designSystemWorkspaceHeaders }
+          : {}),
+      });
       if (!resp.ok) return structuredHttpFailure(resp);
       const data = await resp.json();
       if (flags.json) return process.stdout.write(JSON.stringify(data, null, 2) + '\n');
@@ -4468,12 +9317,16 @@ async function runLibraryList(name, args) {
       return;
     }
     case 'show': {
-      const id = rest.find((a) => !a.startsWith('-'));
+      const id = positionalArgs(rest, LIBRARY_STRING_FLAGS)[0];
       if (!id) {
         console.error(`Usage: od ${name} show <id>`);
         process.exit(2);
       }
-      const resp = await fetch(`${base}${apiPath}/${encodeURIComponent(id)}`);
+      const resp = await fetch(`${base}${apiPath}/${encodeURIComponent(id)}`, {
+        ...(designSystemWorkspaceHeaders
+          ? { headers: designSystemWorkspaceHeaders }
+          : {}),
+      });
       if (!resp.ok) return structuredHttpFailure(resp);
       const data = await resp.json();
       process.stdout.write(JSON.stringify(data, null, 2) + '\n');
@@ -4485,13 +9338,464 @@ async function runLibraryList(name, args) {
   }
 }
 
-async function runSkills(args)        { return runLibraryList('skills', args); }
-async function runDesignSystems(args) { return runLibraryList('design-systems', args); }
+// `od skills` lists; `od skills uninstall <id>` removes a user-installed skill.
+// The uninstall arm exists because the Extensions page grew a 卸载 action, and a
+// capability that only one surface can reach is not shippable (AGENTS.md,
+// "Capability exposure (UI/CLI dual-track)"). Bundled skills are refused by the
+// route, not here — the daemon owns that judgement.
+async function runSkills(args) {
+  if (!args[0] || args[0] === 'help' || args.includes('--help') || args.includes('-h')) {
+    console.log(`Usage:
+  od skill install <https://github.com/owner/repo|github:owner/repo|https://…tar.gz|https://…tgz> [--json]
+  od skill list
+  od skill show <id>
+  od skill uninstall <id>
+
+\`od skills …\` remains an alias for compatibility.`);
+    process.exit(args[0] ? 0 : 2);
+  }
+  if (args[0] === 'install' || args[0] === 'add') return runSkillInstall(args.slice(1));
+  if (args[0] === 'uninstall' || args[0] === 'remove') return runSkillUninstall(args.slice(1));
+  return runLibraryList('skills', args);
+}
+
+async function runSkillInstall(rest) {
+  const flags = parseFlags(rest, {
+    string: LIBRARY_STRING_FLAGS,
+    boolean: LIBRARY_BOOLEAN_FLAGS,
+  });
+  const source = positionalArgs(rest, LIBRARY_STRING_FLAGS)[0];
+  if (!source) {
+    console.error(
+      'Usage: od skill install <https://github.com/owner/repo|github:owner/repo|https://…tar.gz|https://…tgz> [--json] [--daemon-url <url>]',
+    );
+    process.exit(2);
+  }
+  const base = (await libraryDaemonUrl(flags)).replace(/\/$/, '');
+  const workspaceHeaders = workspaceHeadersFromExplicitFlags(flags) ?? {};
+  try {
+    const resp = await fetch(`${base}/api/skills/install`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...workspaceHeaders },
+      body: JSON.stringify({ source }),
+    });
+    const body = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      const message = body?.error ?? `Skill install failed (${resp.status})`;
+      if (flags.json) {
+        console.log(JSON.stringify({
+          ok: false,
+          status: resp.status,
+          code: body?.code ?? null,
+          error: message,
+        }));
+      } else {
+        console.error(`POST /api/skills/install failed: ${resp.status} ${message}`);
+      }
+      process.exit(1);
+    }
+    if (flags.json) return process.stdout.write(JSON.stringify(body, null, 2) + '\n');
+    console.log(`[install] ${body?.skill?.id ?? body?.skill?.name ?? source}`);
+  } catch (err) {
+    surfaceFetchError(err, base);
+    process.exit(3);
+  }
+}
+
+async function runSkillUninstall(rest) {
+  const flags = parseFlags(rest, { string: LIBRARY_STRING_FLAGS, boolean: LIBRARY_BOOLEAN_FLAGS });
+  const id = positionalArgs(rest, LIBRARY_STRING_FLAGS)[0];
+  if (!id) {
+    console.error('Usage: od skills uninstall <id> [--json] [--daemon-url <url>]');
+    process.exit(2);
+  }
+  const base = (await libraryDaemonUrl(flags)).replace(/\/$/, '');
+  const workspaceHeaders = workspaceHeadersFromExplicitFlags(flags) ?? {};
+  const resp = await fetch(`${base}/api/skills/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    headers: workspaceHeaders,
+  });
+  const body = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    if (flags.json) {
+      console.log(JSON.stringify({ ok: false, id, status: resp.status, error: body?.error ?? null }));
+    } else {
+      console.error(`DELETE /api/skills/${id} failed: ${resp.status} ${body?.error ?? ''}`.trim());
+    }
+    process.exit(1);
+  }
+  if (flags.json) console.log(JSON.stringify({ ok: true, id }));
+  else console.log(`[uninstall] ${id} removed`);
+}
 async function runCraft(args)         { return runLibraryList('craft', args); }
+
+async function runDesignSystems(args) {
+  if (args[0] === 'rename') return runDesignSystemRename(args.slice(1));
+  if (args[0] === 'download') return runDesignSystemDownload(args.slice(1));
+  if (args[0] === 'import-local') return runDesignSystemImportLocal(args.slice(1));
+  if (args[0] === 'import-github') return runDesignSystemImportGithub(args.slice(1));
+  if (args[0] === 'import-shadcn') return runDesignSystemImportShadcn(args.slice(1));
+  if (args[0] === 'rebuild-token-contract') return runDesignSystemTokenContractRebuild(args.slice(1));
+  if (!args[0] || isDesignSystemsHelpArg(args[0])) {
+    console.log(DESIGN_SYSTEMS_USAGE);
+    process.exit(isDesignSystemsHelpArg(args[0]) ? 0 : 2);
+  }
+  return runLibraryList('design-systems', args);
+}
+
+// od design-systems download <id> [--out <path>] [--json] [--daemon-url <url>]
+//
+// Streams GET /api/design-systems/:id/archive — the same self-contained brand
+// .zip (every system file plus a generated SKILLS.md usage guide) the web
+// "Download brand" button produces — and writes it to disk. Only user design
+// systems are downloadable; presets return 404.
+async function runDesignSystemDownload(args) {
+  if (args.length === 0 || args[0] === 'help' || args.includes('--help') || args.includes('-h')) {
+    console.log(`Usage:
+  od design-systems download <id> [--out <path>] [--json] [--daemon-url <url>]
+
+Downloads an editable design system as a shareable .zip (all files plus a
+generated SKILLS.md usage guide).
+
+  <id>                   Design system id (e.g. user:my-brand).
+  --out <path>           Write the .zip here (defaults to the brand's name).`);
+    process.exit(args.length === 0 ? 2 : 0);
+  }
+  const stringFlags = new Set([...LIBRARY_STRING_FLAGS, 'out']);
+  const flags = parseFlags(args, { string: stringFlags, boolean: LIBRARY_BOOLEAN_FLAGS });
+  const workspaceHeaders = workspaceHeadersFromExplicitFlags(flags) ?? {};
+  const id = positionalArgs(args, stringFlags)[0];
+  if (!id) {
+    console.error('Usage: od design-systems download <id> [--out <path>]');
+    process.exit(2);
+  }
+  const base = (await libraryDaemonUrl(flags)).replace(/\/$/, '');
+  let resp;
+  try {
+    resp = await fetch(`${base}/api/design-systems/${encodeURIComponent(id)}/archive`, {
+      headers: workspaceHeaders,
+    });
+  } catch (err) {
+    surfaceFetchError(err, base);
+    process.exit(3);
+  }
+  if (resp.status === 404) {
+    console.error(`downloadable design system not found: ${id}`);
+    process.exit(4);
+  }
+  if (!resp.ok) return structuredHttpFailure(resp);
+  const buffer = Buffer.from(await resp.arrayBuffer());
+  let out = typeof flags.out === 'string' ? flags.out : null;
+  if (!out) {
+    const cd = resp.headers.get('content-disposition') || '';
+    const star = /filename\*=UTF-8''([^;]+)/i.exec(cd);
+    const plain = /filename="([^"]+)"/i.exec(cd);
+    if (star && star[1]) {
+      try { out = decodeURIComponent(star[1]); } catch { out = plain && plain[1] ? plain[1] : null; }
+    } else if (plain && plain[1]) {
+      out = plain[1];
+    }
+    if (!out) out = 'design-system.zip';
+  }
+  const { writeFile } = await import('node:fs/promises');
+  await writeFile(out, buffer);
+  if (flags.json) {
+    return process.stdout.write(
+      JSON.stringify({ ok: true, id, out, bytes: buffer.length }, null, 2) + '\n',
+    );
+  }
+  console.log(`Downloaded ${id} -> ${out} (${buffer.length} bytes)`);
+}
+
+// od design-systems import-local <path> [--name <name>]
+//   [--import-mode <mode>] [--craft <slug,slug>] [--json] [--daemon-url <url>]
+//
+// Imports a local app/design-system project through the same daemon endpoint as
+// the Settings UI. The CLI resolves relative paths before sending the request
+// because the daemon intentionally accepts only absolute host paths.
+async function runDesignSystemImportLocal(args) {
+  if (args.length === 0 || args[0] === 'help' || args.includes('--help') || args.includes('-h')) {
+    console.log(`Usage:
+  od design-systems import-local <path> [--name <name>] [--import-mode <mode>] [--craft <slugs>] [--json] [--daemon-url <url>]
+  od design-systems import-local --path <path> [--name <name>] [--json]
+
+Imports a local project directory as an editable OpenDesign design system.
+
+  <path>                 Local project directory to scan.
+  --path <path>          Path alternative for scripts that prefer named flags.
+  --name <name>          Display name override for the imported system.
+  --import-mode <mode>   normalized | hybrid | verbatim (default hybrid).
+  --craft <slugs>        Comma-separated craft sections to apply (e.g. color,type).`);
+    process.exit(args.length === 0 ? 2 : 0);
+  }
+  const stringFlags = new Set([...LIBRARY_STRING_FLAGS, 'path', 'name', 'import-mode', 'craft']);
+  const flags = parseFlags(args, { string: stringFlags, boolean: LIBRARY_BOOLEAN_FLAGS });
+  const localPath = typeof flags.path === 'string' ? flags.path : positionalArgs(args, stringFlags)[0];
+  if (!localPath) {
+    console.error('Usage: od design-systems import-local <path>');
+    process.exit(2);
+  }
+  const pathModule = await import('node:path');
+  const body = designSystemImportRequestBody(flags, {
+    baseDir: pathModule.resolve(localPath),
+  });
+  return postDesignSystemImport(flags, '/api/design-systems/import/local', body);
+}
+
+// od design-systems import-github <url> [--branch <branch>] [--name <name>]
+//   [--import-mode <mode>] [--craft <slug,slug>] [--json] [--daemon-url <url>]
+async function runDesignSystemImportGithub(args) {
+  if (args.length === 0 || args[0] === 'help' || args.includes('--help') || args.includes('-h')) {
+    console.log(`Usage:
+  od design-systems import-github <url> [--branch <branch>] [--name <name>] [--import-mode <mode>] [--craft <slugs>] [--json] [--daemon-url <url>]
+  od design-systems import-github --url <url> [--branch <branch>] [--json]
+
+Imports a public GitHub repository as an editable OpenDesign design system.
+
+  <url>                  Repository root URL, e.g. https://github.com/acme/design-kit.
+  --url <url>            URL alternative for scripts that prefer named flags.
+  --branch <branch>      Branch, tag, or ref to clone.
+  --name <name>          Display name override for the imported system.
+  --import-mode <mode>   normalized | hybrid | verbatim (default hybrid).
+  --craft <slugs>        Comma-separated craft sections to apply (e.g. color,type).`);
+    process.exit(args.length === 0 ? 2 : 0);
+  }
+  const stringFlags = new Set([...LIBRARY_STRING_FLAGS, 'url', 'branch', 'name', 'import-mode', 'craft']);
+  const flags = parseFlags(args, { string: stringFlags, boolean: LIBRARY_BOOLEAN_FLAGS });
+  const url = typeof flags.url === 'string' ? flags.url : positionalArgs(args, stringFlags)[0];
+  if (!url) {
+    console.error('Usage: od design-systems import-github <url>');
+    process.exit(2);
+  }
+  const body = designSystemImportRequestBody(flags, {
+    url,
+    ...(typeof flags.branch === 'string' ? { branch: flags.branch } : {}),
+  });
+  return postDesignSystemImport(flags, '/api/design-systems/import/github', body);
+}
+
+function designSystemImportRequestBody(flags, baseBody) {
+  const craftApplies =
+    typeof flags.craft === 'string'
+      ? flags.craft.split(',').map((slug) => slug.trim().toLowerCase()).filter(Boolean)
+      : undefined;
+  return {
+    ...baseBody,
+    ...(typeof flags.name === 'string' ? { name: flags.name } : {}),
+    ...(typeof flags['import-mode'] === 'string' ? { importMode: flags['import-mode'] } : {}),
+    ...(craftApplies && craftApplies.length > 0 ? { craftApplies } : {}),
+  };
+}
+
+async function postDesignSystemImport(flags, endpoint, body) {
+  const base = (await libraryDaemonUrl(flags)).replace(/\/$/, '');
+  const workspaceHeaders = workspaceHeadersFromExplicitFlags(flags) ?? {};
+  const resp = await fetch(`${base}${endpoint}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...workspaceHeaders },
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) return structuredHttpFailure(resp);
+  const data = await resp.json();
+  if (flags.json) return process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+  const imported = data.designSystem ?? data;
+  console.log(`Imported ${imported.id ?? '(unknown id)'}${imported.title ? ` -> ${imported.title}` : ''}`);
+  if (data.tokenContractRebuild?.job) {
+    console.log(`Token contract rebuild queued: ${data.tokenContractRebuild.job.id}`);
+  } else if (data.tokenContractRebuild?.decision?.reason) {
+    console.log(`Token contract rebuild: ${data.tokenContractRebuild.decision.reason}`);
+  }
+}
+
+// od design-systems rebuild-token-contract <id> [--force] [--json]
+//
+// Starts the same review-gated token contract rebuild job exposed in the web
+// design-system detail view. Without --force the daemon only queues a job when
+// source/token-contract.report.json recommends it.
+async function runDesignSystemTokenContractRebuild(args) {
+  if (args.length === 0 || args[0] === 'help' || args.includes('--help') || args.includes('-h')) {
+    console.log(`Usage:
+  od design-systems rebuild-token-contract <id> [--force] [--json] [--daemon-url <url>]
+
+Starts a review-gated TOKEN_SCHEMA token contract rebuild for an editable imported design system.
+
+  <id>       Editable design-system id, e.g. user:acme-product.
+  --force    Queue the review even when the quality report is already usable.`);
+    process.exit(args.length === 0 ? 2 : 0);
+  }
+  const flags = parseFlags(args, {
+    string: LIBRARY_STRING_FLAGS,
+    boolean: new Set([...LIBRARY_BOOLEAN_FLAGS, 'force']),
+  });
+  const id = positionalArgs(args, LIBRARY_STRING_FLAGS)[0];
+  if (!id) {
+    console.error('Usage: od design-systems rebuild-token-contract <id>');
+    process.exit(2);
+  }
+  const base = (await libraryDaemonUrl(flags)).replace(/\/$/, '');
+  const workspaceHeaders = workspaceHeadersFromExplicitFlags(flags) ?? {};
+  const resp = await fetch(`${base}/api/design-systems/${encodeURIComponent(id)}/token-contract/rebuild-jobs`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...workspaceHeaders },
+    body: JSON.stringify({ force: flags.force === true }),
+  });
+  if (!resp.ok) return structuredHttpFailure(resp);
+  const data = await resp.json();
+  if (flags.json) return process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+  if (data.job) {
+    console.log(`Token contract rebuild queued for ${id}: ${data.job.id}`);
+    return;
+  }
+  const decision = data.decision;
+  console.log(`Token contract rebuild not queued for ${id}: ${decision?.reason ?? 'no rebuild needed'}`);
+}
+
+// od design-systems import-shadcn <reference> [--name <name>]
+//   [--import-mode <mode>] [--craft <slug,slug>] [--json] [--daemon-url <url>]
+//
+// Imports a shadcn registry item as an editable user design system via
+// POST /api/design-systems/import/shadcn — the CLI mirror of the Settings →
+// Design systems "shadcn" import source. <reference> is the shadcn CLI
+// shorthand "<owner>/<repo>/<item>" (e.g. shadcn/ui/theme-zinc) or a direct
+// https URL to a registry-item JSON document.
+async function runDesignSystemImportShadcn(args) {
+  if (args.length === 0 || args[0] === 'help' || args.includes('--help') || args.includes('-h')) {
+    console.log(`Usage:
+  od design-systems import-shadcn <reference> [--name <name>] [--import-mode <mode>] [--craft <slugs>] [--json] [--daemon-url <url>]
+
+Imports a shadcn registry item as an OpenDesign design system.
+
+  <reference>            "<owner>/<repo>/<item>" (e.g. shadcn/ui/theme-zinc)
+                         or an https URL to a registry-item JSON document.
+  --name <name>          Display name override for the imported system.
+  --import-mode <mode>   normalized | hybrid | verbatim (default hybrid).
+  --craft <slugs>        Comma-separated craft sections to apply (e.g. color,type).`);
+    process.exit(args.length === 0 ? 2 : 0);
+  }
+  const stringFlags = new Set([...LIBRARY_STRING_FLAGS, 'name', 'import-mode', 'craft']);
+  const flags = parseFlags(args, { string: stringFlags, boolean: LIBRARY_BOOLEAN_FLAGS });
+  const reference = positionalArgs(args, stringFlags)[0];
+  if (!reference) {
+    console.error('Usage: od design-systems import-shadcn <reference>');
+    process.exit(2);
+  }
+  const body = designSystemImportRequestBody(flags, { reference });
+  return postDesignSystemImport(flags, '/api/design-systems/import/shadcn', body);
+}
+
+// od design-systems rename <id> --title <new-title> [--json]
+// Renames an editable (user-created) design system via PATCH
+// /api/design-systems/:id. Built-in systems are read-only and the daemon
+// returns 404, surfaced here as a structured failure. Arg parsing lives in
+// rename-args.ts so it can be unit-tested.
+async function runDesignSystemRename(args) {
+  if (args.length === 0 || args[0] === 'help' || args.includes('--help') || args.includes('-h')) {
+    console.log(`Usage:
+  od design-systems rename <id> --title <new-title> [--json] [--daemon-url <url>]
+  od design-systems rename <id> "<new title>" [--json]
+
+Renames an editable (user-created) design system. Built-in systems are read-only.`);
+    process.exit(args.length === 0 ? 2 : 0);
+  }
+  const parsed = parseDesignSystemRenameArgs(args);
+  if (!parsed) {
+    console.error('Usage: od design-systems rename <id> --title <new-title>');
+    process.exit(2);
+  }
+  const flags = parseFlags(args, {
+    string: new Set([...LIBRARY_STRING_FLAGS, 'title']),
+    boolean: LIBRARY_BOOLEAN_FLAGS,
+  });
+  const base = (await libraryDaemonUrl(flags)).replace(/\/$/, '');
+  const workspaceHeaders = workspaceHeadersFromExplicitFlags(flags) ?? {};
+  const resp = await fetch(`${base}/api/design-systems/${encodeURIComponent(parsed.id)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...workspaceHeaders },
+    body: JSON.stringify({ title: parsed.title }),
+  });
+  if (!resp.ok) return structuredHttpFailure(resp);
+  const data = await resp.json();
+  if (flags.json) return process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+  const renamed = data.designSystem ?? data;
+  console.log(`Renamed ${parsed.id} -> ${renamed.title ?? parsed.title}`);
+}
 
 async function runStatus(args) {
   // Alias of `od daemon status`.
   return runDaemon(['status', ...args]);
+}
+
+// ---------------------------------------------------------------------------
+// Subcommand: od diagnostics export <path> [--json]
+//
+// CLI surface for the Settings → About “Export diagnostics” feature. The
+// daemon already exposes the bundle behind a local-loopback HTTP endpoint;
+// this command is a thin shell over that endpoint so headless callers (CI,
+// `od doctor` follow-ups, shell scripts) can collect a support bundle
+// without driving the web UI.
+// ---------------------------------------------------------------------------
+
+async function runDiagnostics(args) {
+  const sub = args[0];
+  if (!sub || sub === 'help' || args.includes('--help') || args.includes('-h')) {
+    console.log(`Usage:
+  od diagnostics export [<path>] [--output <path>] [--json] [--daemon-url <url>]
+
+Bundles daemon/web/desktop logs, machine info, and recent crash reports
+into a zip. The bundle is the same one Settings → About → Export
+diagnostics produces.
+
+  <path>                 Where to write the zip. Defaults to
+                         ./open-design-diagnostics-<timestamp>.zip in the
+                         current working directory. Alias: --output <path>.
+  --json                 Print {path, sizeBytes} on stdout instead of a
+                         human-readable summary. The file is still written
+                         to <path>.
+  --daemon-url <url>     Override the daemon HTTP base URL.`);
+    process.exit(0);
+  }
+  if (sub !== 'export') {
+    console.error(`unknown subcommand: od diagnostics ${sub}`);
+    process.exit(2);
+  }
+
+  const flags = parseFlags(args.slice(1), {
+    string: DIAGNOSTICS_STRING_FLAGS,
+    boolean: DIAGNOSTICS_BOOLEAN_FLAGS,
+  });
+  const positional = args.slice(1).filter((a) => !a.startsWith('-'));
+  const base = (await libraryDaemonUrl(flags)).replace(/\/$/, '');
+
+  const { DIAGNOSTICS_EXPORT_PATH, DIAGNOSTICS_FILENAME_PREFIX, diagnosticsFileName } =
+    await import('@open-design/diagnostics');
+  const fs = await import('node:fs/promises');
+  const path = await import('node:path');
+
+  const explicitOutput = typeof flags.output === 'string' && flags.output.length > 0
+    ? flags.output
+    : positional[0];
+  const targetPath = path.resolve(explicitOutput ?? diagnosticsFileName(DIAGNOSTICS_FILENAME_PREFIX));
+
+  let resp;
+  try {
+    resp = await fetch(`${base}${DIAGNOSTICS_EXPORT_PATH}`);
+  } catch (err) {
+    return exitWithStructuredError({
+      code:    'daemon-not-running',
+      message: `Cannot reach daemon at ${base}: ${err?.message ?? err}`,
+    });
+  }
+  if (!resp.ok) return structuredHttpFailure(resp);
+
+  const buf = Buffer.from(await resp.arrayBuffer());
+  await fs.mkdir(path.dirname(targetPath), { recursive: true });
+  await fs.writeFile(targetPath, buf);
+
+  if (flags.json) {
+    process.stdout.write(JSON.stringify({ path: targetPath, sizeBytes: buf.length }) + '\n');
+    return;
+  }
+  console.log(`Wrote diagnostics bundle to ${targetPath} (${buf.length} bytes).`);
 }
 
 async function runVersion(args) {
@@ -4515,6 +9819,39 @@ async function runVersion(args) {
   console.log(version);
 }
 
+// `od whats-new` — CLI mirror of the home-surface post-update highlights
+// card. Prints the current hand-curated "what's new" highlight (or a note
+// when there is none right now), from the same /api/whats-new endpoint the
+// web UI reads.
+async function runWhatsNew(args) {
+  const flags = parseFlags(args, { string: LIBRARY_STRING_FLAGS, boolean: LIBRARY_BOOLEAN_FLAGS });
+  if (flags.help || flags.h) {
+    console.log(`Usage:
+  od whats-new [--json]   Print the current release highlight, if any.`);
+    process.exit(0);
+  }
+  const base = (await libraryDaemonUrl(flags)).replace(/\/$/, '');
+  let resp;
+  try {
+    resp = await fetch(`${base}/api/whats-new`);
+  } catch (err) {
+    return exitWithStructuredError({
+      code:    'daemon-not-running',
+      message: `Cannot reach daemon at ${base}: ${err?.message ?? err}`,
+    });
+  }
+  if (!resp.ok) return structuredHttpFailure(resp);
+  const data = await resp.json();
+  if (flags.json) return process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+  console.log(`OpenDesign ${data?.version ?? 'unknown'}`);
+  if (data?.content != null) {
+    console.log(`\n${data.content.title}\n${data.content.body}`);
+    if (data.content.linkUrl) console.log(`\nDetails: ${data.content.linkUrl}`);
+  } else {
+    console.log(`\nNo release highlights right now.`);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Subcommand: od doctor / od config (Phase 4 CLI parity tail).
 //
@@ -4531,9 +9868,6 @@ async function runVersion(args) {
 // without leaving the terminal. JSON values pass through unchanged;
 // scalar strings/numbers/booleans are coerced.
 // ---------------------------------------------------------------------------
-
-const CONFIG_STRING_FLAGS = new Set(['daemon-url', 'value', 'value-json']);
-const CONFIG_BOOLEAN_FLAGS = new Set(['help', 'h', 'json']);
 
 async function runDoctor(args) {
   const flags = parseFlags(args, { string: CONFIG_STRING_FLAGS, boolean: CONFIG_BOOLEAN_FLAGS });
@@ -4575,9 +9909,14 @@ or the daemon cannot be reached.`);
 
   // Library inventory
   try {
+    const designSystemWorkspaceHeaders = null;
     const [skillsResp, dsResp, atomsResp] = await Promise.all([
       fetch(`${base}/api/skills`),
-      fetch(`${base}/api/design-systems`),
+      fetch(`${base}/api/design-systems`, {
+        ...(designSystemWorkspaceHeaders
+          ? { headers: designSystemWorkspaceHeaders }
+          : {}),
+      }),
       fetch(`${base}/api/atoms`),
     ]);
     if (skillsResp.ok) {
@@ -4655,7 +9994,7 @@ async function runConfig(args) {
   od config unset <key>               Remove a top-level key.
 
 Common options:
-  --daemon-url <url>   Open Design daemon HTTP base.
+  --daemon-url <url>   OpenDesign daemon HTTP base.
   --json               Emit raw JSON.`);
     process.exit(args.length === 0 ? 2 : 0);
   }
@@ -4781,8 +10120,48 @@ function printMemoryHelp() {
   od memory tree move <id> --type user|feedback|project|reference [--json]
       Move an entry node to a different memory bucket while preserving its id.
 
+  od memory profile show [--json]
+      Print the singleton structured user profile (the PRE-loop reads this to
+      expand a short query into a brief), or "no profile yet" when unset.
+
+  od memory profile set [--field "Label=Value" ...] [--prompt-file <path|->]
+                        [--description <text>] [--json]
+      Upsert the user_profile entry. --field merges by label into the existing
+      profile body; --prompt-file (path or - for stdin) replaces the body
+      verbatim. Combine both: --prompt-file seeds the body, --field overrides.
+
+  od memory rule list [--json]
+      List verified rule memories (name + description). The POST loop enforces
+      these as scorecard rubric items.
+
+  od memory rule add --name <name> --assertion <text> --check <text>
+                     [--description <text>] [--rationale <text>]
+                     [--prompt-file <path|->] [--json]
+      Add a rule. The body is "Assertion: …\nCheck: …" (plus an optional
+      Rationale line), or the verbatim --prompt-file content when supplied.
+
+  od memory rule suggest --note <text> [--target <label>] [--file <path>]
+                         [--current-text <text>] [--json]
+  od memory rule suggest --prompt-file <path|-> [--json]
+      Distil annotations into candidate rule proposals (display-only). Pass one
+      annotation via --note, or a JSON array of annotations / one note per line
+      via --prompt-file. Keep one with: od memory rule add.
+
+  od memory verify [list] [--json]
+      List recent POST self-verify enforcement outcomes (pass/fail/missing) the
+      daemon recorded for artifact turns with active rules.
+  od memory verify clear [--json]
+      Drop the in-memory verification history.
+
+  od memory config [--enabled true|false] [--extraction true|false]
+                   [--profile true|false] [--rewrite true|false]
+                   [--verify true|false] [--json]
+      With no toggle flags, print every memory switch. With flags, PATCH the
+      config and print the result. --profile/--rewrite/--verify map to the
+      profile/rewrite/verify hooks; --extraction maps to chatExtractionEnabled.
+
 Common options:
-  --daemon-url <url>   Open Design daemon HTTP base.`);
+  --daemon-url <url>   OpenDesign daemon HTTP base.`);
 }
 
 function memoryPositionals(values) {
@@ -4863,17 +10242,137 @@ async function patchMemoryTreeNode(base, id, body) {
   return await resp.json();
 }
 
+// GET /api/memory/:id, returning the MemoryEntry or null on a 404. Used by the
+// profile/rule subcommands so they can read-before-write (merge) without
+// crashing when the entry doesn't exist yet.
+async function fetchMemoryEntry(base, id) {
+  let resp;
+  try {
+    resp = await fetch(`${base}/api/memory/${encodeURIComponent(id)}`);
+  } catch (err) {
+    surfaceFetchError(err, base);
+    process.exit(3);
+  }
+  if (resp.status === 404) return null;
+  if (!resp.ok) return structuredHttpFailure(resp);
+  const data = await resp.json();
+  return data.entry ?? data;
+}
+
+// Read the verbatim prose body for `od memory profile set` / `rule add`.
+// Accepts `--prompt-file <path>` or `--prompt-file -` (stdin). Returns
+// undefined when neither is supplied so the caller can fall back to flags.
+async function readMemoryPromptFile(flags) {
+  if (typeof flags['prompt-file'] !== 'string' || flags['prompt-file'].length === 0) {
+    return undefined;
+  }
+  const path = flags['prompt-file'];
+  if (path === '-') {
+    return await new Promise((resolve, reject) => {
+      let buf = '';
+      process.stdin.setEncoding('utf8');
+      process.stdin.on('data', (chunk) => { buf += chunk; });
+      process.stdin.on('end', () => resolve(buf));
+      process.stdin.on('error', reject);
+    });
+  }
+  const { readFile } = await import('node:fs/promises');
+  return await readFile(path, 'utf8');
+}
+
+// Collect repeated `--field "Label=Value"` flags from the raw argv slice.
+// parseFlags collapses duplicate keys, so we scan manually like `--input`
+// in `od plugin apply`. Returns an ordered list of {label, value} pairs.
+function collectMemoryFieldFlags(rest) {
+  const out = [];
+  for (let i = 0; i < rest.length; i++) {
+    if (rest[i] !== '--field') continue;
+    const raw = rest[i + 1];
+    if (typeof raw !== 'string') continue;
+    i += 1;
+    const eq = raw.indexOf('=');
+    if (eq <= 0) continue;
+    const label = raw.slice(0, eq).trim();
+    const value = raw.slice(eq + 1).trim();
+    if (label) out.push({ label, value });
+  }
+  return out;
+}
+
+// The profile body is the canonical flat "- Label: value" markdown list shared
+// by the web Profile panel and the daemon onboarding-capture path
+// (apps/daemon/src/memory.ts). We parse it back into label→value so `--field`
+// upserts can merge by label rather than blindly appending, then re-render in
+// the same plain shape so a CLI-written profile round-trips through the UI.
+// A legacy "- **Label:** value" line is tolerated on read. Lines that don't
+// match (free prose, blank lines, headings) are preserved verbatim ahead of
+// the list.
+function parseProfileBody(body) {
+  const labels = [];
+  const byLabel = new Map();
+  const preamble = [];
+  for (const line of (body ?? '').split('\n')) {
+    const match = /^\s*-\s+(.+?):\s*(.*)$/.exec(line);
+    if (match) {
+      const label = match[1].replace(/\*\*/g, '').trim();
+      const value = match[2].replace(/^\*\*\s*/, '').replace(/\s*\*\*$/, '').trim();
+      if (!byLabel.has(label)) labels.push(label);
+      byLabel.set(label, value);
+    } else if (line.trim().length > 0) {
+      preamble.push(line);
+    }
+  }
+  return { labels, byLabel, preamble };
+}
+
+function renderProfileBody(parsed) {
+  const lines = [];
+  if (parsed.preamble.length > 0) {
+    lines.push(...parsed.preamble, '');
+  }
+  for (const label of parsed.labels) {
+    lines.push(`- ${label}: ${parsed.byLabel.get(label) ?? ''}`);
+  }
+  return lines.join('\n');
+}
+
+function printMemoryProfile(entry) {
+  if (!entry) {
+    console.log('no profile yet');
+    return;
+  }
+  printMemoryEntry(entry);
+}
+
+// `od memory config` reads every switch off GET /api/memory (the master
+// `enabled`, the extraction hook `chatExtractionEnabled`, and the three new
+// loop hooks). The new flags may be absent from older daemons / before the
+// route patch lands, so we coalesce missing booleans to a printable dash.
+function formatMemoryConfigSwitch(value) {
+  if (value === true) return 'on';
+  if (value === false) return 'off';
+  return '-';
+}
+
 async function runMemory(args) {
   if (args.length === 0 || args[0] === 'help' || args.includes('--help') || args.includes('-h')) {
     printMemoryHelp();
     process.exit(args.length === 0 ? 2 : 0);
   }
   const topic = args[0];
-  if (topic !== 'tree') {
+  if (
+    topic !== 'tree'
+    && topic !== 'profile'
+    && topic !== 'rule'
+    && topic !== 'config'
+    && topic !== 'verify'
+  ) {
     console.error(`unknown subcommand: od memory ${topic}`);
     printMemoryHelp();
     process.exit(2);
   }
+  // `od memory config` takes no inner action verb; the others are
+  // `<topic> <action>` and re-scan positionals below for the verb.
   const rest = args.slice(1);
   let flags;
   try {
@@ -4888,6 +10387,20 @@ async function runMemory(args) {
   const base = await cliDaemonBaseUrl(flags);
   const writeJson = (data) =>
     process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+
+  if (topic === 'profile') {
+    return runMemoryProfile(base, rest, flags, writeJson);
+  }
+  if (topic === 'rule') {
+    return runMemoryRule(base, rest, flags, writeJson);
+  }
+  if (topic === 'verify') {
+    return runMemoryVerify(base, rest, flags, writeJson);
+  }
+  if (topic === 'config') {
+    return runMemoryConfig(base, rest, flags, writeJson);
+  }
+
   const parts = memoryPositionals(rest);
   const action = parts[0] ?? 'list';
 
@@ -4973,6 +10486,382 @@ async function runMemory(args) {
   console.error(`unknown subcommand: od memory tree ${action}`);
   printMemoryHelp();
   process.exit(2);
+}
+
+// `od memory profile <show|set>` — the singleton structured user profile the
+// PRE loop (intent gateway) reads to expand a short query into a full brief.
+// Same store as every other memory entry; the well-known id is `user_profile`.
+async function runMemoryProfile(base, rest, flags, writeJson) {
+  const parts = memoryPositionals(rest);
+  const action = parts[0] ?? 'show';
+  const PROFILE_ID = 'user_profile';
+
+  if (action === 'show') {
+    const entry = await fetchMemoryEntry(base, PROFILE_ID);
+    if (flags.json) return writeJson(entry ?? null);
+    printMemoryProfile(entry);
+    return;
+  }
+
+  if (action === 'set') {
+    const fields = collectMemoryFieldFlags(rest);
+    const promptBody = await readMemoryPromptFile(flags);
+    if (fields.length === 0 && typeof promptBody !== 'string') {
+      console.error('Usage: od memory profile set [--field "Label=Value" ...] [--prompt-file <path|->] [--description <text>]');
+      process.exit(2);
+    }
+    const existing = await fetchMemoryEntry(base, PROFILE_ID);
+    // --prompt-file replaces the body verbatim; otherwise we merge --field
+    // pairs by label into the existing profile body.
+    const parsed = typeof promptBody === 'string'
+      ? parseProfileBody(promptBody)
+      : parseProfileBody(existing?.body ?? '');
+    for (const { label, value } of fields) {
+      if (!parsed.byLabel.has(label)) parsed.labels.push(label);
+      parsed.byLabel.set(label, value);
+    }
+    const nextBody = renderProfileBody(parsed);
+    const payload = {
+      type: 'profile',
+      name: existing?.name || 'Work profile',
+      description: typeof flags.description === 'string'
+        ? flags.description
+        : (existing?.description ?? 'How I work — read by the intent gateway.'),
+      body: nextBody,
+    };
+    let resp;
+    try {
+      resp = await fetch(`${base}/api/memory/${encodeURIComponent(PROFILE_ID)}`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+    } catch (err) {
+      surfaceFetchError(err, base);
+      process.exit(3);
+    }
+    if (!resp.ok) return structuredHttpFailure(resp);
+    const data = await resp.json();
+    if (flags.json) return writeJson(data.entry ?? data);
+    console.log(`[memory] saved profile ${data.entry?.id ?? PROFILE_ID}`);
+    printMemoryProfile(data.entry ?? data);
+    return;
+  }
+
+  console.error(`unknown subcommand: od memory profile ${action}`);
+  printMemoryHelp();
+  process.exit(2);
+}
+
+// `od memory rule <list|add>` — verified rules (assertion + check) the POST
+// self-verify loop enforces as scorecard rubric items.
+async function runMemoryRule(base, rest, flags, writeJson) {
+  const parts = memoryPositionals(rest);
+  const action = parts[0] ?? 'list';
+
+  if (action === 'list') {
+    let resp;
+    try {
+      resp = await fetch(`${base}/api/memory`);
+    } catch (err) {
+      surfaceFetchError(err, base);
+      process.exit(3);
+    }
+    if (!resp.ok) return structuredHttpFailure(resp);
+    const data = await resp.json();
+    const rules = (data.entries ?? []).filter((e) => e.type === 'rule');
+    if (flags.json) return writeJson({ rules });
+    if (rules.length === 0) {
+      console.log('No rule memories.');
+      return;
+    }
+    for (const rule of rules) {
+      console.log(`${rule.id}\t${rule.name}\t${rule.description || '-'}`);
+    }
+    return;
+  }
+
+  if (action === 'add') {
+    const name = flags.name;
+    if (typeof name !== 'string' || name.length === 0) {
+      console.error('Usage: od memory rule add --name <name> --assertion <text> --check <text> [--description <text>] [--rationale <text>] [--prompt-file <path|->]');
+      process.exit(2);
+    }
+    // --prompt-file content becomes the rule body verbatim; otherwise we
+    // compose "Assertion: …\nCheck: …" (+ optional Rationale) from flags.
+    const promptBody = await readMemoryPromptFile(flags);
+    let body;
+    if (typeof promptBody === 'string') {
+      body = promptBody;
+    } else {
+      const assertion = flags.assertion;
+      const check = flags.check;
+      if (typeof assertion !== 'string' || typeof check !== 'string') {
+        console.error('rule add needs --assertion and --check (or --prompt-file for the body)');
+        process.exit(2);
+      }
+      const lines = [`Assertion: ${assertion}`, `Check: ${check}`];
+      if (typeof flags.rationale === 'string' && flags.rationale.length > 0) {
+        lines.push(`Rationale: ${flags.rationale}`);
+      }
+      body = lines.join('\n');
+    }
+    const payload = {
+      type: 'rule',
+      name,
+      description: typeof flags.description === 'string' ? flags.description : '',
+      body,
+    };
+    let resp;
+    try {
+      resp = await fetch(`${base}/api/memory`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+    } catch (err) {
+      surfaceFetchError(err, base);
+      process.exit(3);
+    }
+    if (!resp.ok) return structuredHttpFailure(resp);
+    const data = await resp.json();
+    if (flags.json) return writeJson(data.entry ?? data);
+    console.log(`[memory] added rule ${data.entry?.id ?? name}`);
+    return;
+  }
+
+  if (action === 'suggest') {
+    // Distil annotations into rule proposals (THREAD 1). Display-only: the
+    // daemon never writes; the user Keeps a proposal (web) or pipes it into
+    // `od memory rule add` (CLI) to commit it. Annotations come from a single
+    // --note (+ optional --target/--file/--current-text) or a --prompt-file
+    // carrying a JSON array of annotation objects or newline-separated notes.
+    const annotations = await collectDistillAnnotations(flags);
+    if (annotations.length === 0) {
+      console.error('Usage: od memory rule suggest --note <text> [--target <label>] [--file <path>] [--current-text <text>]');
+      console.error('   or: od memory rule suggest --prompt-file <path|->   (JSON array of annotations, or one note per line)');
+      process.exit(2);
+    }
+    let resp;
+    try {
+      resp = await fetch(`${base}/api/memory/rules/suggest`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ annotations }),
+      });
+    } catch (err) {
+      surfaceFetchError(err, base);
+      process.exit(3);
+    }
+    if (!resp.ok) return structuredHttpFailure(resp);
+    const data = await resp.json();
+    if (flags.json) return writeJson(data);
+    const proposals = data.proposals ?? [];
+    if (proposals.length === 0) {
+      console.log('No rule proposals distilled from these annotations.');
+      return;
+    }
+    console.log(`[memory] ${proposals.length} rule proposal(s) (source: ${data.source}, llm: ${data.attemptedLLM ? 'yes' : 'no'})`);
+    for (const p of proposals) {
+      console.log(`\n${p.name}`);
+      if (p.description) console.log(`  ${p.description}`);
+      console.log(`  Assertion: ${p.assertion}`);
+      console.log(`  Check: ${p.check}`);
+      if (p.rationale) console.log(`  Rationale: ${p.rationale}`);
+    }
+    console.log('\nTo keep one: od memory rule add --name "<name>" --assertion "<...>" --check "<...>"');
+    return;
+  }
+
+  console.error(`unknown subcommand: od memory rule ${action}`);
+  printMemoryHelp();
+  process.exit(2);
+}
+
+// Collect annotation inputs for `od memory rule suggest` from either a single
+// --note (+ optional target context) or a --prompt-file. The prompt-file may
+// hold a JSON array of annotation objects, or plain text with one note per
+// line — both keep the --prompt-file embeddability contract clean for jobs
+// that pipe through xargs/jq/heredoc.
+async function collectDistillAnnotations(flags) {
+  const annotations = [];
+  if (typeof flags.note === 'string' && flags.note.trim()) {
+    annotations.push({
+      note: flags.note,
+      ...(typeof flags.target === 'string' ? { targetLabel: flags.target } : {}),
+      ...(typeof flags.file === 'string' ? { filePath: flags.file } : {}),
+      ...(typeof flags['current-text'] === 'string'
+        ? { currentText: flags['current-text'] }
+        : {}),
+    });
+  }
+  const promptBody = await readMemoryPromptFile(flags);
+  if (typeof promptBody === 'string' && promptBody.trim()) {
+    const trimmed = promptBody.trim();
+    let parsedJson = null;
+    if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
+      try {
+        parsedJson = JSON.parse(trimmed);
+      } catch {
+        parsedJson = null;
+      }
+    }
+    if (Array.isArray(parsedJson)) {
+      for (const item of parsedJson) {
+        const note = item && typeof item.note === 'string' ? item.note : '';
+        if (!note.trim()) continue;
+        annotations.push({
+          note,
+          ...(typeof item.targetLabel === 'string' ? { targetLabel: item.targetLabel } : {}),
+          ...(typeof item.filePath === 'string' ? { filePath: item.filePath } : {}),
+          ...(typeof item.currentText === 'string' ? { currentText: item.currentText } : {}),
+          ...(typeof item.selectionKind === 'string' ? { selectionKind: item.selectionKind } : {}),
+          ...(typeof item.htmlHint === 'string' ? { htmlHint: item.htmlHint } : {}),
+        });
+      }
+    } else if (parsedJson && typeof parsedJson === 'object' && typeof parsedJson.note === 'string') {
+      annotations.push({ note: parsedJson.note });
+    } else {
+      for (const line of trimmed.split(/\r?\n/)) {
+        const note = line.trim();
+        if (note) annotations.push({ note });
+      }
+    }
+  }
+  return annotations;
+}
+
+// `od memory verify <list|clear>` — inspect or wipe the POST self-verify
+// enforcement history (THREAD 2). `list` prints recent enforcement outcomes
+// (`pass` / `fail` / `missing`) the daemon recorded for artifact turns with
+// active rules; `clear` drops the in-memory buffer.
+async function runMemoryVerify(base, rest, flags, writeJson) {
+  const parts = memoryPositionals(rest);
+  const action = parts[0] ?? 'list';
+
+  if (action === 'list') {
+    let resp;
+    try {
+      resp = await fetch(`${base}/api/memory/verifications`);
+    } catch (err) {
+      surfaceFetchError(err, base);
+      process.exit(3);
+    }
+    if (!resp.ok) return structuredHttpFailure(resp);
+    const data = await resp.json();
+    if (flags.json) return writeJson(data);
+    const verifications = data.verifications ?? [];
+    if (verifications.length === 0) {
+      console.log('No verification records yet.');
+      return;
+    }
+    console.log('# status\trules\tcovered\trowsFail\tat\trunId');
+    for (const v of verifications) {
+      const at = new Date(v.at).toISOString();
+      console.log(
+        `${v.status}\t${v.rulesActive}\t${v.rulesCovered}\t${v.rowsFailed}\t${at}\t${v.runId ?? '-'}`,
+      );
+      if (Array.isArray(v.uncoveredRules) && v.uncoveredRules.length > 0) {
+        console.log(`  uncovered: ${v.uncoveredRules.join(', ')}`);
+      }
+    }
+    return;
+  }
+
+  if (action === 'clear') {
+    let resp;
+    try {
+      resp = await fetch(`${base}/api/memory/verifications`, { method: 'DELETE' });
+    } catch (err) {
+      surfaceFetchError(err, base);
+      process.exit(3);
+    }
+    if (!resp.ok) return structuredHttpFailure(resp);
+    const data = await resp.json();
+    if (flags.json) return writeJson(data);
+    console.log(`[memory] cleared ${data.removed ?? 0} verification record(s)`);
+    return;
+  }
+
+  console.error(`unknown subcommand: od memory verify ${action}`);
+  printMemoryHelp();
+  process.exit(2);
+}
+
+// `od memory config` — inspect or toggle the master switch + the four hooks.
+// No flags ⇒ print every switch (read off GET /api/memory). Toggle flags ⇒
+// PATCH /api/memory/config and print the result. Flags accept true|false.
+async function runMemoryConfig(base, rest, flags, writeJson) {
+  // Map CLI flag → config field. --extraction is the chat-extraction hook;
+  // --profile/--rewrite/--verify are the new PRE/POST loop hooks.
+  const TOGGLE_MAP = {
+    enabled: 'enabled',
+    extraction: 'chatExtractionEnabled',
+    profile: 'profileEnabled',
+    rewrite: 'rewriteEnabled',
+    verify: 'verifyEnabled',
+  };
+  const parseBool = (raw, flagName) => {
+    if (raw === 'true' || raw === true) return true;
+    if (raw === 'false') return false;
+    console.error(`--${flagName} expects true or false`);
+    process.exit(2);
+  };
+
+  const patch = {};
+  for (const [flagName, field] of Object.entries(TOGGLE_MAP)) {
+    if (flagName in flags) {
+      patch[field] = parseBool(flags[flagName], flagName);
+    }
+  }
+
+  // No toggles → read-only listing of every switch off GET /api/memory.
+  if (Object.keys(patch).length === 0) {
+    let resp;
+    try {
+      resp = await fetch(`${base}/api/memory`);
+    } catch (err) {
+      surfaceFetchError(err, base);
+      process.exit(3);
+    }
+    if (!resp.ok) return structuredHttpFailure(resp);
+    const data = await resp.json();
+    const view = {
+      enabled: data.enabled,
+      chatExtractionEnabled: data.chatExtractionEnabled,
+      profileEnabled: data.profileEnabled,
+      rewriteEnabled: data.rewriteEnabled,
+      verifyEnabled: data.verifyEnabled,
+    };
+    if (flags.json) return writeJson(view);
+    console.log(`enabled               ${formatMemoryConfigSwitch(view.enabled)}`);
+    console.log(`chatExtractionEnabled ${formatMemoryConfigSwitch(view.chatExtractionEnabled)}`);
+    console.log(`profileEnabled        ${formatMemoryConfigSwitch(view.profileEnabled)}`);
+    console.log(`rewriteEnabled        ${formatMemoryConfigSwitch(view.rewriteEnabled)}`);
+    console.log(`verifyEnabled         ${formatMemoryConfigSwitch(view.verifyEnabled)}`);
+    return;
+  }
+
+  let resp;
+  try {
+    resp = await fetch(`${base}/api/memory/config`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(patch),
+    });
+  } catch (err) {
+    surfaceFetchError(err, base);
+    process.exit(3);
+  }
+  if (!resp.ok) return structuredHttpFailure(resp);
+  const data = await resp.json();
+  if (flags.json) return writeJson(data);
+  console.log(`enabled               ${formatMemoryConfigSwitch(data.enabled)}`);
+  console.log(`chatExtractionEnabled ${formatMemoryConfigSwitch(data.chatExtractionEnabled)}`);
+  console.log(`profileEnabled        ${formatMemoryConfigSwitch(data.profileEnabled)}`);
+  console.log(`rewriteEnabled        ${formatMemoryConfigSwitch(data.rewriteEnabled)}`);
+  console.log(`verifyEnabled         ${formatMemoryConfigSwitch(data.verifyEnabled)}`);
+  return;
 }
 
 // ---------------------------------------------------------------------------
@@ -5200,7 +11089,7 @@ Output:
   can drive the full automation lifecycle headlessly.
 
 Common options:
-  --daemon-url <url>   Open Design daemon HTTP base.`);
+  --daemon-url <url>   OpenDesign daemon HTTP base.`);
 }
 
 async function runAutomation(args) {
@@ -5789,4 +11678,94 @@ async function runAutomation(args) {
       printAutomationHelp();
       process.exit(2);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Subcommand: od deploy
+// ---------------------------------------------------------------------------
+
+async function runDeploy(args) {
+  let flags;
+  try {
+    flags = parseFlags(args, { string: DEPLOY_STRING_FLAGS, boolean: DEPLOY_BOOLEAN_FLAGS });
+  } catch (err) {
+    console.error(err.message);
+    process.exit(2);
+  }
+  if (flags.help || flags.h) {
+    console.log(`Usage: od deploy <projectId> --file <fileName> [options]
+
+Required:
+  <projectId>              Project id to deploy.
+  --file <fileName>        File name within the project to deploy.
+
+Options:
+  --provider vercel-self|cloudflare-pages   Deploy provider (default: vercel-self).
+  --target preview|production               Deployment target (default: server decides).
+  --cf-zone-id <id>                         Cloudflare Pages: zone id.
+  --cf-zone-name <name>                     Cloudflare Pages: zone name.
+  --cf-domain-prefix <prefix>               Cloudflare Pages: domain prefix.
+  --workspace <id>                          Explicit Workspace id for a bound project.
+  --workspace-member <id>                   Explicit Workspace member id for a bound project.
+  --json                                    Emit raw JSON response.
+  --daemon-url <url>                        OpenDesign daemon HTTP base.`);
+    return;
+  }
+
+  // Extract positional projectId (first non-flag argument)
+  const positionals = positionalArgs(args, DEPLOY_STRING_FLAGS);
+  const projectId = positionals[0] ?? '';
+  if (!projectId) {
+    console.error('projectId is required: od deploy <projectId> --file <fileName>');
+    process.exit(2);
+  }
+
+  const fileName = typeof flags.file === 'string' ? flags.file.trim() : '';
+  if (!fileName) {
+    console.error('--file <fileName> is required');
+    process.exit(2);
+  }
+
+  // Validate --target locally before making any HTTP request
+  const targetRaw = flags.target;
+  if (targetRaw !== undefined && targetRaw !== 'preview' && targetRaw !== 'production') {
+    console.error(`invalid --target value: "${targetRaw}" (must be "preview" or "production")`);
+    process.exit(2);
+  }
+
+  const providerId = typeof flags.provider === 'string' ? flags.provider : 'vercel-self';
+
+  const body: Record<string, unknown> = { fileName, providerId };
+
+  // Only include target when explicitly supplied
+  if (targetRaw !== undefined) {
+    body.target = targetRaw;
+  }
+
+  // Include cloudflarePages object only when at least one CF flag is present
+  const zoneId = typeof flags['cf-zone-id'] === 'string' ? flags['cf-zone-id'] : undefined;
+  const zoneName = typeof flags['cf-zone-name'] === 'string' ? flags['cf-zone-name'] : undefined;
+  const domainPrefix = typeof flags['cf-domain-prefix'] === 'string' ? flags['cf-domain-prefix'] : undefined;
+  if (zoneId !== undefined || zoneName !== undefined || domainPrefix !== undefined) {
+    body.cloudflarePages = { zoneId, zoneName, domainPrefix };
+  }
+
+  const base = await cliDaemonBaseUrl(flags);
+  const workspaceHeaders = workspaceHeadersFromExplicitFlags(flags) ?? {};
+  let resp;
+  try {
+    resp = await fetch(`${base}/api/projects/${encodeURIComponent(projectId)}/deploy`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...workspaceHeaders },
+      body: JSON.stringify(body),
+    });
+  } catch (err) {
+    surfaceFetchError(err, base);
+    process.exit(3);
+  }
+  if (!resp.ok) return structuredHttpFailure(resp);
+  const data = await resp.json();
+  if (flags.json) return process.stdout.write(JSON.stringify(data) + '\n');
+  const url = data?.url ?? data?.deploymentUrl ?? '';
+  console.log(`[deploy] ${data?.id ?? 'done'}${url ? ` → ${url}` : ''}`);
 }

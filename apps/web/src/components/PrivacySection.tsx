@@ -1,4 +1,6 @@
 import type { Dispatch, SetStateAction } from 'react';
+import { useAnalytics } from '../analytics/provider';
+import { trackSettingsPrivacyClick } from '../analytics/events';
 import { useT } from '../i18n';
 import { Icon } from './Icon';
 import type { AppConfig, TelemetryConfig } from '../types';
@@ -19,11 +21,13 @@ function generateInstallationId(): string {
 
 export function PrivacySection({ cfg, setCfg }: Props): JSX.Element {
   const t = useT();
+  const analytics = useAnalytics();
   const telemetry: TelemetryConfig = cfg.telemetry ?? {};
   // `privacyDecisionAt` gates the consent surface. installationId is only
   // the anonymous reporting id and can be rotated by Delete my data without
   // making the first-run banner appear again.
   const hasMadeConsentDecision = cfg.privacyDecisionAt != null;
+  const sharingEnabled = telemetry.metrics === true || telemetry.content === true;
 
   function patchTelemetry(patch: Partial<TelemetryConfig>): void {
     setCfg((c) => {
@@ -32,9 +36,9 @@ export function PrivacySection({ cfg, setCfg }: Props): JSX.Element {
       return {
         ...c,
         installationId:
-          shouldHaveId && !c.installationId
-            ? generateInstallationId()
-            : c.installationId,
+          shouldHaveId
+            ? c.installationId ?? generateInstallationId()
+            : null,
         privacyDecisionAt: Date.now(),
         telemetry: nextTelemetry,
       };
@@ -44,9 +48,9 @@ export function PrivacySection({ cfg, setCfg }: Props): JSX.Element {
   function shareUsage(): void {
     setCfg((c) => ({
       ...c,
-      installationId: generateInstallationId(),
+      installationId: c.installationId ?? generateInstallationId(),
       privacyDecisionAt: Date.now(),
-      telemetry: { metrics: true, content: true, artifactManifest: false },
+      telemetry: { ...(c.telemetry ?? {}), metrics: true, content: true },
     }));
   }
 
@@ -55,7 +59,7 @@ export function PrivacySection({ cfg, setCfg }: Props): JSX.Element {
       ...c,
       installationId: null,
       privacyDecisionAt: Date.now(),
-      telemetry: { metrics: false, content: false, artifactManifest: false },
+      telemetry: { ...(c.telemetry ?? {}), metrics: false, content: false },
     }));
   }
 
@@ -64,12 +68,15 @@ export function PrivacySection({ cfg, setCfg }: Props): JSX.Element {
       ...c,
       installationId: generateInstallationId(),
       privacyDecisionAt: c.privacyDecisionAt ?? Date.now(),
-      telemetry: { metrics: false, content: false, artifactManifest: false },
+      telemetry: { metrics: false, content: false },
     }));
   }
 
   return (
     <section className="settings-section">
+      {/* The consent card asks the question; the toggles below ARE the answer.
+          Rendering both once a decision exists put two competing controls for
+          the same setting on screen (#5517 renders one or the other). */}
       {!hasMadeConsentDecision ? (
         <ConsentCard onShare={shareUsage} onDecline={declineUsage} />
       ) : (
@@ -79,19 +86,29 @@ export function PrivacySection({ cfg, setCfg }: Props): JSX.Element {
               label={t('settings.privacyMetrics')}
               hint={t('settings.privacyMetricsHint')}
               checked={telemetry.metrics === true}
-              onChange={(v) => patchTelemetry({ metrics: v })}
+              onChange={(v) => {
+                trackSettingsPrivacyClick(analytics.track, {
+                  page_name: 'settings',
+                  area: 'privacy',
+                  element: 'anonymous_metrics',
+                  anonymous_metrics_status: v ? 'on' : 'off',
+                });
+                patchTelemetry({ metrics: v });
+              }}
             />
             <ToggleRow
               label={t('settings.privacyContent')}
               hint={t('settings.privacyContentHint')}
               checked={telemetry.content === true}
-              onChange={(v) => patchTelemetry({ content: v })}
-            />
-            <ToggleRow
-              label={t('settings.privacyArtifacts')}
-              hint={t('settings.privacyArtifactsHint')}
-              checked={telemetry.artifactManifest === true}
-              onChange={(v) => patchTelemetry({ artifactManifest: v })}
+              onChange={(v) => {
+                trackSettingsPrivacyClick(analytics.track, {
+                  page_name: 'settings',
+                  area: 'privacy',
+                  element: 'conversation_and_tool_content',
+                  conversation_and_tool_content_status: v ? 'on' : 'off',
+                });
+                patchTelemetry({ content: v });
+              }}
             />
           </div>
 
@@ -113,10 +130,17 @@ export function PrivacySection({ cfg, setCfg }: Props): JSX.Element {
             <button
               type="button"
               className="ghost"
-              onClick={deleteMyData}
-              style={{ alignSelf: 'flex-start', marginTop: 12 }}
+              onClick={() => {
+                trackSettingsPrivacyClick(analytics.track, {
+                  page_name: 'settings',
+                  area: 'privacy',
+                  element: 'delete_my_data',
+                });
+                deleteMyData();
+              }}
+              style={{ alignSelf: 'flex-start', marginTop: 12, paddingLeft: 0 }}
             >
-              <Icon name="trash" size={13} />
+              <Icon name="trash" size={14} />
               <span style={{ marginLeft: 6 }}>{t('settings.privacyDataDeletion')}</span>
             </button>
           </div>
@@ -156,43 +180,57 @@ function ToggleRow({ label, hint, checked, onChange }: ToggleRowProps): JSX.Elem
 interface ConsentProps {
   onShare: () => void;
   onDecline: () => void;
+  sharingEnabled?: boolean;
 }
 
-function ConsentCard({ onShare, onDecline }: ConsentProps): JSX.Element {
+function ConsentCard({ onShare, onDecline, sharingEnabled }: ConsentProps): JSX.Element {
   const t = useT();
   return (
     <div className="settings-subsection">
       <div className="section-head">
         <div>
-          <h4>{t('settings.privacyConsentKicker')}</h4>
-          <p className="hint">{t('settings.privacyConsentLead')}</p>
+          <h4 className="privacy-consent-title">{t('settings.privacyConsentKicker')}</h4>
         </div>
       </div>
 
-      <dl className="settings-privacy-disclosure">
-        <div>
-          <dt>{t('settings.privacyMetrics')}</dt>
-          <dd>{t('settings.privacyMetricsHint')}</dd>
-        </div>
-        <div>
-          <dt>{t('settings.privacyContent')}</dt>
-          <dd>{t('settings.privacyContentHint')}</dd>
-        </div>
-      </dl>
+      <div className="privacy-consent-card">
+        <p className="privacy-consent-lead">{t('settings.privacyConsentLead')}</p>
 
-      <p className="hint">{t('settings.privacyConsentFooter')}</p>
+        <dl className="settings-privacy-disclosure">
+          <div>
+            <dt>{t('settings.privacyMetrics')}</dt>
+            <dd>{t('settings.privacyMetricsHint')}</dd>
+          </div>
+          <div>
+            <dt>{t('settings.privacyContent')}</dt>
+            <dd>{t('settings.privacyContentHint')}</dd>
+          </div>
+        </dl>
 
-      <div
-        className="privacy-consent-actions"
-        role="group"
-        aria-label={t('settings.privacyConsentKicker')}
-      >
-        <button type="button" className="privacy-consent-action" onClick={onDecline}>
+        <p className="hint">{t('settings.privacyConsentFooter')}</p>
+
+        <div
+          className="privacy-consent-actions"
+          role="group"
+          aria-label={t('settings.privacyConsentKicker')}
+        >
+        <button
+          type="button"
+          className={`privacy-consent-action${sharingEnabled === false ? ' is-active' : ''}`}
+          aria-pressed={sharingEnabled === false}
+          onClick={onDecline}
+        >
           {t('settings.privacyConsentDecline')}
         </button>
-        <button type="button" className="privacy-consent-action" onClick={onShare}>
+        <button
+          type="button"
+          className={`privacy-consent-action privacy-consent-action--primary${sharingEnabled === true ? ' is-active' : ''}`}
+          aria-pressed={sharingEnabled === true}
+          onClick={onShare}
+        >
           {t('settings.privacyConsentShare')}
         </button>
+        </div>
       </div>
     </div>
   );

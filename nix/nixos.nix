@@ -1,4 +1,4 @@
-# NixOS module for Open Design — secondary interface for shared/server
+# NixOS module for OpenDesign — secondary interface for shared/server
 # installs (e.g. running the daemon as a long-lived service on a team
 # build host). For individual developer machines, prefer the Home
 # Manager module (nix/home-manager.nix).
@@ -41,7 +41,7 @@
       persist_config off
     }
 
-    ${cfg.webFrontend.host}:${toString cfg.webFrontend.port} {
+    http://${cfg.webFrontend.host}:${toString cfg.webFrontend.port} {
       handle /api/* {
         reverse_proxy 127.0.0.1:${toString cfg.port} {
           flush_interval -1
@@ -178,7 +178,7 @@ in {
         isSystemUser = true;
         group = cfg.group;
         home = cfg.dataDir;
-        description = "Open Design daemon";
+        description = "OpenDesign daemon";
       };
       users.groups.${cfg.group} = {};
 
@@ -220,7 +220,7 @@ in {
 
     (lib.mkIf cfg.autoStart {
       systemd.services.open-design = {
-        description = "Open Design daemon";
+        description = "OpenDesign daemon";
         wantedBy = ["multi-user.target"];
         after = ["network-online.target"];
         wants = ["network-online.target"];
@@ -246,7 +246,7 @@ in {
 
     (lib.mkIf cfg.webFrontend.enable {
       systemd.services.open-design-web = {
-        description = "Open Design web frontend (static file server)";
+        description = "OpenDesign web frontend (static file server)";
         wantedBy = ["multi-user.target"];
         after = ["network-online.target"];
         wants = ["network-online.target"];

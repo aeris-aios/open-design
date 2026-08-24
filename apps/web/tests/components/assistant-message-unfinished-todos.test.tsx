@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AssistantMessage } from '../../src/components/AssistantMessage';
 import type { AgentEvent, ChatMessage, ProjectFile } from '../../src/types';
@@ -79,6 +79,8 @@ describe('AssistantMessage unfinished todo state', () => {
   it('shows a soft no-output state instead of Done for empty API responses', () => {
     render(
       <AssistantMessage
+        projectKind="prototype"
+        conversationId="conv-1"
         message={messageWithEvents([
           { kind: 'status', label: 'empty_response', detail: 'deepseek-chat' },
           {
@@ -98,9 +100,11 @@ describe('AssistantMessage unfinished todo state', () => {
     expect(screen.queryByText('empty_response')).toBeNull();
   });
 
-  it('keeps Done for a completed latest TodoWrite fixture', () => {
+  it('lets the pinned Todo summary own completion status', () => {
     render(
       <AssistantMessage
+        projectKind="prototype"
+        conversationId="conv-1"
         message={messageWithEvents([
           {
             kind: 'tool_use',
@@ -115,21 +119,21 @@ describe('AssistantMessage unfinished todo state', () => {
       />,
     );
 
-    expect(screen.getByText('Done')).toBeTruthy();
+    expect(screen.queryByText('Done')).toBeNull();
     expect(screen.queryByText('Stopped with unfinished work')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Continue remaining tasks' })).toBeNull();
   });
 
-  it('uses persisted usage duration for completed messages that do not have endedAt', () => {
+  it('hides answer-footer duration, token, and cost statistics', () => {
     render(
       <AssistantMessage
         message={{
-          id: 'assistant-duration',
+          id: 'assistant-usage',
           role: 'assistant',
           content: 'Done',
           startedAt: 1_000,
           runStatus: 'succeeded',
-          events: [{ kind: 'usage', outputTokens: 1439, durationMs: 32_000 }],
+          events: [{ kind: 'usage', outputTokens: 1439, durationMs: 32_000, costUsd: 0.0123 }],
         }}
         streaming={false}
         projectId="project-1"
@@ -137,35 +141,16 @@ describe('AssistantMessage unfinished todo state', () => {
       />,
     );
 
-    expect(screen.getByText(/32s/)).toBeTruthy();
-    expect(screen.getByText(/1439 out/)).toBeTruthy();
+    expect(screen.queryByText(/32s/)).toBeNull();
+    expect(screen.queryByText(/1439 out/)).toBeNull();
+    expect(screen.queryByText(/\$0\.0123/)).toBeNull();
   });
 
-  it('does not synthesize a growing elapsed time for completed messages without endedAt', () => {
+  it('leaves unfinished Todo status to the canonical pinned card', () => {
     render(
       <AssistantMessage
-        message={{
-          id: 'assistant-duration-missing',
-          role: 'assistant',
-          content: 'Done',
-          startedAt: 1_000,
-          runStatus: 'succeeded',
-          events: [{ kind: 'usage', outputTokens: 1439 }],
-        }}
-        streaming={false}
-        projectId="project-1"
-        isLast
-      />,
-    );
-
-    expect(screen.getByText(/1439 out/)).toBeTruthy();
-    expect(screen.queryByText(/\d+m \d{2}s/)).toBeNull();
-  });
-
-  it('shows unfinished state and passes unfinished todos to the continue callback', () => {
-    const onContinue = vi.fn();
-    render(
-      <AssistantMessage
+        projectKind="prototype"
+        conversationId="conv-1"
         message={messageWithEvents([
           {
             kind: 'tool_use',
@@ -187,32 +172,19 @@ describe('AssistantMessage unfinished todo state', () => {
         streaming={false}
         projectId="project-1"
         isLast
-        onContinueRemainingTasks={onContinue}
       />,
     );
 
-    expect(screen.getByText('Stopped with unfinished work')).toBeTruthy();
-    expect(screen.getByText('2 task(s) remain')).toBeTruthy();
-    const remainingList = screen.getByText('2 task(s) remain').closest('.unfinished-todos');
-    expect(remainingList).not.toBeNull();
-    expect(within(remainingList as HTMLElement).getByText('Building components')).toBeTruthy();
-    expect(within(remainingList as HTMLElement).getByText('Run QA')).toBeTruthy();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Continue remaining tasks' }));
-
-    expect(onContinue).toHaveBeenCalledWith([
-      {
-        content: 'Build components',
-        status: 'in_progress',
-        activeForm: 'Building components',
-      },
-      { content: 'Run QA', status: 'pending', activeForm: undefined },
-    ]);
+    expect(screen.queryByText('Stopped with unfinished work')).toBeNull();
+    expect(screen.queryByText('2 task(s) remain')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Continue remaining tasks' })).toBeNull();
   });
 
-  it('hides the continue button on older assistant turns', () => {
+  it('does not duplicate an older Todo snapshot inline', () => {
     render(
       <AssistantMessage
+        projectKind="prototype"
+        conversationId="conv-1"
         message={messageWithEvents([
           {
             kind: 'tool_use',
@@ -224,12 +196,11 @@ describe('AssistantMessage unfinished todo state', () => {
         streaming={false}
         projectId="project-1"
         isLast={false}
-        onContinueRemainingTasks={vi.fn()}
       />,
     );
 
-    expect(screen.getByText('Stopped with unfinished work')).toBeTruthy();
-    expect(screen.getByText('1 task(s) remain')).toBeTruthy();
+    expect(screen.queryByText('Stopped with unfinished work')).toBeNull();
+    expect(screen.queryByText('1 task(s) remain')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Continue remaining tasks' })).toBeNull();
   });
 
@@ -276,8 +247,8 @@ describe('AssistantMessage unfinished todo state', () => {
     fireEvent.click(screen.getByTestId('assistant-plugin-contribute-generated-plugin'));
     expect(onPluginFolderAgentAction).toHaveBeenCalledWith('generated-plugin', 'contribute');
     expect(
-      await screen.findByText('Sent to the agent. The CLI run will continue in chat.'),
-    ).toBeTruthy();
+      screen.queryByText('Sent to the agent. The CLI run will continue in chat.'),
+    ).toBeNull();
 
     fireEvent.click(screen.getByTestId('assistant-plugin-open-manifest-generated-plugin'));
     expect(onOpen).toHaveBeenCalledWith('generated-plugin/open-design.json');

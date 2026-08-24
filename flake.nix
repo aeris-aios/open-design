@@ -1,5 +1,5 @@
 {
-  description = "Open Design — local-first design product. Daemon (`od` CLI) + Next.js static web frontend.";
+  description = "OpenDesign — local-first design product. Daemon (`od` CLI) + Next.js static web frontend.";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -21,9 +21,86 @@
     dream2nix,
     home-manager,
   }: let
+    filterProjectSource = includePaths:
+      nixpkgs.lib.cleanSourceWith {
+        src = self;
+        filter = path: type: let
+          root = toString self;
+          pathStr = toString path;
+          rel = nixpkgs.lib.removePrefix (root + "/") pathStr;
+          matches = includePath:
+            rel == includePath
+            || nixpkgs.lib.hasPrefix (includePath + "/") rel
+            || (type == "directory" && nixpkgs.lib.hasPrefix (rel + "/") includePath);
+        in
+          rel == ""
+          || builtins.any matches includePaths;
+      };
+
     perSystem = flake-utils.lib.eachDefaultSystem (system: let
       pkgs = import nixpkgs {inherit system;};
       nodejs = pkgs.nodejs_24;
+      workspacePackageManifests = workspacePaths:
+        map (workspacePath: "${workspacePath}/package.json") workspacePaths;
+      # Keep in sync with .github/workflows/ci.yml change_scopes
+      # nix_validation_required filter.
+      daemonWorkspacePaths = [
+        "packages/release"
+        "packages/contracts"
+        "packages/registry-protocol"
+        "packages/agui-adapter"
+        "packages/plugin-runtime"
+        "packages/sidecar-proto"
+        "packages/launcher-proto"
+        "packages/sidecar"
+        "packages/platform"
+        "packages/diagnostics"
+        "apps/daemon"
+      ];
+      # Keep in sync with .github/workflows/ci.yml change_scopes
+      # nix_validation_required filter.
+      webWorkspacePaths = [
+        "packages/release"
+        "packages/components"
+        "packages/contracts"
+        "packages/host"
+        "packages/platform"
+        "packages/sidecar"
+        "packages/sidecar-proto"
+        "apps/web"
+      ];
+      daemonSrc = filterProjectSource ([
+        "package.json"
+        "pnpm-lock.yaml"
+        "pnpm-workspace.yaml"
+        "tsconfig.json"
+        "assets"
+        "plugins"
+        "skills"
+        "design-systems"
+        "design-templates"
+        "craft"
+        "prompt-templates"
+      ]
+      ++ daemonWorkspacePaths);
+      webSrc = filterProjectSource ([
+        "package.json"
+        "pnpm-lock.yaml"
+        "pnpm-workspace.yaml"
+        "tsconfig.json"
+      ]
+      ++ webWorkspacePaths);
+      pnpmDepsBaseInputs = [
+        "package.json"
+        "pnpm-lock.yaml"
+        "pnpm-workspace.yaml"
+      ];
+      daemonPnpmDepsSrc = filterProjectSource (
+        pnpmDepsBaseInputs ++ workspacePackageManifests daemonWorkspacePaths
+      );
+      webPnpmDepsSrc = filterProjectSource (
+        pnpmDepsBaseInputs ++ workspacePackageManifests webWorkspacePaths
+      );
 
       # nixpkgs ships pnpm 10.33.0; the repo's package.json declares
       # `engines.pnpm: ">=10.33.2 <11"` and pnpm refuses to install
@@ -47,11 +124,15 @@
 
       daemon = pkgs.callPackage ./nix/package-daemon.nix {
         inherit dream2nix nixpkgs system nodejs pnpm_10;
-        src = self;
+        src = daemonSrc;
+        pnpmDepsSrc = daemonPnpmDepsSrc;
+        workspacePaths = daemonWorkspacePaths;
       };
       web = pkgs.callPackage ./nix/package-web.nix {
         inherit dream2nix nixpkgs system nodejs pnpm_10;
-        src = self;
+        src = webSrc;
+        pnpmDepsSrc = webPnpmDepsSrc;
+        workspacePaths = webWorkspacePaths;
       };
     in {
       packages = {
@@ -72,7 +153,7 @@
           export OD_DATA_DIR="''${OD_DATA_DIR:-$HOME/.od}"
           exec ${daemon}/bin/od --no-open "$@"
         ''}";
-        meta.description = "Open Design local daemon (`od`)";
+        meta.description = "OpenDesign local daemon (`od`)";
       };
 
       devShells.default = pkgs.mkShell {
@@ -81,7 +162,7 @@
           pnpm_10
         ];
         shellHook = ''
-          echo "🎨 Open Design dev shell loaded!"
+          echo "🎨 OpenDesign dev shell loaded!"
           echo ""
           echo "Language runtimes:"
           echo "  - 🐢 Node.js: $(node --version 2>/dev/null || echo 'not found')"

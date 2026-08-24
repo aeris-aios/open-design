@@ -32,6 +32,7 @@ interface SkillFrontmatter {
   zh_name?: string;
   en_name?: string;
   description?: string;
+  example_prompt?: string;
   triggers?: unknown[];
   tags?: unknown[];
   od?: {
@@ -98,7 +99,7 @@ export async function runExampleGenerator(opts: ExampleGeneratorOptions): Promis
       title,
       description: typeof fm.description === 'string' ? fm.description.trim() : '',
       license: 'MIT',
-      author: { name: 'Open Design', url: 'https://github.com/nexu-io' },
+      author: { name: 'OpenDesign', url: 'https://github.com/nexu-io' },
       homepage: `https://github.com/nexu-io/open-design/tree/main/plugins/_official/${TIER_EXAMPLES}/${id}`,
       tags: dedupeTags([
         'example',
@@ -169,8 +170,8 @@ function inferSurface(mode: string): string {
   return 'web';
 }
 
-function derivePrompt(fm: SkillFrontmatter): string {
-  const explicit = fm.od?.example_prompt;
+export function derivePrompt(fm: SkillFrontmatter): string {
+  const explicit = fm.example_prompt ?? fm.od?.example_prompt;
   if (typeof explicit === 'string' && explicit.trim()) return explicit.trim();
   const desc = typeof fm.description === 'string' ? fm.description.trim() : '';
   if (!desc) return 'Produce the artifact described in this skill, following its workflow exactly.';

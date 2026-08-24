@@ -2,9 +2,9 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import type { ToolPackConfig } from "../src/config.js";
-import { resolveMacInstallIdentity } from "../src/mac/identity.js";
-import { resolveMacPaths } from "../src/mac/paths.js";
+import type { ToolPackConfig } from "@/config/index.js";
+import { resolveMacInstallIdentity } from "@/mac/identity.js";
+import { resolveMacPaths } from "@/mac/paths.js";
 
 function makeConfig(root: string, namespace: string): ToolPackConfig {
   return {
@@ -20,6 +20,7 @@ function makeConfig(root: string, namespace: string): ToolPackConfig {
     removeLogs: false,
     removeProductUserData: false,
     removeSidecars: false,
+    requireVelaCli: false,
     roots: {
       output: {
         appBuilderRoot: join(root, ".tmp", "tools-pack", "out", "mac", "namespaces", namespace, "builder"),
@@ -46,8 +47,10 @@ describe("resolveMacInstallIdentity", () => {
   it("keeps stable builds on the canonical mac identity", () => {
     expect(resolveMacInstallIdentity(makeConfig("/work", "release-stable"))).toMatchObject({
       appId: "io.open-design.desktop",
+      installerTitle: "Open Design",
       productName: "Open Design",
       publicAppBundleName: "Open Design.app",
+      systemAppBundleName: "Open Design.app",
     });
   });
 
@@ -57,6 +60,7 @@ describe("resolveMacInstallIdentity", () => {
     expect(resolveMacInstallIdentity(config)).toEqual({
       appId: "io.open-design.desktop.beta",
       executableName: "Open Design Beta",
+      installerTitle: "Open Design Beta",
       productName: "Open Design Beta",
       publicAppBundleName: "Open Design Beta.app",
       systemAppBundleName: "Open Design Beta.app",
@@ -70,10 +74,33 @@ describe("resolveMacInstallIdentity", () => {
     expect(resolveMacInstallIdentity(config)).toEqual({
       appId: "io.open-design.desktop.preview",
       executableName: "Open Design Preview",
+      installerTitle: "Open Design Preview",
       productName: "Open Design Preview",
       publicAppBundleName: "Open Design Preview.app",
       systemAppBundleName: "Open Design Preview.app",
     });
     expect(resolveMacPaths(config).appPath).toMatch(/Open Design Preview\.app$/);
+  });
+
+  it("uses first-class prerelease app identity for prerelease release versions and namespaces", () => {
+    const prereleaseVersionConfig = {
+      ...makeConfig("/work", "release-stable"),
+      appVersion: "0.8.0-prerelease.2",
+    };
+    const prereleaseNamespaceConfig = makeConfig("/work", "release-prerelease");
+
+    expect(resolveMacInstallIdentity(prereleaseVersionConfig)).toEqual({
+      appId: "io.open-design.desktop.prerelease",
+      executableName: "Open Design Prerelease",
+      installerTitle: "Open Design Prerelease",
+      productName: "Open Design Prerelease",
+      publicAppBundleName: "Open Design Prerelease.app",
+      systemAppBundleName: "Open Design Prerelease.app",
+    });
+    expect(resolveMacPaths(prereleaseVersionConfig).appPath).toMatch(/Open Design Prerelease\.app$/);
+    expect(resolveMacInstallIdentity(prereleaseNamespaceConfig)).toMatchObject({
+      productName: "Open Design Prerelease",
+      publicAppBundleName: "Open Design Prerelease.app",
+    });
   });
 });

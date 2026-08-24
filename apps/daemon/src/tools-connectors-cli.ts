@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -44,7 +45,7 @@ const CONNECTORS_USAGE = `Usage:
 
 Environment:
   OD_NODE_BIN     Node-compatible runtime for agent wrapper invocations
-  OD_BIN          Open Design CLI script for agent wrapper invocations
+  OD_BIN          OpenDesign CLI script for agent wrapper invocations
   OD_DAEMON_URL   Daemon base URL injected into agent runs
   OD_TOOL_TOKEN   Bearer token injected into agent runs
 
@@ -589,10 +590,18 @@ function extractDirectoryEntries(value: unknown): GithubDirectoryEntry[] {
   return [...entries.values()].sort((left, right) => left.path.localeCompare(right.path));
 }
 
-function scoreDesignFile(repoPath: string): number {
+export function scoreDesignFile(repoPath: string): number {
   const normalized = repoPath.toLowerCase();
   if (shouldSkipRepoPath(normalized)) return -1;
   let score = 0;
+  // Native / non-web design-token source. Without this, a SwiftUI, Kotlin, or
+  // other non-JS repo has every source file score 0, so config dotfiles (which
+  // hit the generic text bonus below) win the ranking and the real source is
+  // never snapshotted. Design-token files (ColorSystem.swift, Typography.kt,
+  // Spacing.swift, ...) get the high boost; other native source gets a solid
+  // floor so it outranks config noise.
+  if (/(^|\/)(color|colors|colour|colours|theme|themes|palette|palettes|typography|type|fonts?|spacing|sizing|metrics|dimens|tokens?|designsystem|design-?system|design|styles?|styling|appearance|brand|branding)[a-z0-9_]*\.(swift|kt|kts|java|dart|scala|cs|m|mm)$/u.test(normalized)) score += 95;
+  if (/\.(swift|kt|kts|java|scala|go|rs|rb|py|php|cs|dart|vue|svelte|astro|ex|exs|elm|c|cc|cpp|cxx|h|hpp|hh|m|mm)$/u.test(normalized)) score += 40;
   if (/(^|\/)readme\.(md|mdx|txt|rst)$/u.test(normalized)) score += 100;
   if (/(^|\/)package\.json$/u.test(normalized)) score += 95;
   if (/(^|\/)(tailwind|theme|themes?|themeprovider|antdprovider|tokens?|colors?|typography|design-system|design|constant|constants|env|style|styles)\.(config\.)?(ts|tsx|js|jsx|json|css|scss|less|md)$/u.test(normalized)) score += 95;
@@ -639,8 +648,13 @@ function scoreDesignDirectory(repoPath: string): number {
   return score;
 }
 
-function shouldSkipRepoPath(normalizedPath: string): boolean {
+export function shouldSkipRepoPath(normalizedPath: string): boolean {
   if (isDesignAssetDirectory(normalizedPath) || isDesignAssetPath(normalizedPath)) return false;
+  // Editor / CI / agent-tooling directories are never design evidence, but
+  // their .md / .json files otherwise score on the generic text bonus and crowd
+  // out real source (this is what filled a SwiftUI import with .zenflow, .zed,
+  // and .vscode files instead of the Swift token source).
+  if (/(^|\/)\.(vscode|zed|idea|fleet|zenflow|github|husky|gradle|vs|turbo|cache|devcontainer)\//u.test(normalizedPath)) return true;
   return /(^|\/)(node_modules|vendor|dist|build|coverage|\.next|\.nuxt|\.git|out|target|storybook-static)\//u.test(normalizedPath)
     || /(^|\/)(package-lock\.json|pnpm-lock\.ya?ml|yarn\.lock|bun\.lockb)$/u.test(normalizedPath)
     || /(^|\/)(__tests__|__snapshots__|test|tests)\//u.test(normalizedPath)
@@ -663,8 +677,8 @@ function isBinaryDesignAssetPath(normalizedPath: string): boolean {
   return /\.(png|jpe?g|webp|ico|ttf|otf|woff2?)$/u.test(normalizedPath);
 }
 
-function isTextSnapshotPath(normalizedPath: string): boolean {
-  return /\.(css|scss|less|tsx|ts|jsx|js|md|mdx|json|svg|txt|rst)$/u.test(normalizedPath);
+export function isTextSnapshotPath(normalizedPath: string): boolean {
+  return /\.(css|scss|less|tsx|ts|jsx|js|mjs|cjs|md|mdx|json|jsonc|svg|txt|rst|yaml|yml|toml|xml|swift|kt|kts|java|scala|go|rs|rb|py|php|cs|dart|vue|svelte|astro|ex|exs|elm|c|cc|cpp|cxx|h|hpp|hh|m|mm)$/u.test(normalizedPath);
 }
 
 function selectDesignFiles(paths: string[], maxFiles: number): string[] {
@@ -1091,9 +1105,11 @@ async function runProcessBuffered(
         ...(result.error === undefined ? {} : { error: redactSensitiveProcessOutput(result.error) }),
       });
     };
-    const child = spawn(command, args, {
+    const resolvedCommand = resolveProcessCommand(command);
+    const child = spawn(resolvedCommand, args, {
       stdio: ['ignore', 'pipe', 'pipe'],
       env: { ...process.env, ...(options.env ?? {}) },
+      shell: process.platform === 'win32' && /\.(?:bat|cmd)$/iu.test(resolvedCommand),
     });
     timeout = setTimeout(() => {
       timedOut = true;
@@ -1116,6 +1132,18 @@ async function runProcessBuffered(
       settle({ ok: code === 0 && !timedOut, stdout, stderr, code, ...(timedOut ? { timedOut } : {}) });
     });
   });
+}
+
+function resolveProcessCommand(command: string): string {
+  if (process.platform !== 'win32' || path.extname(command)) return command;
+  for (const directory of (process.env.PATH ?? '').split(path.delimiter)) {
+    if (!directory) continue;
+    for (const extension of ['.cmd', '.exe', '.bat', '']) {
+      const candidate = path.join(directory, `${command}${extension}`);
+      if (existsSync(candidate)) return candidate;
+    }
+  }
+  return command;
 }
 
 function appendProcessOutput(current: string, chunk: unknown): string {
@@ -1733,18 +1761,27 @@ export async function auditDesignSystemPackage(
 
   if (options.referencePackage === true) {
     if (!fileSet.has('DESIGN.md')) {
-      addIssue('warning', 'missing_open_design_rules', 'Reference packages may omit DESIGN.md, but generated Open Design packages must include it as the canonical rules file.', 'DESIGN.md');
+      addIssue('warning', 'missing_open_design_rules', 'Reference packages may omit DESIGN.md, but generated OpenDesign packages must include it as the canonical rules file.', 'DESIGN.md');
     }
   } else {
     requireFile('DESIGN.md', 'Claude Design-style packages need DESIGN.md as the canonical system rules.');
   }
   requireFile('README.md', 'Claude Design-style packages need README.md so the system is reusable outside the current run.');
   requireFile('SKILL.md', 'Claude Design-style packages need SKILL.md with agent-facing usage instructions.');
-  requireFile('colors_and_type.css', 'Claude Design-style packages need colors_and_type.css for reusable color, type, spacing, radius, and state tokens.');
+  requireFile('colors_and_type.css', 'Claude Design-style packages need colors_and_type.css for reusable color and typography foundations; spacing and radius may live in tokens.css.');
+  const companionTokenCss = fileSet.has('tokens.css')
+    ? await readAuditText(projectPath, 'tokens.css')
+    : undefined;
   await requireContent('DESIGN.md', 800, 'thin_design_rules', 'DESIGN.md is too thin to be a reusable rules document; include source-backed context, foundations, tokens, components, motion, voice, and anti-patterns.', validateDesignRules);
   await requireContent('README.md', 600, 'thin_readme', 'README.md is too thin to explain the package, source evidence, generated files, and reuse workflow.', requireMarkdownHeading);
   await requireContent('SKILL.md', 500, 'thin_skill', 'SKILL.md is too thin to guide future agents on how to use this design system.', validateSkillInstructions);
-  await requireContent('colors_and_type.css', 500, 'thin_token_css', 'colors_and_type.css is too thin to carry reusable color, typography, spacing, radius, and state tokens.', validateTokenCss);
+  await requireContent(
+    'colors_and_type.css',
+    500,
+    'thin_token_css',
+    'colors_and_type.css is too thin to carry reusable color and typography foundations.',
+    (text) => validateTokenCss(text, companionTokenCss),
+  );
   if (fileSet.has('SKILL.md')) {
     const skillText = await readAuditText(projectPath, 'SKILL.md');
     if (skillText !== undefined && !skillHasAgentFrontmatter(skillText)) {
@@ -2211,7 +2248,11 @@ function skillHasAgentFrontmatter(text: string): boolean {
 
 function skillHasReusableSections(text: string): boolean {
   if (text.trim().length < 800) return false;
-  const hasInside = (/\*\*What's inside:\*\*/iu.test(text) || /^##\s+(?:What's inside|Contents)\s*$/imu.test(text))
+  // Accept "What's inside", the skill_missing_reuse_sections warning's own
+  // "What is inside" wording, and "Contents" — the validator must accept the
+  // headings the warning tells authors to write or --fail-on-warnings loops
+  // forever re-spelling them (#4435).
+  const hasInside = (/\*\*What(?:'s| is) inside:\*\*/iu.test(text) || /^##\s+(?:What(?:'s| is) inside|Contents)\s*$/imu.test(text))
     && /\b(tokens?|assets?|fonts?|preview|ui\s*kit|components?)\b/iu.test(text);
   const hasSourceContext = (/\*\*Source context:\*\*/iu.test(text) || /^##\s+(?:Source Context|Source)\s*$/imu.test(text))
     && /\b(source|repository|github|local|based on|evidence)\b/iu.test(text);
@@ -2219,7 +2260,9 @@ function skillHasReusableSections(text: string): boolean {
     && /\b(prototypes?|mockups?|interfaces?|artifacts?|production|design|build(?:ing)?)\b/iu.test(text);
   const hasHowToUse = (/\*\*How to use:\*\*/iu.test(text) || /^##\s+(?:How to use|Usage)\s*$/imu.test(text))
     && /\b(README\.md|DESIGN\.md|colors_and_type\.css|preview\/|assets\/|build\/|fonts\/|ui_kits\/app)\b/iu.test(text);
-  const hasHighlights = (/\*\*Design system highlights:\*\*/iu.test(text) || /^##\s+(?:(?:Design System|Design) )?Highlights\s*$/imu.test(text))
+  // Accept "Design system highlights", the warning's hyphenated "design-system
+  // highlights", and bare "Highlights" so following the warning text passes (#4435).
+  const hasHighlights = (/\*\*Design[ -]system highlights:\*\*/iu.test(text) || /^##\s+(?:(?:Design[ -]System|Design) )?Highlights\s*$/imu.test(text))
     && /\b(colors?|typography|spacing|radius|shadows?|icons?|layout|interaction)\b/iu.test(text);
   return hasInside && hasSourceContext && hasWhenToUse && hasHowToUse && hasHighlights;
 }
@@ -2302,14 +2345,15 @@ function validateDesignRules(text: string): string | undefined {
     : `DESIGN.md is missing source-backed sections for ${missing.map((group) => group[0]).join(', ')}.`;
 }
 
-function validateTokenCss(text: string): string | undefined {
+function validateTokenCss(text: string, companionText?: string): string | undefined {
   const variables = [...text.matchAll(/--[a-z0-9_-]+\s*:/giu)].length;
   if (variables < 12) return `Expected at least 12 CSS custom properties, found ${variables}.`;
   const colors = [...text.matchAll(/#[0-9a-f]{3,8}\b|rgb[a]?\(|hsl[a]?\(/giu)].length;
   if (colors < 4) return `Expected concrete color values in colors_and_type.css, found ${colors}.`;
   if (!/font(-family)?|--[^:]*font/iu.test(text)) return 'Expected font-family or font token declarations.';
-  if (!/radius|border-radius/iu.test(text)) return 'Expected radius token declarations.';
-  if (!/space|spacing|gap/iu.test(text)) return 'Expected spacing token declarations.';
+  const layoutTokens = companionText === undefined ? text : `${text}\n${companionText}`;
+  if (!/radius|border-radius/iu.test(layoutTokens)) return 'Expected radius token declarations in colors_and_type.css or tokens.css.';
+  if (!/space|spacing|gap/iu.test(layoutTokens)) return 'Expected spacing token declarations in colors_and_type.css or tokens.css.';
   return undefined;
 }
 

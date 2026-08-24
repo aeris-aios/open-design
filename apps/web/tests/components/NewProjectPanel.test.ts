@@ -1,9 +1,15 @@
 import { describe, expect, it } from 'vitest';
 
 import { supportedModels } from '../../src/components/NewProjectPanel';
-import { AUDIO_MODELS_BY_KIND, IMAGE_MODELS } from '../../src/media/models';
+import { AUDIO_MODELS_BY_KIND, IMAGE_MODELS, VIDEO_MODELS } from '../../src/media/models';
 
 describe('NewProjectPanel image provider visibility', () => {
+  it('shows Vela image models without exposing Codex image models', () => {
+    const imageModels = supportedModels('image', IMAGE_MODELS);
+    expect(imageModels.some((model) => model.provider === 'vela')).toBe(true);
+    expect(imageModels.map((model) => String(model.provider))).not.toContain('codex');
+  });
+
   it('shows Nano Banana in supported image models', () => {
     const models = supportedModels('image', IMAGE_MODELS);
     expect(models.some((model) => model.provider === 'nanobanana')).toBe(true);
@@ -19,5 +25,15 @@ describe('NewProjectPanel image provider visibility', () => {
   it('shows ElevenLabs sound effects models in supported audio models', () => {
     const models = supportedModels('audio', AUDIO_MODELS_BY_KIND.sfx);
     expect(models.some((model) => model.id === 'elevenlabs-sfx')).toBe(true);
+  });
+
+  it('shows OpenRouter in supported image models', () => {
+    const models = supportedModels('image', IMAGE_MODELS);
+    expect(models.some((model) => model.provider === 'openrouter')).toBe(true);
+  });
+
+  it('shows OpenRouter in supported video models', () => {
+    const models = supportedModels('video', VIDEO_MODELS);
+    expect(models.some((model) => model.provider === 'openrouter')).toBe(true);
   });
 });

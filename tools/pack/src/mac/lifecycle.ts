@@ -9,9 +9,11 @@ import {
   SIDECAR_MESSAGES,
   SIDECAR_MODES,
   SIDECAR_SOURCES,
+  isDesktopUpdateAction,
   type DesktopEvalResult,
   type DesktopScreenshotResult,
   type DesktopStatusSnapshot,
+  type DesktopUpdateAction,
   type DesktopUpdateResult,
   type SidecarStamp,
 } from "@open-design/sidecar-proto";
@@ -26,15 +28,18 @@ import {
   spawnLoggedProcess,
   stopProcesses,
 } from "@open-design/platform";
-import type { ToolPackConfig } from "../config.js";
+import type { ToolPackConfig } from "../config/index.js";
+import { readToolPackLauncherRuntimeSnapshot } from "../launcher/runtime-snapshot.js";
+import { readToolPackUpdateCacheLifecycleSnapshot } from "../updates/cache-lifecycle-snapshot.js";
 import { PACKAGED_CONFIG_PATH_ENV, writeLaunchPackagedConfig } from "./app-config.js";
 import { DESKTOP_LOG_ECHO_ENV } from "./constants.js";
-import { clearQuarantine, pathExists } from "./fs.js";
+import { pathExists, scrubMacExtendedAttributes } from "./fs.js";
 import { resolveMacInstallIdentity } from "./identity.js";
 import { desktopIdentityPath, desktopLogPath, macAppExecutablePath, resolveMacPaths } from "./paths.js";
 import type { DesktopRootIdentityFallback, DesktopRootIdentityMarker, MacCleanupResult, MacInspectResult, MacInstallResult, MacStartResult, MacStartSource, MacStopResult, MacUninstallResult } from "./types.js";
 
 const execFileAsync = promisify(execFile);
+const UPDATE_ACTION_TIMEOUT_MS = 10 * 60 * 1000;
 
 function desktopStamp(config: ToolPackConfig): SidecarStamp {
   return {
@@ -318,10 +323,12 @@ async function collectLaunchXattrSummary(appPath: string): Promise<string[]> {
     const lines = nonEmptyLines(result.stdout);
     const quarantine = lines.filter((line) => line.includes("com.apple.quarantine"));
     const provenance = lines.filter((line) => line.includes("com.apple.provenance"));
-    const matched = [...quarantine, ...provenance];
+    const macl = lines.filter((line) => line.includes("com.apple.macl"));
+    const matched = [...quarantine, ...provenance, ...macl];
     return [
       `quarantine entries: ${quarantine.length}`,
       `provenance entries: ${provenance.length}`,
+      `macl entries: ${macl.length}`,
       ...(matched.length === 0 ? [] : tailLines(matched, 8).map((line) => truncateLine(line))),
     ];
   } catch (error) {
@@ -504,7 +511,7 @@ export async function installPackedMacDmg(config: ToolPackConfig): Promise<MacIn
       "-quiet",
     ]);
     await execFileAsync("ditto", [join(paths.mountPoint, identity.publicAppBundleName), paths.installedAppPath]);
-    await clearQuarantine(paths.installedAppPath);
+    await scrubMacExtendedAttributes(paths.installedAppPath);
   } finally {
     detached = await detachMount(paths.mountPoint);
   }
@@ -553,7 +560,8 @@ export async function startPackedMacApp(config: ToolPackConfig): Promise<MacStar
   const exit = watchProcessExit(child);
   const earlyExit = await exit.wait(1500);
   child.unref();
-  if (earlyExit != null) {
+  const cleanLauncherExit = earlyExit?.code === 0 && earlyExit.signal == null;
+  if (earlyExit != null && !cleanLauncherExit) {
     throw new Error(await createLaunchFailureMessage(config, target, {
       pid,
       reason: `process exited early ${formatExit(earlyExit)}`,
@@ -561,6 +569,12 @@ export async function startPackedMacApp(config: ToolPackConfig): Promise<MacStar
   }
 
   const status = await waitForDesktopStatus(config);
+  if (status == null && earlyExit != null) {
+    throw new Error(await createLaunchFailureMessage(config, target, {
+      pid,
+      reason: `launcher exited cleanly before desktop IPC was available ${formatExit(earlyExit)}`,
+    }));
+  }
   const delayedExit = exit.current();
   if (status == null && delayedExit != null) {
     throw new Error(await createLaunchFailureMessage(config, target, {
@@ -574,12 +588,13 @@ export async function startPackedMacApp(config: ToolPackConfig): Promise<MacStar
       reason: "process exited before desktop IPC was available without an observed exit event",
     }));
   }
+  const activePid = typeof status?.pid === "number" && status.pid > 0 ? status.pid : pid;
   return {
     appPath: target.appPath,
     executablePath: target.executablePath,
     logPath,
     namespace: config.namespace,
-    pid,
+    pid: activePid,
     source: target.source,
     status,
   };
@@ -592,11 +607,13 @@ async function findManagedDesktopProcessTree(config: ToolPackConfig): Promise<{
   const processes = await listProcessSnapshots();
   const stampedRootPids = processes
     .filter((processInfo) =>
-      matchesStampedProcess(processInfo, {
-        mode: SIDECAR_MODES.RUNTIME,
-        namespace: config.namespace,
-        source: SIDECAR_SOURCES.TOOLS_PACK,
-      }, OPEN_DESIGN_SIDECAR_CONTRACT),
+      [SIDECAR_SOURCES.TOOLS_PACK, SIDECAR_SOURCES.PACKAGED].some((source) =>
+        matchesStampedProcess(
+          processInfo,
+          { mode: SIDECAR_MODES.RUNTIME, namespace: config.namespace, source },
+          OPEN_DESIGN_SIDECAR_CONTRACT,
+        )
+      ),
     )
     .map((processInfo) => processInfo.pid);
   const identity = await resolveDesktopRootIdentityFallback(config);
@@ -676,10 +693,10 @@ export async function readPackedMacLogs(config: ToolPackConfig) {
   };
 }
 
-function resolveUpdateAction(value: string | undefined): "status" | "check" | "download" | "install" | null {
+function resolveUpdateAction(value: string | undefined): DesktopUpdateAction | null {
   if (value == null) return null;
-  if (value === "status" || value === "check" || value === "download" || value === "install") return value;
-  throw new Error("--update-action must be status, check, download, or install");
+  if (isDesktopUpdateAction(value)) return value;
+  throw new Error("--update-action must be status, check, clear-cache, download, or install");
 }
 
 export async function inspectPackedMacApp(config: ToolPackConfig, options: { expr?: string; path?: string; updateAction?: string }): Promise<MacInspectResult> {
@@ -699,6 +716,8 @@ export async function inspectPackedMacApp(config: ToolPackConfig, options: { exp
         { timeoutMs: 5000 },
       ),
     }),
+    launcher: await readToolPackLauncherRuntimeSnapshot(config),
+    updateCache: await readToolPackUpdateCacheLifecycleSnapshot(config),
     ...(options.path == null ? {} : {
       screenshot: await requestJsonIpc<DesktopScreenshotResult>(
         stamp.ipc,
@@ -710,7 +729,7 @@ export async function inspectPackedMacApp(config: ToolPackConfig, options: { exp
       update: await requestJsonIpc<DesktopUpdateResult>(
         stamp.ipc,
         { input: { action: updateAction }, type: SIDECAR_MESSAGES.UPDATE },
-        { timeoutMs: 60000 },
+        { timeoutMs: UPDATE_ACTION_TIMEOUT_MS },
       ),
     }),
     status,

@@ -1,325 +1,208 @@
 ---
-import '../../globals.css';
-import { createElement } from 'react';
-import { renderToStaticMarkup } from 'react-dom/server';
-import { Header } from '../../_components/header';
-import { getCatalogCounts } from '../../_lib/catalog';
-import { getPublicPlugins, getRegistryCounts } from '../../plugin-registry';
+/*
+ * /plugins/ — Agent design plugin library hub.
+ *
+ * A content-first library surface: a centered hero with quick stats and
+ * download / GitHub-star CTAs, on-brand category covers, and a dense
+ * "explore all resources" grid of real plugins so the page reads as a
+ * full, browsable library at a glance. Detail-page URLs stay where they
+ * are; the hub is purely a discovery surface.
+ */
+import Layout from '../../_components/sub-page-layout.astro';
+import PluginContribute from '../../_components/plugin-contribute.astro';
+import TemplateCard from '../../_components/template-card.astro';
+import { getCraftRecords, getSystemRecords } from '../../_lib/catalog';
+import { getBundledPlugins, type BundledPluginRecord } from '../../_lib/bundled-plugins';
+import { categorizePlugin, bundledRecordOf, type PluginCategorySlug } from '../../_lib/plugin-facets';
+import { getPluginsCopy } from '../../_lib/plugins-i18n';
+import { localeFromPath, localizedHref } from '../../i18n';
 
-const plugins = getPublicPlugins();
-const counts = getRegistryCounts(plugins);
-const catalogCounts = await getCatalogCounts();
-const previewCount = plugins.filter((plugin) => plugin.preview).length;
-const surfaceCount = new Set(
-  plugins.map((plugin) => plugin.mode ?? plugin.surface ?? plugin.visualKind),
-).size;
-const featuredPlugins = plugins
-  .filter((plugin) =>
-    Boolean(plugin.preview) ||
-    plugin.visualKind === 'deck' ||
-    plugin.visualKind === 'image' ||
-    plugin.visualKind === 'video',
-  )
-  .slice(0, 3);
-const showcasePlugins =
-  featuredPlugins.length >= 3 ? featuredPlugins : plugins.slice(0, 3);
-const site = Astro.site ?? new URL('https://open-design.ai');
-const canonical = new URL('/plugins/', site).toString();
-const title = 'Open Design Plugins — Official and community registries';
-const description = `Browse ${counts.all} Open Design plugins from official and community registries. Search installable agent-native design workflows with stable vendor/plugin IDs.`;
-const headerHtml = renderToStaticMarkup(
-  createElement(Header, { counts: catalogCounts, brandHref: '/' }),
-);
-const itemListJsonLd = {
+const REPO_URL = 'https://github.com/nexu-io/open-design';
+const locale = localeFromPath(Astro.url.pathname);
+const href = (path: string) => localizedHref(path, locale);
+const pcopy = getPluginsCopy(locale);
+
+const [bundled, systems, craft] = await Promise.all([
+  Promise.resolve(getBundledPlugins()),
+  getSystemRecords(locale),
+  getCraftRecords(locale),
+]);
+
+const nonSystems = bundled.filter((p) => p.bucket !== 'design-systems');
+const templatesSet = nonSystems.filter((p) => categorizePlugin(bundledRecordOf(p)) !== null);
+const skillsSet = nonSystems.filter((p) => categorizePlugin(bundledRecordOf(p)) === null);
+
+const templatesCount = templatesSet.length;
+const skillsCount = skillsSet.length;
+const systemsCount = systems.length;
+const craftCount = craft.length;
+const totalCount = templatesCount + skillsCount + systemsCount + craftCount;
+
+// Explore grid — real template cards (rich preview posters), featured first.
+const isFeatured = (p: BundledPluginRecord) => (p.tags ?? []).includes('featured');
+// Only surface HTML-based templates with a real cover — hide media
+// generators (image / video / audio) and any card without a preview.
+const MEDIA_CATEGORIES = new Set<PluginCategorySlug>(['image', 'video', 'audio']);
+// Curated, non-overlapping filter tags (allowlist beats a blocklist here —
+// the raw tag set is noisy and full of near-dupes like deck/slides/ppt).
+const TAG_ALLOWLIST = ['web', 'deck', 'marketing', 'prototype', 'desktop', 'brand', 'editorial', 'motion'];
+const cleanTagsOf = (rec: BundledPluginRecord) =>
+  (rec.tags ?? []).filter((t) => TAG_ALLOWLIST.includes(t));
+const hasPreview = (p: BundledPluginRecord) => Boolean(p.previewPoster || p.previewVideo);
+// Low-quality entries pulled from the hub's explore grid (by manifest id).
+const EXCLUDE_IDS = new Set(['example-data-report']);
+
+const exploreItems = [...templatesSet]
+  .filter((p) => !EXCLUDE_IDS.has(p.manifestId))
+  .filter(hasPreview)
+  .map((rec) => ({ rec, category: categorizePlugin(bundledRecordOf(rec)), tags: cleanTagsOf(rec) }))
+  .filter((it) => it.category !== null && !MEDIA_CATEGORIES.has(it.category))
+  .sort((a, b) => Number(isFeatured(b.rec)) - Number(isFeatured(a.rec)))
+  .slice(0, 24)
+  .map((it, idx) => ({ rec: it.rec, idx, tags: it.tags }));
+
+// Filter chips = the most-common real content tags across the visible
+// cards (clean, junk tags dropped), so a click filters the grid in place.
+const tagCounts = new Map<string, number>();
+for (const it of exploreItems) for (const t of it.tags) tagCounts.set(t, (tagCounts.get(t) ?? 0) + 1);
+const titleize = (t: string) => t.charAt(0).toUpperCase() + t.slice(1).replace(/-/g, ' ');
+const topTags = TAG_ALLOWLIST
+  .filter((tag) => (tagCounts.get(tag) ?? 0) > 0)
+  .map((tag) => ({ tag, label: pcopy.tagLabels[tag] ?? titleize(tag), count: tagCounts.get(tag) ?? 0 }));
+
+const title = pcopy.hubMetaTitle(totalCount);
+const description = pcopy.hubMetaDescription;
+
+const jsonLd = {
   '@context': 'https://schema.org',
-  '@type': 'ItemList',
-  name: 'Open Design Plugin Registry',
+  '@type': 'CollectionPage',
+  name: title,
   description,
-  url: canonical,
-  numberOfItems: counts.all,
-  itemListElement: plugins.slice(0, 120).map((plugin, index) => ({
-    '@type': 'ListItem',
-    position: index + 1,
-    url: new URL(plugin.detailHref, site).toString(),
-    name: plugin.title,
-    description: plugin.description,
-  })),
-};
-const breadcrumbJsonLd = {
-  '@context': 'https://schema.org',
-  '@type': 'BreadcrumbList',
-  itemListElement: [
-    {
-      '@type': 'ListItem',
-      position: 1,
-      name: 'Open Design',
-      item: new URL('/', site).toString(),
-    },
-    {
-      '@type': 'ListItem',
-      position: 2,
-      name: 'Plugins',
-      item: canonical,
-    },
-  ],
+  url: new URL('/plugins/', Astro.site).toString(),
+  isPartOf: {
+    '@type': 'WebSite',
+    name: 'OpenDesign',
+    url: Astro.site?.toString(),
+  },
+  numberOfItems: totalCount,
 };
 
-const displayKind = (plugin: (typeof plugins)[number]) =>
-  plugin.mode ?? plugin.surface ?? plugin.visualKind;
+const tiles = [
+  { href: href('/plugins/templates/'), title: pcopy.tileTemplates, count: templatesCount, blurb: pcopy.tileTemplatesBlurb, cta: pcopy.browseTemplates, cover: '/plugins/covers/templates.webp' },
+  { href: href('/plugins/skills/'),    title: pcopy.tileSkills,    count: skillsCount,    blurb: pcopy.tileSkillsBlurb,    cta: pcopy.browseSkills,    cover: '/plugins/covers/skills.webp' },
+  { href: href('/plugins/systems/'),   title: pcopy.tileSystems,   count: systemsCount,   blurb: pcopy.tileSystemsBlurb,   cta: pcopy.browseSystems,   cover: '/plugins/covers/systems.webp' },
+];
 
-const primaryMeta = (plugin: (typeof plugins)[number]) =>
-  [displayKind(plugin), plugin.preview?.label]
-    .filter(Boolean)
-    .join(' · ');
 ---
 
-<!doctype html>
-<html lang='en'>
-  <head>
-    <meta charset='utf-8' />
-    <meta name='viewport' content='width=device-width, initial-scale=1' />
-    <title>{title}</title>
-    <meta name='description' content={description} />
-    <meta name='robots' content='index,follow' />
-    <link rel='canonical' href={canonical} />
-    <meta property='og:type' content='website' />
-    <meta property='og:site_name' content='Open Design' />
-    <meta property='og:title' content={title} />
-    <meta property='og:description' content={description} />
-    <meta property='og:url' content={canonical} />
-    <meta name='twitter:card' content='summary_large_image' />
-    <meta name='twitter:title' content={title} />
-    <meta name='twitter:description' content={description} />
-    <script is:inline type='application/ld+json' set:html={JSON.stringify(itemListJsonLd)}></script>
-    <script is:inline type='application/ld+json' set:html={JSON.stringify(breadcrumbJsonLd)}></script>
-  </head>
-  <body>
-    <div class='side-rail right' aria-hidden='true'>
-      <span class='rail-text'>Open Design Registry · Official · Community</span>
+<Layout title={title} description={description} active="plugins" jsonLd={jsonLd}>
+  <header class="catalog-head catalog-head-bare plugins-hero">
+    <p class="plugins-eyebrow">{pcopy.hubEyebrow}</p>
+    <h1 class="display">
+      {pcopy.hubHeading(totalCount)}<span class="dot">.</span>
+    </h1>
+    <p class="lead">{pcopy.hubLead}</p>
+    <ul class="plugins-stats">
+      <li><strong>{totalCount}+</strong> {pcopy.hubUnitPlugins}</li>
+      <li class="plugins-stat-link"><a href={href('/agents/')}>{pcopy.hubStatAgents} →</a></li>
+    </ul>
+    <div class="plugins-hero-cta">
+      <a class="btn btn-primary" href={href('/download/')}>{pcopy.hubCtaDownload}</a>
+      <a class="btn btn-ghost plugins-star-btn" href={REPO_URL} target="_blank" rel="noopener">
+        <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 .6l2.02 4.28 4.6.6-3.37 3.18.88 4.68L8 11.5 3.87 13.7l.88-4.68L1.38 5.85l4.6-.6z"/></svg>
+        GitHub<span class="plugins-star-count" data-github-stars>76K</span>
+      </a>
     </div>
-    <div class='side-rail left' aria-hidden='true'>
-      <span class='rail-text'>vendor/plugin-name · marketplace.json</span>
-    </div>
+  </header>
 
-    <div class='shell plugin-shell'>
-      <div class='topbar'>
-        <div class='container topbar-inner'>
-          <span><b>OD / REGISTRY</b>&nbsp;·&nbsp;Public index</span>
-          <span class='mid'>
-            <span>Official · Community · Self-hosted</span>
-            <span>GitHub-backed today · database-ready later</span>
-          </span>
-          <span class='right'>
-            <a class='topbar-link' href='https://github.com/nexu-io/open-design/tree/main/plugins/registry' target='_blank' rel='noreferrer noopener'>
-              Source JSON
-            </a>
-          </span>
+  {/* Featured curated collection — Codex design. */}
+  <a class="plugins-feature" href={href('/plugins/codex-design/')}>
+    <img class="plugins-feature-cover" src="/plugins/covers/codex-design.webp" alt="" width="640" height="427" loading="lazy" decoding="async" />
+    <div class="plugins-feature-body">
+      <span class="plugins-feature-eyebrow">{pcopy.hubFeatureEyebrow}</span>
+      <h2 class="plugins-feature-title">{pcopy.hubFeatureTitle}</h2>
+      <p class="plugins-feature-blurb">{pcopy.hubFeatureBlurb}</p>
+      <span class="plugins-feature-cta">{pcopy.hubFeatureCta} →</span>
+    </div>
+  </a>
+
+  {/* Featured curated collection — DeepSeek Harness design. */}
+  <a class="plugins-feature" href={href('/plugins/deepseek-harness-design-plugins/')}>
+    <img class="plugins-feature-cover" src="/plugins/covers/deepseek-harness-design.webp" alt="" width="640" height="427" loading="lazy" decoding="async" />
+    <div class="plugins-feature-body">
+      <span class="plugins-feature-eyebrow">{pcopy.hubFeatureDshEyebrow}</span>
+      <h2 class="plugins-feature-title">{pcopy.hubFeatureDshTitle}</h2>
+      <p class="plugins-feature-blurb">{pcopy.hubFeatureDshBlurb}</p>
+      <span class="plugins-feature-cta">{pcopy.hubFeatureDshCta} →</span>
+    </div>
+  </a>
+
+  {/* Browse by category — each collection leads with an on-brand cover. */}
+  <section class="plugins-tile-grid" aria-label={pcopy.hubLabel}>
+    {tiles.map((tile) => (
+      <a class="plugins-tile plugins-tile-covered" href={tile.href}>
+        <img class="plugins-tile-cover" src={tile.cover} alt="" width="720" height="405" loading="lazy" decoding="async" />
+        <div class="plugins-tile-body">
+          <div class="plugins-tile-head">
+            <h2 class="plugins-tile-title">{tile.title}</h2>
+            <span class="plugins-tile-count">{tile.count}</span>
+          </div>
+          <p class="plugins-tile-blurb">{tile.blurb}</p>
+          <span class="plugins-tile-cta">{tile.cta} →</span>
         </div>
-      </div>
+      </a>
+    ))}
+  </section>
 
-      <Fragment set:html={headerHtml} />
-
-      <main id='top' class='plugin-directory'>
-        <section class='plugin-hero'>
-          <div class='container plugin-hero__grid'>
-            <div>
-              <span class='label'>Plugin Registry · public ecosystem</span>
-              <h1>Browse agent-native design plugins with live previews.</h1>
-              <p>
-                Discover installable workflows, decks, image templates, design
-                systems, and atomic capabilities. Each entry keeps a stable
-                vendor/plugin ID, clear provenance, and a visual cue so browsing
-                the registry feels closer to choosing a creative tool than reading
-                a manifest dump.
-              </p>
-              <div class='plugin-hero__actions'>
-                <a class='btn btn-primary' href='#registry-results'>
-                  Browse registry
-                </a>
-                <a class='btn btn-ghost' href='https://raw.githubusercontent.com/nexu-io/open-design/main/plugins/registry/community/open-design-marketplace.json' target='_blank' rel='noreferrer noopener'>
-                  Community marketplace.json
-                </a>
-              </div>
-            </div>
-            <aside class='plugin-hero__panel' aria-label='Registry preview'>
-              <div class='plugin-showcase__head'>
-                <span>Registry preview</span>
-                <strong>{counts.all}</strong>
-                <small>installable entries</small>
-              </div>
-              <div class='plugin-showcase__list'>
-                {showcasePlugins.map((plugin, index) => (
-                  <a
-                    class={`plugin-showcase-item plugin-showcase-item--${plugin.visualKind}`}
-                    href={plugin.detailHref}
-                  >
-                    <span class='plugin-showcase-item__visual' aria-hidden='true'>
-                      {plugin.preview?.poster ? (
-                        <img src={plugin.preview.poster} alt='' loading='lazy' />
-                      ) : (
-                        <>
-                          <span />
-                          <span />
-                          <span />
-                        </>
-                      )}
-                    </span>
-                    <span class='plugin-showcase-item__copy'>
-                      <small>0{index + 1} · {displayKind(plugin)}</small>
-                      <strong>{plugin.title}</strong>
-                      <em>{plugin.id}</em>
-                    </span>
-                  </a>
-                ))}
-              </div>
-              <dl class='plugin-hero__stats'>
-                <div>
-                  <dt>{counts.official}</dt>
-                  <dd>official</dd>
-                </div>
-                <div>
-                  <dt>{previewCount}</dt>
-                  <dd>with preview</dd>
-                </div>
-                <div>
-                  <dt>{surfaceCount}</dt>
-                  <dd>surfaces</dd>
-                </div>
-              </dl>
-            </aside>
-          </div>
-        </section>
-
-        <section class='plugin-registry-section' id='registry-results'>
-          <div class='container'>
-            <div class='plugin-toolbar' data-plugin-toolbar>
-              <div>
-                <span class='label'>Available from sources</span>
-                <h2>Registry entries</h2>
-              </div>
-              <label class='plugin-search'>
-                <span class='sr-only'>Search plugins</span>
-                <input data-plugin-search type='search' placeholder='Search plugins, workflows, vendors...' autocomplete='off' />
-              </label>
-            </div>
-
-            <div class='plugin-filter-row' aria-label='Registry filters'>
-              <button class='plugin-filter is-active' type='button' data-plugin-filter='all' aria-pressed='true'>
-                All <span>{counts.all}</span>
-              </button>
-              <button class='plugin-filter' type='button' data-plugin-filter='official' aria-pressed='false'>
-                Official <span>{counts.official}</span>
-              </button>
-              <button class='plugin-filter' type='button' data-plugin-filter='community' aria-pressed='false'>
-                Community <span>{counts.community}</span>
-              </button>
-            </div>
-
-            <p class='plugin-result-count'>
-              <span data-plugin-visible-count>{counts.all}</span> visible plugins
-            </p>
-
-            <div class='plugin-card-grid'>
-              {plugins.map((plugin) => (
-                <article
-                  class='plugin-card'
-                  data-plugin-card
-                  data-registry={plugin.registryId}
-                  data-search={plugin.searchText}
-                >
-                  <a
-                    class={`plugin-card__preview plugin-card__preview--${plugin.visualKind}`}
-                    href={plugin.detailHref}
-                    aria-label={`Open ${plugin.title} details`}
-                  >
-                    {plugin.preview?.poster ? (
-                      <img src={plugin.preview.poster} alt='' loading='lazy' />
-                    ) : (
-                      <span class='plugin-card__mock' aria-hidden='true'>
-                        <span />
-                        <span />
-                        <span />
-                      </span>
-                    )}
-                    <span class='plugin-card__preview-label'>
-                      {primaryMeta(plugin)}
-                    </span>
-                  </a>
-                  <div class='plugin-card__meta'>
-                    <span class={`plugin-badge plugin-badge--${plugin.registryId}`}>
-                      {plugin.registryName}
-                    </span>
-                    <span>{plugin.version}</span>
-                  </div>
-                  <h3>
-                    <a href={plugin.detailHref}>{plugin.title}</a>
-                  </h3>
-                  <code>{plugin.id}</code>
-                  <p>{plugin.description}</p>
-                  <div class='plugin-tags'>
-                    {plugin.tags.slice(0, 5).map((tag) => <span>{tag}</span>)}
-                    {plugin.capabilities.slice(0, 3).map((capability) => (
-                      <span>{capability}</span>
-                    ))}
-                  </div>
-                  <div class='plugin-card__footer'>
-                    <a href={plugin.detailHref}>Details</a>
-                    <span>{plugin.trust}</span>
-                  </div>
-                </article>
-              ))}
-            </div>
-          </div>
-        </section>
-      </main>
+  {/* Explore all resources — dense grid of real plugins with filter chips. */}
+  <section class="plugins-explore" aria-label={pcopy.hubExploreTitle}>
+    <div class="plugins-sec-head">
+      <h2 class="plugins-sec-title">{pcopy.hubExploreTitle}</h2>
+      <a class="plugins-sec-more" href={href('/plugins/templates/')}>{pcopy.hubViewAll} →</a>
     </div>
+    <div class="explore-tags" data-explore-tags>
+      <button class="explore-tag is-active" data-tag-chip="" type="button">
+        {pcopy.hubFilterAll}<span class="chip-num">{exploreItems.length}</span>
+      </button>
+      {topTags.map((t) => (
+        <button class="explore-tag" data-tag-chip={t.tag} type="button">
+          {t.label}<span class="chip-num">{t.count}</span>
+        </button>
+      ))}
+    </div>
+    <div class="explore-grid" data-explore-grid>
+      {exploreItems.map(({ rec, idx, tags }) => (
+        <div class="explore-cell" data-tags={tags.join(' ')}>
+          <TemplateCard record={rec} index={idx} featured={isFeatured(rec)} />
+        </div>
+      ))}
+    </div>
+  </section>
 
-    <script is:inline>
-      const searchInput = document.querySelector('[data-plugin-search]');
-      const cards = Array.from(document.querySelectorAll('[data-plugin-card]'));
-      const filterButtons = Array.from(document.querySelectorAll('[data-plugin-filter]'));
-      const visibleCount = document.querySelector('[data-plugin-visible-count]');
-      let activeFilter = 'all';
-
-      const applyFilters = () => {
-        const query = String(searchInput?.value ?? '').trim().toLowerCase();
-        let total = 0;
-        for (const card of cards) {
-          const matchesFilter = activeFilter === 'all' || card.dataset.registry === activeFilter;
-          const matchesSearch = !query || String(card.dataset.search ?? '').includes(query);
-          const visible = matchesFilter && matchesSearch;
-          card.hidden = !visible;
-          if (visible) total += 1;
-        }
-        if (visibleCount) {
-          visibleCount.textContent = String(total);
-        }
-      };
-
-      searchInput?.addEventListener('input', applyFilters);
-      for (const button of filterButtons) {
-        button.addEventListener('click', () => {
-          activeFilter = button.dataset.pluginFilter ?? 'all';
-          for (const item of filterButtons) {
-            const selected = item === button;
-            item.classList.toggle('is-active', selected);
-            item.setAttribute('aria-pressed', String(selected));
-          }
-          applyFilters();
+  <script is:inline>
+    (function () {
+      var bar = document.querySelector('[data-explore-tags]');
+      var grid = document.querySelector('[data-explore-grid]');
+      if (!bar || !grid) return;
+      var chips = bar.querySelectorAll('.explore-tag');
+      var cells = grid.querySelectorAll('.explore-cell');
+      bar.addEventListener('click', function (e) {
+        var chip = e.target.closest('.explore-tag');
+        if (!chip) return;
+        var tag = chip.getAttribute('data-tag-chip') || '';
+        chips.forEach(function (c) { c.classList.toggle('is-active', c === chip); });
+        cells.forEach(function (cell) {
+          var tags = (cell.getAttribute('data-tags') || '').split(' ');
+          cell.hidden = tag !== '' && tags.indexOf(tag) === -1;
         });
-      }
+      });
+    })();
+  </script>
 
-      fetch('https://api.github.com/repos/nexu-io/open-design')
-        .then((response) => response.ok ? response.json() : undefined)
-        .then((repo) => {
-          const count = Number(repo?.stargazers_count);
-          if (!Number.isFinite(count)) return;
-          const formatted = count >= 1000 ? `${(count / 1000).toFixed(1)}K` : String(count);
-          document.querySelectorAll('[data-github-stars]').forEach((node) => {
-            node.textContent = formatted;
-          });
-        })
-        .catch(() => {});
-    </script>
-  </body>
-</html>
+
+  {/* Contribute entry — de-emphasized, at the bottom. */}
+  <PluginContribute compact />
+</Layout>
+
+{/* Hub styles live in `app/sub-pages.css` so the catch-all
+    `[locale]/[...path].astro` can reuse them for the localized hub. */}

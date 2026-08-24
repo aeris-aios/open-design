@@ -1,28 +1,121 @@
-import { Fragment, useEffect, useRef, useState } from 'react';
-import { useT } from '../i18n';
+import {
+  Fragment,
+  memo,
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type DragEvent as ReactDragEvent,
+  type MutableRefObject,
+  type ReactNode,
+} from 'react';
+import { createPortal } from 'react-dom';
+import { hasOdCard } from '@open-design/contracts';
+import { useAnalytics } from '../analytics/provider';
+import { getResolvedDeviceId } from '../analytics/client';
+import {
+  trackChatPanelClick,
+  trackMessageQueueClick,
+  trackRunFailedToastSurfaceView,
+  trackRunRecoveryActionClick,
+  trackRunRecoveryActionSurfaceView,
+} from '../analytics/events';
+import {
+  buildRecoveryTaskAnalytics,
+  runAgentProviderId,
+} from '../analytics/run-task';
+import { amrHandoffDeviceId, attributedAmrUrl, recordAmrEntry } from '../analytics/amr-attribution';
+import { useI18n, useT } from '../i18n';
+import { startersForProduct, type ProductType } from '../onboarding/recommendation';
+import { starterCopyFor } from '../onboarding/starter-copy';
+import {
+  FEATURED_DESIGN_TOOLBOX_ACTION_IDS,
+  findDesignToolboxSkill,
+  getDesignToolboxAction,
+  type DesignToolboxActionId,
+} from '../runtime/design-toolbox';
+import { isRetryableAssistantTerminalFailure } from '../runtime/design-delivery';
 import type { Dict } from '../i18n/types';
 import { copyToClipboard } from '../lib/copy-to-clipboard';
+import { useLiquidGlass } from '../hooks/useLiquidGlass';
 import { projectRawUrl } from '../providers/registry';
+import { appendResourceQuery } from '../collab/workspace-identity';
+import { useProjectCollabContext } from '../collab/collab-context';
+import { takeComposerSeedFor } from '../state/libraryHandoff';
+import { splitOnQuestionForms } from '../artifacts/question-form';
+import { stripArtifact } from '../artifacts/strip';
 import type { TodoItem } from '../runtime/todos';
-import type { AppliedPluginSnapshot } from '@open-design/contracts';
+import type {
+  AppliedPluginSnapshot,
+  ChatSessionMode,
+  RunContextSelection,
+  WorkspaceContextItem,
+} from '@open-design/contracts';
+import type {
+  TrackingProjectKind,
+  TrackingRunRecoveryActionType,
+} from '@open-design/contracts/analytics';
 import {
   DESIGN_SYSTEM_WORKSPACE_DISPLAY_DESCRIPTION,
   DESIGN_SYSTEM_WORKSPACE_DISPLAY_TITLE,
   isDesignSystemWorkspacePrompt,
 } from '../design-system-auto-prompt';
-import { latestTodoWriteInputFromMessages } from '../runtime/todos';
+import {
+  isTodoWriteToolName,
+  latestTodoWriteInputForPinnedCard,
+  unfinishedTodosFromEvents,
+} from '../runtime/todos';
+import type { AppConfig, ChatAttachment, ChatCommentAttachment, ChatMessage, ChatMessageFeedbackChange, Conversation, DesignSystemSummary, PreviewComment, Project, ProjectFile, ProjectMetadata, SkillSummary } from '../types';
+import { agentDisplayName } from '../utils/agentLabels';
+import { commentTargetDisplayName, commentsToAttachments, simplePositionLabel } from '../comments';
+import { AssistantMessage, type QuestionFormSubmitHandler } from './AssistantMessage';
 import { TodoCard } from './ToolCard';
-import type { AppConfig, ChatAttachment, ChatCommentAttachment, ChatMessage, ChatMessageFeedbackChange, Conversation, PreviewComment, ProjectFile, ProjectMetadata, SkillSummary } from '../types';
-import { dayKey, dayLabel, exactDateTime, messageTime, relativeTimeLong } from '../utils/chatTime';
-import { commentsToAttachments, simplePositionLabel } from '../comments';
-import { AssistantMessage } from './AssistantMessage';
+import type { BrandBrowserAssistConfirm } from './OdCard';
+import {
+  DESIGN_SYSTEM_NEXT_STEP_ACTIONS,
+  type NextStepActionsVariant,
+} from './NextStepActions';
+import { AmrGuidance } from './AmrGuidance';
+import { AmrLoginPill } from './AmrLoginPill';
+import {
+  AMR_LOGIN_STATUS_EVENT,
+  amrLoginStatusEventReason,
+  isAmrSessionAuthenticated,
+} from './amrLoginPolling';
+import {
+  amrPlansUrlForProfile,
+  amrRechargeUrlForProfile,
+  formatModelWindowRetryAt,
+  resolveRunFailureUi,
+} from '../runtime/amr-guidance';
+import {
+  fetchVelaLoginStatus,
+  type VelaLoginStatus,
+} from '../providers/daemon';
+import { RESUME_CONTINUE_PROMPT } from '../runtime/resume';
+import {
+  canConsumeAmrAuthRetryContinuation,
+  type AmrAuthRetryContinuation,
+  type AmrAuthRetryPersonalAdoptionWitness,
+} from '../runtime/amr-auth-retry-continuation';
 import {
   ChatComposer,
   type ChatComposerHandle,
+  type ChatSendOutcome,
   type ChatSendMeta,
 } from './ChatComposer';
+import type { PlaceholderScenario } from './home-hero/placeholderScenarios';
+import { listDesignArtifactCandidates } from './design-files/designArtifacts';
 import type { PluginFolderAgentAction } from './design-files/pluginFolderActions';
-import { Icon } from './Icon';
+import { Icon, type IconName } from './Icon';
+import { UserActionCard, type UserActionCardTone } from './UserActionCard';
+import { repoConnectCopy } from './design-system-github-evidence';
+import { isRenderableSketchJson, SketchPreview } from './SketchPreview';
+import type { SettingsSection } from './SettingsDialog';
 
 type TranslateFn = (key: keyof Dict, vars?: Record<string, string | number>) => string;
 
@@ -35,7 +128,7 @@ type TranslateFn = (key: keyof Dict, vars?: Record<string, string | number>) => 
 // Starter sets are picked per project kind (and per video model) so a
 // fresh seedance video, a hyperframes html-in-canvas video, an image
 // project and an audio project each see relevant prompts instead of the
-// generic prototype trio. The default (prototype/deck/template/other/
+// generic starter set. The default (prototype/deck/template/other/
 // live-artifact) set stays i18n-translated via existing chat.example*
 // keys so the user-facing copy keeps its localizations. The new media
 // sets are inline English literals — they are technical agent prompts
@@ -44,6 +137,7 @@ type TranslateFn = (key: keyof Dict, vars?: Record<string, string | number>) => 
 type StarterPrompt = {
   icon: string;
   title: string;
+  // Empty for path-scoped onboarding starters, which have no category tag.
   tag: string;
   prompt: string;
 };
@@ -72,7 +166,37 @@ const DEFAULT_STARTER_KEYS: Array<{
     tagKey: 'chat.example3Tag',
     promptKey: 'chat.example3Prompt',
   },
+  {
+    icon: '▶',
+    titleKey: 'chat.example4Title',
+    tagKey: 'chat.example4Tag',
+    promptKey: 'chat.example4Prompt',
+  },
 ];
+
+const IMPORTED_ARTIFACTS_INITIAL_VISIBLE_COUNT = 5;
+const IMPORTED_ARTIFACTS_REVEAL_COUNT = 5;
+const CHAT_RAIL_MIN_USER_MESSAGES = 2;
+// Above this the rail becomes a compact rolling wheel with faded extremes;
+// at or below it the full column shows with no mask occlusion.
+const CHAT_RAIL_WHEEL_MIN_USER_MESSAGES = 40;
+const CHAT_RAIL_HIGHLIGHT_MS = 1200;
+
+// Dock-style proximity effect: every dash rests at the same base length;
+// the hovered dash grows to the full module width and only its 4 neighbors
+// on each side are pulled along, easing off with distance.
+const CHAT_RAIL_DASH_BASE_PX = 8;
+const CHAT_RAIL_DASH_HOVER_PX = 16;
+const CHAT_RAIL_DASH_NEIGHBOR_SPAN = 4;
+
+function chatRailDashWidth(distance: number): number {
+  if (distance > CHAT_RAIL_DASH_NEIGHBOR_SPAN) return CHAT_RAIL_DASH_BASE_PX;
+  const falloff = 1 - distance / (CHAT_RAIL_DASH_NEIGHBOR_SPAN + 1);
+  return (
+    CHAT_RAIL_DASH_BASE_PX +
+    (CHAT_RAIL_DASH_HOVER_PX - CHAT_RAIL_DASH_BASE_PX) * falloff * falloff
+  );
+}
 
 const IMAGE_STARTERS: StarterPrompt[] = [
   {
@@ -203,17 +327,234 @@ function pickStarters(
   }));
 }
 
+function sortArtifactsByModified(files: ProjectFile[]): ProjectFile[] {
+  return [...files].sort(
+    (a, b) => b.mtime - a.mtime || a.name.localeCompare(b.name),
+  );
+}
+
+function ImportedFolderArtifacts({
+  projectId,
+  files,
+  onOpenFile,
+  t,
+}: {
+  projectId: string | null;
+  files: ProjectFile[];
+  onOpenFile?: (name: string) => void;
+  t: TranslateFn;
+}) {
+  const [visibleCount, setVisibleCount] = useState(IMPORTED_ARTIFACTS_INITIAL_VISIBLE_COUNT);
+
+  useEffect(() => {
+    setVisibleCount(IMPORTED_ARTIFACTS_INITIAL_VISIBLE_COUNT);
+  }, [files]);
+
+  if (files.length === 0) {
+    return (
+      <div className="chat-design-artifacts-empty" data-testid="chat-design-artifacts-empty">
+        {t('designFiles.empty')}
+      </div>
+    );
+  }
+
+  const visibleFiles = files.slice(0, visibleCount);
+  const hiddenCount = Math.max(0, files.length - visibleFiles.length);
+  const revealCount = Math.min(IMPORTED_ARTIFACTS_REVEAL_COUNT, hiddenCount);
+  const revealLabel = t('chat.designArtifactsShowMore', { count: revealCount });
+
+  return (
+    <div className="chat-design-artifacts" data-testid="chat-design-artifacts">
+      {visibleFiles.map((file, index) => {
+        const openable = Boolean(onOpenFile);
+        const openLabel = `${t('designFiles.previewOpen')} ${file.name}`;
+        const openFile = () => {
+          onOpenFile?.(file.name);
+        };
+        return (
+          <div
+            key={file.name}
+            className="chat-design-artifact"
+            data-kind={file.kind}
+            data-file-name={file.name}
+            data-testid={`chat-design-artifact-${index}`}
+            role={openable ? 'button' : 'listitem'}
+            tabIndex={openable ? 0 : undefined}
+            title={openLabel}
+            aria-label={openLabel}
+            onDoubleClick={openable ? openFile : undefined}
+            onKeyDown={
+              openable
+                ? (event) => {
+                    if (event.key !== 'Enter' && event.key !== ' ') return;
+                    event.preventDefault();
+                    openFile();
+                  }
+                : undefined
+            }
+          >
+            <div className="chat-design-artifact-preview" aria-hidden>
+              <ChatArtifactPreview projectId={projectId} file={file} />
+            </div>
+            <div className="chat-design-artifact-meta">
+              <span className="chat-design-artifact-name" title={file.name}>
+                {file.name}
+              </span>
+              <span className="chat-design-artifact-kind">
+                {chatArtifactKindLabel(file.kind, t)}
+              </span>
+            </div>
+          </div>
+        );
+      })}
+      {hiddenCount > 0 ? (
+        <button
+          type="button"
+          className="chat-design-artifact chat-design-artifact-more"
+          data-testid="chat-design-artifacts-more"
+          aria-label={revealLabel}
+          title={revealLabel}
+          onClick={() => {
+            setVisibleCount((current) =>
+              Math.min(files.length, current + IMPORTED_ARTIFACTS_REVEAL_COUNT),
+            );
+          }}
+        >
+          <span className="chat-design-artifact-more-icon" aria-hidden>
+            +
+          </span>
+          <span className="chat-design-artifact-more-count">
+            {revealLabel}
+          </span>
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+function ChatArtifactPreview({
+  projectId,
+  file,
+}: {
+  projectId: string | null;
+  file: ProjectFile;
+}) {
+  const { workspaceContext } = useProjectCollabContext();
+  if (!projectId) {
+    return <ChatArtifactFallback kind={file.kind} />;
+  }
+
+  const url = appendResourceQuery(
+    projectRawUrl(projectId, file.name, workspaceContext),
+    `v=${Math.round(file.mtime)}`,
+  );
+  if (isRenderableSketchJson(file)) {
+    return (
+      <SketchPreview
+        projectId={projectId}
+        file={file}
+        workspaceContext={workspaceContext}
+      />
+    );
+  }
+  if (file.kind === 'image' || file.kind === 'sketch') {
+    return <img src={url} alt="" loading="lazy" />;
+  }
+  if (file.kind === 'html') {
+    return (
+      <iframe
+        title={file.name}
+        src={url}
+        sandbox="allow-scripts allow-downloads"
+        loading="lazy"
+      />
+    );
+  }
+  if (file.kind === 'video') {
+    return <video src={url} muted playsInline preload="metadata" />;
+  }
+  return <ChatArtifactFallback kind={file.kind} />;
+}
+
+function ChatArtifactFallback({ kind }: { kind: ProjectFile['kind'] }) {
+  return (
+    <span className="chat-design-artifact-fallback">
+      <Icon name={chatArtifactIcon(kind)} size={28} />
+      <span>{chatArtifactShortKind(kind)}</span>
+    </span>
+  );
+}
+
+function chatArtifactIcon(kind: ProjectFile['kind']): IconName {
+  if (kind === 'html' || kind === 'code') return 'file-code';
+  if (kind === 'image' || kind === 'sketch') return 'image';
+  if (kind === 'video' || kind === 'audio') return 'play';
+  if (kind === 'presentation') return 'present';
+  return 'file';
+}
+
+function chatArtifactShortKind(kind: ProjectFile['kind']): string {
+  if (kind === 'html') return 'HTML';
+  if (kind === 'image') return 'IMG';
+  if (kind === 'sketch') return 'SKETCH';
+  if (kind === 'video') return 'VIDEO';
+  if (kind === 'pdf') return 'PDF';
+  if (kind === 'presentation') return 'PPT';
+  if (kind === 'document') return 'DOC';
+  return 'FILE';
+}
+
+function chatArtifactKindLabel(kind: ProjectFile['kind'], t: TranslateFn): string {
+  if (kind === 'html') return t('designFiles.kindHtml');
+  if (kind === 'image') return t('designFiles.kindImage');
+  if (kind === 'sketch') return t('designFiles.kindSketch');
+  if (kind === 'video') return 'Video';
+  if (kind === 'audio') return 'Audio';
+  if (kind === 'pdf') return t('designFiles.kindPdf');
+  if (kind === 'document') return t('designFiles.kindDocument');
+  if (kind === 'presentation') return t('designFiles.kindPresentation');
+  if (kind === 'spreadsheet') return t('designFiles.kindSpreadsheet');
+  return t('designFiles.kindBinary');
+}
+
 interface Props {
   messages: ChatMessage[];
   streaming: boolean;
+  loading?: boolean;
   error: string | null;
+  // Identifies a pane-level error produced by an assistant run. This lets the
+  // pane distinguish a stale run error from a later failure with identical
+  // canonical text; non-run errors leave the source undefined.
+  errorSourceAssistantId?: string | null;
   projectId: string | null;
+  sessionMode?: ChatSessionMode;
+  onSessionModeChange?: (mode: ChatSessionMode) => void;
+  // Analytics-only — forwarded to AssistantMessage so the feedback
+  // events know which project surface the rating applies to. Optional
+  // (defaults to null/'prototype') so unit tests can mount ChatPane
+  // without project context.
+  projectKindForTracking?: TrackingProjectKind | null;
   projectFiles: ProjectFile[];
+  activeProjectFileName?: string | null;
   hasActiveDesignSystem?: boolean;
+  activeDesignSystem?: DesignSystemSummary | null;
   sendDisabled?: boolean;
+  // Read-only viewer of a team-shared project. Beyond `sendDisabled` (which only
+  // blocks the send action), this also disables the composer input itself and
+  // hides the empty-state starter cards, since a member cannot start a
+  // conversation on someone else's shared project.
+  viewerOnly?: boolean;
+  queuedItems?: QueuedSendItem[];
+  onRemoveQueuedSend?: (id: string) => void;
+  onUpdateQueuedSend?: (id: string, update: QueuedSendUpdate) => void;
+  onReorderQueuedSends?: (orderedIds: string[]) => void;
+  onSendQueuedNow?: (id: string) => void;
   // Names that exist in the project folder. Tool cards and chips use this
   // set to decide whether a path can be opened as a tab.
   projectFileNames?: Set<string>;
+  // Daemon-resolved on-disk working directory of the current project —
+  // positive-proof anchor for chat file-link routing (see AssistantMessage).
+  projectResolvedDir?: string | null;
   onEnsureProject: () => Promise<string | null>;
   previewComments?: PreviewComment[];
   attachedComments?: PreviewComment[];
@@ -225,7 +566,25 @@ interface Props {
     attachments: ChatAttachment[],
     commentAttachments: ChatCommentAttachment[],
     meta?: ChatSendMeta,
+  ) => ChatSendOutcome | Promise<ChatSendOutcome>;
+  onRetry?: (
+    assistantMessage: ChatMessage,
+    recoveryActionType?: TrackingRunRecoveryActionType,
   ) => void;
+  amrAuthRetryContinuation?: AmrAuthRetryContinuation | null;
+  amrAuthRetryMountId?: string;
+  amrAuthRetryWorkspaceIdentityKey?: string;
+  amrAuthRetryPersonalAdoptionWitness?: AmrAuthRetryPersonalAdoptionWitness | null;
+  onArmAmrAuthRetryContinuation?: (
+    continuation: Omit<AmrAuthRetryContinuation, 'accountIdAtArm' | 'createdAtMs'>,
+  ) => void;
+  onConsumeAmrAuthRetryContinuation?: (
+    continuation: AmrAuthRetryContinuation,
+  ) => boolean;
+  onDiscardAmrAuthRetryContinuation?: (
+    continuation: AmrAuthRetryContinuation,
+  ) => void;
+  onResumeRun?: (assistantMessage: ChatMessage) => void;
   onStop: () => void;
   // Skills available for @-mention assembly. ProjectView filters out the
   // user's disabled set before passing them in here.
@@ -234,16 +593,47 @@ interface Props {
   // FileWorkspace's openRequest. Tool cards, attachment chips, and
   // produced-file chips all call this.
   onRequestOpenFile?: (name: string) => void;
+  onRequestPluginDetails?: (pluginId: string) => void;
+  onRequestDesignSystemDetails?: (system: DesignSystemSummary) => void;
   onRequestPluginFolderAgentAction?: (
     relativePath: string,
     action: PluginFolderAgentAction,
-  ) => Promise<void> | void;
+  ) => Promise<{ message?: string; url?: string } | void> | { message?: string; url?: string } | void;
+  activePluginActionPaths?: Set<string>;
+  hiddenPluginActionPaths?: Set<string>;
+  // "Share to OpenDesign" button on each completed assistant message —
+  // wired by ProjectView to handleSend with the bundled
+  // `od-share-to-community` scenario's trigger prompt.
+  onShareToOpenDesign?: (assistantMessageId: string) => void;
+  shareToOpenDesignBusyMessageId?: string | null;
+  forceStreamingMessageIds?: Set<string>;
+  // Live-only streaming tool-input partials keyed by tool-use id. Threaded to
+  // AssistantMessage so an in-flight Write/Edit can render its code in real
+  // time before the full `tool_use` arrives. Never persisted.
+  liveToolInput?: Record<string, { name: string; text: string; seq?: number }>;
   initialDraft?: string;
-  // Question-form submissions become a normal user message; the parent
-  // routes that text through onSend (no attachments).
-  onSubmitForm?: (text: string) => void;
-  onContinueRemainingTasks?: (assistantMessage: ChatMessage, todos: TodoItem[]) => void;
+  // Product path of the Home recommendation that started this project. When
+  // set (and concrete), the empty-conversation starter cards show that path's
+  // starters — one-click composer replacements — instead of the generic set.
+  onboardingStarterPath?: ProductType | null;
+  composerPlaceholder?: string;
+  onSubmitQuestionForm?: QuestionFormSubmitHandler;
+  questionFormSubmitDisabled?: boolean;
+  onContinueRemainingTasks?: (
+    assistantMessage: ChatMessage,
+    todos: TodoItem[],
+  ) => boolean | void | Promise<boolean | void>;
   onAssistantFeedback?: (assistantMessage: ChatMessage, change: ChatMessageFeedbackChange) => void;
+  // Client-side action for a brand-browser-assist od-card: open/focus the
+  // Browser tab. Routed through the stable callbacks ref.
+  onBrandBrowserAssistConfirm?: BrandBrowserAssistConfirm;
+  // "Next step" affordance handlers forwarded to the last assistant message.
+  // The featured design-toolbox rows are driven directly off the composer ref
+  // owned here, so they need no handler from ProjectView (unlike onArtifactShare).
+  onArtifactShare?: (fileName: string) => void;
+  onArtifactDownload?: (fileName: string) => void;
+  onForkFromMessage?: (assistantMessage: ChatMessage) => void;
+  forkingMessageId?: string | null;
   // Header "+" button — kicks off ProjectView's create-conversation flow.
   onNewConversation?: () => void;
   newConversationDisabled?: boolean;
@@ -252,15 +642,77 @@ interface Props {
   // leaving the pane.
   conversations: Conversation[];
   activeConversationId: string | null;
+  // The conversation whose history the live `messages` array currently
+  // reflects. Null while a switch is mid-flight (or after a load failure),
+  // which is exactly when `messages.length` must NOT be trusted as the active
+  // conversation's count — see `conversationMessageCount`. Callers that do not
+  // track this (mounts whose loader resets/retags `messages` asynchronously)
+  // leave it undefined and fall back to the persisted `conversation.messageCount`
+  // for a stable list count.
+  messagesConversationId?: string | null;
   onSelectConversation: (id: string) => void;
   onDeleteConversation: (id: string) => void;
-  onRenameConversation?: (id: string, title: string) => void;
   // Composer settings/CLI button forwards to here. The dialog lives in App
   // (it owns the AppConfig lifecycle) so we just pass the open trigger.
-  onOpenSettings?: () => void;
+  onOpenSettings?: (section?: SettingsSection) => void;
+  showByokRecoveryAction?: boolean;
+  onSwitchToLocalCli?: () => void;
+  onOpenAmrSettings?: () => void;
+  onSwitchToAmrAndRetry?: (failedAssistant: ChatMessage) => void;
+  // PR #3157: Antigravity's `agy -p` can't complete OAuth on its own,
+  // so the auth banner offers a "Sign in via terminal" button that
+  // POSTs to /api/agents/antigravity/oauth-launch. Handler resolves
+  // after the daemon kicks off `osascript`/`x-terminal-emulator`/
+  // `cmd /c start` so the UI can disable the button while in flight.
+  onLaunchAntigravityOauth?: () => Promise<void>;
   // Same dialog, but landing on the External MCP tab. Forwarded to the
   // composer's `/mcp` slash and MCP picker button.
   onOpenMcpSettings?: () => void;
+  // The composer "+" menu's "add plugin" / "add connector" rows route to the
+  // home plugin-registry / connector-integration surfaces.
+  onBrowsePlugins?: () => void;
+  onOpenConnectors?: () => void;
+  // True when this project is a GitHub-backed design system whose repository
+  // evidence has not fully landed. Surfaces a "Connect your repo" CTA in the
+  // empty chat state alongside the starter examples.
+  connectRepoNeeded?: boolean;
+  // Live GitHub connector status, used only to pick the connect-repo CTA copy
+  // (connect vs re-import). Undefined until the status fetch resolves.
+  githubConnected?: boolean;
+  // Fires when the connect-repo CTA button is clicked. The parent decides what
+  // it does based on connector status (open Connectors, or prefill the composer
+  // with the import instruction).
+  onConnectRepo?: () => void;
+  // True once the deterministic brand extraction actually reached ready. Until
+  // then the next-step card must stay on continue/recover actions even if the
+  // latest assistant row is terminal.
+  brandExtractionComplete?: boolean;
+  // True for a programmatically-extracted brand project whose AI enrichment
+  // never ran. The next-step card uses this to offer AI Optimize after the
+  // extraction completion message.
+  brandEnrichmentEligible?: boolean;
+  // Runs the optional brand-enrichment turn. The parent sends the project's
+  // seeded enrichment prompt with the default per-turn skill bundle.
+  onContinueBrandEnrichment?: () => void;
+  brandEnrichmentBusy?: boolean;
+  // Runs or resumes the selected agent for an incomplete brand extraction
+  // scaffold. Distinct from AI Optimize, which assumes a ready system exists.
+  onContinueBrandAgentExtraction?: () => void;
+  continueBrandAgentExtractionBusy?: boolean;
+  // Restarts the deterministic programmatic pass for an incomplete brand
+  // extraction without creating a duplicate design-system item.
+  onContinueBrandExtraction?: () => void;
+  continueBrandExtractionBusy?: boolean;
+  // Creates a fresh design project using the current extracted design system.
+  onCreateDesignFromActiveDesignSystem?: () => void;
+  createDesignFromActiveDesignSystemBusy?: boolean;
+  // Duplicates a regular project into a new design-system workspace and starts
+  // the design-system generation pass from that copied evidence.
+  onCreateDesignSystemFromProject?: () => void;
+  createDesignSystemFromProjectBusy?: boolean;
+  // Bumped by the parent to push a draft into the composer (used by the
+  // "Import repo" CTA). The nonce lets the same text fire more than once.
+  composerDraftSignal?: { text: string; nonce: number };
   // Optional pet wiring forwarded straight through to ChatComposer's
   // /pet button. When omitted the composer hides the button entirely.
   petConfig?: AppConfig['pet'];
@@ -268,7 +720,12 @@ interface Props {
   onTogglePet?: () => void;
   onOpenPetSettings?: () => void;
   projectMetadata?: ProjectMetadata;
-  onProjectMetadataChange?: (metadata: ProjectMetadata) => void;
+  // Authoritative post-patch project from the daemon — see ChatComposer's
+  // prop of the same name for the recency invariant.
+  onProjectMetadataChange?: (updated: Project) => void;
+  activeWorkspaceContext?: WorkspaceContextItem | null;
+  initialWorkspaceContexts?: WorkspaceContextItem[];
+  workspaceContexts?: WorkspaceContextItem[];
   currentSkillId?: string | null;
   onProjectSkillChange?: (skillId: string | null) => void;
   researchAvailable?: boolean;
@@ -278,20 +735,167 @@ interface Props {
   // each user message — that satisfies §8 "show context inside the run
   // message" without forcing a separate side widget.
   activePluginSnapshot?: AppliedPluginSnapshot | null;
+  // SenseAudio BYOK only — wired straight through to ChatComposer for the
+  // in-composer image-model picker. Active protocol is read so the picker
+  // hides when the user is on any other BYOK tab (azure / openai / …).
+  byokApiProtocol?: AppConfig['apiProtocol'];
+  byokImageModel?: string;
+  onChangeByokImageModel?: (model: string) => void;
+  byokVideoModel?: string;
+  onChangeByokVideoModel?: (model: string) => void;
+  byokSpeechModel?: string;
+  onChangeByokSpeechModel?: (model: string) => void;
+  byokSpeechVoice?: string;
+  onChangeByokSpeechVoice?: (voice: string) => void;
+  composerFooterAccessory?: ReactNode;
+  // Slot rendered next to the composer's "+" menu (e.g. the working-dir pill).
+  composerLeadingAccessory?: ReactNode;
+  // Forwarded straight to the chat composer's mid-chat design-system
+  // switcher. ProjectView owns the project record so the parent is the
+  // natural place to mirror the patched project after a PATCH lands.
+  currentDesignSystemId?: string | null;
+  onActiveDesignSystemChange?: (project: Project) => void;
+  onShowToast?: (message: string) => void;
+  // Optional transient UI owned by the project shell. Rendering it inside the
+  // scroll-area wrapper keeps it structurally above the variable-height
+  // composer instead of guessing a bottom offset from outside ChatPane.
+  chatLogTray?: ReactNode;
+  // Project header slot. The former standalone chrome header row was removed;
+  // its back button, project title (editable) and design-system picker moved
+  // into the top of the chat pane. ProjectView owns the project record so it
+  // renders these as slots rather than ChatPane re-deriving the data.
+  onBack?: () => void;
+  /** Collapse the conversation pane into workspace-focused mode (#5517's
+   *  panel-left control). Takes precedence over onBack in the header. */
   onCollapse?: () => void;
+  /** True when the collapse control renders OUTSIDE this pane (lifted into
+   *  the tabs dock row) — suppresses the header's collapse/back slot. */
+  collapseControlLifted?: boolean;
+  backLabel?: string;
+  projectHeader?: ReactNode;
+  designSystemPicker?: ReactNode;
+  config?: AppConfig;
 }
 
+const AMR_PROFILE_ENV_KEY = 'OPEN_DESIGN_AMR_PROFILE';
+
 type Tab = 'chat' | 'comments';
+
+const CHAT_MESSAGE_VIRTUALIZE_THRESHOLD = 80;
+const CHAT_MESSAGE_OVERSCAN_PX = 900;
+const CHAT_VIRTUAL_ROW_GAP_PX = 14;
+const CHAT_VIRTUAL_MIN_ROW_HEIGHT = 36;
+const CHAT_VIRTUAL_DEFAULT_VIEWPORT_PX = 640;
+const CHAT_VIRTUAL_INITIAL_TAIL_ROWS = 16;
+const CONVERSATION_ROW_HEIGHT_PX = 34;
+const CONVERSATION_VIRTUALIZE_THRESHOLD = 36;
+const CONVERSATION_OVERSCAN_ROWS = 8;
+
+interface RunErrorDiagnosticInput {
+  message: string;
+  rawMessage?: string | null;
+  errorCode?: string;
+  traceId?: string;
+  projectId?: string | null;
+  conversationId?: string | null;
+  assistantMessageId?: string;
+  agentId?: string;
+}
+
+interface QueuedSendItem {
+  id: string;
+  prompt: string;
+  attachments?: ChatAttachment[];
+  commentAttachments?: ChatCommentAttachment[];
+  meta?: ChatSendMeta;
+}
+
+interface QueuedSendUpdate {
+  prompt: string;
+  attachments: ChatAttachment[];
+  commentAttachments: ChatCommentAttachment[];
+  meta?: ChatSendMeta;
+}
+
+// Gap left above the anchored user message when it is pinned to the top.
+const ANCHOR_TOP_PADDING = 12;
+
+function shouldHideEmptyBrandAssistantMessage(message: ChatMessage, metadata?: ProjectMetadata): boolean {
+  if (metadata?.importedFrom !== 'brand-extraction' && metadata?.kind !== 'brand') return false;
+  if (message.role !== 'assistant') return false;
+  if (brandAssistantTextHasVisibleContent(message.content)) return false;
+  if ((message.events ?? []).some(hasVisibleBrandAssistantEvent)) return false;
+  if ((message.producedFiles?.length ?? 0) > 0) return false;
+  return Boolean(message.runStatus || message.endedAt);
+}
+
+function brandAssistantTextHasVisibleContent(content: string): boolean {
+  const trimmed = content.trim();
+  if (!trimmed) return false;
+  if (hasOdCard(trimmed)) return true;
+  const withoutArtifacts = stripArtifact(trimmed).trim();
+  if (!withoutArtifacts) return false;
+  return splitOnQuestionForms(withoutArtifacts).some((segment) => {
+    if (segment.kind === 'form') return true;
+    return segment.text.trim().length > 0;
+  });
+}
+
+const HIDDEN_BRAND_ASSISTANT_STATUS_LABELS = new Set([
+  'streaming',
+  'starting',
+  'running',
+  'working',
+  'requesting',
+  'thinking',
+  'empty_response',
+  'done',
+  'completed',
+]);
+
+function hasVisibleBrandAssistantEvent(event: NonNullable<ChatMessage['events']>[number]): boolean {
+  switch (event.kind) {
+    case 'text':
+      return brandAssistantTextHasVisibleContent(event.text);
+    case 'thinking':
+      return event.text.trim().length > 0;
+    case 'tool_use':
+    case 'live_artifact':
+    case 'live_artifact_refresh':
+    case 'plugin_candidate':
+      return true;
+    case 'tool_result':
+      return false;
+    case 'raw':
+      return false;
+    case 'status':
+      return !HIDDEN_BRAND_ASSISTANT_STATUS_LABELS.has(event.label);
+    case 'usage':
+    case 'diagnostic':
+    case 'conversation_title':
+      return false;
+  }
+}
 
 export function ChatPane({
   messages,
   streaming,
+  loading = false,
   sendDisabled = false,
+  viewerOnly = false,
+  queuedItems = [],
   error,
+  errorSourceAssistantId,
   projectId,
+  sessionMode = 'design',
+  onSessionModeChange,
+  projectKindForTracking = null,
   projectFiles,
+  activeProjectFileName = null,
   hasActiveDesignSystem = false,
+  activeDesignSystem = null,
   projectFileNames,
+  projectResolvedDir,
   onEnsureProject,
   previewComments = [],
   attachedComments = [],
@@ -299,40 +903,134 @@ export function ChatPane({
   onDetachComment,
   onDeleteComment,
   onSend,
+  onRetry,
+  amrAuthRetryContinuation = null,
+  amrAuthRetryMountId,
+  amrAuthRetryWorkspaceIdentityKey,
+  amrAuthRetryPersonalAdoptionWitness = null,
+  onArmAmrAuthRetryContinuation,
+  onConsumeAmrAuthRetryContinuation,
+  onDiscardAmrAuthRetryContinuation,
+  onResumeRun,
   onStop,
+  onRemoveQueuedSend,
+  onUpdateQueuedSend,
+  onReorderQueuedSends,
+  onSendQueuedNow,
   onRequestOpenFile,
+  onRequestPluginDetails,
+  onRequestDesignSystemDetails,
   onRequestPluginFolderAgentAction,
+  activePluginActionPaths,
+  hiddenPluginActionPaths,
+  onShareToOpenDesign,
+  shareToOpenDesignBusyMessageId,
+  forceStreamingMessageIds,
+  liveToolInput,
   initialDraft,
-  onSubmitForm,
+  onboardingStarterPath = null,
+  composerPlaceholder,
+  onSubmitQuestionForm,
+  questionFormSubmitDisabled = false,
   onContinueRemainingTasks,
   onAssistantFeedback,
+  onBrandBrowserAssistConfirm,
+  onArtifactShare,
+  onArtifactDownload,
+  onForkFromMessage,
+  forkingMessageId = null,
   onNewConversation,
   newConversationDisabled = false,
   conversations,
   activeConversationId,
+  messagesConversationId = null,
   onSelectConversation,
   onDeleteConversation,
-  onRenameConversation,
   onOpenSettings,
+  showByokRecoveryAction = false,
+  onSwitchToLocalCli,
+  onOpenAmrSettings,
+  onSwitchToAmrAndRetry,
+  onLaunchAntigravityOauth,
   onOpenMcpSettings,
+  onBrowsePlugins,
+  onOpenConnectors,
+  connectRepoNeeded,
+  githubConnected,
+  onConnectRepo,
+  brandExtractionComplete = false,
+  brandEnrichmentEligible,
+  onContinueBrandEnrichment,
+  brandEnrichmentBusy,
+  onContinueBrandAgentExtraction,
+  continueBrandAgentExtractionBusy,
+  onContinueBrandExtraction,
+  continueBrandExtractionBusy,
+  onCreateDesignFromActiveDesignSystem,
+  createDesignFromActiveDesignSystemBusy,
+  onCreateDesignSystemFromProject,
+  createDesignSystemFromProjectBusy,
+  composerDraftSignal,
   petConfig,
   onAdoptPet,
   onTogglePet,
   onOpenPetSettings,
   projectMetadata,
   onProjectMetadataChange,
+  activeWorkspaceContext,
+  initialWorkspaceContexts = [],
+  workspaceContexts = [],
   currentSkillId = null,
   onProjectSkillChange,
   researchAvailable,
   activePluginSnapshot,
   skills = [],
+  byokApiProtocol,
+  byokImageModel,
+  onChangeByokImageModel,
+  byokVideoModel,
+  onChangeByokVideoModel,
+  byokSpeechModel,
+  onChangeByokSpeechModel,
+  byokSpeechVoice,
+  onChangeByokSpeechVoice,
+  composerLeadingAccessory,
+  composerFooterAccessory,
+  currentDesignSystemId,
+  onActiveDesignSystemChange,
+  onShowToast,
+  chatLogTray,
+  onBack,
   onCollapse,
+  collapseControlLifted,
+  backLabel,
+  projectHeader,
+  designSystemPicker,
+  config,
 }: Props) {
-  const t = useT();
+  const { workspaceContext } = useProjectCollabContext();
+  const { t, locale } = useI18n();
+  const analytics = useAnalytics();
+  const displayMessages = useMemo(
+    () => messages.filter((message) => !shouldHideEmptyBrandAssistantMessage(message, projectMetadata)),
+    [messages, projectMetadata],
+  );
+  const amrProfile = config?.agentCliEnv?.amr?.[AMR_PROFILE_ENV_KEY] ?? null;
+  const [inlineAmrLoginStatus, setInlineAmrLoginStatus] =
+    useState<VelaLoginStatus | null>(null);
+  const amrAuthRetrySignedOutWitnessRef =
+    useRef<AmrAuthRetryContinuation | null>(null);
   const logRef = useRef<HTMLDivElement | null>(null);
+  const chatLogScrollIdleTimerRef = useRef<number | null>(null);
   const historyWrapRef = useRef<HTMLDivElement | null>(null);
   const composerRef = useRef<ChatComposerHandle | null>(null);
+  const composerSlotRef = useRef<HTMLDivElement | null>(null);
+  const composerLayerRef = useRef<HTMLDivElement | null>(null);
+  const pinnedTodoRef = useRef<HTMLDivElement | null>(null);
+  const queuedSendStripRef = useRef<HTMLDivElement | null>(null);
   const didInitialScrollRef = useRef(false);
+  const runFailedToastSurfaceKeysRef = useRef<Set<string>>(new Set());
+  const runRecoverySurfaceKeysRef = useRef<Set<string>>(new Set());
   // Tracks whether the user is glued close enough to the bottom that
   // streamed content should auto-follow. Distinct from the jump-button
   // state below, which uses a wider threshold (120px) so the affordance
@@ -341,43 +1039,728 @@ export function ChatPane({
   // shouldn't be yanked back the moment the next chunk streams in.
   const pinnedToBottomRef = useRef(true);
   const scrolledToFormRef = useRef<Set<string>>(new Set());
+  const refreshInlineAmrLoginStatus = useCallback(async (options: { refresh?: boolean } = {}) => {
+    const next = await fetchVelaLoginStatus(options).catch(() => null);
+    if (next) setInlineAmrLoginStatus(next);
+    return next;
+  }, []);
+
+  useEffect(() => {
+    void refreshInlineAmrLoginStatus();
+    const onAmrLoginStatusChange = (event: Event) => {
+      const reason = amrLoginStatusEventReason(event);
+      if (reason === 'login-canceled') return;
+      void refreshInlineAmrLoginStatus();
+    };
+    window.addEventListener(AMR_LOGIN_STATUS_EVENT, onAmrLoginStatusChange);
+    return () => {
+      window.removeEventListener(AMR_LOGIN_STATUS_EVENT, onAmrLoginStatusChange);
+    };
+  }, [refreshInlineAmrLoginStatus]);
+
+  useEffect(() => {
+    const refreshAfterExternalAmrReturn = () => {
+      if (document.visibilityState === 'hidden') return;
+      void refreshInlineAmrLoginStatus({ refresh: true });
+    };
+    window.addEventListener('focus', refreshAfterExternalAmrReturn);
+    document.addEventListener('visibilitychange', refreshAfterExternalAmrReturn);
+    return () => {
+      window.removeEventListener('focus', refreshAfterExternalAmrReturn);
+      document.removeEventListener('visibilitychange', refreshAfterExternalAmrReturn);
+    };
+  }, [refreshInlineAmrLoginStatus]);
+
+  // "Anchor the just-sent turn to the top" (ChatGPT-style). On send we pin
+  // the user's message to the top of the viewport and let the reply stream
+  // below it instead of following the bottom. `pending` is armed by the
+  // composer's onSend; the messages effect promotes it to `active` once the
+  // new user turn actually renders. A dynamic tail spacer reserves just
+  // enough real, scrollable blank space below the turn so the message can
+  // reach the top even when the reply is short. The spacer is only resized
+  // while the message sits at its pinned position — once the user scrolls
+  // below it, the reserved blank stays put (no collapse, no jump).
+  const anchorPendingRef = useRef(false);
+  const anchorActiveRef = useRef(false);
+  const tailSpacerRef = useRef<HTMLDivElement | null>(null);
+  const chatRailHighlightTimerRef = useRef<ReturnType<typeof setTimeout>>();
+  const [chatRailHighlightedMessageId, setChatRailHighlightedMessageId] =
+    useState<string | null>(null);
+  const prevStreamingRef = useRef(streaming);
+  const prevLastUserIdRef = useRef<string | undefined>(undefined);
+  // AssistantMessage's interaction callbacks are re-created per render and
+  // excluded from its memo comparison (so streaming doesn't re-render every
+  // message). Route them through this ref so a memoized message still calls the
+  // LATEST handler. See areAssistantMessagePropsEqual in AssistantMessage.tsx.
+  const assistantCallbacksRef = useRef<AssistantCallbacks>({
+    onSubmitQuestionForm,
+    onContinueRemainingTasks,
+    onAssistantFeedback,
+    onBrandBrowserAssistConfirm,
+    onArtifactShare,
+    onForkFromMessage,
+    onShareToOpenDesign,
+    onNextStepAiOptimize: onContinueBrandEnrichment,
+    onNextStepContinueExtraction: onContinueBrandExtraction,
+    onNextStepContinueAiExtraction: onContinueBrandAgentExtraction,
+    onNextStepCreateDesign: onCreateDesignFromActiveDesignSystem,
+    onNextStepCreateDesignSystem: onCreateDesignSystemFromProject,
+  });
+  assistantCallbacksRef.current = {
+    onSubmitQuestionForm,
+    onContinueRemainingTasks,
+    onAssistantFeedback,
+    onBrandBrowserAssistConfirm,
+    onArtifactShare,
+    onForkFromMessage,
+    onShareToOpenDesign,
+    onNextStepAiOptimize: onContinueBrandEnrichment,
+    onNextStepContinueExtraction: onContinueBrandExtraction,
+    onNextStepContinueAiExtraction: onContinueBrandAgentExtraction,
+    onNextStepCreateDesign: onCreateDesignFromActiveDesignSystem,
+    onNextStepCreateDesignSystem: onCreateDesignSystemFromProject,
+  };
+  // Featured design-toolbox follow-up rows on the assistant "next step" card.
+  // The toolbox left the "+" menu, so these route straight into the composer
+  // we own here: seeding an action's prompt+skill, or opening the full panel.
+  // Both stay stable (composer ref + no deps) so AssistantMessage stays memoized.
+  const handleToolboxAction = useCallback((id: DesignToolboxActionId) => {
+    composerRef.current?.applyDesignToolboxAction(id);
+  }, []);
+  const handleNextStepPromptAction = useCallback((
+    prompt: string,
+    options?: { sessionMode?: ChatSessionMode },
+  ) => {
+    if (options?.sessionMode && options.sessionMode !== sessionMode) {
+      onSessionModeChange?.(options.sessionMode);
+    }
+    composerRef.current?.setDraft(prompt, {
+      entryFrom: 'next_step',
+      sessionMode: options?.sessionMode,
+    });
+  }, [onSessionModeChange, sessionMode]);
+
+  const handleChatRailNavigate = useCallback(
+    (message: ChatMessage, messageIndex: number) => {
+      const log = logRef.current;
+      if (!log) return;
+      pinnedToBottomRef.current = false;
+      anchorActiveRef.current = false;
+      setScrolledFromBottom(true);
+      scrollChatLogToMessage(log, displayMessages, message.id, messageIndex);
+      setChatRailHighlightedMessageId(message.id);
+      if (chatRailHighlightTimerRef.current) {
+        clearTimeout(chatRailHighlightTimerRef.current);
+      }
+      chatRailHighlightTimerRef.current = setTimeout(() => {
+        setChatRailHighlightedMessageId((current) =>
+          current === message.id ? null : current,
+        );
+        chatRailHighlightTimerRef.current = undefined;
+      }, CHAT_RAIL_HIGHLIGHT_MS);
+    },
+    [displayMessages],
+  );
+
+  useEffect(() => {
+    return () => {
+      if (chatRailHighlightTimerRef.current) {
+        clearTimeout(chatRailHighlightTimerRef.current);
+      }
+    };
+  }, []);
+  const handlePickSkill = useCallback((skillId: string) => {
+    composerRef.current?.applyDesignToolboxSkill(skillId);
+  }, []);
+  const latestAssistantForBrandState = useMemo(() => {
+    for (let i = displayMessages.length - 1; i >= 0; i -= 1) {
+      const message = displayMessages[i]!;
+      if (message.role === 'assistant') return message;
+    }
+    return null;
+  }, [displayMessages]);
+  const nextStepVariant: NextStepActionsVariant = sessionMode === 'plan'
+    ? 'plan'
+    : isDesignSystemNextStepProject(projectMetadata)
+      ? isBrandExtractionNextStepProject(projectMetadata)
+        ? brandExtractionComplete
+          ? 'brand-extraction'
+          : !latestAssistantForBrandState || isProgrammaticBrandAssistantMessage(latestAssistantForBrandState)
+            ? 'brand-programmatic-incomplete'
+            : 'brand-ai-incomplete'
+        : 'design-system'
+      : 'default';
+  // The `@skill` shown in each featured row's hover detail — matched the same
+  // way the composer matches it, using the raw skill name (what gets inlined
+  // into the draft). Recomputed only when the skill list changes.
+  const featuredToolboxSkillNames = useMemo<Partial<Record<DesignToolboxActionId, string | null>>>(() => {
+    const map: Partial<Record<DesignToolboxActionId, string | null>> = {};
+    for (const id of FEATURED_DESIGN_TOOLBOX_ACTION_IDS) {
+      const action = getDesignToolboxAction(id);
+      map[id] = action ? (findDesignToolboxSkill(action, skills)?.name ?? null) : null;
+    }
+    return map;
+  }, [skills]);
+  const blankProjectComposerScenarios = useMemo<PlaceholderScenario[]>(
+    () => pickStarters(projectMetadata, t).map((starter, index) => ({
+      id: `blank-${projectMetadata?.kind ?? 'prototype'}-${index}`,
+      text: starter.prompt,
+      chipId: 'project',
+    })),
+    [projectMetadata, t],
+  );
+  const followUpComposerScenarios = useMemo<PlaceholderScenario[]>(() => {
+    if (nextStepVariant === 'design-system') {
+      return DESIGN_SYSTEM_NEXT_STEP_ACTIONS.map((action) => ({
+        id: action.id,
+        text: action.prompt,
+        chipId: 'design-system',
+      }));
+    }
+    if (nextStepVariant === 'plan') {
+      return [
+        {
+          id: 'plan-generate-from-doc',
+          text: t('nextStep.planGeneratePrompt'),
+          chipId: 'plan',
+          sessionMode: 'design',
+        },
+        {
+          id: 'plan-improve-doc',
+          text: t('nextStep.planImprovePrompt'),
+          chipId: 'plan',
+          sessionMode: 'plan',
+        },
+      ];
+    }
+    const promptPairs: Array<[string, string]> = [
+      ['auto-match', t('chat.designToolbox.prompt.autoMatchIntro')],
+      ['visual-polish', t('chat.designToolbox.prompt.visualPolish')],
+      ['asset-search', t('chat.designToolbox.prompt.assetSearch')],
+      ['icon-workflow', t('chat.designToolbox.prompt.iconWorkflow')],
+      ['anti-ai-polish', t('chat.designToolbox.prompt.antiAiPolish')],
+      ['motion-polish', t('chat.designToolbox.prompt.motionPolish')],
+      ['chart-gen', t('chat.designToolbox.prompt.chartGen')],
+    ];
+    return promptPairs.map(([id, text]) => ({
+      id: `follow-up-${id}`,
+      text,
+      chipId: 'design-toolbox',
+    }));
+  }, [nextStepVariant, t]);
+  const composerPlaceholderScenarios = useMemo<PlaceholderScenario[]>(() => {
+    if (loading || initialDraft?.trim()) return [];
+    if (displayMessages.length === 0 && queuedItems.length === 0) return blankProjectComposerScenarios;
+    if (displayMessages.length > 0) return followUpComposerScenarios;
+    return [];
+  }, [
+    blankProjectComposerScenarios,
+    displayMessages.length,
+    followUpComposerScenarios,
+    initialDraft,
+    loading,
+    queuedItems.length,
+  ]);
   const [tab, setTab] = useState<Tab>('chat');
   const [showConvList, setShowConvList] = useState(false);
+  const [conversationSearch, setConversationSearch] = useState('');
+  const deferredConversationSearch = useDeferredValue(conversationSearch);
   const [scrolledFromBottom, setScrolledFromBottom] = useState(false);
-  // The user can dismiss the pinned task list once everything is complete.
-  // We key the dismissal on the snapshot (serialized TodoWrite input) so
-  // the next time the agent emits a different snapshot the card returns,
-  // but the same snapshot stays hidden across renders / streaming ticks.
-  const [dismissedPinnedTodoKey, setDismissedPinnedTodoKey] = useState<string | null>(null);
-  const lastAssistantId = [...messages].reverse().find((m) => m.role === 'assistant')?.id;
-  const hasActiveRunMessage = messages.some(
+  // SDF liquid-glass refraction on the jump pill (frosted fallback via CSS).
+  const jumpBtnGlassRef = useLiquidGlass<HTMLButtonElement>({ strength: 0.2 });
+  const [chatLogScrollable, setChatLogScrollable] = useState(false);
+  const [chatLogScrolling, setChatLogScrolling] = useState(false);
+  const [composerPortalTarget, setComposerPortalTarget] = useState<HTMLElement | null>(null);
+  const [composerPortalRect, setComposerPortalRect] = useState<{
+    left: number;
+    width: number;
+    bottom: number;
+  } | null>(null);
+  const [composerSlotHeight, setComposerSlotHeight] = useState(0);
+  const [editingQueuedSendId, setEditingQueuedSendId] = useState<string | null>(null);
+  // Reverse scan (no array copy) + memo so this and the maps below don't
+  // recompute on every non-`messages` render (scroll, hover, toggles).
+  const lastAssistantId = useMemo(() => {
+    for (let i = displayMessages.length - 1; i >= 0; i--) {
+      if (displayMessages[i]!.role === 'assistant') return displayMessages[i]!.id;
+    }
+    return undefined;
+  }, [displayMessages]);
+  const hasActiveRunMessage = displayMessages.some(
     (m) => m.role === 'assistant' && isActiveRunStatus(m.runStatus),
   );
-  // Only the first user message gets the active-plugin chip — the
-  // plugin is project-scoped so re-stamping it on every reply would be
-  // noise. Subsequent messages still run under the same snapshot.
-  const firstUserMessageId = messages.find((m) => m.role === 'user')?.id;
-  // Map each assistant message id to the user message that follows it
-  // (if any) so QuestionFormView can render its locked "answered" state
-  // with the user's picks.
-  const nextUserContentByAssistantId = (() => {
+  const retryAssistant = retryableAssistantMessage(displayMessages, lastAssistantId, streaming);
+  // The failed run's error event lives on the (persisted) assistant message, so
+  // the error card + AMR card survive a reload — unlike the ephemeral global
+  // `error` state. Drive both off this event.
+  const failedRunErrorEvent = (() => {
+    const evs = retryAssistant?.events ?? [];
+    for (let i = evs.length - 1; i >= 0; i--) {
+      const ev = evs[i];
+      if (ev?.kind === 'status' && ev.label === 'error') return ev;
+    }
+    return null;
+  })();
+  // Per-case failure UI (button + copy + whether to promote AMR). Only
+  // meaningful for a failed run (retryAssistant present).
+  const runFailureUi = retryAssistant
+    ? resolveRunFailureUi(
+        failedRunErrorEvent?.code,
+        failedRunErrorEvent?.failureDetail,
+        retryAssistant.agentId,
+        // The raw upstream sentence, so a failure whose copy names something the
+        // gateway reported (the instant a model window reopens) can read it back
+        // out. Same string the card renders under 「查看详情」.
+        failedRunErrorEvent?.detail,
+      )
+    : null;
+  const hasInlineAmrAuthorizeFailure = Boolean(
+    retryAssistant && onRetry && runFailureUi?.primaryAction === 'authorize',
+  );
+  useEffect(() => {
+    if (
+      !amrAuthRetryContinuation
+      || !onDiscardAmrAuthRetryContinuation
+      || loading
+      || !projectId
+      || !activeConversationId
+      || messagesConversationId !== activeConversationId
+    ) {
+      return;
+    }
+    const personalAdoptionAuthorityTransition =
+      amrAuthRetryContinuation.workspaceIdentityKey === 'none'
+      && amrAuthRetryContinuation.originMountId === amrAuthRetryMountId
+      && amrAuthRetryPersonalAdoptionWitness?.workspaceIdentityKey
+        === amrAuthRetryWorkspaceIdentityKey;
+    const mismatched =
+      amrAuthRetryContinuation.projectId !== projectId
+      || amrAuthRetryContinuation.conversationId !== activeConversationId
+      || amrAuthRetryContinuation.assistantId !== retryAssistant?.id
+      || (
+        amrAuthRetryWorkspaceIdentityKey !== undefined
+        && amrAuthRetryContinuation.workspaceIdentityKey
+          !== amrAuthRetryWorkspaceIdentityKey
+        && !personalAdoptionAuthorityTransition
+      );
+    if (mismatched) {
+      onDiscardAmrAuthRetryContinuation(amrAuthRetryContinuation);
+    }
+  }, [
+    activeConversationId,
+    amrAuthRetryContinuation,
+    amrAuthRetryMountId,
+    amrAuthRetryPersonalAdoptionWitness,
+    amrAuthRetryWorkspaceIdentityKey,
+    loading,
+    messagesConversationId,
+    onDiscardAmrAuthRetryContinuation,
+    projectId,
+    retryAssistant?.id,
+  ]);
+  const consumeAmrAuthRetryIfAuthorized = useCallback((status: VelaLoginStatus | null) => {
+    if (!isAmrSessionAuthenticated(status)) {
+      if (
+        status?.loginInFlight === true
+        && amrAuthRetryContinuation
+        && amrAuthRetryContinuation.workspaceIdentityKey === 'none'
+        && amrAuthRetryContinuation.originMountId === amrAuthRetryMountId
+      ) {
+        amrAuthRetrySignedOutWitnessRef.current = amrAuthRetryContinuation;
+      }
+      return;
+    }
+    if (
+      !isAmrSessionAuthenticated(status)
+      || !amrAuthRetryContinuation
+      || !amrAuthRetryMountId
+      || !amrAuthRetryWorkspaceIdentityKey
+      || !projectId
+      || !activeConversationId
+      || !retryAssistant
+      || !onRetry
+      || !onConsumeAmrAuthRetryContinuation
+    ) {
+      return;
+    }
+    const originMountObservedSignedOut =
+      amrAuthRetrySignedOutWitnessRef.current === amrAuthRetryContinuation;
+    // Every continuation is consumed against the account identity returned by
+    // this exact status observation. An ambient shell snapshot can belong to a
+    // prior account during sign-out/sign-in transitions.
+    const loggedInAccountId = status?.user?.id ?? null;
+    if (!canConsumeAmrAuthRetryContinuation(amrAuthRetryContinuation, {
+      projectId,
+      conversationId: activeConversationId,
+      assistantId: retryAssistant.id,
+      workspaceIdentityKey: amrAuthRetryWorkspaceIdentityKey,
+      mountId: amrAuthRetryMountId,
+      loggedInAccountId,
+      nowMs: Date.now(),
+      originMountObservedSignedOut,
+      personalAdoptionWitness: amrAuthRetryPersonalAdoptionWitness,
+    })) {
+      return;
+    }
+    if (onConsumeAmrAuthRetryContinuation(amrAuthRetryContinuation)) {
+      amrAuthRetrySignedOutWitnessRef.current = null;
+      onRetry(
+        retryAssistant,
+        retryAssistant.agentId === 'amr'
+          ? 'authorize_and_retry'
+          : 'switch_runtime_retry',
+      );
+    }
+  }, [
+    activeConversationId,
+    amrAuthRetryContinuation,
+    amrAuthRetryMountId,
+    amrAuthRetryPersonalAdoptionWitness,
+    amrAuthRetryWorkspaceIdentityKey,
+    onConsumeAmrAuthRetryContinuation,
+    onRetry,
+    projectId,
+    retryAssistant,
+  ]);
+  useEffect(() => {
+    if (!amrAuthRetryContinuation || !isAmrSessionAuthenticated(inlineAmrLoginStatus)) return;
+    // A Settings handoff remounts the whole project surface, so there is no
+    // inline AmrLoginPill callback to drive consumption. The fresh pane's own
+    // status read may request the one-shot retry; the common guard above still
+    // requires the exact project, conversation, failed assistant, account,
+    // fresh mount and Workspace authority.
+    consumeAmrAuthRetryIfAuthorized(inlineAmrLoginStatus);
+  }, [
+    amrAuthRetryContinuation,
+    consumeAmrAuthRetryIfAuthorized,
+    inlineAmrLoginStatus,
+  ]);
+  useEffect(() => {
+    if (
+      amrAuthRetrySignedOutWitnessRef.current
+      && amrAuthRetrySignedOutWitnessRef.current !== amrAuthRetryContinuation
+    ) {
+      amrAuthRetrySignedOutWitnessRef.current = null;
+    }
+  }, [amrAuthRetryContinuation]);
+  useEffect(() => {
+    if (!hasInlineAmrAuthorizeFailure || !retryAssistant || !onRetry) return;
+    let stopped = false;
+    const retryIfSignedIn = async () => {
+      const next = await refreshInlineAmrLoginStatus();
+      if (stopped) return;
+      consumeAmrAuthRetryIfAuthorized(next);
+    };
+    void retryIfSignedIn();
+    const interval = window.setInterval(() => {
+      void retryIfSignedIn();
+    }, 500);
+    return () => {
+      stopped = true;
+      window.clearInterval(interval);
+    };
+  }, [
+    consumeAmrAuthRetryIfAuthorized,
+    hasInlineAmrAuthorizeFailure,
+    onRetry,
+    refreshInlineAmrLoginStatus,
+    retryAssistant,
+  ]);
+  // Offer Continue (resume) when the failed run is resumable AND the active
+  // agent still matches the agent that produced it. The daemon stores a
+  // resumable session per (conversation, agent); after an agent switch the new
+  // agent has no id for that session, so a resume would silently start fresh —
+  // fall back to the from-scratch Retry instead. We do NOT require `onResumeRun`
+  // here: because the daemon persists the resumable session, the plain Retry
+  // path (which re-sends the original prompt) would itself silently resume that
+  // session and double the work. So every ChatPane surface must offer Continue
+  // for a resumable failure — `onResumeRun` when wired (primary chat, carries
+  // the resume_continue analytics), otherwise a plain `onSend` of the canonical
+  // continue prompt (resumes the session without re-sending the original turn).
+  const canResumeFailedRun =
+    !!retryAssistant?.resumable &&
+    !!retryAssistant?.agentId &&
+    retryAssistant.agentId === config?.agentId;
+  // `error` is a shared escape hatch for both run failures and unrelated pane
+  // errors. A run error also lives durably on its assistant message. Suppress
+  // it only when its exact source assistant owns the persisted diagnostic and
+  // a later assistant has succeeded; canonical error text alone cannot prove
+  // ownership because a new run can fail with the same detail.
+  const historicalRunError = useMemo(
+    () =>
+      !retryAssistant &&
+      isRecoveredAssistantRunError(
+        displayMessages,
+        error,
+        errorSourceAssistantId,
+      ),
+    [displayMessages, error, errorSourceAssistantId, retryAssistant],
+  );
+  const currentGlobalError = historicalRunError ? null : error;
+  // Prefer a case-specific message (AMR auth / balance) over the raw upstream
+  // string; otherwise keep a current pane-level error ahead of the persisted
+  // failed-run detail. Historical run errors were already removed above.
+  const rawError = currentGlobalError ?? failedRunErrorEvent?.detail ?? null;
+  // Friendly agent name for {agent} interpolation in failure copy (e.g. the
+  // sign-in messages). Falls back to a neutral word when unreadable, never null.
+  const failedAgentLabel =
+    agentDisplayName(retryAssistant?.agentId, retryAssistant?.agentName) ??
+    t('chat.runError.agentFallback');
+  // Values the failure copy names, localized before interpolation: the gateway
+  // reports a UTC instant, the reader waits on their own clock.
+  const runFailureMessageVars = runFailureUi?.messageVars?.retryAt
+    ? {
+        ...runFailureUi.messageVars,
+        retryAt: formatModelWindowRetryAt(runFailureUi.messageVars.retryAt, locale),
+      }
+    : runFailureUi?.messageVars;
+  const displayError = runFailureUi?.messageKey
+    ? t(runFailureUi.messageKey, { agent: failedAgentLabel, ...runFailureMessageVars })
+    : rawError;
+  const errorDiagnosticText = displayError
+    ? buildRunErrorDiagnosticText({
+        message: displayError,
+        rawMessage: rawError,
+        errorCode: failedRunErrorEvent?.code,
+        traceId: retryAssistant?.runId,
+        projectId,
+        conversationId: activeConversationId,
+        assistantMessageId: retryAssistant?.id,
+        agentId: retryAssistant?.agentId,
+      })
+    : null;
+  // Brand (accent) for AMR sign-in/top-up, warning for a self-healing
+  // connection drop, danger for everything else. The shared action card only
+  // tints its icon; the surface itself stays neutral.
+  const runErrorTone: UserActionCardTone =
+    runFailureUi?.primaryAction === 'authorize' ||
+    runFailureUi?.primaryAction === 'recharge' ||
+    runFailureUi?.primaryAction === 'upgrade'
+      ? 'brand'
+      : failedRunErrorEvent?.code === 'AGENT_CONNECTION_DROPPED'
+        ? 'warning'
+        : 'danger';
+  const [copiedErrorDiagnostic, setCopiedErrorDiagnostic] = useState(false);
+  // Collapsed by default: the error source area shows one line until expanded.
+  const [errorSourceOpen, setErrorSourceOpen] = useState(false);
+  const errorDiagnosticCopyTimerRef = useRef<number | null>(null);
+  const copyErrorDiagnostic = useCallback(async () => {
+    if (!errorDiagnosticText) return;
+    const ok = await copyToClipboard(errorDiagnosticText);
+    if (!ok) return;
+    if (errorDiagnosticCopyTimerRef.current != null) {
+      window.clearTimeout(errorDiagnosticCopyTimerRef.current);
+    }
+    setCopiedErrorDiagnostic(true);
+    errorDiagnosticCopyTimerRef.current = window.setTimeout(() => {
+      errorDiagnosticCopyTimerRef.current = null;
+      setCopiedErrorDiagnostic(false);
+    }, 1600);
+  }, [errorDiagnosticText]);
+  useEffect(() => () => {
+    if (errorDiagnosticCopyTimerRef.current != null) {
+      window.clearTimeout(errorDiagnosticCopyTimerRef.current);
+      errorDiagnosticCopyTimerRef.current = null;
+    }
+  }, []);
+  // The failed run whose error this top-level card represents. AssistantMessage
+  // suppresses only THIS message's per-message error pill (to avoid the
+  // duplicate); other failed turns — older history, or once a follow-up makes
+  // this no longer the last assistant — keep their pill so the error survives.
+  const errorCardOwnerId =
+    retryAssistant && failedRunErrorEvent ? retryAssistant.id : null;
+  // AMR promotion card payload (only the non-AMR model/auth/quota case).
+  const amrSwitchPayload =
+    runFailureUi?.showSwitchCard
+    && failedRunErrorEvent?.code !== 'UPSTREAM_UNAVAILABLE'
+    && retryAssistant
+    && failedRunErrorEvent?.code
+      ? {
+          errorCode: failedRunErrorEvent.code,
+          projectId: projectId ?? '',
+          projectKind: projectKindForTracking,
+          conversationId: activeConversationId,
+          assistantMessageId: retryAssistant.id,
+          runId: retryAssistant.runId ?? null,
+        }
+      : null;
+  // A `primaryAction: 'none'` failure (e.g. a hard quota where retrying is
+  // futile) contributes no button of its own — it relies on the AMR switch card
+  // below. Only claim the actions row when a real control will render, so a
+  // no-action card doesn't leave an empty flex row (and a dangling column gap).
+  const runFailureHasAction = Boolean(
+    retryAssistant &&
+      onRetry &&
+      runFailureUi &&
+      (runFailureUi.primaryAction !== 'none' ||
+        runFailureUi.secondaryRetry ||
+        canResumeFailedRun),
+  );
+  // The generic local-CLI escape hatch is only used when the failure card has
+  // no direct recovery action. AMR guidance remains visible whenever the
+  // classifier asks for it, alongside a case-specific retry when applicable.
+  const showByokRecoveryCta =
+    showByokRecoveryAction && Boolean(onSwitchToLocalCli) && !runFailureHasAction;
+  const showErrorActions = showByokRecoveryCta || runFailureHasAction;
+  const showAmrGuidance = Boolean(amrSwitchPayload);
+  const visibleRecoveryActionTypes = useMemo(() => {
+    const actions: TrackingRunRecoveryActionType[] = [];
+    if (!retryAssistant || !onRetry || !runFailureUi) return actions;
+    if (runFailureUi.primaryAction === 'authorize') actions.push('authorize_and_retry');
+    if (canResumeFailedRun) actions.push('resume_run');
+    else if (runFailureUi.primaryAction === 'retry' || runFailureUi.secondaryRetry) {
+      actions.push('manual_retry');
+    }
+    if (showAmrGuidance && onSwitchToAmrAndRetry) actions.push('switch_runtime_retry');
+    return actions;
+  }, [
+    canResumeFailedRun,
+    onRetry,
+    onSwitchToAmrAndRetry,
+    retryAssistant,
+    runFailureUi,
+    showAmrGuidance,
+  ]);
+  const recoveryAnalyticsProps = useCallback((
+    assistantMessage: ChatMessage,
+    actionType: TrackingRunRecoveryActionType,
+  ) => {
+    const task = buildRecoveryTaskAnalytics(displayMessages, assistantMessage, actionType);
+    return {
+      task_execution_id: task.taskExecutionId,
+      recovery_action_instance_id: task.recoveryActionInstanceId!,
+      recovery_action_type: actionType,
+      ...(task.sourceRunId ? { source_run_id: task.sourceRunId } : {}),
+      ...(assistantMessage.agentId
+        ? { source_agent_provider_id: runAgentProviderId(assistantMessage.agentId) }
+        : {}),
+      ...(failedRunErrorEvent?.failureCategory
+        ? { failure_category: failedRunErrorEvent.failureCategory }
+        : {}),
+      ...(failedRunErrorEvent?.failureDetail
+        ? { failure_reason: failedRunErrorEvent.failureDetail }
+        : {}),
+    };
+  }, [displayMessages, failedRunErrorEvent]);
+  useEffect(() => {
+    if (!retryAssistant) return;
+    for (const actionType of visibleRecoveryActionTypes) {
+      const props = recoveryAnalyticsProps(retryAssistant, actionType);
+      const key = `${props.recovery_action_instance_id}:surface`;
+      if (runRecoverySurfaceKeysRef.current.has(key)) continue;
+      runRecoverySurfaceKeysRef.current.add(key);
+      trackRunRecoveryActionSurfaceView(analytics.track, {
+        page_name: 'chat_panel',
+        area: 'chat_panel',
+        element: 'run_recovery_action',
+        ...props,
+      });
+    }
+  }, [analytics.track, recoveryAnalyticsProps, retryAssistant, visibleRecoveryActionTypes]);
+  const trackRecoveryClick = useCallback((
+    assistantMessage: ChatMessage,
+    actionType: TrackingRunRecoveryActionType,
+    target?: { agentProviderId?: string; modelId?: string },
+  ) => {
+    trackRunRecoveryActionClick(analytics.track, {
+      page_name: 'chat_panel',
+      area: 'chat_panel',
+      element: 'run_recovery_action',
+      ...recoveryAnalyticsProps(assistantMessage, actionType),
+      ...(target?.agentProviderId
+        ? { target_agent_provider_id: target.agentProviderId }
+        : {}),
+      ...(target?.modelId ? { target_model_id: target.modelId } : {}),
+    });
+  }, [analytics.track, recoveryAnalyticsProps]);
+  useEffect(() => {
+    if (!displayError || !failedRunErrorEvent?.code || !retryAssistant) return;
+    // The hosted-AMR nudge owns this same surface_view when it renders below
+    // the error card. For all other failed-run guidance (AMR auth/balance,
+    // Antigravity auth/quota, upstream outage, generic retry), the chat error
+    // card itself is the visible run_failed_toast surface.
+    if (showAmrGuidance) return;
+
+    const key = [
+      projectId ?? '',
+      activeConversationId ?? '',
+      retryAssistant.id,
+      retryAssistant.runId ?? '',
+      failedRunErrorEvent.code,
+    ].join(':');
+    if (runFailedToastSurfaceKeysRef.current.has(key)) return;
+    runFailedToastSurfaceKeysRef.current.add(key);
+
+    trackRunFailedToastSurfaceView(analytics.track, {
+      page_name: 'chat_panel',
+      area: 'chat_panel',
+      element: 'run_failed_toast',
+      error_code: failedRunErrorEvent.code,
+      project_id: projectId ?? '',
+      project_kind: projectKindForTracking,
+      conversation_id: activeConversationId,
+      assistant_message_id: retryAssistant.id,
+      run_id: retryAssistant.runId ?? null,
+    });
+  }, [
+    activeConversationId,
+    analytics.track,
+    showAmrGuidance,
+    displayError,
+    failedRunErrorEvent?.code,
+    projectId,
+    projectKindForTracking,
+    retryAssistant,
+  ]);
+  const importedFolderArtifacts = useMemo(
+    () =>
+      projectMetadata?.importedFrom === 'folder'
+        ? sortArtifactsByModified(
+            listDesignArtifactCandidates(projectFiles, projectMetadata.entryFile),
+          )
+        : [],
+    [projectFiles, projectMetadata?.entryFile, projectMetadata?.importedFrom],
+  );
+  const showImportedFolderArtifacts = projectMetadata?.importedFrom === 'folder';
+  const composerDraftStorageKey = projectId && activeConversationId
+    ? `od:chat-composer:draft:${projectId}:${activeConversationId}`
+    : undefined;
+  const shouldBalanceFinishedTranscript =
+    !loading &&
+    !streaming &&
+    !displayError &&
+    !hasActiveRunMessage &&
+    displayMessages.length > 0;
+  // Map each assistant message id to the user message that follows it (if any)
+  // so structured form replies collapse into a readable summary on the
+  // assistant message that asked them.
+  const nextUserContentByAssistantId = useMemo(() => {
     const map = new Map<string, string>();
-    for (let i = 0; i < messages.length - 1; i++) {
-      const m = messages[i]!;
-      const next = messages[i + 1]!;
+    for (let i = 0; i < displayMessages.length - 1; i++) {
+      const m = displayMessages[i]!;
+      const next = displayMessages[i + 1]!;
       if (m.role === 'assistant' && next.role === 'user') {
         map.set(m.id, next.content);
       }
     }
     return map;
-  })();
+  }, [displayMessages]);
 
   useEffect(() => {
     didInitialScrollRef.current = false;
+    anchorPendingRef.current = false;
+    anchorActiveRef.current = false;
+    prevLastUserIdRef.current = undefined;
+    resetTailSpacer();
     // A new conversation should land at the bottom (its own initial
-    // scroll), not inherit the previous conversation's saved position.
+    // scroll), not inherit the previous conversation's saved position —
+    // including any anchor-to-top reserve still held by the tail spacer, which
+    // would otherwise strand the freshly opened conversation below a dead gap.
     savedChatScrollRef.current = null;
     scrolledToFormRef.current = new Set();
+    anchorActiveRef.current = false;
+    anchorPendingRef.current = false;
+    resetTailSpacer();
   }, [activeConversationId]);
 
   // ChatComposer's internal `seededRef` latches after the first
@@ -397,23 +1780,67 @@ export function ChatPane({
     }
   }, [initialDraft]);
 
+  // Parent-driven composer prefill (the "Import repo" CTA). Reuse the same
+  // imperative setDraft the starter cards use; the nonce guards against
+  // re-applying the same signal on unrelated re-renders.
+  const lastDraftSignalNonceRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!composerDraftSignal) return;
+    if (lastDraftSignalNonceRef.current === composerDraftSignal.nonce) return;
+    lastDraftSignalNonceRef.current = composerDraftSignal.nonce;
+    composerRef.current?.setDraft(composerDraftSignal.text);
+  }, [composerDraftSignal]);
+
+  // Library "optimize design system" hand-off: when the user pushed selected
+  // assets into this project's design system from the Library, pre-fill the
+  // composer with the query + those assets (as attachment chips) so they only
+  // need to review and Send. Fires once, after the composer mounts for the
+  // routed conversation; re-checks on conversation change so an async-loaded
+  // composer still gets seeded. The seed is consumed (cleared) on apply.
+  const seededComposerSeedRef = useRef(false);
+  useEffect(() => {
+    if (seededComposerSeedRef.current) return;
+    if (!projectId || !composerRef.current) return;
+    const seed = takeComposerSeedFor(projectId);
+    if (!seed) return;
+    seededComposerSeedRef.current = true;
+    composerRef.current.restoreDraft({ text: seed.text, attachments: seed.attachments });
+  }, [projectId, activeConversationId]);
+
+  useEffect(() => {
+    if (!editingQueuedSendId) return;
+    if (queuedItems.some((item) => item.id === editingQueuedSendId)) return;
+    setEditingQueuedSendId(null);
+  }, [editingQueuedSendId, queuedItems]);
+
+  const restoreQueuedSendToComposer = (item: QueuedSendItem) => {
+    setEditingQueuedSendId(item.id);
+    composerRef.current?.restoreDraft({
+      text: item.prompt,
+      attachments: item.attachments ?? [],
+      commentAttachments: item.commentAttachments ?? [],
+      meta: item.meta,
+    });
+  };
+
   useEffect(() => {
     const el = logRef.current;
-    if (!el || didInitialScrollRef.current || messages.length === 0) return;
+    if (!el || didInitialScrollRef.current || displayMessages.length === 0) return;
     didInitialScrollRef.current = true;
     requestAnimationFrame(() => {
       // If the last assistant message contains a question form, scroll to
       // the form instead of the bottom, so the user sees the form first.
-      const lastAssistantMsg = [...messages].reverse().find((m) => m.role === 'assistant');
+      const lastAssistantMsg = [...displayMessages].reverse().find((m) => m.role === 'assistant');
       if (lastAssistantMsg?.content.includes('<question-form')) {
         const assistantEls = el.querySelectorAll('.msg.assistant');
         const lastAssistantEl = assistantEls[assistantEls.length - 1];
         const formEl = lastAssistantEl?.querySelector<HTMLElement>('[data-form-id]');
         if (formEl && !scrolledToFormRef.current.has(formEl.dataset.formId!)) {
           scrolledToFormRef.current.add(formEl.dataset.formId!);
+          const distance = distanceFromBottomAfterAligningTop(el, formEl);
           formEl.scrollIntoView({ block: 'start', behavior: 'smooth' });
-          pinnedToBottomRef.current = false;
-          setScrolledFromBottom(true);
+          pinnedToBottomRef.current = distance < 80;
+          setScrolledFromBottom(distance > 120);
           return;
         }
         // Already handled by the auto-scroll effect — don't bottom-scroll.
@@ -431,7 +1858,27 @@ export function ChatPane({
     // didInitialScrollRef while the chat-log is unmounted; this effect
     // then re-runs when the user returns to Chat and the element is
     // available, scrolling the new conversation to its initial bottom.
-  }, [activeConversationId, messages.length, tab]);
+  }, [activeConversationId, displayMessages, tab]);
+
+  // When a turn finishes streaming, release the anchor-to-top reserve. The
+  // tail spacer only exists to give a streaming reply room to grow while the
+  // user message stays pinned at the top; once the reply is final it must not
+  // linger, or a short turn (typical of a fresh fork) is left with a large
+  // dead gap below it. Collapsing the spacer lets the bottom-anchored layout
+  // settle the finished transcript against the composer.
+  useEffect(() => {
+    const was = prevStreamingRef.current;
+    prevStreamingRef.current = streaming;
+    // The tail spacer only ever holds the anchor-to-top reserve for an actively
+    // streaming reply, so once the turn ends it must collapse unconditionally —
+    // even if a mid-turn scroll already cleared `anchorActiveRef` (which leaves
+    // the spacer sized). Collapsing it lets the bottom-anchored layout settle a
+    // finished short turn against the composer instead of below a dead gap.
+    if (was && !streaming) {
+      anchorActiveRef.current = false;
+      resetTailSpacer();
+    }
+  }, [streaming]);
 
   useEffect(() => {
     const el = logRef.current;
@@ -447,19 +1894,46 @@ export function ChatPane({
     // cutoff tracked by the ref (not the wider 120px jump-button
     // threshold) so a deliberate ~90px scroll-up isn't snapped back the
     // next time content streams in. Issue #983.
+
+    // A brand-new user turn from a local send: switch to "anchor to top"
+    // mode and smooth-scroll their message to the top of the viewport.
+    const lastUser = [...displayMessages].reverse().find((m) => m.role === 'user');
+    const prevUserId = prevLastUserIdRef.current;
+    prevLastUserIdRef.current = lastUser?.id;
+    if (anchorPendingRef.current && lastUser && lastUser.id !== prevUserId) {
+      anchorPendingRef.current = false;
+      resetTailSpacer();
+      anchorActiveRef.current = true;
+      pinnedToBottomRef.current = false;
+      setScrolledFromBottom(true);
+      requestAnimationFrame(() => {
+        sizeAnchorSpacer();
+        scrollAnchorToTop();
+      });
+      return;
+    }
+    // While anchored, the message stays at the top on its own (nothing above
+    // it changes), so we only shrink the spacer as the reply grows — never
+    // re-scroll. This is what keeps scrolling down and the final settle smooth.
+    if (anchorActiveRef.current) {
+      requestAnimationFrame(sizeAnchorSpacer);
+      return;
+    }
+
     if (pinnedToBottomRef.current) {
       // If the last assistant message contains a question form, scroll to
       // the form instead of the bottom, so the user lands on the form.
-      const lastAssistantMsg = [...messages].reverse().find((m) => m.role === 'assistant');
+      const lastAssistantMsg = [...displayMessages].reverse().find((m) => m.role === 'assistant');
       if (lastAssistantMsg?.content.includes('<question-form')) {
         const assistantEls = el.querySelectorAll('.msg.assistant');
         const lastAssistantEl = assistantEls[assistantEls.length - 1];
         const formEl = lastAssistantEl?.querySelector<HTMLElement>('[data-form-id]');
         if (formEl && !scrolledToFormRef.current.has(formEl.dataset.formId!)) {
           scrolledToFormRef.current.add(formEl.dataset.formId!);
+          const distance = distanceFromBottomAfterAligningTop(el, formEl);
           formEl.scrollIntoView({ block: 'start', behavior: 'smooth' });
-          pinnedToBottomRef.current = false;
-          setScrolledFromBottom(true);
+          pinnedToBottomRef.current = distance < 80;
+          setScrolledFromBottom(distance > 120);
           return;
         }
         // Form tag in content but the DOM element isn't ready yet (partial
@@ -472,7 +1946,7 @@ export function ChatPane({
       // breaking auto-follow for subsequent chunks.
       el.scrollTop = el.scrollHeight;
     }
-  }, [messages, error, streaming]);
+  }, [displayMessages, error, streaming]);
 
   // Saved chat-log scroll state, preserved across tab switches. The
   // chat-log <div> is conditionally rendered so it unmounts when the
@@ -490,6 +1964,23 @@ export function ChatPane({
     const el = logRef.current;
     if (!el) return;
 
+    function syncScrollable(target: HTMLDivElement) {
+      const next = target.scrollHeight - target.clientHeight > 1;
+      setChatLogScrollable((prev) => (prev === next ? prev : next));
+      if (!next) setChatLogScrolling(false);
+    }
+
+    function markScrolling() {
+      setChatLogScrolling(true);
+      if (chatLogScrollIdleTimerRef.current !== null) {
+        window.clearTimeout(chatLogScrollIdleTimerRef.current);
+      }
+      chatLogScrollIdleTimerRef.current = window.setTimeout(() => {
+        chatLogScrollIdleTimerRef.current = null;
+        setChatLogScrolling(false);
+      }, 650);
+    }
+
     // Restore previously-saved position on remount. Defer to the next
     // frame so the conditional <> contents finish layout before the
     // scrollTop write lands.
@@ -503,6 +1994,7 @@ export function ChatPane({
         } else {
           target.scrollTop = saved.scrollTop;
         }
+        syncScrollable(target);
         // Resync the jump-to-latest affordance with the restored
         // position. Without this, a user who left Chat ~60px from the
         // bottom and returns to find new messages stacked underneath
@@ -527,12 +2019,33 @@ export function ChatPane({
     function onScroll() {
       const target = logRef.current;
       if (!target) return;
+      // A genuine user scroll (one that moves away from where the anchored
+      // message currently sits) releases the auto-resize behavior. We do NOT
+      // collapse the tail spacer: the reserved blank below stays as real,
+      // scrollable space so scrolling down feels natural instead of snapping.
+      if (anchorActiveRef.current) {
+        const pinnedTop = lastUserMsgTopInContent(target);
+        if (
+          pinnedTop !== null &&
+          Math.abs(target.scrollTop - (pinnedTop - ANCHOR_TOP_PADDING)) > 40
+        ) {
+          anchorActiveRef.current = false;
+        }
+      }
+      syncScrollable(target);
+      markScrolling();
       snapshot(target);
       const distance =
         target.scrollHeight - target.scrollTop - target.clientHeight;
-      setScrolledFromBottom(distance > 120);
+      // Functional updater bails out when the value is unchanged so a flood
+      // of scroll events (e.g. programmatic scrollTop + ResizeObserver
+      // follow-up during streaming) does not schedule a re-render per tick
+      // and trip React's "Maximum update depth exceeded" guard.
+      const next = distance > 120;
+      setScrolledFromBottom((prev) => (prev === next ? prev : next));
       pinnedToBottomRef.current = distance < 80;
     }
+    syncScrollable(el);
     el.addEventListener('scroll', onScroll);
     return () => {
       // Capture final scroll state before unmount; the ref normally
@@ -540,6 +2053,11 @@ export function ChatPane({
       // right before unmount can leave it stale.
       snapshot(el);
       el.removeEventListener('scroll', onScroll);
+      if (chatLogScrollIdleTimerRef.current !== null) {
+        window.clearTimeout(chatLogScrollIdleTimerRef.current);
+        chatLogScrollIdleTimerRef.current = null;
+      }
+      setChatLogScrolling(false);
     };
   }, [tab]);
 
@@ -550,6 +2068,18 @@ export function ChatPane({
 
     let followFrame: number | null = null;
     const followLatestIfPinned = () => {
+      // While anchored, only shrink the tail spacer as the reply grows
+      // (resize-only, never scroll) so the user message stays put without
+      // fighting a manual scroll-down.
+      if (anchorActiveRef.current) {
+        if (followFrame !== null) return;
+        followFrame = requestAnimationFrame(() => {
+          followFrame = null;
+          if (!anchorActiveRef.current) return;
+          sizeAnchorSpacer();
+        });
+        return;
+      }
       if (!pinnedToBottomRef.current || followFrame !== null) return;
       followFrame = requestAnimationFrame(() => {
         followFrame = null;
@@ -562,12 +2092,23 @@ export function ChatPane({
 
     const resizeObserver =
       typeof ResizeObserver !== 'undefined'
-        ? new ResizeObserver(followLatestIfPinned)
+        ? new ResizeObserver(() => {
+            const target = logRef.current;
+            if (target) {
+              const next = target.scrollHeight - target.clientHeight > 1;
+              setChatLogScrollable((prev) => (prev === next ? prev : next));
+              if (!next) setChatLogScrolling(false);
+            }
+            followLatestIfPinned();
+          })
         : null;
     const observedChildren = new Set<Element>();
     const syncObservedChildren = () => {
       if (!resizeObserver) return;
       const currentChildren = new Set(Array.from(el.children));
+      // The tail spacer's height is driven by the anchor logic; observing it
+      // would feed its own resize back into followLatestIfPinned.
+      if (tailSpacerRef.current) currentChildren.delete(tailSpacerRef.current);
       for (const child of currentChildren) {
         if (observedChildren.has(child)) continue;
         resizeObserver.observe(child);
@@ -580,20 +2121,63 @@ export function ChatPane({
       }
     };
 
+    let observedPinnedTodo: Element | null = null;
+    let observedQueuedSendStrip: Element | null = null;
+    const syncPinnedTodo = () => {
+      if (!resizeObserver) return;
+      const pinnedEl = pinnedTodoRef.current;
+      if (pinnedEl && observedPinnedTodo !== pinnedEl) {
+        if (observedPinnedTodo) resizeObserver.unobserve(observedPinnedTodo);
+        resizeObserver.observe(pinnedEl);
+        observedPinnedTodo = pinnedEl;
+      } else if (!pinnedEl && observedPinnedTodo) {
+        resizeObserver.unobserve(observedPinnedTodo);
+        observedPinnedTodo = null;
+      }
+    };
+    const syncQueuedSendStrip = () => {
+      if (!resizeObserver) return;
+      const queuedEl = queuedSendStripRef.current;
+      if (queuedEl && observedQueuedSendStrip !== queuedEl) {
+        if (observedQueuedSendStrip) {
+          resizeObserver.unobserve(observedQueuedSendStrip);
+        }
+        resizeObserver.observe(queuedEl);
+        observedQueuedSendStrip = queuedEl;
+      } else if (!queuedEl && observedQueuedSendStrip) {
+        resizeObserver.unobserve(observedQueuedSendStrip);
+        observedQueuedSendStrip = null;
+      }
+    };
+
     syncObservedChildren();
+    syncPinnedTodo();
+    syncQueuedSendStrip();
 
     const mutationObserver =
       typeof MutationObserver !== 'undefined'
         ? new MutationObserver(() => {
             syncObservedChildren();
+            syncPinnedTodo();
+            syncQueuedSendStrip();
             followLatestIfPinned();
           })
         : null;
+    // childList + subtree only — NOT characterData. Auto-follow during
+    // streaming is driven by the ResizeObserver on each message child (text
+    // growth changes height), so observing per-character text mutations would
+    // re-run the full sync sweep on every streamed frame for no extra benefit.
     mutationObserver?.observe(el, {
       childList: true,
       subtree: true,
-      characterData: true,
     });
+    // PinnedTodoSlot and QueuedSendStrip live outside the chat-log subtree.
+    // Watch their nearest common ancestor so resize observation follows those
+    // surfaces when they mount or unmount.
+    const paneEl = el.parentElement?.parentElement ?? null;
+    if (paneEl && mutationObserver) {
+      mutationObserver.observe(paneEl, { childList: true });
+    }
 
     return () => {
       if (followFrame !== null) cancelAnimationFrame(followFrame);
@@ -621,312 +2205,2154 @@ export function ChatPane({
     };
   }, [showConvList]);
 
+  useEffect(() => {
+    if (showConvList) return;
+    setConversationSearch('');
+  }, [showConvList]);
+
   const activeConversation =
     conversations.find((c) => c.id === activeConversationId) ?? null;
+  const filteredConversations = useMemo(
+    () => filterConversations(conversations, deferredConversationSearch, t),
+    [conversations, deferredConversationSearch, t],
+  );
+
+  function resetTailSpacer() {
+    const s = tailSpacerRef.current;
+    if (s) s.style.height = '0px';
+  }
+
+  // Content offset (distance from the top of the scroll content) of the most
+  // recent user message. Invariant to the current scrollTop, so it's safe to
+  // call regardless of where the user has scrolled.
+  function lastUserMsgTopInContent(el: HTMLDivElement): number | null {
+    const userEls = el.querySelectorAll<HTMLElement>('.msg.user');
+    const msgEl = userEls[userEls.length - 1];
+    if (!msgEl) return null;
+    const elRect = el.getBoundingClientRect();
+    const msgRect = msgEl.getBoundingClientRect();
+    return el.scrollTop + (msgRect.top - elRect.top);
+  }
+
+  // Predicts the post-settle "distance from bottom" (same metric `onScroll`
+  // computes) after aligning `target`'s top edge with `el`'s top edge, the
+  // way `target.scrollIntoView({ block: 'start' })` does. Reads current
+  // geometry synchronously instead of waiting on the (possibly smooth,
+  // possibly no-op) actual scroll to land: a short `target` — e.g. a
+  // question form that is also the last thing in the log — clamps to the
+  // real bottom, which never fires a native `scroll` event to correct a
+  // hardcoded "still scrolled away" guess. That stale guess is what left the
+  // jump-to-latest button stuck visible with nothing left to jump to
+  // (recvqajMdAnfmd).
+  function distanceFromBottomAfterAligningTop(el: HTMLDivElement, target: HTMLElement): number {
+    const elRect = el.getBoundingClientRect();
+    const targetRect = target.getBoundingClientRect();
+    const targetTopInContent = el.scrollTop + (targetRect.top - elRect.top);
+    const maxScrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
+    const predictedScrollTop = Math.min(Math.max(0, targetTopInContent), maxScrollTop);
+    return Math.max(0, maxScrollTop - predictedScrollTop);
+  }
+
+  // Resize the tail spacer so the anchored message can sit at the top with
+  // just enough room below it — no more. This is a resize ONLY (never a
+  // scroll): shrinking empty space below the fold can't shift what's visible
+  // while the user is pinned near the top, so it never causes jitter. As the
+  // reply streams in, `needed` shrinks monotonically toward 0.
+  function sizeAnchorSpacer() {
+    const el = logRef.current;
+    const spacer = tailSpacerRef.current;
+    if (!el || !spacer) return;
+    const msgTopInContent = lastUserMsgTopInContent(el);
+    if (msgTopInContent === null) return;
+    const spacerH = spacer.offsetHeight;
+    const contentBelow = el.scrollHeight - spacerH - msgTopInContent;
+    const needed = Math.max(0, el.clientHeight - contentBelow - ANCHOR_TOP_PADDING);
+    spacer.style.height = `${needed}px`;
+  }
+
+  // Smooth-scroll the anchored message to the top. Called ONCE per turn (on
+  // send). The message then stays at the top on its own as the reply streams
+  // below it, so we never re-scroll — re-scrolling each chunk is what caused
+  // the scroll-down fight and the settle jitter.
+  function scrollAnchorToTop() {
+    const el = logRef.current;
+    if (!el) return;
+    const msgTopInContent = lastUserMsgTopInContent(el);
+    if (msgTopInContent === null) return;
+    const target = Math.max(0, msgTopInContent - ANCHOR_TOP_PADDING);
+    el.scrollTo({ top: target, behavior: 'smooth' });
+  }
 
   function jumpToBottom() {
     const el = logRef.current;
     if (!el) return;
+    anchorActiveRef.current = false;
+    pinnedToBottomRef.current = true;
+    resetTailSpacer();
     el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
   }
 
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    setComposerPortalTarget(document.body);
+  }, []);
+
+  useLayoutEffect(() => {
+    if (tab !== 'chat') {
+      setComposerPortalRect(null);
+      return;
+    }
+    const slot = composerSlotRef.current;
+    if (!slot || typeof window === 'undefined') return;
+
+    let frame: number | null = null;
+    const updateRect = () => {
+      frame = null;
+      const rect = slot.getBoundingClientRect();
+      setComposerPortalRect((prev) => {
+        const next = {
+          left: Math.round(rect.left),
+          width: Math.round(rect.width),
+          bottom: Math.max(0, Math.round(window.innerHeight - rect.bottom)),
+        };
+        if (
+          prev
+          && prev.left === next.left
+          && prev.width === next.width
+          && prev.bottom === next.bottom
+        ) {
+          return prev;
+        }
+        return next;
+      });
+    };
+    const scheduleUpdate = () => {
+      if (frame !== null) return;
+      frame = window.requestAnimationFrame(updateRect);
+    };
+
+    updateRect();
+    const resizeObserver =
+      typeof ResizeObserver !== 'undefined'
+        ? new ResizeObserver(scheduleUpdate)
+        : null;
+    resizeObserver?.observe(slot);
+    const pane = slot.closest('.pane');
+    if (pane) resizeObserver?.observe(pane);
+    window.addEventListener('resize', scheduleUpdate);
+    window.visualViewport?.addEventListener('resize', scheduleUpdate);
+
+    return () => {
+      if (frame !== null) window.cancelAnimationFrame(frame);
+      resizeObserver?.disconnect();
+      window.removeEventListener('resize', scheduleUpdate);
+      window.visualViewport?.removeEventListener('resize', scheduleUpdate);
+    };
+  }, [tab]);
+
+  useLayoutEffect(() => {
+    if (tab !== 'chat' || !composerPortalTarget || !composerPortalRect) return;
+    const layer = composerLayerRef.current;
+    if (!layer || typeof window === 'undefined') return;
+
+    let frame: number | null = null;
+    const updateHeight = () => {
+      frame = null;
+      const nextHeight = Math.ceil(layer.getBoundingClientRect().height);
+      setComposerSlotHeight((prev) => (prev === nextHeight ? prev : nextHeight));
+    };
+    const scheduleUpdate = () => {
+      if (frame !== null) return;
+      frame = window.requestAnimationFrame(updateHeight);
+    };
+
+    updateHeight();
+    const resizeObserver =
+      typeof ResizeObserver !== 'undefined'
+        ? new ResizeObserver(scheduleUpdate)
+        : null;
+    resizeObserver?.observe(layer);
+
+    return () => {
+      if (frame !== null) window.cancelAnimationFrame(frame);
+      resizeObserver?.disconnect();
+    };
+  }, [composerPortalRect, composerPortalTarget, tab]);
+
+  const composerNode = (
+    <>
+      {/* 插件 / 设计百宝箱 live inside the composer's "+" menu (below 工作目录,
+          hover to expand); they no longer sit as quick pills above the input. */}
+    <ChatComposer
+      ref={composerRef}
+      designSystemPicker={designSystemPicker}
+      projectId={projectId}
+      projectFiles={projectFiles}
+      activeProjectFileName={activeProjectFileName}
+      sessionMode={sessionMode}
+      onSessionModeChange={onSessionModeChange}
+      skills={skills}
+      streaming={streaming}
+      sendDisabled={sendDisabled}
+      inputDisabled={viewerOnly}
+      initialDraft={initialDraft}
+      composerPlaceholder={composerPlaceholder}
+      placeholderScenarios={composerPlaceholderScenarios}
+      draftStorageKey={composerDraftStorageKey}
+      onEnsureProject={onEnsureProject}
+      commentAttachments={commentsToAttachments(attachedComments)}
+      onRemoveCommentAttachment={onDetachComment}
+      onSend={(prompt, attachments, commentAttachments, meta) => {
+        pinnedToBottomRef.current = true;
+        scrolledToFormRef.current = new Set();
+        if (editingQueuedSendId && onUpdateQueuedSend) {
+          const original = queuedItems.find((item) => item.id === editingQueuedSendId);
+          const update: QueuedSendUpdate = {
+            prompt,
+            attachments,
+            commentAttachments,
+          };
+          const nextMeta = meta ?? original?.meta;
+          if (nextMeta !== undefined) update.meta = nextMeta;
+          onUpdateQueuedSend(editingQueuedSendId, update);
+          setEditingQueuedSendId(null);
+          return;
+        }
+        // Arm "anchor to top": the messages effect promotes this once
+        // the new user turn renders, pinning it to the top of the view.
+        // Clear any stale reserve from the previous turn first so a resend
+        // doesn't strand the new turn below a leftover gap (release #3653).
+        anchorActiveRef.current = false;
+        resetTailSpacer();
+        anchorPendingRef.current = true;
+        const outcome = onSend(prompt, attachments, commentAttachments, meta);
+        if (outcome instanceof Promise) {
+          return outcome.then((result) => {
+            if (result === 'restore-draft') anchorPendingRef.current = false;
+            return result;
+          });
+        }
+        if (outcome === 'restore-draft') anchorPendingRef.current = false;
+        return outcome;
+      }}
+      onStop={onStop}
+      onOpenSettings={onOpenSettings}
+      onOpenMcpSettings={onOpenMcpSettings}
+      onBrowsePlugins={onBrowsePlugins}
+      onOpenConnectors={onOpenConnectors}
+      petConfig={petConfig}
+      onAdoptPet={onAdoptPet}
+      onTogglePet={onTogglePet}
+      onOpenPetSettings={onOpenPetSettings}
+      researchAvailable={researchAvailable}
+      projectMetadata={projectMetadata}
+      onProjectMetadataChange={onProjectMetadataChange}
+      activeWorkspaceContext={activeWorkspaceContext}
+      initialWorkspaceContexts={initialWorkspaceContexts}
+      workspaceContexts={workspaceContexts}
+      byokApiProtocol={byokApiProtocol}
+      byokImageModel={byokImageModel}
+      onChangeByokImageModel={onChangeByokImageModel}
+      byokVideoModel={byokVideoModel}
+      onChangeByokVideoModel={onChangeByokVideoModel}
+      byokSpeechModel={byokSpeechModel}
+      onChangeByokSpeechModel={onChangeByokSpeechModel}
+      byokSpeechVoice={byokSpeechVoice}
+      onChangeByokSpeechVoice={onChangeByokSpeechVoice}
+      currentSkillId={currentSkillId}
+      onProjectSkillChange={onProjectSkillChange}
+      pinnedPluginId={activePluginSnapshot?.pluginId ?? null}
+      footerAccessory={composerFooterAccessory}
+      leadingAccessory={composerLeadingAccessory}
+      currentDesignSystemId={currentDesignSystemId}
+      onActiveDesignSystemChange={onActiveDesignSystemChange}
+      onShowToast={onShowToast}
+    />
+    </>
+  );
+  const shouldPortalComposer =
+    tab === 'chat'
+    && composerPortalTarget !== null
+    && composerPortalRect !== null
+    && composerPortalRect.width > 0;
+  const composerSlotStyle: CSSProperties | undefined = shouldPortalComposer
+    ? { minHeight: composerSlotHeight > 0 ? composerSlotHeight : undefined }
+    : undefined;
+
   return (
     <div className="pane">
-      <div className="chat-header">
-        <div className="chat-header-actions">
-          <div
-            className={`chat-history-wrap${showConvList ? ' open' : ''}`}
-            ref={historyWrapRef}
-          >
-            <button
-              type="button"
-              className="icon-only"
-              data-testid="conversation-history-trigger"
-              title={
-                activeConversation?.title
-                  ? `${t('chat.conversationsTitle')} · ${activeConversation.title}`
-                  : t('chat.conversationsTitle')
-              }
-              aria-label={t('chat.conversationsAria')}
-              aria-haspopup="menu"
-              aria-expanded={showConvList}
-              onClick={() => setShowConvList((v) => !v)}
-            >
-              <Icon name="history" size={15} />
-            </button>
-            {showConvList ? (
-              <div className="chat-history-menu" role="menu" data-testid="conversation-history-menu">
-                <div className="chat-history-menu-head">
-                  <span className="chat-history-menu-title">
-                    {t('chat.conversationsHeading')}
-                  </span>
-                  {onNewConversation ? (
-                    <button
-                      type="button"
-                      className="chat-history-new"
-                      data-testid="conversation-history-new"
-                      disabled={newConversationDisabled}
-                      onClick={() => {
-                        if (newConversationDisabled) return;
-                        onNewConversation();
-                        setShowConvList(false);
-                      }}
-                    >
-                      <Icon name="plus" size={11} />
-                      <span>{t('chat.new')}</span>
-                    </button>
-                  ) : null}
-                </div>
-                <div className="chat-history-list" data-testid="conversation-list">
-                  {conversations.length === 0 ? (
-                    <div className="chat-history-empty">
-                      {t('chat.emptyConversations')}
-                    </div>
-                  ) : (
-                    conversations.map((c) => (
-                      <ConversationRow
-                        key={c.id}
-                        conversation={c}
-                        active={c.id === activeConversationId}
-                        onSelect={() => {
-                          onSelectConversation(c.id);
-                          setShowConvList(false);
-                        }}
-                        onDelete={() => onDeleteConversation(c.id)}
-                        onRename={onRenameConversation}
-                        t={t}
-                      />
-                    ))
-                  )}
-                </div>
-              </div>
-            ) : null}
-          </div>
+      <div className="chat-project-header">
+        {collapseControlLifted ? null : onCollapse ? (
           <button
             type="button"
-            className="icon-only"
-            data-testid="new-conversation"
-            title={t('chat.newConversationsTitle')}
-            aria-label={t('chat.newConversation')}
-            onClick={onNewConversation}
-            disabled={!onNewConversation || newConversationDisabled}
+            className="chat-project-back od-tooltip"
+            onClick={onCollapse}
+            title={t('chat.collapsePane')}
+            aria-label={t('chat.collapsePane')}
+            data-tooltip={t('chat.collapsePane')}
+            data-tooltip-placement="bottom"
+            data-testid="chat-collapse-toggle"
           >
-            <Icon name="plus" size={16} />
+            <Icon name="panel-left" size={16} />
           </button>
-          {onCollapse ? (
-            <button
-              type="button"
-              className="icon-only"
-              data-testid="chat-collapse"
-              title={t('workspace.focusMode')}
-              aria-label={t('workspace.focusMode')}
-              onClick={onCollapse}
-            >
-              <Icon name="chevron-left" size={15} />
-            </button>
+        ) : onBack ? (
+          <button
+            type="button"
+            className="chat-project-back"
+            onClick={onBack}
+            title={backLabel}
+            aria-label={backLabel}
+          >
+            <Icon name="arrow-left" size={16} />
+          </button>
+        ) : null}
+        {projectHeader ? (
+          <span className="chat-project-header-title">{projectHeader}</span>
+        ) : null}
+        <div
+          className={`chat-history-wrap chat-session-switcher${showConvList ? ' open' : ''}`}
+          ref={historyWrapRef}
+        >
+          <button
+            type="button"
+            className="chat-session-trigger icon-only"
+            data-testid="conversation-history-trigger"
+            title={
+              activeConversation?.title
+                ? `${t('chat.conversationsTitle')} · ${activeConversation.title}`
+                : t('chat.conversationsTitle')
+            }
+            aria-label={t('chat.conversationsAria')}
+            aria-haspopup="menu"
+            aria-expanded={showConvList}
+            onClick={() => {
+              setShowConvList((v) => {
+                const next = !v;
+                if (next) {
+                  trackChatPanelClick(analytics.track, {
+                    page_name: 'chat_panel',
+                    area: 'chat_panel',
+                    element: 'history',
+                  });
+                }
+                return next;
+              });
+            }}
+          >
+            <Icon name="comment" size={16} />
+          </button>
+          {showConvList ? (
+            <div className="chat-history-menu" role="menu" data-testid="conversation-history-menu">
+              <div className="chat-history-menu-head">
+                <span className="chat-history-menu-title">
+                  {t('chat.conversationsHeading')}
+                  <span className="chat-history-menu-count">
+                    <span data-testid="conversation-history-count">
+                    {filteredConversations.length === conversations.length
+                      ? compactCount(conversations.length)
+                      : `${compactCount(filteredConversations.length)} / ${compactCount(conversations.length)}`}
+                    </span>
+                  </span>
+                </span>
+                {onNewConversation ? (
+                  <button
+                    type="button"
+                    className="chat-history-new"
+                    data-testid="conversation-history-new"
+                    disabled={newConversationDisabled}
+                    onClick={() => {
+                      if (newConversationDisabled) return;
+                      trackChatPanelClick(analytics.track, {
+                        page_name: 'chat_panel',
+                        area: 'chat_panel',
+                        element: 'new_chat',
+                      });
+                      onNewConversation();
+                      setShowConvList(false);
+                    }}
+                  >
+                    <Icon name="plus" size={11} />
+                    <span>{t('chat.new')}</span>
+                  </button>
+                ) : null}
+              </div>
+              <label className="chat-history-search">
+                <Icon name="search" size={12} />
+                <input
+                  type="search"
+                  value={conversationSearch}
+                  onChange={(event) => setConversationSearch(event.currentTarget.value)}
+                  placeholder="Search conversations"
+                  data-testid="conversation-history-search"
+                />
+                {conversationSearch ? (
+                  <button
+                    type="button"
+                    className="chat-history-search-clear"
+                    onClick={() => setConversationSearch('')}
+                    aria-label={t('chat.comments.clear')}
+                  >
+                    <Icon name="close" size={10} />
+                  </button>
+                ) : null}
+              </label>
+              <div className="chat-history-list" data-testid="conversation-list">
+                {conversations.length === 0 ? (
+                  <div className="chat-history-empty">
+                    {t('chat.emptyConversations')}
+                  </div>
+                ) : filteredConversations.length === 0 ? (
+                  <div className="chat-history-empty">
+                    No conversations match.
+                  </div>
+                ) : (
+                  filteredConversations.map((c) => (
+                    <ConversationRow
+                      key={c.id}
+                      conversation={c}
+                      active={c.id === activeConversationId}
+                      messageCount={conversationMessageCount(c, activeConversationId, messagesConversationId, messages.length)}
+                      onSelect={() => {
+                        onSelectConversation(c.id);
+                        setShowConvList(false);
+                      }}
+                      onDelete={() => onDeleteConversation(c.id)}
+                      t={t}
+                    />
+                  ))
+                )}
+              </div>
+            </div>
           ) : null}
         </div>
       </div>
       {tab === 'chat' ? (
         <>
-          <div className="chat-log-wrap">
-            <div className="chat-log" ref={logRef}>
-              {messages.length === 0 ? (
+          <div className={`chat-log-wrap${chatLogTray ? ' has-chat-log-tray' : ''}`}>
+            <ChatMessageRail
+              messages={displayMessages}
+              loading={loading}
+              logRef={logRef}
+              activeConversationKey={activeConversationId ?? 'no-conversation'}
+              onNavigate={handleChatRailNavigate}
+              t={t}
+            />
+            <div
+              className={[
+                'chat-log',
+                loading ? 'is-loading' : '',
+                chatLogScrollable ? 'is-scrollable' : '',
+                chatLogScrolling ? 'is-scrolling' : '',
+                shouldBalanceFinishedTranscript ? 'is-balanced-transcript' : '',
+              ].filter(Boolean).join(' ')}
+              ref={logRef}
+              aria-busy={loading}
+              onClickCapture={(e) => {
+                // Expanding an accordion (tool card / thinking block) should
+                // grow downward with the clicked header staying put. While a
+                // run is glued to the bottom, the ResizeObserver would re-pin
+                // to the bottom on the height change and push the header up,
+                // so unpin the moment the user toggles one open.
+                const toggle = (e.target as HTMLElement).closest(
+                  '.thinking-toggle, .action-card-toggle, button.op-card-head, [aria-expanded]',
+                );
+                if (toggle && logRef.current?.contains(toggle)) {
+                  pinnedToBottomRef.current = false;
+                  anchorActiveRef.current = false;
+                  setScrolledFromBottom(true);
+                }
+              }}
+            >
+              {loading ? <ChatConversationLoading t={t} /> : null}
+              {displayMessages.length === 0 && !loading ? (
                 <div className="chat-empty-wrap">
-                  <div className="chat-empty">
-                    <span className="chat-empty-title">
-                      {t('chat.startTitle')}
-                    </span>
-                  </div>
-                  <div className="chat-examples" role="list">
-                    {pickStarters(projectMetadata, t).map((ex, i) => (
-                      <button
-                        key={`${ex.title}-${i}`}
-                        type="button"
-                        role="listitem"
-                        className="chat-example"
-                        style={{ animationDelay: `${i * 70}ms` }}
-                        onClick={() => composerRef.current?.setDraft(ex.prompt)}
-                        title={t('chat.fillInputTitle')}
-                      >
-                        <span className="chat-example-icon" aria-hidden>
-                          {ex.icon}
-                        </span>
-                        <span className="chat-example-body">
-                          <span className="chat-example-head">
-                            <span className="chat-example-title">{ex.title}</span>
-                            <span className="chat-example-tag">{ex.tag}</span>
+                  {showImportedFolderArtifacts ? (
+                    <ImportedFolderArtifacts
+                      projectId={projectId}
+                      files={importedFolderArtifacts}
+                      onOpenFile={onRequestOpenFile}
+                      t={t}
+                    />
+                  ) : (
+                    <>
+                      {/* #5517 leaves the empty conversation pane clean — no
+                          "start a conversation" title or starter template
+                          cards; only the connect-repo note below survives. */}
+                      {connectRepoNeeded ? (
+                        <div className="chat-connect-repo" role="note">
+                          <span className="chat-connect-repo-icon" aria-hidden>
+                            <Icon name="github" size={18} />
                           </span>
-                          <span className="chat-example-prompt">{ex.prompt}</span>
-                        </span>
-                        <span className="chat-example-cta" aria-hidden>
-                          ↵
-                        </span>
-                      </button>
-                    ))}
-                  </div>
+                          <span className="chat-connect-repo-body">
+                            <span className="chat-connect-repo-title">
+                              {repoConnectCopy(t, githubConnected).cardTitle}
+                            </span>
+                            <span className="chat-connect-repo-text">
+                              {repoConnectCopy(t, githubConnected).cardBody}
+                            </span>
+                          </span>
+                          <button
+                            type="button"
+                            className="primary-ghost"
+                            disabled={githubConnected === undefined}
+                            onClick={() => onConnectRepo?.()}
+                          >
+                            <Icon name="github" size={13} />
+                            {repoConnectCopy(t, githubConnected).buttonLabel}
+                          </button>
+                        </div>
+                      ) : null}
+                    </>
+                  )}
                 </div>
               ) : null}
-              {messages.map((m, i) => {
-                const showDaySeparator = shouldShowDaySeparator(messages[i - 1], m);
-                const messageStreaming = isAssistantMessageStreaming(
-                  m,
-                  streaming,
-                  lastAssistantId,
-                );
-                return (
-                  <Fragment key={m.id}>
-                    {showDaySeparator ? <DaySeparator ts={messageTime(m)} /> : null}
-                    {m.role === 'user' ? (
-                      <UserMessage
-                        message={m}
-                        projectId={projectId}
-                        projectFileNames={projectFileNames}
-                        onRequestOpenFile={onRequestOpenFile}
-                        t={t}
-                        activePluginSnapshot={
-                          m.id === firstUserMessageId
-                            ? activePluginSnapshot ?? null
-                            : null
-                        }
-                      />
-                    ) : (
-                      <AssistantMessage
-                        message={m}
-                        streaming={messageStreaming}
-                        projectId={projectId}
-                        projectFiles={projectFiles}
-                        projectFileNames={projectFileNames}
-                        onRequestOpenFile={onRequestOpenFile}
-                        onRequestPluginFolderAgentAction={onRequestPluginFolderAgentAction}
-                        isLast={m.id === lastAssistantId}
-                        nextUserContent={nextUserContentByAssistantId.get(m.id)}
-                        suppressDirectionForms={hasActiveDesignSystem}
-                        onSubmitForm={(text) => {
-                          pinnedToBottomRef.current = true;
-                          scrolledToFormRef.current = new Set();
-                          onSubmitForm?.(text);
-                        }}
-                        onContinueRemainingTasks={
-                          m.id === lastAssistantId && onContinueRemainingTasks
-                            ? (todos) => onContinueRemainingTasks(m, todos)
-                            : undefined
-                        }
-                        onFeedback={
-                          onAssistantFeedback
-                            ? (rating) => onAssistantFeedback(m, rating)
-                            : undefined
-                        }
-                      />
-                    )}
-                  </Fragment>
-                );
-              })}
-              {error ? <div className="msg error">{error}</div> : null}
+              <ChatRows
+                messages={displayMessages}
+                streaming={streaming}
+                liveToolInput={liveToolInput}
+                projectId={projectId}
+                projectKindForTracking={projectKindForTracking}
+                activeConversationId={activeConversationId}
+                activeConversationKey={activeConversationId ?? 'no-conversation'}
+                projectFiles={projectFiles}
+                projectMetadata={projectMetadata}
+                projectFileNames={projectFileNames}
+                projectResolvedDir={projectResolvedDir}
+                onRequestOpenFile={onRequestOpenFile}
+                onRequestPluginDetails={onRequestPluginDetails}
+                onRequestDesignSystemDetails={onRequestDesignSystemDetails}
+                onRequestPluginFolderAgentAction={onRequestPluginFolderAgentAction}
+                activePluginActionPaths={activePluginActionPaths}
+                hiddenPluginActionPaths={hiddenPluginActionPaths}
+                onShareToOpenDesign={onShareToOpenDesign}
+                shareToOpenDesignBusyMessageId={shareToOpenDesignBusyMessageId}
+                forceStreamingMessageIds={forceStreamingMessageIds}
+                lastAssistantId={lastAssistantId}
+                activePluginSnapshot={activePluginSnapshot}
+                activeDesignSystem={activeDesignSystem}
+                hasActiveDesignSystem={hasActiveDesignSystem}
+                errorCardOwnerId={errorCardOwnerId}
+                nextUserContentByAssistantId={nextUserContentByAssistantId}
+                assistantCallbacksRef={assistantCallbacksRef}
+                onBrandBrowserAssistConfirm={onBrandBrowserAssistConfirm}
+                onArtifactShare={onArtifactShare}
+                onToolboxAction={handleToolboxAction}
+                onNextStepPromptAction={handleNextStepPromptAction}
+                onNextStepAiOptimize={onContinueBrandEnrichment}
+                nextStepAiOptimizeBusy={brandEnrichmentBusy}
+                onNextStepContinueExtraction={onContinueBrandExtraction}
+                nextStepContinueExtractionBusy={continueBrandExtractionBusy}
+                onNextStepContinueAiExtraction={onContinueBrandAgentExtraction}
+                nextStepContinueAiExtractionBusy={continueBrandAgentExtractionBusy}
+                onNextStepCreateDesign={onCreateDesignFromActiveDesignSystem}
+                nextStepCreateDesignBusy={createDesignFromActiveDesignSystemBusy}
+                onNextStepCreateDesignSystem={onCreateDesignSystemFromProject}
+                nextStepCreateDesignSystemBusy={createDesignSystemFromProjectBusy}
+                onPickSkill={handlePickSkill}
+                onArtifactDownload={onArtifactDownload}
+                nextStepSkills={skills}
+                toolboxSkillNames={featuredToolboxSkillNames}
+                nextStepVariant={nextStepVariant}
+                onForkFromMessage={viewerOnly ? undefined : onForkFromMessage}
+                onAssistantFeedback={onAssistantFeedback}
+                forkingMessageId={forkingMessageId}
+                t={t}
+                onSubmitQuestionForm={onSubmitQuestionForm}
+                questionFormSubmitDisabled={questionFormSubmitDisabled}
+                scrollContainerRef={logRef}
+                highlightedUserMessageId={chatRailHighlightedMessageId}
+              />
+              {displayError ? (
+                <UserActionCard
+                  dataKind="run-recovery"
+                  icon="alert-triangle"
+                  tone={runErrorTone}
+                  title={
+                    runFailureUi
+                      ? t(runFailureUi.titleKey)
+                      : t('chat.runError.title.generic')
+                  }
+                  open={errorSourceOpen}
+                  onOpenChange={setErrorSourceOpen}
+                  detailsLabel={t('brand.viewDetails')}
+                  details={
+                    <div className="run-error__details">
+                      <p className="run-error__description">{displayError}</p>
+                      {errorDiagnosticText ? (
+                        <div className="run-error__diagnostic">
+                          <div className="run-error__diagnostic-head">
+                            <span>{t('chat.runError.sourceLabel')}</span>
+                            <button
+                              type="button"
+                              className="run-error__source-copy"
+                              onClick={() => void copyErrorDiagnostic()}
+                              aria-label={copiedErrorDiagnostic ? t('chat.copyDone') : t('chat.copyErrorDiagnostic')}
+                              title={copiedErrorDiagnostic ? t('chat.copyDone') : t('chat.copyErrorDiagnostic')}
+                            >
+                              <Icon name={copiedErrorDiagnostic ? 'check' : 'copy'} size={13} />
+                            </button>
+                          </div>
+                          <pre>{errorDiagnosticText}</pre>
+                        </div>
+                      ) : null}
+                    </div>
+                  }
+                  footerActions={showErrorActions ? (
+                    <>
+                      {showByokRecoveryCta ? (
+                        <button
+                          type="button"
+                          className="chat-error-action"
+                          onClick={onSwitchToLocalCli}
+                        >
+                          {t('avatar.useLocal')}
+                        </button>
+                      ) : null}
+                      {retryAssistant && onRetry && runFailureUi ? (
+                        <>
+                          {runFailureUi.primaryAction === 'authorize' ? (
+                            // Sign in to AMR inline — the pill drives vela login,
+                            // surfaces the activation URL/code when the browser
+                            // doesn't auto-open, and on success we retry the run
+                            // without bouncing the user out to Settings.
+                            <AmrLoginPill
+                              className="chat-error-amr-login"
+                              signInLabel={t('chat.amrError.authorizeCta')}
+                              amrEntrySourceDetail="chat_error_authorize_retry"
+                              initialStatus={inlineAmrLoginStatus}
+                              skipInitialRefresh
+                              metricsConsent={config?.telemetry?.metrics === true}
+                              installationId={config?.installationId}
+                              showActivationDetails
+                              hideSignedOutStatus
+                              revealPendingCancelAction
+                              onSignInStarted={() => {
+                                trackRecoveryClick(
+                                  retryAssistant,
+                                  'authorize_and_retry',
+                                );
+                                if (
+                                  projectId
+                                  && activeConversationId
+                                  && amrAuthRetryMountId
+                                  && amrAuthRetryWorkspaceIdentityKey
+                                  && onArmAmrAuthRetryContinuation
+                                ) {
+                                  onArmAmrAuthRetryContinuation({
+                                    projectId,
+                                    conversationId: activeConversationId,
+                                    assistantId: retryAssistant.id,
+                                    workspaceIdentityKey: amrAuthRetryWorkspaceIdentityKey,
+                                    originMountId: amrAuthRetryMountId,
+                                  });
+                                }
+                              }}
+                              onStatusChange={(loginStatus) => {
+                                consumeAmrAuthRetryIfAuthorized(loginStatus);
+                              }}
+                            />
+                          ) : runFailureUi.primaryAction === 'launch-terminal-auth' ? (
+                            <button
+                              type="button"
+                              className="chat-error-action"
+                              onClick={() => {
+                                onLaunchAntigravityOauth?.();
+                              }}
+                            >
+                              {t('chat.antigravityError.launchTerminalCta')}
+                            </button>
+                          ) : runFailureUi.primaryAction === 'launch-terminal-switch-model' ? (
+                            <button
+                              type="button"
+                              className="chat-error-action"
+                              onClick={() => {
+                                onLaunchAntigravityOauth?.();
+                              }}
+                            >
+                              {t('chat.antigravityError.launchSwitchModelCta')}
+                            </button>
+                          ) : runFailureUi.primaryAction === 'recharge' ? (
+                            <button
+                              type="button"
+                              className="chat-error-action"
+                              onClick={() => {
+                                const attribution = recordAmrEntry(
+                                  analytics.track,
+                                  'chat_error_recharge',
+                                  new Date(),
+                                  {
+                                    metricsConsent:
+                                      config?.telemetry?.metrics === true,
+                                  },
+                                );
+                                // Forward the canonical telemetry device id to
+                                // AMR only on metrics opt-in (see
+                                // amrHandoffDeviceId). Sourced from the current
+                                // config.installationId / resolved device id,
+                                // not the mount-time bootstrap UUID, so the join
+                                // key matches the telemetry identity even across
+                                // a Delete-my-data rotation.
+                                const deviceId = amrHandoffDeviceId({
+                                  metricsConsent:
+                                    config?.telemetry?.metrics === true,
+                                  resolvedDeviceId: getResolvedDeviceId(),
+                                  installationId: config?.installationId,
+                                });
+                                window.open(
+                                  attributedAmrUrl(
+                                    amrRechargeUrlForProfile(amrProfile),
+                                    attribution,
+                                    deviceId,
+                                  ),
+                                  '_blank',
+                                  'noopener,noreferrer',
+                                );
+                              }}
+                            >
+                              {t('chat.amrError.rechargeCta')}
+                            </button>
+                          ) : runFailureUi.primaryAction === 'upgrade' ? (
+                            <button
+                              type="button"
+                              className="chat-error-action"
+                              onClick={() => {
+                                const attribution = recordAmrEntry(
+                                  analytics.track,
+                                  'chat_error_upgrade',
+                                  new Date(),
+                                  {
+                                    metricsConsent:
+                                      config?.telemetry?.metrics === true,
+                                  },
+                                );
+                                const deviceId = amrHandoffDeviceId({
+                                  metricsConsent:
+                                    config?.telemetry?.metrics === true,
+                                  resolvedDeviceId: getResolvedDeviceId(),
+                                  installationId: config?.installationId,
+                                });
+                                window.open(
+                                  attributedAmrUrl(
+                                    amrPlansUrlForProfile(amrProfile),
+                                    attribution,
+                                    deviceId,
+                                  ),
+                                  '_blank',
+                                  'noopener,noreferrer',
+                                );
+                              }}
+                            >
+                              {t('chat.amrBalanceGate.plansCta')}
+                            </button>
+                          ) : null}
+                          {canResumeFailedRun ? (
+                            // Resumable failure: continue the agent's existing
+                            // CLI session instead of restarting from scratch, so
+                            // partial work is kept. Replaces the from-scratch
+                            // Retry as the single primary recovery action. Use
+                            // the wired resume handler when present, otherwise a
+                            // plain send of the continue prompt — never the
+                            // re-sending Retry path, which would resume + repeat.
+                            <button
+                              type="button"
+                              className="chat-error-action"
+                              onClick={() =>
+                                {
+                                  trackRecoveryClick(retryAssistant, 'resume_run');
+                                  if (onResumeRun) onResumeRun(retryAssistant);
+                                  else onSend(RESUME_CONTINUE_PROMPT, [], []);
+                                }
+                              }
+                            >
+                              {t('chat.resumeRunCta')}
+                            </button>
+                          ) : runFailureUi.primaryAction === 'retry' ||
+                            runFailureUi.secondaryRetry ? (
+                            <button
+                              type="button"
+                              className="chat-error-action chat-error-retry"
+                              onClick={() => {
+                                trackRecoveryClick(retryAssistant, 'manual_retry');
+                                onRetry(retryAssistant, 'manual_retry');
+                              }}
+                            >
+                              {t('promptTemplates.retry')}
+                            </button>
+                          ) : null}
+                        </>
+                      ) : null}
+                    </>
+                  ) : undefined}
+                />
+              ) : null}
+              {showAmrGuidance && amrSwitchPayload ? (
+                <AmrGuidance
+                  {...amrSwitchPayload}
+                  sourceDetail="chat_error_switch_retry_card"
+                  metricsConsent={config?.telemetry?.metrics === true}
+                  onActivate={() => {
+                    if (retryAssistant && onSwitchToAmrAndRetry) {
+                      trackRecoveryClick(retryAssistant, 'switch_runtime_retry', {
+                        agentProviderId: 'amr',
+                        modelId: config?.agentModels?.amr?.model?.trim() || 'default',
+                      });
+                      onSwitchToAmrAndRetry(retryAssistant);
+                    } else {
+                      onOpenAmrSettings?.();
+                    }
+                  }}
+                />
+              ) : null}
+              {/* Dynamic spacer: when a turn is anchored to the top, this
+                  grows just enough to let the user message reach the top of
+                  the viewport, then shrinks as the reply streams in below. */}
+              <div className="chat-log-tail-spacer" ref={tailSpacerRef} aria-hidden />
             </div>
+            {chatLogTray}
             {/* Always mounted so the CSS transition can play in both
                 directions; the `chat-jump-btn-active` class flips the
                 slide + opacity, and `aria-hidden` + `tabIndex={-1}`
-                keep it out of the a11y tree when it's not visible. */}
+                keep it out of the a11y tree when it's not visible.
+                Also suppressed while the conversation-history dropdown is
+                open: the dropdown sits in a separate stacking context, so
+                without this the button bleeds through it (#4123). */}
             <button
               type="button"
-              className={`chat-jump-btn${scrolledFromBottom ? ' chat-jump-btn-active' : ''}`}
+              ref={jumpBtnGlassRef}
+              className={`chat-jump-btn od-glass-refract${scrolledFromBottom && !showConvList ? ' chat-jump-btn-active' : ''}`}
               onClick={jumpToBottom}
               title={t('chat.scrollToLatest')}
-              aria-hidden={!scrolledFromBottom}
-              tabIndex={scrolledFromBottom ? 0 : -1}
+              aria-hidden={!scrolledFromBottom || showConvList}
+              tabIndex={scrolledFromBottom && !showConvList ? 0 : -1}
             >
-              <Icon name="arrow-up" size={12} style={{ transform: 'rotate(180deg)' }} />
+              <Icon name="arrow-up" size={14} style={{ transform: 'rotate(180deg)' }} />
               <span>{t('chat.jumpToLatest')}</span>
             </button>
           </div>
           <PinnedTodoSlot
-            messages={messages}
+            messages={displayMessages}
             streaming={streaming}
-            dismissedKey={dismissedPinnedTodoKey}
-            onDismiss={setDismissedPinnedTodoKey}
+            conversationId={activeConversationId}
+            onContinueRemainingTasks={onContinueRemainingTasks}
+            containerRef={pinnedTodoRef}
           />
-          <ChatComposer
-            ref={composerRef}
-            projectId={projectId}
-            projectFiles={projectFiles}
-            skills={skills}
-            streaming={streaming}
-            sendDisabled={sendDisabled}
-            initialDraft={initialDraft}
-            onEnsureProject={onEnsureProject}
-            commentAttachments={commentsToAttachments(attachedComments)}
-            onRemoveCommentAttachment={onDetachComment}
-            onSend={(prompt, attachments, commentAttachments, meta) => {
-              pinnedToBottomRef.current = true;
-              scrolledToFormRef.current = new Set();
-              onSend(prompt, attachments, commentAttachments, meta);
+          <QueuedSendStrip
+            containerRef={queuedSendStripRef}
+            items={queuedItems}
+            editingId={editingQueuedSendId}
+            onEdit={(item) => {
+              trackMessageQueueClick(analytics.track, {
+                page_name: 'chat_panel',
+                area: 'message_queue',
+                element: 'edit',
+                project_id: projectId ?? '',
+                queue_length: queuedItems.length,
+              });
+              restoreQueuedSendToComposer(item);
             }}
-            onStop={onStop}
-            onOpenSettings={onOpenSettings}
-            onOpenMcpSettings={onOpenMcpSettings}
-            petConfig={petConfig}
-            onAdoptPet={onAdoptPet}
-            onTogglePet={onTogglePet}
-            onOpenPetSettings={onOpenPetSettings}
-            researchAvailable={researchAvailable}
-            projectMetadata={projectMetadata}
-            onProjectMetadataChange={onProjectMetadataChange}
-            currentSkillId={currentSkillId}
-            onProjectSkillChange={onProjectSkillChange}
-            pinnedPluginId={activePluginSnapshot?.pluginId ?? null}
+            onRemove={onRemoveQueuedSend
+              ? (id) => {
+                  trackMessageQueueClick(analytics.track, {
+                    page_name: 'chat_panel',
+                    area: 'message_queue',
+                    element: 'delete',
+                    project_id: projectId ?? '',
+                    queue_length: queuedItems.length,
+                  });
+                  onRemoveQueuedSend(id);
+                }
+              : undefined}
+            onReorder={onReorderQueuedSends}
+            onSendNow={onSendQueuedNow
+              ? (id) => {
+                  trackMessageQueueClick(analytics.track, {
+                    page_name: 'chat_panel',
+                    area: 'message_queue',
+                    element: 'send_now',
+                    project_id: projectId ?? '',
+                    queue_length: queuedItems.length,
+                  });
+                  onSendQueuedNow(id);
+                }
+              : undefined}
           />
+          <div
+            className="chat-composer-slot"
+            ref={composerSlotRef}
+            style={composerSlotStyle}
+            aria-hidden={shouldPortalComposer ? true : undefined}
+          >
+            {shouldPortalComposer ? null : composerNode}
+          </div>
+          {shouldPortalComposer && composerPortalTarget && composerPortalRect
+            ? createPortal(
+                <div
+                  className="chat-composer-fixed-layer"
+                  ref={composerLayerRef}
+                  style={{
+                    left: composerPortalRect.left,
+                    bottom: composerPortalRect.bottom,
+                    width: composerPortalRect.width,
+                  }}
+                >
+                  {composerNode}
+                </div>,
+                composerPortalTarget,
+              )
+            : null}
         </>
       ) : null}
     </div>
   );
 }
 
-// Pinned task list above the chat composer. The latest TodoWrite snapshot
-// across the entire conversation is the canonical state; AssistantMessage
-// no longer renders these inline so there is exactly one TodoCard on
-// screen. When every task is complete the user can dismiss the card; the
-// dismissal sticks to the current snapshot only, so a fresh TodoWrite
-// from the agent re-shows it.
-function PinnedTodoSlot({
+interface AssistantCallbacks {
+  onSubmitQuestionForm: QuestionFormSubmitHandler | undefined;
+  onContinueRemainingTasks:
+    | ((assistantMessage: ChatMessage, todos: TodoItem[]) => void)
+    | undefined;
+  onAssistantFeedback:
+    | ((message: ChatMessage, change: ChatMessageFeedbackChange) => void)
+    | undefined;
+  onBrandBrowserAssistConfirm: BrandBrowserAssistConfirm | undefined;
+  onArtifactShare: ((fileName: string) => void) | undefined;
+  onForkFromMessage: ((message: ChatMessage) => void) | undefined;
+  onShareToOpenDesign: ((assistantMessageId: string) => void) | undefined;
+  onNextStepAiOptimize: (() => void) | undefined;
+  onNextStepContinueExtraction: (() => void) | undefined;
+  onNextStepContinueAiExtraction: (() => void) | undefined;
+  onNextStepCreateDesign: (() => void) | undefined;
+  onNextStepCreateDesignSystem: (() => void) | undefined;
+}
+
+type ChatRailMessage = {
+  message: ChatMessage;
+  messageIndex: number;
+  userIndex: number;
+};
+
+function ChatMessageRail({
+  messages,
+  loading,
+  logRef,
+  activeConversationKey,
+  onNavigate,
+  t,
+}: {
+  messages: ChatMessage[];
+  loading: boolean;
+  logRef: MutableRefObject<HTMLDivElement | null>;
+  activeConversationKey: string;
+  onNavigate: (message: ChatMessage, messageIndex: number) => void;
+  t: TranslateFn;
+}) {
+  const userMessages = useMemo<ChatRailMessage[]>(
+    () =>
+      messages.reduce<ChatRailMessage[]>((items, message, messageIndex) => {
+        if (message.role !== 'user') return items;
+        items.push({
+          message,
+          messageIndex,
+          userIndex: items.length,
+        });
+        return items;
+      }, []),
+    [messages],
+  );
+  const [preview, setPreview] = useState<{ id: string; y: number } | null>(null);
+  const [activeMessageId, setActiveMessageId] = useState<string | null>(null);
+  // Picking a message retracts the module until the pointer leaves it, so the
+  // jump lands without the rail lingering over the destination.
+  const [retracted, setRetracted] = useState(false);
+  const navRef = useRef<HTMLElement | null>(null);
+  const trackRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    setPreview(null);
+    setRetracted(false);
+    setActiveMessageId(userMessages[0]?.message.id ?? null);
+  }, [activeConversationKey, userMessages]);
+
+  // Roll the wheel: keep the active dot at the vertical middle of the track
+  // viewport, so the dot column scrolls under the top/bottom fade masks as
+  // the chat scrolls. The browser clamps the target at both extremes.
+  useEffect(() => {
+    const track = trackRef.current;
+    if (!track || !activeMessageId) return;
+    // While the pointer is on the rail the user may be wheel-scrolling it
+    // manually; auto-follow would yank their position, so it yields until
+    // the pointer leaves.
+    if (navRef.current?.matches(':hover')) return;
+    const index = userMessages.findIndex(
+      (item) => item.message.id === activeMessageId,
+    );
+    if (index < 0) return;
+    // Marker pitch is 11px (8px marker + 3px gap); +4 targets the dot center.
+    const top = index * 11 + 4 - track.clientHeight / 2;
+    if (typeof track.scrollTo === 'function') {
+      track.scrollTo({ top, behavior: 'smooth' });
+    } else {
+      track.scrollTop = top;
+    }
+  }, [activeMessageId, userMessages]);
+
+  // The track scrolls, so the preview anchor is measured from the marker's
+  // on-screen position at hover time instead of derived from its index.
+  const showPreview = (id: string, marker: HTMLElement) => {
+    if (retracted) return;
+    const nav = navRef.current;
+    const y = nav
+      ? marker.getBoundingClientRect().top - nav.getBoundingClientRect().top + 4
+      : 0;
+    setPreview({ id, y });
+  };
+
+  useEffect(() => {
+    const log = logRef.current;
+    if (!log || userMessages.length < CHAT_RAIL_MIN_USER_MESSAGES) return;
+    let frame = 0;
+    const updateActiveMessage = () => {
+      frame = 0;
+      const visible = userMessages
+        .map((item) => {
+          const node = findChatMessageElement(log, item.message.id);
+          if (!node) return null;
+          return {
+            id: item.message.id,
+            distance: Math.abs(node.offsetTop - log.scrollTop),
+          };
+        })
+        .filter((item): item is { id: string; distance: number } => item != null)
+        .sort((a, b) => a.distance - b.distance)[0];
+
+      if (visible) {
+        setActiveMessageId(visible.id);
+        return;
+      }
+
+      const maxScrollTop = Math.max(1, log.scrollHeight - log.clientHeight);
+      const index = Math.round(
+        (log.scrollTop / maxScrollTop) * (userMessages.length - 1),
+      );
+      const boundedIndex = Math.min(
+        userMessages.length - 1,
+        Math.max(0, index),
+      );
+      setActiveMessageId(userMessages[boundedIndex]?.message.id ?? null);
+    };
+    const scheduleUpdate = () => {
+      if (frame) return;
+      frame = window.requestAnimationFrame(updateActiveMessage);
+    };
+    scheduleUpdate();
+    log.addEventListener('scroll', scheduleUpdate, { passive: true });
+    return () => {
+      log.removeEventListener('scroll', scheduleUpdate);
+      if (frame) window.cancelAnimationFrame(frame);
+    };
+  }, [logRef, userMessages]);
+
+  if (loading || userMessages.length < CHAT_RAIL_MIN_USER_MESSAGES) {
+    return null;
+  }
+
+  const previewItem =
+    userMessages.find((item) => item.message.id === preview?.id) ?? null;
+  const hoverIndex =
+    !retracted && preview
+      ? userMessages.findIndex((item) => item.message.id === preview.id)
+      : -1;
+
+  return (
+    <nav
+      ref={navRef}
+      className={`chat-message-rail${retracted ? ' is-retracted' : ''}`}
+      aria-label={t('chat.messageRail.aria')}
+      onMouseLeave={() => {
+        setPreview(null);
+        setRetracted(false);
+      }}
+      onWheel={(ev) => {
+        // The nav is a full-height hit zone; wheeling over its empty parts
+        // (outside the track, which scrolls natively) still rolls the wheel.
+        const track = trackRef.current;
+        if (!track || track.contains(ev.target as Node)) return;
+        track.scrollTop += ev.deltaY;
+      }}
+      data-wheel={userMessages.length > CHAT_RAIL_WHEEL_MIN_USER_MESSAGES ? 'true' : 'false'}
+      data-testid="chat-message-rail"
+    >
+      <div className="chat-message-rail__track" ref={trackRef}>
+        {userMessages.map((item) => {
+          const active = item.message.id === activeMessageId;
+          const previewing = item.message.id === preview?.id;
+          return (
+            <button
+              key={item.message.id}
+              type="button"
+              className={[
+                'chat-message-rail__marker',
+                active ? 'is-active' : '',
+                previewing ? 'is-previewing' : '',
+              ].filter(Boolean).join(' ')}
+              aria-label={t('chat.messageRail.jumpAria', {
+                index: item.userIndex + 1,
+              })}
+              style={{
+                '--chat-rail-dash': `${
+                  hoverIndex < 0
+                    ? CHAT_RAIL_DASH_BASE_PX
+                    : chatRailDashWidth(Math.abs(item.userIndex - hoverIndex))
+                }px`,
+              } as CSSProperties}
+              onMouseEnter={(ev) => showPreview(item.message.id, ev.currentTarget)}
+              onFocus={(ev) => showPreview(item.message.id, ev.currentTarget)}
+              onBlur={() => setPreview(null)}
+              onClick={() => {
+                setPreview(null);
+                setRetracted(true);
+                onNavigate(item.message, item.messageIndex);
+              }}
+            >
+              <span aria-hidden />
+            </button>
+          );
+        })}
+      </div>
+      {/* Sibling of the track, not a child: the track fades its extremes with
+          a mask, which must not wash out the hover preview card. */}
+      {previewItem && preview ? (
+        <div
+          className="chat-message-rail__preview"
+          style={{
+            '--chat-message-rail-y': `${preview.y}px`,
+          } as CSSProperties}
+          role="tooltip"
+        >
+          <p>
+            {previewItem.message.content.trim() || t('chat.messageRail.empty')}
+          </p>
+        </div>
+      ) : null}
+    </nav>
+  );
+}
+
+function findChatMessageElement(
+  log: HTMLElement,
+  messageId: string,
+): HTMLElement | null {
+  const nodes = log.querySelectorAll<HTMLElement>('[data-chat-message-id]');
+  for (const node of nodes) {
+    if (node.dataset.chatMessageId === messageId) return node;
+  }
+  return null;
+}
+
+function scrollChatLogToMessage(
+  log: HTMLElement,
+  messages: ChatMessage[],
+  messageId: string,
+  messageIndex: number,
+) {
+  const target = findChatMessageElement(log, messageId);
+  if (target) {
+    target.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
+    return;
+  }
+
+  const maxScrollTop = Math.max(0, log.scrollHeight - log.clientHeight);
+  const ratio =
+    messages.length <= 1
+      ? 0
+      : Math.min(1, Math.max(0, messageIndex / (messages.length - 1)));
+  log.scrollTo({ top: maxScrollTop * ratio, behavior: 'smooth' });
+  window.requestAnimationFrame(() => {
+    findChatMessageElement(log, messageId)?.scrollIntoView?.({
+      block: 'center',
+      behavior: 'smooth',
+    });
+  });
+}
+
+type ChatRenderItem = {
+  kind: 'message';
+  key: string;
+  message: ChatMessage;
+};
+
+type AppliedContextItem =
+  | { kind: 'plugin'; title: string; pluginId: string }
+  | { kind: 'skill'; title: string }
+  | { kind: 'design-system'; title: string; system?: DesignSystemSummary };
+
+function ChatConversationLoading({ t }: { t: TranslateFn }) {
+  return (
+    <div className="chat-loading-state" role="status" aria-live="polite">
+      <span className="chat-loading-mark" aria-hidden>
+        <span />
+        <span />
+        <span />
+      </span>
+      <span className="chat-loading-copy">{t('common.loading')}</span>
+      <span className="chat-loading-lines" aria-hidden>
+        <span />
+        <span />
+        <span />
+      </span>
+    </div>
+  );
+}
+
+function ChatRows({
   messages,
   streaming,
-  dismissedKey,
-  onDismiss,
+  liveToolInput,
+  projectId,
+  projectKindForTracking,
+  activeConversationId,
+  activeConversationKey,
+  projectFiles,
+  projectMetadata,
+  projectFileNames,
+  projectResolvedDir,
+  onRequestOpenFile,
+  onRequestPluginDetails,
+  onRequestDesignSystemDetails,
+  onRequestPluginFolderAgentAction,
+  activePluginActionPaths,
+  hiddenPluginActionPaths,
+  onShareToOpenDesign,
+  shareToOpenDesignBusyMessageId,
+  forceStreamingMessageIds,
+  lastAssistantId,
+  activePluginSnapshot,
+  activeDesignSystem,
+  hasActiveDesignSystem,
+  errorCardOwnerId,
+  nextUserContentByAssistantId,
+  assistantCallbacksRef,
+  onBrandBrowserAssistConfirm,
+  onArtifactShare,
+  onToolboxAction,
+  onNextStepPromptAction,
+  onNextStepAiOptimize,
+  nextStepAiOptimizeBusy,
+  onNextStepContinueExtraction,
+  nextStepContinueExtractionBusy,
+  onNextStepContinueAiExtraction,
+  nextStepContinueAiExtractionBusy,
+  onNextStepCreateDesign,
+  nextStepCreateDesignBusy,
+  onNextStepCreateDesignSystem,
+  nextStepCreateDesignSystemBusy,
+  onPickSkill,
+  onArtifactDownload,
+  nextStepSkills,
+  toolboxSkillNames,
+  nextStepVariant,
+  onForkFromMessage,
+  onAssistantFeedback,
+  forkingMessageId,
+  t,
+  onSubmitQuestionForm,
+  questionFormSubmitDisabled,
+  scrollContainerRef,
+  highlightedUserMessageId,
 }: {
   messages: ChatMessage[];
   streaming: boolean;
-  dismissedKey: string | null;
-  onDismiss: (key: string | null) => void;
+  liveToolInput?: Record<string, { name: string; text: string; seq?: number }>;
+  projectId: string | null;
+  projectKindForTracking: TrackingProjectKind | null;
+  activeConversationId: string | null;
+  activeConversationKey: string;
+  projectFiles: ProjectFile[];
+  projectMetadata?: ProjectMetadata;
+  projectFileNames?: Set<string>;
+  // Daemon-resolved on-disk working directory of the current project —
+  // positive-proof anchor for chat file-link routing (see AssistantMessage).
+  projectResolvedDir?: string | null;
+  onRequestOpenFile?: (name: string) => void;
+  onRequestPluginDetails?: (pluginId: string) => void;
+  onRequestDesignSystemDetails?: (system: DesignSystemSummary) => void;
+  onRequestPluginFolderAgentAction?: (relativePath: string, action: PluginFolderAgentAction) => void;
+  activePluginActionPaths?: Set<string>;
+  hiddenPluginActionPaths?: Set<string>;
+  onShareToOpenDesign?: (assistantMessageId: string) => void;
+  shareToOpenDesignBusyMessageId?: string | null;
+  forceStreamingMessageIds?: Set<string>;
+  lastAssistantId: string | undefined;
+  activePluginSnapshot?: AppliedPluginSnapshot | null;
+  activeDesignSystem?: DesignSystemSummary | null;
+  hasActiveDesignSystem: boolean;
+  errorCardOwnerId: string | null;
+  nextUserContentByAssistantId: Map<string, string>;
+  assistantCallbacksRef: MutableRefObject<AssistantCallbacks>;
+  onBrandBrowserAssistConfirm?: BrandBrowserAssistConfirm;
+  onArtifactShare?: (fileName: string) => void;
+  onToolboxAction?: (id: DesignToolboxActionId) => void;
+  onNextStepPromptAction?: (
+    prompt: string,
+    options?: { sessionMode?: ChatSessionMode },
+  ) => void;
+  onNextStepAiOptimize?: () => void;
+  nextStepAiOptimizeBusy?: boolean;
+  onNextStepContinueExtraction?: () => void;
+  nextStepContinueExtractionBusy?: boolean;
+  onNextStepContinueAiExtraction?: () => void;
+  nextStepContinueAiExtractionBusy?: boolean;
+  onNextStepCreateDesign?: () => void;
+  nextStepCreateDesignBusy?: boolean;
+  onNextStepCreateDesignSystem?: () => void;
+  nextStepCreateDesignSystemBusy?: boolean;
+  onPickSkill?: (skillId: string) => void;
+  onArtifactDownload?: (fileName: string) => void;
+  nextStepSkills?: SkillSummary[];
+  toolboxSkillNames?: Partial<Record<DesignToolboxActionId, string | null>>;
+  nextStepVariant?: NextStepActionsVariant;
+  onForkFromMessage?: (message: ChatMessage) => void;
+  onAssistantFeedback?: (message: ChatMessage, change: ChatMessageFeedbackChange) => void;
+  forkingMessageId?: string | null;
+  t: TranslateFn;
+  onSubmitQuestionForm?: QuestionFormSubmitHandler;
+  questionFormSubmitDisabled: boolean;
+  scrollContainerRef: MutableRefObject<HTMLDivElement | null>;
+  highlightedUserMessageId?: string | null;
 }) {
-  // `exiting` lets the dismiss click play a slide-down transition before
-  // the slot tears down. Without it React would unmount immediately and
-  // the card would pop out without animation.
-  const [exiting, setExiting] = useState(false);
-  const input = latestTodoWriteInputFromMessages(messages);
-  if (input == null) return null;
-  let snapshotKey: string;
-  try {
-    snapshotKey = JSON.stringify(input);
-  } catch {
-    snapshotKey = String(input);
+  const items = useMemo(
+    () => buildChatRenderItems(messages),
+    [messages],
+  );
+  const appliedContextByMessageId = useMemo(() => {
+    const skillNames = new Map(
+      (nextStepSkills ?? []).map((skill) => [skill.id, skill.name || skill.id]),
+    );
+    const byMessageId = new Map<string, AppliedContextItem[]>();
+    let previousSignature = '';
+
+    for (const message of messages) {
+      if (message.role !== 'user') continue;
+      const pluginSnapshot = message.appliedPluginSnapshot ?? activePluginSnapshot ?? null;
+      const contextItems: AppliedContextItem[] = [];
+
+      if (pluginSnapshot) {
+        contextItems.push({
+          kind: 'plugin',
+          title: pluginSnapshot.pluginTitle ?? pluginSnapshot.pluginId,
+          pluginId: pluginSnapshot.pluginId,
+        });
+      }
+      for (const pluginId of message.runContext?.pluginIds ?? []) {
+        if (pluginSnapshot?.pluginId === pluginId) continue;
+        contextItems.push({ kind: 'plugin', title: pluginId, pluginId });
+      }
+      for (const skillId of message.runContext?.skillIds ?? []) {
+        contextItems.push({ kind: 'skill', title: skillNames.get(skillId) ?? skillId });
+      }
+      if (activeDesignSystem) {
+        contextItems.push({
+          kind: 'design-system',
+          title: activeDesignSystem.title,
+          system: activeDesignSystem,
+        });
+      }
+      for (const item of message.runContext?.workspaceItems ?? []) {
+        if (item.kind !== 'design-system') continue;
+        if (contextItems.some((candidate) => candidate.kind === 'design-system' && candidate.title === item.label)) {
+          continue;
+        }
+        contextItems.push({ kind: 'design-system', title: item.label });
+      }
+
+      const deduped = contextItems.filter((item, index, all) =>
+        all.findIndex((candidate) => candidate.kind === item.kind && candidate.title === item.title) === index,
+      );
+      const signature = deduped.map((item) => `${item.kind}:${item.title}`).join('|');
+      if (signature && signature !== previousSignature) {
+        byMessageId.set(message.id, deduped);
+      }
+      previousSignature = signature;
+    }
+    return byMessageId;
+  }, [activeDesignSystem, activePluginSnapshot, messages, nextStepSkills]);
+  const assistantRoleByMessageId = useMemo(() => {
+    const byMessageId = new Map<string, boolean>();
+    let previousAssistantIdentity: string | null = null;
+
+    for (const message of messages) {
+      if (message.role !== 'assistant') {
+        previousAssistantIdentity = null;
+        continue;
+      }
+      const identity = message.agentId ?? message.agentName ?? 'assistant';
+      byMessageId.set(message.id, identity !== previousAssistantIdentity);
+      previousAssistantIdentity = identity;
+    }
+    return byMessageId;
+  }, [messages]);
+  const virtualized = items.length > CHAT_MESSAGE_VIRTUALIZE_THRESHOLD;
+  const virtualWindow = useMeasuredVirtualWindow(items, {
+    enabled: virtualized,
+    containerRef: scrollContainerRef,
+    estimateSize: estimateChatRenderItemHeight,
+    overscanPx: CHAT_MESSAGE_OVERSCAN_PX,
+    resetKey: activeConversationKey,
+    initialTailRows: CHAT_VIRTUAL_INITIAL_TAIL_ROWS,
+  });
+
+  const renderItem = (item: ChatRenderItem) => {
+    const m = item.message;
+    const messageStreaming = isAssistantMessageStreaming(
+      m,
+      streaming,
+      lastAssistantId,
+      forceStreamingMessageIds,
+    );
+    if (m.role === 'user') {
+      return (
+        <UserMessage
+          message={m}
+          projectId={projectId}
+          projectFileNames={projectFileNames}
+          onRequestOpenFile={onRequestOpenFile}
+          onRequestPluginDetails={onRequestPluginDetails}
+          onRequestDesignSystemDetails={onRequestDesignSystemDetails}
+          t={t}
+          appliedContextItems={appliedContextByMessageId.get(m.id) ?? []}
+          highlighted={highlightedUserMessageId === m.id}
+        />
+      );
+    }
+    return (
+      <AssistantMessage
+        message={m}
+        streaming={messageStreaming}
+        // Only the streaming row consumes live tool input. Non-streaming rows
+        // get a stable `undefined`, so adding `liveToolInput` to the memo
+        // comparator re-renders just this row per `tool_input_delta`, not all N.
+        liveToolInput={messageStreaming ? liveToolInput : undefined}
+        projectId={projectId}
+        projectKind={projectKindForTracking}
+        conversationId={activeConversationId}
+        projectFiles={projectFiles}
+        projectMetadata={projectMetadata}
+        projectFileNames={projectFileNames}
+        projectResolvedDir={projectResolvedDir}
+        onRequestOpenFile={onRequestOpenFile}
+        onRequestPluginFolderAgentAction={onRequestPluginFolderAgentAction}
+        activePluginActionPaths={activePluginActionPaths}
+        hiddenPluginActionPaths={hiddenPluginActionPaths}
+        onShareToOpenDesign={
+          onShareToOpenDesign
+            ? () => assistantCallbacksRef.current.onShareToOpenDesign?.(m.id)
+            : undefined
+        }
+        shareToOpenDesignBusy={shareToOpenDesignBusyMessageId === m.id}
+        showRole={assistantRoleByMessageId.get(m.id) ?? true}
+        isLast={m.id === lastAssistantId}
+        errorCardOwnerId={errorCardOwnerId}
+        nextUserContent={nextUserContentByAssistantId.get(m.id)}
+        suppressDirectionForms={hasActiveDesignSystem}
+        hasDesignSystemContext={hasActiveDesignSystem || !!activeDesignSystem}
+        onSubmitQuestionForm={
+          onSubmitQuestionForm
+            ? (text, attachments, context) =>
+                assistantCallbacksRef.current.onSubmitQuestionForm?.(
+                  text,
+                  attachments,
+                  context,
+                  m.id,
+                )
+            : undefined
+        }
+        questionFormSubmitDisabled={questionFormSubmitDisabled}
+        onBrandBrowserAssistConfirm={
+          onBrandBrowserAssistConfirm
+            ? (card) => assistantCallbacksRef.current.onBrandBrowserAssistConfirm?.(card)
+            : undefined
+        }
+        onForkFromMessage={
+          onForkFromMessage
+            ? () => assistantCallbacksRef.current.onForkFromMessage?.(m)
+            : undefined
+        }
+        forking={forkingMessageId === m.id}
+        onFeedback={
+          onAssistantFeedback
+            ? (rating) => assistantCallbacksRef.current.onAssistantFeedback?.(m, rating)
+            : undefined
+        }
+        onArtifactShare={
+          onArtifactShare
+            ? (fileName) => assistantCallbacksRef.current.onArtifactShare?.(fileName)
+            : undefined
+        }
+        onToolboxAction={onToolboxAction}
+        onNextStepPromptAction={onNextStepPromptAction}
+        onNextStepAiOptimize={
+          onNextStepAiOptimize
+            ? () => assistantCallbacksRef.current.onNextStepAiOptimize?.()
+            : undefined
+        }
+        nextStepAiOptimizeBusy={nextStepAiOptimizeBusy}
+        onNextStepContinueExtraction={
+          onNextStepContinueExtraction
+            ? () => assistantCallbacksRef.current.onNextStepContinueExtraction?.()
+            : undefined
+        }
+        nextStepContinueExtractionBusy={nextStepContinueExtractionBusy}
+        onNextStepContinueAiExtraction={
+          onNextStepContinueAiExtraction
+            ? () => assistantCallbacksRef.current.onNextStepContinueAiExtraction?.()
+            : undefined
+        }
+        nextStepContinueAiExtractionBusy={nextStepContinueAiExtractionBusy}
+        onNextStepCreateDesign={
+          onNextStepCreateDesign
+            ? () => assistantCallbacksRef.current.onNextStepCreateDesign?.()
+            : undefined
+        }
+        nextStepCreateDesignBusy={nextStepCreateDesignBusy}
+        onNextStepCreateDesignSystem={
+          onNextStepCreateDesignSystem
+            ? () => assistantCallbacksRef.current.onNextStepCreateDesignSystem?.()
+            : undefined
+        }
+        nextStepCreateDesignSystemBusy={nextStepCreateDesignSystemBusy}
+        onPickSkill={onPickSkill}
+        onArtifactDownload={onArtifactDownload}
+        nextStepSkills={nextStepSkills}
+        toolboxSkillNames={toolboxSkillNames}
+        nextStepVariant={nextStepVariant}
+      />
+    );
+  };
+
+  if (items.length === 0) return null;
+
+  if (!virtualized) {
+    return (
+      <>
+        {items.map((item) => (
+          <Fragment key={item.key}>{renderItem(item)}</Fragment>
+        ))}
+      </>
+    );
   }
-  if (snapshotKey === dismissedKey) return null;
+
   return (
-    <div className={`chat-pinned-todo${exiting ? ' chat-pinned-todo-exit' : ''}`}>
+    <div
+      className="chat-virtual-spacer"
+      data-testid="chat-virtual-spacer"
+      style={{ height: virtualWindow.totalHeight }}
+    >
+      {virtualWindow.rows.map((row) => (
+        <VirtualChatRow
+          key={row.item.key}
+          itemKey={row.item.key}
+          top={row.top}
+          onMeasure={virtualWindow.onMeasure}
+        >
+          {renderItem(row.item)}
+        </VirtualChatRow>
+      ))}
+    </div>
+  );
+}
+
+function VirtualChatRow({
+  itemKey,
+  top,
+  onMeasure,
+  children,
+}: {
+  itemKey: string;
+  top: number;
+  onMeasure: (key: string, height: number) => void;
+  children: ReactNode;
+}) {
+  const rowRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const node = rowRef.current;
+    if (!node) return;
+    const measure = () => {
+      const height = node.getBoundingClientRect().height;
+      onMeasure(itemKey, height);
+    };
+    measure();
+    if (typeof ResizeObserver === 'undefined') return undefined;
+    const observer = new ResizeObserver(measure);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [itemKey, onMeasure]);
+
+  return (
+    <div
+      ref={rowRef}
+      className="chat-virtual-row"
+      style={{ transform: `translateY(${top}px)` }}
+    >
+      {children}
+    </div>
+  );
+}
+
+function buildChatRenderItems(messages: ChatMessage[]): ChatRenderItem[] {
+  const items: ChatRenderItem[] = [];
+  for (let i = 0; i < messages.length; i += 1) {
+    const message = messages[i]!;
+    // Structured form answers are rendered as a compact summary on the
+    // preceding assistant message. Keeping the raw machine payload in a
+    // separate user bubble duplicates the same decision and exposes stable IDs.
+    if (message.role === 'user' && /^\[form answers\b/i.test(message.content.trim())) {
+      continue;
+    }
+    items.push({
+      kind: 'message',
+      key: `message:${message.id}`,
+      message,
+    });
+  }
+  return items;
+}
+
+function estimateChatRenderItemHeight(item: ChatRenderItem): number {
+  const message = item.message;
+  const contentLength = message.content?.length ?? 0;
+  const attachmentCount = (message.attachments?.length ?? 0) + (message.commentAttachments?.length ?? 0);
+  const eventCount = message.events?.length ?? 0;
+  const fileCount = message.producedFiles?.length ?? 0;
+  const base = message.role === 'user' ? 82 : 118;
+  const contentRows = Math.min(18, Math.ceil(contentLength / 120));
+  return (
+    base
+    + contentRows * 18
+    + attachmentCount * 34
+    + eventCount * 28
+    + fileCount * 32
+    + CHAT_VIRTUAL_ROW_GAP_PX
+  );
+}
+
+function useMeasuredVirtualWindow<T extends { key: string }>(
+  items: T[],
+  {
+    enabled,
+    containerRef,
+    estimateSize,
+    overscanPx,
+    resetKey,
+    initialTailRows,
+    alwaysIncludeKey,
+  }: {
+    enabled: boolean;
+    containerRef: MutableRefObject<HTMLDivElement | null>;
+    estimateSize: (item: T) => number;
+    overscanPx: number;
+    resetKey: string;
+    initialTailRows: number;
+    alwaysIncludeKey?: string;
+  },
+) {
+  const measuredHeightsRef = useRef<Map<string, number>>(new Map());
+  const [measureVersion, setMeasureVersion] = useState(0);
+  const [viewport, setViewport] = useState({ scrollTop: 0, height: 0 });
+
+  useEffect(() => {
+    measuredHeightsRef.current.clear();
+    setMeasureVersion((version) => version + 1);
+    setViewport({ scrollTop: 0, height: 0 });
+  }, [resetKey]);
+
+  useEffect(() => {
+    if (!enabled) return undefined;
+    const el = containerRef.current;
+    if (!el) return undefined;
+    let frame: number | null = null;
+    const readViewport = () => {
+      frame = null;
+      setViewport((current) => {
+        const next = {
+          scrollTop: el.scrollTop,
+          height: el.clientHeight || CHAT_VIRTUAL_DEFAULT_VIEWPORT_PX,
+        };
+        return current.scrollTop === next.scrollTop && current.height === next.height
+          ? current
+          : next;
+      });
+    };
+    const scheduleRead = () => {
+      if (frame !== null) return;
+      frame = requestAnimationFrame(readViewport);
+    };
+    scheduleRead();
+    el.addEventListener('scroll', scheduleRead, { passive: true });
+    const observer =
+      typeof ResizeObserver !== 'undefined'
+        ? new ResizeObserver(scheduleRead)
+        : null;
+    observer?.observe(el);
+    return () => {
+      if (frame !== null) cancelAnimationFrame(frame);
+      el.removeEventListener('scroll', scheduleRead);
+      observer?.disconnect();
+    };
+  }, [containerRef, enabled]);
+
+  const layout = useMemo(() => {
+    const offsets: number[] = [];
+    const sizes: number[] = [];
+    let cursor = 0;
+    for (const item of items) {
+      offsets.push(cursor);
+      const measured = measuredHeightsRef.current.get(item.key);
+      const size = Math.max(
+        CHAT_VIRTUAL_MIN_ROW_HEIGHT,
+        measured ?? estimateSize(item),
+      );
+      sizes.push(size);
+      cursor += size;
+    }
+    return { offsets, sizes, totalHeight: cursor };
+  }, [estimateSize, items, measureVersion]);
+
+  const rows = useMemo(() => {
+    if (!enabled || items.length === 0) return [];
+    const height = viewport.height || CHAT_VIRTUAL_DEFAULT_VIEWPORT_PX;
+    if (viewport.scrollTop === 0 && viewport.height === 0) {
+      const start = Math.max(0, items.length - initialTailRows);
+      const rows = items.slice(start).map((item, offset) => {
+        const index = start + offset;
+        return { item, index, top: layout.offsets[index] ?? 0 };
+      });
+      return includeVirtualRowByKey(rows, items, layout.offsets, alwaysIncludeKey);
+    }
+    const startTarget = Math.max(0, viewport.scrollTop - overscanPx);
+    const endTarget = viewport.scrollTop + height + overscanPx;
+    let start = 0;
+    while (
+      start < items.length - 1
+      && (layout.offsets[start] ?? 0) + (layout.sizes[start] ?? 0) < startTarget
+    ) {
+      start += 1;
+    }
+    let end = start;
+    while (end < items.length && (layout.offsets[end] ?? 0) <= endTarget) {
+      end += 1;
+    }
+    const rows = items.slice(start, end).map((item, offset) => {
+      const index = start + offset;
+      return { item, index, top: layout.offsets[index] ?? 0 };
+    });
+    return includeVirtualRowByKey(rows, items, layout.offsets, alwaysIncludeKey);
+  }, [
+    alwaysIncludeKey,
+    enabled,
+    initialTailRows,
+    items,
+    layout.offsets,
+    layout.sizes,
+    overscanPx,
+    viewport.height,
+    viewport.scrollTop,
+  ]);
+
+  const onMeasure = useCallback((key: string, height: number) => {
+    if (!Number.isFinite(height) || height <= 0) return;
+    const next = Math.max(CHAT_VIRTUAL_MIN_ROW_HEIGHT, Math.ceil(height));
+    const previous = measuredHeightsRef.current.get(key);
+    if (previous !== undefined && Math.abs(previous - next) < 2) return;
+    measuredHeightsRef.current.set(key, next);
+    setMeasureVersion((version) => version + 1);
+  }, []);
+
+  return {
+    rows,
+    totalHeight: layout.totalHeight,
+    onMeasure,
+  };
+}
+
+function includeVirtualRowByKey<T extends { key: string }>(
+  rows: Array<{ item: T; index: number; top: number }>,
+  items: T[],
+  offsets: number[],
+  key: string | undefined,
+): Array<{ item: T; index: number; top: number }> {
+  if (!key || rows.some((row) => row.item.key === key)) return rows;
+  const index = items.findIndex((item) => item.key === key);
+  if (index === -1) return rows;
+  return [
+    ...rows,
+    {
+      item: items[index]!,
+      index,
+      top: offsets[index] ?? 0,
+    },
+  ].sort((a, b) => a.index - b.index);
+}
+
+function PinnedTodoSlot({
+  messages,
+  streaming,
+  conversationId,
+  onContinueRemainingTasks,
+  containerRef,
+}: {
+  messages: ChatMessage[];
+  streaming: boolean;
+  conversationId: string | null;
+  onContinueRemainingTasks?: (
+    assistantMessage: ChatMessage,
+    todos: TodoItem[],
+  ) => boolean | void | Promise<boolean | void>;
+  containerRef?: MutableRefObject<HTMLDivElement | null>;
+}) {
+  const storageKey = `od:chat:continued-todo:${conversationId ?? 'none'}`;
+  const [dismissal, setDismissal] = useState(() => ({
+    storageKey,
+    snapshotKey: readContinuedTodoSnapshotKey(storageKey),
+  }));
+  useEffect(() => {
+    setDismissal({
+      storageKey,
+      snapshotKey: readContinuedTodoSnapshotKey(storageKey),
+    });
+  }, [storageKey]);
+  const dismissedSnapshotKey =
+    dismissal.storageKey === storageKey ? dismissal.snapshotKey : null;
+  const input = latestTodoWriteInputForPinnedCard(messages);
+  if (input == null) return null;
+
+  const owner = [...messages].reverse().find(
+    (message) =>
+      message.role === 'assistant' &&
+      message.events?.some(
+        (event) => event.kind === 'tool_use' && isTodoWriteToolName(event.name),
+      ),
+  );
+  const ownerTodoEvent = owner?.events
+    ? [...owner.events].reverse().find(
+        (event) => event.kind === 'tool_use' && isTodoWriteToolName(event.name),
+      )
+    : undefined;
+  const snapshotKey =
+    owner &&
+    ownerTodoEvent &&
+    'id' in ownerTodoEvent &&
+    typeof ownerTodoEvent.id === 'string'
+      ? `${owner.id}:${ownerTodoEvent.id}`
+      : null;
+  if (snapshotKey != null && snapshotKey === dismissedSnapshotKey) return null;
+  const unfinishedTodos = owner ? unfinishedTodosFromEvents(owner.events) : [];
+
+  return (
+    <div
+      className="chat-pinned-todo"
+      ref={containerRef}
+    >
       <TodoCard
         input={input}
         runStreaming={streaming}
         runSucceeded={!streaming}
-        onDismiss={() => {
-          if (exiting) return;
-          setExiting(true);
-          // Match the slide-out duration in CSS (220ms) — once the
-          // transition completes the snapshot key is recorded as
-          // dismissed and the slot is unmounted by the early return.
-          window.setTimeout(() => onDismiss(snapshotKey), 220);
-        }}
+        onContinue={
+          owner && snapshotKey && unfinishedTodos.length > 0 && onContinueRemainingTasks
+            ? () => {
+                void Promise.resolve(onContinueRemainingTasks(owner, unfinishedTodos))
+                  .then((accepted) => {
+                    if (accepted === false) return;
+                    setDismissal({ storageKey, snapshotKey });
+                    writeContinuedTodoSnapshotKey(storageKey, snapshotKey);
+                  })
+                  .catch(() => {});
+              }
+            : undefined
+        }
       />
+    </div>
+  );
+}
+
+function readContinuedTodoSnapshotKey(storageKey: string): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    return window.sessionStorage.getItem(storageKey);
+  } catch {
+    return null;
+  }
+}
+
+function writeContinuedTodoSnapshotKey(storageKey: string, snapshotKey: string): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.sessionStorage.setItem(storageKey, snapshotKey);
+  } catch {
+    // sessionStorage may be unavailable in sandboxed or privacy-restricted contexts.
+  }
+}
+
+function QueuedSendStrip({
+  containerRef,
+  editingId,
+  items,
+  onEdit,
+  onRemove,
+  onReorder,
+  onSendNow,
+}: {
+  containerRef?: MutableRefObject<HTMLDivElement | null>;
+  editingId?: string | null;
+  items: QueuedSendItem[];
+  onEdit?: (item: QueuedSendItem) => void;
+  onRemove?: (id: string) => void;
+  onReorder?: (orderedIds: string[]) => void;
+  onSendNow?: (id: string) => void;
+}) {
+  const t = useT();
+  const [dragState, setDragState] = useState<QueuedSendDragState | null>(null);
+  if (items.length === 0) return null;
+  const canReorder = Boolean(onReorder && items.length > 1);
+  const overflowCount = Math.max(0, items.length - QUEUED_SEND_VISIBLE_ROW_COUNT);
+
+  const handleDragStart = (
+    event: ReactDragEvent<HTMLButtonElement>,
+    item: QueuedSendItem,
+  ) => {
+    if (!canReorder) return;
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData(QUEUED_SEND_DRAG_MIME, item.id);
+    event.dataTransfer.setData('text/plain', item.id);
+    setDragState({ draggingId: item.id, overId: item.id, edge: null });
+  };
+
+  const handleDragOver = (
+    event: ReactDragEvent<HTMLDivElement>,
+    targetId: string,
+  ) => {
+    if (!canReorder) return;
+    const draggingId = dragState?.draggingId || event.dataTransfer.getData(QUEUED_SEND_DRAG_MIME);
+    if (!draggingId) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+    if (draggingId === targetId) {
+      if (dragState?.overId !== targetId || dragState.edge !== null) {
+        setDragState({ draggingId, overId: targetId, edge: null });
+      }
+      return;
+    }
+    const edge = queuedDropEdgeForEvent(event);
+    if (
+      dragState?.draggingId !== draggingId
+      || dragState.overId !== targetId
+      || dragState.edge !== edge
+    ) {
+      setDragState({ draggingId, overId: targetId, edge });
+    }
+  };
+
+  const handleDrop = (
+    event: ReactDragEvent<HTMLDivElement>,
+    targetId: string,
+  ) => {
+    if (!canReorder) return;
+    event.preventDefault();
+    const draggingId =
+      dragState?.draggingId
+      || event.dataTransfer.getData(QUEUED_SEND_DRAG_MIME)
+      || event.dataTransfer.getData('text/plain');
+    if (!draggingId || draggingId === targetId) {
+      setDragState(null);
+      return;
+    }
+    const edge = dragState?.overId === targetId && dragState.edge
+      ? dragState.edge
+      : queuedDropEdgeForEvent(event);
+    const nextIds = reorderQueuedSendIds(items, draggingId, targetId, edge);
+    if (nextIds.join('\0') !== items.map((item) => item.id).join('\0')) {
+      onReorder?.(nextIds);
+    }
+    setDragState(null);
+  };
+
+  return (
+    <div
+      ref={containerRef}
+      className="chat-queued-send-strip"
+      data-testid="chat-queued-send-strip"
+      onDragLeave={(event) => {
+        const related = event.relatedTarget;
+        if (related instanceof Node && event.currentTarget.contains(related)) return;
+        setDragState(null);
+      }}
+    >
+      <div className="chat-queued-send-header">
+        <div className="chat-queued-send-heading">
+          <strong>
+            {items.length} {t('chat.queuedHeader')}
+          </strong>
+          <span aria-hidden>↩</span>
+          <span>{t('chat.queuedToSend')}</span>
+        </div>
+      </div>
+      <div className={`chat-queued-send-list${overflowCount > 0 ? ' is-scrollable' : ''}`}>
+        {items.map((item, index) => {
+          const isDragging = dragState?.draggingId === item.id;
+          const dropClass = dragState?.overId === item.id
+            && dragState.draggingId !== item.id
+            && dragState.edge
+            ? ` chat-queued-send-row-drop-${dragState.edge}`
+            : '';
+          return (
+            <div
+              className={`chat-queued-send-row${index === 0 ? ' chat-queued-send-row-active' : ''}${
+                editingId === item.id ? ' chat-queued-send-row-editing' : ''
+              }${isDragging ? ' chat-queued-send-row-dragging' : ''}${dropClass}`}
+              key={item.id}
+              onDragOver={(event) => handleDragOver(event, item.id)}
+              onDrop={(event) => handleDrop(event, item.id)}
+            >
+              <button
+                type="button"
+                className="chat-queued-send-drag-handle chat-queued-send-tooltip od-tooltip"
+                title={t('chat.queuedReorder')}
+                data-tooltip={t('chat.queuedReorder')}
+                data-tooltip-placement="right"
+                aria-label={t('chat.queuedReorder')}
+                draggable={canReorder}
+                disabled={!canReorder}
+                onDragStart={(event) => handleDragStart(event, item)}
+                onDragEnd={() => setDragState(null)}
+              >
+                <Icon name="grip-vertical" size={14} />
+              </button>
+              <div className="chat-queued-send-main">
+                <span className="chat-queued-send-title">{summarizeQueuedPrompt(item, t)}</span>
+                <QueuedSendMetaChips item={item} />
+              </div>
+              <div className="chat-queued-send-actions">
+                {onEdit ? (
+                  <button
+                    type="button"
+                    className="chat-queued-send-action chat-queued-send-tooltip od-tooltip"
+                    title={t('chat.queuedEdit')}
+                    data-tooltip={t('chat.queuedEdit')}
+                    data-tooltip-placement="top"
+                    aria-label={t('chat.queuedEdit')}
+                    onClick={() => onEdit(item)}
+                  >
+                    <Icon name="pencil" size={13} />
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  className="chat-queued-send-action chat-queued-send-tooltip od-tooltip"
+                  title={t('chat.send')}
+                  data-tooltip={t('chat.send')}
+                  data-tooltip-placement="top"
+                  aria-label={t('chat.send')}
+                  data-testid="chat-queued-send-now"
+                  onClick={() => onSendNow?.(item.id)}
+                  disabled={!onSendNow}
+                >
+                  <Icon name="arrow-up" size={13} />
+                </button>
+                {onRemove ? (
+                  <button
+                    type="button"
+                    className="chat-queued-send-action chat-queued-send-tooltip od-tooltip"
+                    onClick={() => onRemove(item.id)}
+                    title={t('chat.comments.remove')}
+                    data-tooltip={t('chat.comments.remove')}
+                    data-tooltip-placement="top"
+                    aria-label={t('chat.comments.remove')}
+                  >
+                    <Icon name="trash" size={13} />
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {overflowCount > 0 ? (
+        <div className="chat-queued-send-overflow">
+          +{overflowCount} {t('chat.queuedMore')}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+const QUEUED_SEND_DRAG_MIME = 'application/x-open-design-queued-send';
+const QUEUED_SEND_VISIBLE_ROW_COUNT = 4;
+
+type QueuedSendDropEdge = 'before' | 'after';
+
+interface QueuedSendDragState {
+  draggingId: string;
+  overId: string | null;
+  edge: QueuedSendDropEdge | null;
+}
+
+function queuedDropEdgeForEvent(event: ReactDragEvent<HTMLElement>): QueuedSendDropEdge {
+  const rect = event.currentTarget.getBoundingClientRect();
+  return event.clientY < rect.top + rect.height / 2 ? 'before' : 'after';
+}
+
+function reorderQueuedSendIds(
+  items: QueuedSendItem[],
+  draggingId: string,
+  targetId: string,
+  edge: QueuedSendDropEdge,
+): string[] {
+  const ids = items.map((item) => item.id);
+  const from = ids.indexOf(draggingId);
+  if (from < 0) return ids;
+  const [draggedId] = ids.splice(from, 1);
+  const targetIndex = ids.indexOf(targetId);
+  if (targetIndex < 0 || !draggedId) return items.map((item) => item.id);
+  ids.splice(edge === 'after' ? targetIndex + 1 : targetIndex, 0, draggedId);
+  return ids;
+}
+
+function summarizeQueuedPrompt(item: QueuedSendItem, t: TranslateFn): string {
+  const normalized = item.prompt.replace(/\s+/g, ' ').trim();
+  const text = normalized || t('chat.queuedFollowUpFallback');
+  return text.length > 58 ? `${text.slice(0, 57)}...` : text;
+}
+
+// Surfaces what a queued turn carries — attachments, visual marks, and the
+// staged plugin / skill / MCP / connector context from its meta — as compact
+// chips so the user can see (and trust) what will be sent without expanding it.
+// Counts use the same plain-English style as the rest of this strip.
+function QueuedSendMetaChips({ item }: { item: QueuedSendItem }) {
+  const ctx = item.meta?.context;
+  const files = item.attachments?.length ?? 0;
+  const marks = item.commentAttachments?.length ?? 0;
+  const plugins = item.meta?.appliedPluginSnapshot ? 1 : ctx?.pluginIds?.length ?? 0;
+  const skills = ctx?.skillIds?.length ?? 0;
+  const mcp = ctx?.mcpServerIds?.length ?? 0;
+  const connectors = ctx?.connectorIds?.length ?? 0;
+  const workspace = ctx?.workspaceItems?.length ?? 0;
+  const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+  const chips: Array<{ key: string; label: string }> = [];
+  if (files > 0) chips.push({ key: 'files', label: plural(files, 'file') });
+  if (marks > 0) chips.push({ key: 'marks', label: plural(marks, 'mark') });
+  if (plugins > 0) chips.push({ key: 'plugins', label: plural(plugins, 'plugin') });
+  if (skills > 0) chips.push({ key: 'skills', label: plural(skills, 'skill') });
+  if (mcp > 0) chips.push({ key: 'mcp', label: `${mcp} MCP` });
+  if (connectors > 0) chips.push({ key: 'connectors', label: plural(connectors, 'connector') });
+  if (workspace > 0) chips.push({ key: 'workspace', label: plural(workspace, 'workspace context') });
+  if (chips.length === 0) return null;
+  return (
+    <div className="chat-queued-send-chips">
+      {chips.map((chip) => (
+        <span key={chip.key} className="chat-queued-send-chip">
+          {chip.label}
+        </span>
+      ))}
     </div>
   );
 }
@@ -1014,7 +4440,7 @@ function CommentSection({
             data-testid={`comment-card-${comment.elementId}`}
           >
             <div className="comment-card-top">
-              <strong>{comment.elementId}</strong>
+              <strong>{commentTargetDisplayName(comment)}</strong>
               <div className="comment-card-actions">
                 {secondaryActionLabel && onSecondaryAction ? (
                   <button
@@ -1034,7 +4460,7 @@ function CommentSection({
             <div className="comment-card-meta">
               <span>{comment.id}</span>
               <span>{comment.filePath}</span>
-              <span>{comment.label}</span>
+              <span>{commentTargetDisplayName(comment)}</span>
               <span>{simplePositionLabel(comment.position)}</span>
             </div>
           </article>
@@ -1052,81 +4478,161 @@ function isTerminalRunStatus(status: ChatMessage['runStatus']): boolean {
   return status === 'succeeded' || status === 'failed' || status === 'canceled';
 }
 
+export function retryableAssistantMessage(
+  messages: ChatMessage[],
+  lastAssistantId: string | null | undefined,
+  paneStreaming: boolean,
+): ChatMessage | null {
+  if (paneStreaming) return null;
+  const last = messages[messages.length - 1];
+  if (!last || last.role !== 'assistant') return null;
+  if (last.id !== lastAssistantId) return null;
+  return isRetryableAssistantTerminalFailure(last) ? last : null;
+}
+
+function isRecoveredAssistantRunError(
+  messages: ChatMessage[],
+  error: string | null,
+  sourceAssistantId: string | null | undefined,
+): boolean {
+  const target = error?.trim();
+  if (!target || !sourceAssistantId) return false;
+  const sourceIndex = messages.findIndex(
+    (message) =>
+      message.role === 'assistant' && message.id === sourceAssistantId,
+  );
+  if (sourceIndex < 0) return false;
+  const source = messages[sourceIndex]!;
+  const ownsPersistedError = (source.events ?? []).some(
+    (event) =>
+      event.kind === 'status' &&
+      event.label === 'error' &&
+      event.detail?.trim() === target,
+  );
+  if (!ownsPersistedError) return false;
+  return messages.slice(sourceIndex + 1).some(
+    (message) => message.role === 'assistant' && message.runStatus === 'succeeded',
+  );
+}
+
 export function isAssistantMessageStreaming(
   message: ChatMessage,
   paneStreaming: boolean,
   lastAssistantId: string | null | undefined,
+  forceStreamingMessageIds?: Set<string>,
 ): boolean {
   if (message.role !== 'assistant') return false;
+  if (isTerminalRunStatus(message.runStatus)) return false;
+  if (forceStreamingMessageIds?.has(message.id)) return true;
   if (isActiveRunStatus(message.runStatus)) return true;
   if (message.id !== lastAssistantId) return false;
   if (!paneStreaming) return false;
   if (message.endedAt !== undefined) return false;
-  if (isTerminalRunStatus(message.runStatus)) return false;
   return true;
+}
+
+export function buildRunErrorDiagnosticText(input: RunErrorDiagnosticInput): string {
+  const lines: string[] = [];
+  const sourceText = input.rawMessage?.trim() || input.message.trim();
+  if (sourceText) {
+    lines.push(sourceText, '');
+  }
+
+  lines.push(
+    'OpenDesign run error diagnostics',
+    `trace_id: ${input.traceId ?? 'n/a'}`,
+    `run_id: ${input.traceId ?? 'n/a'}`,
+    `error_code: ${input.errorCode ?? 'n/a'}`,
+    `project_id: ${input.projectId ?? 'n/a'}`,
+    `conversation_id: ${input.conversationId ?? 'n/a'}`,
+    `assistant_message_id: ${input.assistantMessageId ?? 'n/a'}`,
+    `agent_id: ${input.agentId ?? 'n/a'}`,
+  );
+
+  return lines.join('\n');
+}
+
+function filterConversations(
+  conversations: Conversation[],
+  query: string,
+  t: TranslateFn,
+): Conversation[] {
+  const normalized = query.trim().toLocaleLowerCase();
+  if (!normalized) return conversations;
+  return conversations.filter((conversation) => {
+    const title = conversation.title || t('chat.untitledConversation');
+    const meta = conversationMetaLabel(conversation, t);
+    return `${title} ${conversation.id} ${meta}`.toLocaleLowerCase().includes(normalized);
+  });
+}
+
+function conversationMessageCount(
+  conversation: Conversation,
+  activeConversationId: string | null,
+  messagesConversationId: string | null,
+  activeMessageCount: number,
+): number | null {
+  // The live `messages` array is authoritative for the active conversation —
+  // it stays fresh as a run streams new turns in — but ONLY once it has
+  // actually loaded for that conversation. While a switch is mid-flight (or a
+  // load failed) `messages` is reset to [] and `messagesConversationId` no
+  // longer matches the active id; trusting `messages.length` there renders a
+  // phantom "0 msg". Fall back to the persisted server count until the live
+  // array catches up.
+  if (
+    conversation.id === activeConversationId &&
+    messagesConversationId === activeConversationId
+  ) {
+    return activeMessageCount;
+  }
+  return typeof conversation.messageCount === 'number' ? conversation.messageCount : null;
+}
+
+function compactCount(value: number): string {
+  if (value < 1000) return String(value);
+  const compact = Math.floor(value / 100) / 10;
+  return `${compact}k`;
 }
 
 function ConversationRow({
   conversation,
   active,
+  messageCount,
   onSelect,
   onDelete,
-  onRename,
   t,
 }: {
   conversation: Conversation;
   active: boolean;
+  messageCount: number | null;
   onSelect: () => void;
   onDelete: () => void;
-  onRename?: (id: string, title: string) => void;
   t: TranslateFn;
 }) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(conversation.title ?? '');
   const displayTitle =
     conversation.title || t('chat.untitledConversation');
+
   return (
     <div
       className={`chat-conv-item${active ? ' active' : ''}`}
       data-testid={`conversation-item-${conversation.id}`}
     >
-      {editing && onRename ? (
-        <input
-          autoFocus
-          className="chat-conv-rename-input"
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onBlur={() => {
-            onRename(conversation.id, draft);
-            setEditing(false);
-          }}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              onRename(conversation.id, draft);
-              setEditing(false);
-            } else if (e.key === 'Escape') {
-              setEditing(false);
-            }
-          }}
-          style={{ flex: 1, padding: '2px 6px', fontSize: 12 }}
-        />
-      ) : (
-        <button
-          type="button"
-          className="chat-conv-item-name"
-          data-testid={`conversation-select-${conversation.id}`}
-          style={{ background: 'transparent', border: 'none', padding: 0, textAlign: 'left' }}
-          onClick={onSelect}
-          onDoubleClick={() => {
-            if (!onRename) return;
-            setDraft(conversation.title ?? '');
-            setEditing(true);
-          }}
-        >
-          {displayTitle}
-        </button>
-      )}
-      <span className="chat-conv-item-meta">{conversationMetaLabel(conversation, t)}</span>
+      <button
+        type="button"
+        className="chat-conv-item-name"
+        data-testid={`conversation-select-${conversation.id}`}
+        style={{ background: 'transparent', border: 'none', padding: 0, textAlign: 'left' }}
+        onClick={onSelect}
+      >
+        {displayTitle}
+      </button>
+      <span
+        className="chat-conv-item-meta"
+        data-testid={`conversation-meta-${conversation.id}`}
+      >
+        {messageCount !== null ? `${compactCount(messageCount)} msg · ` : ''}
+        {conversationMetaLabel(conversation, t)}
+      </span>
       <button
         type="button"
         className="chat-conv-item-del"
@@ -1147,23 +4653,41 @@ function ConversationRow({
   );
 }
 
-function UserMessage({
+// Memoized (hoisted impl referenced below): a static user message has stable
+// props, so it skips re-render while a later turn streams.
+const UserMessage = memo(UserMessageImpl);
+
+function UserMessageImpl({
   message,
   projectId,
   projectFileNames,
   onRequestOpenFile,
+  onRequestPluginDetails,
+  onRequestDesignSystemDetails,
   t,
-  activePluginSnapshot,
+  appliedContextItems,
+  highlighted,
 }: {
   message: ChatMessage;
   projectId: string | null;
   projectFileNames?: Set<string>;
   onRequestOpenFile?: (name: string) => void;
+  onRequestPluginDetails?: (pluginId: string) => void;
+  onRequestDesignSystemDetails?: (system: DesignSystemSummary) => void;
   t: TranslateFn;
-  activePluginSnapshot?: AppliedPluginSnapshot | null;
+  appliedContextItems: AppliedContextItem[];
+  highlighted?: boolean;
 }) {
-  const attachments = message.attachments ?? [];
+  const { workspaceContext } = useProjectCollabContext();
+  const attachments = sortChatAttachmentsForDisplay(message.attachments ?? []);
   const commentAttachments = message.commentAttachments ?? [];
+  const workspaceItems = message.runContext?.workspaceItems ?? [];
+  const visibleWorkspaceItems = workspaceItems.filter((item) => item.kind !== 'design-system');
+  const hasRunContext = Boolean(
+    message.sessionMode ||
+      visibleWorkspaceItems.length > 0 ||
+      appliedContextItems.length > 0,
+  );
   const [copied, setCopied] = useState(false);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout>>();
 
@@ -1188,17 +4712,36 @@ function UserMessage({
   const isDesignSystemWorkspaceRequest = isDesignSystemWorkspacePrompt(message.content);
 
   return (
-    <div className="msg user">
-      <div className="role">
-        <span>{t('chat.you')}</span>
-        <MessageTimestamp message={message} t={t} />
-      </div>
-      {activePluginSnapshot ? (
-        <ActivePluginChip snapshot={activePluginSnapshot} t={t} />
+    <div
+      className={`msg user${highlighted ? ' is-chat-rail-highlighted' : ''}`}
+      data-chat-message-id={message.id}
+    >
+      <span className="sr-only">{t('chat.you')}</span>
+      {hasRunContext ? (
+        <div className="msg-run-context-row" data-testid="msg-run-context-row">
+          {message.sessionMode ? (
+            <MessageSessionModeChip mode={message.sessionMode} t={t} />
+          ) : null}
+          {visibleWorkspaceItems.map((item) => (
+            <ActiveWorkspaceContextChip
+              key={`${item.kind}:${item.id}`}
+              item={item}
+              onOpen={onRequestOpenFile}
+            />
+          ))}
+          {appliedContextItems.length > 0 ? (
+            <AppliedContextDisclosure
+              items={appliedContextItems}
+              t={t}
+              onOpenPlugin={onRequestPluginDetails}
+              onOpenDesignSystem={onRequestDesignSystemDetails}
+            />
+          ) : null}
+        </div>
       ) : null}
       {attachments.length > 0 ? (
         <div className="user-attachments">
-          {attachments.map((a) => {
+          {attachments.map((a, index) => {
             const baseName = a.path.split('/').pop() || a.path;
             const openable =
               !!onRequestOpenFile &&
@@ -1215,8 +4758,14 @@ function UserMessage({
                 disabled={!openable}
                 title={openable ? t('chat.openFile', { name: baseName }) : a.path}
               >
+                <span className="staged-order" aria-label={`Attachment ${index + 1}`}>
+                  {index + 1}
+                </span>
                 {a.kind === 'image' && projectId ? (
-                  <img src={projectRawUrl(projectId, a.path)} alt={a.name} />
+                  <img
+                    src={projectRawUrl(projectId, a.path, workspaceContext)}
+                    alt={a.name}
+                  />
                 ) : (
                   <Icon name="file" size={14} />
                 )}
@@ -1230,9 +4779,9 @@ function UserMessage({
         <div className="user-attachments comment-history-attachments">
           {commentAttachments.filter((attachment) => attachment.selectionKind !== 'visual').map((a) => (
             <span key={a.id} className="user-attachment staged-comment">
-              <span className="staged-name" title={`${a.elementId}: ${a.comment}`}>
-                <strong>{a.selectionKind === 'visual' ? 'Visual mark' : a.elementId}</strong>
-                <span>{a.comment}</span>
+              <span className="staged-name" title={a.comment ? `${commentTargetDisplayName(a)}: ${a.comment}` : commentTargetDisplayName(a)}>
+                <strong>{commentTargetDisplayName(a)}</strong>
+                {a.comment ? <span>{a.comment}</span> : null}
               </span>
             </span>
           ))}
@@ -1242,7 +4791,7 @@ function UserMessage({
         <div className="user-text-wrap user-status-wrap">
           <div className="user-status-card design-system-generation-status">
             <span className="user-status-card__icon">
-              <Icon name="palette" size={15} />
+              <Icon name="blocks" size={15} />
             </span>
             <span className="user-status-card__copy">
               <strong>{DESIGN_SYSTEM_WORKSPACE_DISPLAY_TITLE}</strong>
@@ -1253,76 +4802,276 @@ function UserMessage({
       ) : message.content ? (
         <div className="user-text-wrap">
           <div className="user-text user-bubble">{message.content}</div>
-          <button
-            type="button"
-            className="ghost user-copy-btn"
-            onClick={handleCopy}
-            aria-label={copied ? t('chat.copyDone') : t('chat.copyPrompt')}
-            title={copied ? t('chat.copyDone') : t('chat.copyPrompt')}
-          >
-            <Icon name={copied ? 'check' : 'copy'} size={12} />
-          </button>
+          <div className="user-actions">
+            <button
+              type="button"
+              className="ghost user-copy-btn"
+              onClick={handleCopy}
+              aria-label={copied ? t('chat.copyDone') : t('chat.copyPrompt')}
+              title={copied ? t('chat.copyDone') : t('chat.copyPrompt')}
+            >
+              <Icon name={copied ? 'check' : 'copy'} size={13} />
+            </button>
+          </div>
         </div>
       ) : null}
     </div>
   );
 }
 
-// Context chip rendered above a user message when the project pinned a
-// plugin at create time (PluginLoopHome on Home). Replaces the noisy
-// in-composer plugin rail so the user is not re-prompted to pick
-// something they already chose; instead the active plugin lives inside
-// the run message it kicked off.
-function ActivePluginChip({
-  snapshot,
-  t: _t,
+// Plugin, skill and design-system inputs are supporting context, not separate
+// cards. Collapse them into one line and only render that line when the
+// selection changes (the caller performs the conversation-level dedupe).
+function AppliedContextDisclosure({
+  items,
+  t,
+  onOpenPlugin,
+  onOpenDesignSystem,
 }: {
-  snapshot: AppliedPluginSnapshot;
+  items: AppliedContextItem[];
+  t: TranslateFn;
+  onOpenPlugin?: (pluginId: string) => void;
+  onOpenDesignSystem?: (system: DesignSystemSummary) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const names = items.map((item) => item.title).join(' · ');
+  const summary = t('brand.appliedToChat', { name: names });
+  return (
+    <div className="msg-applied-context" data-testid="msg-applied-context">
+      <button
+        type="button"
+        className="msg-applied-context__toggle"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+        title={summary}
+      >
+        <span className="msg-applied-context__icon" aria-hidden>
+          <Icon name="blocks" size={11} />
+        </span>
+        <span className="msg-applied-context__summary">{summary}</span>
+        <span className={`msg-applied-context__chevron${open ? ' is-open' : ''}`} aria-hidden>
+          <Icon name="chevron-down" size={11} />
+        </span>
+      </button>
+      <div className={`accordion-collapsible${open ? ' open' : ''}`}>
+        <div className="accordion-collapsible-inner">
+          <div className="msg-applied-context__details">
+            {items.map((item, index) => {
+              const label = item.kind === 'plugin'
+                ? 'Plugin'
+                : item.kind === 'skill'
+                  ? 'Skill'
+                  : 'Design System';
+              const canOpenPlugin = item.kind === 'plugin' && !!onOpenPlugin;
+              const canOpenSystem = item.kind === 'design-system' && !!item.system && !!onOpenDesignSystem;
+              const content = (
+                <>
+                  <span className="msg-applied-context__kind">{label}</span>
+                  <span>{item.title}</span>
+                </>
+              );
+              return canOpenPlugin || canOpenSystem ? (
+                <button
+                  key={`${item.kind}:${item.title}:${index}`}
+                  type="button"
+                  className="msg-applied-context__item is-action"
+                  onClick={() => {
+                    if (item.kind === 'plugin') onOpenPlugin?.(item.pluginId);
+                    if (item.kind === 'design-system' && item.system) {
+                      onOpenDesignSystem?.(item.system);
+                    }
+                  }}
+                >
+                  {content}
+                </button>
+              ) : (
+                <span
+                  key={`${item.kind}:${item.title}:${index}`}
+                  className="msg-applied-context__item"
+                >
+                  {content}
+                </span>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MessageSessionModeChip({
+  mode,
+  t,
+}: {
+  mode: ChatSessionMode;
   t: TranslateFn;
 }) {
-  const title = snapshot.pluginTitle ?? snapshot.pluginId;
-  const version = snapshot.pluginVersion;
-  const taskKind = snapshot.taskKind;
+  const label = mode === 'chat'
+    ? t('chat.mode.chat.label')
+    : mode === 'plan'
+      ? t('chat.mode.plan.label')
+      : t('chat.mode.design.label');
+  const icon = mode === 'chat' ? 'comment' : mode === 'plan' ? 'file' : 'sparkles';
   return (
-    <div className="msg-plugin-chip" data-testid="msg-plugin-chip">
-      <span className="msg-plugin-chip__dot" aria-hidden />
-      <span className="msg-plugin-chip__label">
-        <span className="msg-plugin-chip__kind">Plugin</span>
-        <span className="msg-plugin-chip__title">{title}</span>
-        <span className="msg-plugin-chip__version">@{version}</span>
+    <div
+      className={`msg-mode-chip msg-mode-chip--${mode}`}
+      data-testid="msg-session-mode-chip"
+      title={label}
+    >
+      <Icon name={icon} size={12} />
+      <span>{label}</span>
+    </div>
+  );
+}
+
+const WORKSPACE_DESIGN_FILES_TAB = '__design_files__';
+const WORKSPACE_DESIGN_SYSTEM_TAB = '__design_system__';
+
+function ActiveWorkspaceContextChip({
+  item,
+  onOpen,
+}: {
+  item: WorkspaceContextItem;
+  onOpen?: (name: string) => void;
+}) {
+  const target = workspaceContextOpenTarget(item);
+  const content = (
+    <>
+      <span className="msg-plugin-chip__icon" aria-hidden>
+        <Icon name={workspaceContextIcon(item)} size={12} />
       </span>
-      {taskKind ? (
-        <span className="msg-plugin-chip__task">{taskKind}</span>
-      ) : null}
-    </div>
+      <span className="msg-plugin-chip__label">
+        <span className="msg-plugin-chip__kind">Current</span>
+        <span className="msg-plugin-chip__title">{item.label}</span>
+      </span>
+    </>
   );
-}
-
-function DaySeparator({ ts }: { ts: number | undefined }) {
-  if (!ts) return null;
+  if (!target || !onOpen) {
+    return (
+      <div
+        className={`msg-plugin-chip msg-plugin-chip--workspace msg-plugin-chip--workspace-${item.kind}`}
+        data-testid="msg-workspace-context-chip"
+        title={workspaceContextTitle(item)}
+      >
+        {content}
+      </div>
+    );
+  }
   return (
-    <div className="chat-day-separator" role="separator">
-      <time dateTime={new Date(ts).toISOString()}>{dayLabel(ts)}</time>
-    </div>
+    <button
+      type="button"
+      className={`msg-plugin-chip msg-plugin-chip--workspace msg-plugin-chip--workspace-${item.kind} msg-plugin-chip--action`}
+      data-testid="msg-workspace-context-chip"
+      title={workspaceContextTitle(item)}
+      onClick={() => onOpen(target)}
+    >
+      {content}
+    </button>
   );
 }
 
-function MessageTimestamp({ message, t }: { message: ChatMessage; t: TranslateFn }) {
-  const ts = messageTime(message);
-  if (!ts) return null;
+function workspaceContextOpenTarget(item: WorkspaceContextItem): string | null {
+  if (item.tabId) return item.tabId;
+  if (item.kind === 'design-files') return WORKSPACE_DESIGN_FILES_TAB;
+  if (item.kind === 'design-system') return WORKSPACE_DESIGN_SYSTEM_TAB;
+  if (item.kind === 'file' || item.kind === 'live-artifact') {
+    return item.path ?? item.label;
+  }
+  return null;
+}
+
+function workspaceContextIcon(item: WorkspaceContextItem): IconName {
+  if (item.kind === 'browser') return 'globe';
+  if (item.kind === 'folder' || item.kind === 'design-files') return 'folder';
+  if (item.kind === 'project') return 'folder';
+  if (item.kind === 'local-code') return 'terminal';
+  if (item.kind === 'terminal') return 'terminal';
+  if (item.kind === 'side-chat') return 'comment';
+  if (item.kind === 'design-system') return 'blocks';
+  return 'file';
+}
+
+function workspaceContextTitle(item: WorkspaceContextItem): string {
+  return [
+    workspaceContextKindLabel(item.kind),
+    item.path ? `path: ${item.path}` : null,
+    item.absolutePath ? `absolute: ${item.absolutePath}` : null,
+    item.url ? `url: ${item.url}` : null,
+    item.title ? `title: ${item.title}` : null,
+  ].filter(Boolean).join(' | ');
+}
+
+function workspaceContextKindLabel(kind: WorkspaceContextItem['kind']): string {
+  switch (kind) {
+    case 'browser':
+      return 'Browser';
+    case 'design-files':
+      return 'Design files';
+    case 'design-system':
+      return 'Design system';
+    case 'folder':
+      return 'Folder';
+    case 'project':
+      return 'Project';
+    case 'local-code':
+      return 'Local code';
+    case 'terminal':
+      return 'Terminal';
+    case 'side-chat':
+      return 'Side chat';
+    case 'live-artifact':
+      return 'Live artifact';
+    case 'file':
+    default:
+      return 'File';
+  }
+}
+
+function sortChatAttachmentsForDisplay(attachments: ChatAttachment[]): ChatAttachment[] {
+  return attachments
+    .map((attachment, index) => ({ attachment, index }))
+    .sort((a, b) => {
+      const aOrder = typeof a.attachment.order === 'number' && Number.isFinite(a.attachment.order)
+        ? a.attachment.order
+        : a.index;
+      const bOrder = typeof b.attachment.order === 'number' && Number.isFinite(b.attachment.order)
+        ? b.attachment.order
+        : b.index;
+      if (aOrder !== bOrder) return aOrder - bOrder;
+      return a.index - b.index;
+    })
+    .map((entry) => entry.attachment);
+}
+
+function isDesignSystemNextStepProject(metadata: ProjectMetadata | undefined): boolean {
+  if (!metadata) return false;
   return (
-    <time className="msg-time" dateTime={new Date(ts).toISOString()} title={exactDateTime(ts)}>
-      {relativeTimeLong(ts, t)}
-    </time>
+    metadata.kind === 'brand' ||
+    metadata.importedFrom === 'design-system' ||
+    metadata.importedFrom === 'brand-extraction' ||
+    Boolean(metadata.brandDesignSystemId)
   );
 }
 
-function shouldShowDaySeparator(prev: ChatMessage | undefined, curr: ChatMessage): boolean {
-  const currTime = messageTime(curr);
-  if (!currTime) return false;
-  const prevTime = prev ? messageTime(prev) : undefined;
-  if (!prevTime) return true;
-  return dayKey(prevTime) !== dayKey(currTime);
+function isBrandExtractionNextStepProject(metadata: ProjectMetadata | undefined): boolean {
+  if (!metadata) return false;
+  return (
+    metadata.kind === 'brand' ||
+    metadata.importedFrom === 'brand-extraction' ||
+    Boolean(metadata.brandId) ||
+    Boolean(metadata.brandDesignSystemId)
+  );
+}
+
+function isProgrammaticBrandAssistantMessage(message: ChatMessage | null | undefined): boolean {
+  if (!message || message.role !== 'assistant') return false;
+  const content = message.content || '';
+  return (
+    content.includes('<od-card type="brand-browser-assist"') ||
+    /programmatic (design-system )?extraction|automatic pass needs a hand|extraction stopped/i.test(content) ||
+    /程序化.*抽取|程式化.*抽取|抽取已停止/.test(content)
+  );
 }
 
 function relTime(ts: number, t: TranslateFn): string {
@@ -1342,6 +5091,16 @@ export function conversationMetaLabel(
   t: TranslateFn,
 ): string {
   const latestRun = conversation.latestRun;
+  if (
+    latestRun &&
+    (latestRun.status === 'succeeded' ||
+      latestRun.status === 'failed' ||
+      latestRun.status === 'canceled') &&
+    typeof conversation.totalDurationMs === 'number' &&
+    Number.isFinite(conversation.totalDurationMs)
+  ) {
+    return formatDurationShort(conversation.totalDurationMs);
+  }
   if (
     latestRun &&
     (latestRun.status === 'succeeded' ||

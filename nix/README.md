@@ -1,6 +1,6 @@
-# Open Design — Nix flake
+# OpenDesign — Nix flake
 
-This flake exposes Open Design as a reproducible package, a `nix run` entry
+This flake exposes OpenDesign as a reproducible package, a `nix run` entry
 point, a dev shell, and Home Manager / NixOS modules. The architecture
 mirrors the runtime: the **daemon** (`od` CLI, Express API on `/api/*`)
 and the **web frontend** (Next.js static SPA at `apps/web/out/`) are
@@ -57,7 +57,9 @@ What this wires up:
   `open-design-web.service`. `systemctl --user status open-design`.
 - macOS: `launchd` agents `io.nexu.open-design` and (optionally)
   `io.nexu.open-design-web`. `launchctl print gui/$UID/io.nexu.open-design`.
-- Data lives in `$HOME/.od/` by default — override `dataDir` to relocate.
+- Before documenting or changing daemon storage, you MUST read root
+  [`AGENTS.md`](../AGENTS.md) → **Daemon data directory contract**. This README
+  MUST NOT restate it.
 
 ## (2) NixOS — for shared/server installs
 
@@ -84,7 +86,7 @@ configuration prefer the Home Manager module.
 
 ## (3) `webFrontend` — when to use it, when to bring your own server
 
-Open Design's frontend is a static SPA that issues relative `/api/*`,
+OpenDesign's frontend is a static SPA that issues relative `/api/*`,
 `/artifacts/*`, and `/frames/*` requests. Three serving options:
 
 | Option                                 | When                                                                                                                                                                                                              |
@@ -175,7 +177,7 @@ If you serve the static bundle yourself, replicate that shape:
   response compression.
 - SPA fallback for unmatched paths → `index.html`.
 
-The static-server's environment does not need any Open Design env
+The static-server's environment does not need any OpenDesign env
 vars — but **the daemon's environment usually does**, because its
 same-origin gate is built from `OD_BIND_HOST:port` (loopback hosts
 included). The browser's `Origin` and `Host` are whatever your proxy
@@ -220,17 +222,37 @@ Never inline a secret with `pkgs.writeText` or `home.file`.
 
 ## First-build hash pinning
 
-Both `nix/package-daemon.nix` and `nix/package-web.nix` vendor the pnpm
-store via a fixed-output derivation (`pnpmDeps`). The `outputHash`
-defaults to `lib.fakeSha256` so `nix build` will fail with the expected
-hash printed. Copy that value into the matching `pnpmDepsHash` constant
-at the top of each file and re-run. Bump the hash whenever
-`pnpm-lock.yaml` changes.
+`nix/pnpm-deps.nix` is the generated single source of truth for the
+vendored pnpm store hash used by both `nix/package-daemon.nix` and
+`nix/package-web.nix`. Treat it like a lock artifact, not a hand-edited
+source file. If `pnpm-lock.yaml` changes and you are intentionally
+maintaining the Nix packaging, run:
+
+```bash
+pnpm nix:update-hash
+```
+
+The script temporarily swaps one consumer to `lib.fakeHash`, runs the
+matching `nix build .#<consumer> --print-build-logs`, extracts the
+expected hash from the failure output, writes it back into
+`nix/pnpm-deps.nix`, and restores the consumer file. The script runs via
+`node --experimental-strip-types`, so CI can invoke it without first
+installing the workspace.
 
 ## CI
 
-`.github/workflows/nix-check.yml` runs `nix flake check` followed by
-separate `nix build .#daemon` and `nix build .#web` steps on each push
-that touches the flake or the lockfile. Build artifacts are cached on
-the `nexu-open-design` Cachix instance — PRs from forks read from the
-cache without needing the auth token.
+Nix validation is a **standalone** workflow (`.github/workflows/nix.yml`), not
+part of core merge validation (`ci.yml` / `Validate workspace` / merge queue).
+It runs `nix flake check` on pull requests and `main` pushes that touch flake,
+lock, or `nix/**` inputs (plus manual `workflow_dispatch`).
+
+Refresh a stale `nix/pnpm-deps.nix` locally:
+
+```bash
+pnpm nix:update-hash
+nix flake check --print-build-logs --keep-going
+```
+
+The flake filters each derivation down to only the workspace packages it
+actually installs, so unrelated package/tool changes stay off the slower Nix
+path and do not churn the other derivation's pnpm store hash.

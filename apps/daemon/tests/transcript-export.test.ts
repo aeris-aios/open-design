@@ -21,6 +21,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
+  appendMessageAgentEvents,
   closeDatabase,
   insertConversation,
   insertProject,
@@ -216,6 +217,32 @@ describe('exportProjectTranscript', () => {
     expect(msg.blocks).toEqual([{ type: 'text', text: 'hello world' }]);
   });
 
+  it('includes append-only events from an active assistant run', () => {
+    const { db, projectsRoot } = setup();
+    seedConversation(db, { id: 'c1', createdAt: 100 });
+    upsertMessage(db, 'c1', {
+      id: 'm1',
+      role: 'assistant',
+      content: '',
+      events: [],
+      runId: 'run-1',
+      runStatus: 'running',
+    });
+    appendMessageAgentEvents(db, 'm1', [
+      { kind: 'thinking', text: 'working' },
+      { kind: 'text', text: 'answer' },
+    ]);
+
+    const lines = readLines(
+      exportProjectTranscript(db, projectsRoot, PROJECT_ID, { now: FIXED_NOW }).path,
+    );
+
+    expect(line(lines, 2).blocks).toEqual([
+      { type: 'thinking', thinking: 'working' },
+      { type: 'text', text: 'answer' },
+    ]);
+  });
+
   it('preserves tool_use and tool_result ordering interleaved with text', () => {
     const { db, projectsRoot } = setup();
     seedConversation(db, { id: 'c1', createdAt: 100 });
@@ -337,6 +364,30 @@ describe('exportProjectTranscript', () => {
     const lines = readLines(exportProjectTranscript(db, projectsRoot, PROJECT_ID, { now: FIXED_NOW }).path);
     const conversationLines = lines.filter((l) => l.kind === 'conversation');
     expect(conversationLines.map((c) => c.id)).toEqual(['older', 'newer']);
+  });
+
+  it('restricts the export to a single conversation when options.conversationId is set', () => {
+    // The handoff/resume flow scopes to one conversation — a project-wide
+    // export would blend unrelated chats. The unrelated conversation must
+    // not appear in the output at all.
+    const { db, projectsRoot } = setup();
+    seedConversation(db, { id: 'keep', createdAt: 100, title: 'Keep' });
+    seedConversation(db, { id: 'drop', createdAt: 200, title: 'Drop' });
+    seedMessage(db, 'keep', { id: 'm-keep', role: 'user', events: [{ kind: 'text', text: 'KEEP-TEXT' }] });
+    seedMessage(db, 'drop', { id: 'm-drop', role: 'user', events: [{ kind: 'text', text: 'DROP-TEXT' }] });
+
+    const result = exportProjectTranscript(db, projectsRoot, PROJECT_ID, {
+      now: FIXED_NOW,
+      conversationId: 'keep',
+    });
+
+    expect(result.conversationCount).toBe(1);
+    expect(result.messageCount).toBe(1);
+    const conversationLines = readLines(result.path).filter((l) => l.kind === 'conversation');
+    expect(conversationLines.map((c) => c.id)).toEqual(['keep']);
+    const raw = fs.readFileSync(result.path, 'utf8');
+    expect(raw).toContain('KEEP-TEXT');
+    expect(raw).not.toContain('DROP-TEXT');
   });
 
   it('atomic write: leaves no .tmp file at success and does not disturb unrelated tmp files', () => {

@@ -1,71 +1,101 @@
 // Plugins discovery section on Home.
 //
-// Renders a curated workflow bar (Lovart-style) over the plugin catalog:
-// Import · Create · Export · Refine · Extend. A scoped child row appears
-// inside the active lane, e.g. Create -> Prototype / Slides / Design
-// system / Media. A small Featured chip sits orthogonal to the rows for
-// quick access to curator-promoted picks.
+// Renders an artifact-kind bar over the plugin catalog: Prototype ·
+// Slides · Image · Video · HyperFrames · Audio. Prototype, Slides,
+// Image, and Video can reveal scene buckets from the user-prompt
+// taxonomy; HyperFrames and Audio stay flat. A small Saved chip
+// sits orthogonal to the rows for quick access to user-saved picks.
 //
 // The category list is curated — finer metadata (surface, role tags,
-// scenario domains) lives on each plugin card and detail surface, not
-// in the filter bar.
+// scenario domains) lives on each plugin card and detail surface.
 //
 // Derivation, catalog building and category-based filtering live in
-// `./plugins-home/facets.ts`; selection state and the Featured
+// `./plugins-home/facets.ts`; selection state and the Saved
 // override live in `./plugins-home/usePluginFacets.ts`. This file
 // owns layout only.
 
-import type { InstalledPluginRecord } from '@open-design/contracts';
-import { useT } from '../i18n';
+import { Button, Input } from '@open-design/components';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type {
+  InstalledPluginRecord,
+  WorkspaceCollabContext,
+} from '@open-design/contracts';
+import { useI18n, useT } from '../i18n';
 import type { PluginShareAction } from '../state/projects';
 import { Icon } from './Icon';
 import { PluginCard } from './plugins-home/PluginCard';
+import { isFeaturedPlugin, type FacetOption } from './plugins-home/facets';
+import { localizePluginTitle } from './plugins-home/localization';
 import { usePluginFacets } from './plugins-home/usePluginFacets';
-import type { FacetOption } from './plugins-home/facets';
+import { pluginSubfacetLabel } from './plugins-home/subfacetLabel';
+import { useSavedPluginIds } from './plugins-home/savedPlugins';
+import type { PluginSortOrder } from './plugins-home/sortOrder';
 import type { PluginUseAction } from './plugins-home/useActions';
+import { Toast } from './Toast';
+import { AnimatePresence } from 'motion/react';
+
+const RICH_PLUGIN_RENDER_LIMIT = 60;
+const RICH_PLUGIN_RENDER_BATCH_SIZE = 60;
+const GALLERY_PLUGIN_RENDER_LIMIT = 12;
+const GALLERY_PLUGIN_RENDER_BATCH_SIZE = 12;
 
 interface Props {
   plugins: InstalledPluginRecord[];
   loading: boolean;
   activePluginId: string | null;
   pendingApplyId: string | null;
+  pendingDuplicateId?: string | null;
   pendingShareAction?: { pluginId: string; action: PluginShareAction } | null;
   onUse: (record: InstalledPluginRecord, action: PluginUseAction) => void;
+  onDuplicate?: (record: InstalledPluginRecord) => void;
   onOpenDetails: (record: InstalledPluginRecord) => void;
   onPluginShareAction?: (
     record: InstalledPluginRecord,
     action: PluginShareAction,
   ) => void;
-  onCreatePlugin?: (goal?: string) => void;
   onBrowseRegistry?: () => void;
   preferDefaultFacet?: boolean;
   title?: string;
   subtitle?: string;
   emptyMessage?: string;
+  // 'gallery' renders each card as a minimal live example.html preview
+  // tile (Community); 'rich' keeps the hover-overlay metadata card.
+  cardLayout?: 'rich' | 'gallery';
+  workspaceContext?: WorkspaceCollabContext | null;
 }
-
-const CONTRIBUTION_CARD_THRESHOLD = 3;
 
 export function PluginsHomeSection({
   plugins,
   loading,
   activePluginId,
   pendingApplyId,
+  pendingDuplicateId = null,
   pendingShareAction = null,
   onUse,
+  onDuplicate,
   onOpenDetails,
   onPluginShareAction,
-  onCreatePlugin,
   onBrowseRegistry,
   preferDefaultFacet = true,
   title,
   subtitle,
   emptyMessage,
+  cardLayout = 'rich',
+  workspaceContext = null,
 }: Props) {
-  const t = useT();
+  const { locale, t } = useI18n();
+  const { savedPluginIds, savePluginId } = useSavedPluginIds();
+  const [saveToast, setSaveToast] = useState<string | null>(null);
+  const initialRenderLimit =
+    cardLayout === 'gallery' ? GALLERY_PLUGIN_RENDER_LIMIT : RICH_PLUGIN_RENDER_LIMIT;
+  const renderBatchSize =
+    cardLayout === 'gallery' ? GALLERY_PLUGIN_RENDER_BATCH_SIZE : RICH_PLUGIN_RENDER_BATCH_SIZE;
+  const loadMoreRootMargin = cardLayout === 'gallery' ? '900px' : '640px';
+  const [renderLimit, setRenderLimit] = useState(initialRenderLimit);
+  const loadMoreRef = useRef<HTMLDivElement | null>(null);
   const {
     visiblePlugins,
-    featuredList,
+    savedList,
     filtered,
     catalog,
     selection,
@@ -76,14 +106,60 @@ export function PluginsHomeSection({
     setMode,
     query,
     setQuery,
+    sortOrder,
+    setSortOrder,
     totalVisible,
-  } = usePluginFacets({ plugins, preferDefaultFacet });
-  const contributionTarget = onCreatePlugin
-    ? resolveContributionTarget(catalog, selection)
-    : null;
-  const showContributionCard =
-    contributionTarget !== null &&
-    shouldShowContributionCard(filtered.length, selection.category);
+  } = usePluginFacets({
+    plugins,
+    savedPluginIds,
+    preferDefaultFacet: cardLayout === 'gallery' ? false : preferDefaultFacet,
+    locale,
+  });
+  const renderedPlugins = useMemo(
+    () => filtered.slice(0, renderLimit),
+    [filtered, renderLimit],
+  );
+  const hasMorePlugins = renderLimit < filtered.length;
+  const handlePickCategory = (slug: string | null): void => {
+    pickCategory(slug);
+  };
+
+  useEffect(() => {
+    setRenderLimit(initialRenderLimit);
+  }, [filtered, initialRenderLimit]);
+
+  useEffect(() => {
+    if (!hasMorePlugins) return;
+    const node = loadMoreRef.current;
+    if (!node) return;
+    if (typeof IntersectionObserver === 'undefined') {
+      setRenderLimit(filtered.length);
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((entry) => entry.isIntersecting)) return;
+        setRenderLimit((limit) =>
+          Math.min(filtered.length, limit + renderBatchSize),
+        );
+      },
+      { rootMargin: loadMoreRootMargin },
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [filtered.length, hasMorePlugins, loadMoreRootMargin, renderBatchSize]);
+
+  function handleSavePlugin(record: InstalledPluginRecord): void {
+    const result = savePluginId(record.id);
+    const title = localizePluginTitle(locale, record);
+    if (result === 'saved') {
+      setSaveToast(`Saved ${title}.`);
+    } else if (result === 'already-saved') {
+      setSaveToast(`${title} is already saved.`);
+    } else {
+      setSaveToast('Could not save this plugin in this browser.');
+    }
+  }
 
   return (
     <section className="plugins-home" data-testid="plugins-home-section">
@@ -125,14 +201,21 @@ export function PluginsHomeSection({
               options={catalog.category}
               selectedSlug={selection.category}
               totalVisible={totalVisible}
-              onPick={pickCategory}
-              featuredCount={featuredList.length}
-              featuredActive={mode === 'featured'}
-              onToggleFeatured={() =>
-                setMode(mode === 'featured' ? 'all' : 'featured')
+              // The Saved collection lives on the rich management surface
+              // (PluginsView). The minimal Community gallery has no per-card
+              // save affordance, so the orthogonal Saved chip is hidden there.
+              showSaved={cardLayout === 'rich'}
+              savedCount={savedList.length}
+              savedActive={mode === 'saved'}
+              onToggleSaved={() =>
+                setMode(mode === 'saved' ? 'all' : 'saved')
               }
+              showAll
               query={query}
               onQueryChange={setQuery}
+              sortOrder={sortOrder}
+              onSortOrderChange={setSortOrder}
+              onPick={handlePickCategory}
             />
             {selection.category ? (
               <SubcategoryRow
@@ -144,7 +227,7 @@ export function PluginsHomeSection({
             ) : null}
           </div>
 
-          {filtered.length === 0 && !showContributionCard ? (
+          {filtered.length === 0 ? (
             <div className="plugins-home__empty plugins-home__empty--filtered">
               {t('pluginsHome.emptyFiltered')}{' '}
               <button
@@ -156,95 +239,52 @@ export function PluginsHomeSection({
               </button>
             </div>
           ) : (
-            <div className="plugins-home__grid" role="list">
-              {filtered.map((p) => (
+            <div
+              className={`plugins-home__grid${cardLayout === 'gallery' ? ' plugins-home__grid--gallery' : ''}`}
+              role="list"
+            >
+              {renderedPlugins.map((p) => (
                 <PluginCard
                   key={p.id}
                   record={p}
                   isActive={activePluginId === p.id}
                   isPending={pendingApplyId === p.id}
                   pendingAny={pendingApplyId !== null}
+                  isDuplicatePending={pendingDuplicateId === p.id}
+                  pendingDuplicateAny={pendingDuplicateId !== null}
                   pendingShareAction={pendingShareAction}
-                  isFeatured={featuredList.some((f) => f.id === p.id)}
+                  isFeatured={isFeaturedPlugin(p)}
+                  isSaved={savedPluginIds.has(p.id)}
                   onUse={onUse}
+                  onDuplicate={onDuplicate}
                   onOpenDetails={onOpenDetails}
+                  onSave={handleSavePlugin}
                   onShareAction={onPluginShareAction}
+                  layout={cardLayout}
+                  workspaceContext={workspaceContext}
                 />
               ))}
-              {showContributionCard && contributionTarget ? (
-                <ContributionCard
-                  label={contributionTarget.label}
-                  starterPrompt={contributionTarget.starterPrompt}
-                  onCreatePlugin={() => onCreatePlugin?.(contributionTarget.starterPrompt)}
-                  t={t}
+              {hasMorePlugins ? (
+                <div
+                  ref={loadMoreRef}
+                  className="plugins-home__load-more-sentinel"
+                  aria-hidden
                 />
               ) : null}
             </div>
           )}
         </>
       )}
+      <AnimatePresence>
+        {saveToast ? (
+          <Toast
+            message={saveToast}
+            ttlMs={2200}
+            onDismiss={() => setSaveToast(null)}
+          />
+        ) : null}
+      </AnimatePresence>
     </section>
-  );
-}
-
-function shouldShowContributionCard(count: number, category: string | null): boolean {
-  return Boolean(category) && count < CONTRIBUTION_CARD_THRESHOLD;
-}
-
-function resolveContributionTarget(
-  catalog: ReturnType<typeof usePluginFacets>['catalog'],
-  selection: ReturnType<typeof usePluginFacets>['selection'],
-): FacetOption | null {
-  if (!selection.category) return null;
-  if (selection.subcategory) {
-    const sub = catalog.subcategory[selection.category]?.find(
-      (opt) => opt.slug === selection.subcategory,
-    );
-    if (sub) return sub;
-  }
-  return catalog.category.find((opt) => opt.slug === selection.category) ?? null;
-}
-
-function ContributionCard({
-  label,
-  starterPrompt,
-  onCreatePlugin,
-  t,
-}: {
-  label: string;
-  starterPrompt: string;
-  onCreatePlugin: () => void;
-  t: ReturnType<typeof useT>;
-}) {
-  return (
-    <article
-      role="listitem"
-      className="plugins-home__card plugins-home__card--contribute"
-      data-testid="plugins-home-contribution-card"
-    >
-      <div className="plugins-home__contribute-inner">
-        <span className="plugins-home__contribute-icon" aria-hidden>
-          <Icon name="plus" size={18} />
-        </span>
-        <div>
-          <h3>{t('pluginsHome.contributeTitle', { label })}</h3>
-          <p>
-            {t('pluginsHome.contributeBody')}
-          </p>
-          <p className="plugins-home__contribute-template">
-            {t('pluginsHome.starterPrefix', { starter: starterPrompt })}
-          </p>
-        </div>
-        <button
-          type="button"
-          className="plugins-home__action plugins-home__action--primary"
-          onClick={onCreatePlugin}
-          data-testid="plugins-home-contribution-create"
-        >
-          {t('homeHero.chip.createPlugin')}
-        </button>
-      </div>
-    </article>
   );
 }
 
@@ -253,28 +293,38 @@ interface CategoryRowProps {
   selectedSlug: string | null;
   totalVisible: number;
   onPick: (slug: string | null) => void;
-  featuredCount: number;
-  featuredActive: boolean;
-  onToggleFeatured: () => void;
+  // The Saved override chip only renders on the rich management surface
+  // (PluginsView); the minimal Community gallery hides it.
+  showSaved: boolean;
+  savedCount: number;
+  savedActive: boolean;
+  onToggleSaved: () => void;
+  showAll: boolean;
   query: string;
   onQueryChange: (next: string) => void;
+  sortOrder: PluginSortOrder;
+  onSortOrderChange: (next: PluginSortOrder) => void;
 }
 
-// Single combined filter bar: Featured override chip + category pills
-// on the left, search field on the right. Each chip carries its own
-// count, and the "All" chip doubles as a clear-filters affordance,
-// so a separate `X / Y` counter and `Clear` link would just repeat
-// what the chip strip already shows.
+// Single combined filter bar: an optional Saved override chip + category
+// pills on the left, sort toggle + search field on the right. The "All"
+// pill doubles as a clear-filters affordance, so a separate `X / Y`
+// counter and `Clear` link would just repeat what the pill strip already
+// shows.
 function CategoryRow({
   options,
   selectedSlug,
   totalVisible,
   onPick,
-  featuredCount,
-  featuredActive,
-  onToggleFeatured,
+  showSaved,
+  savedCount,
+  savedActive,
+  onToggleSaved,
+  showAll,
   query,
   onQueryChange,
+  sortOrder,
+  onSortOrderChange,
 }: CategoryRowProps) {
   const t = useT();
   if (options.length === 0) return null;
@@ -288,33 +338,35 @@ function CategoryRow({
         role="tablist"
         aria-label={t('pluginsHome.categoryFilterAria')}
       >
-        {featuredCount > 0 ? (
+        {showSaved ? (
           <button
             type="button"
             className={[
               'plugins-home__chip',
-              'plugins-home__chip--featured',
-              featuredActive ? 'is-active' : '',
+              'plugins-home__chip--saved',
+              savedActive ? 'is-active' : '',
             ]
               .filter(Boolean)
               .join(' ')}
-            onClick={onToggleFeatured}
-            aria-pressed={featuredActive}
-            data-testid="plugins-home-chip-featured"
+            onClick={onToggleSaved}
+            aria-pressed={savedActive}
+            data-testid="plugins-home-chip-saved"
           >
-            <Icon name="star" size={11} />
+            <Icon name="star" size={14} />
             <span>{t('pluginsHome.featured')}</span>
-            <span className="plugins-home__chip-count">{featuredCount}</span>
+            <span className="plugins-home__chip-count">{savedCount}</span>
           </button>
         ) : null}
-        <CategoryPill
-          slug={null}
-          label={t('common.all')}
-          count={totalVisible}
-          active={selectedSlug === null}
-          onPick={onPick}
-          variant="all"
-        />
+        {showAll ? (
+          <CategoryPill
+            slug={null}
+            label={t('common.all')}
+            count={totalVisible}
+            active={selectedSlug === null}
+            onPick={onPick}
+            variant="all"
+          />
+        ) : null}
         {options.map((opt) => (
           <CategoryPill
             key={opt.slug}
@@ -327,6 +379,7 @@ function CategoryRow({
         ))}
       </div>
       <div className="plugins-home__facet-tools">
+        <SortToggle value={sortOrder} onChange={onSortOrderChange} />
         <SearchInput value={query} onChange={onQueryChange} />
       </div>
     </div>
@@ -405,14 +458,10 @@ function CategoryPill({ slug, label, count, active, variant, testId, onPick }: C
         .filter(Boolean)
         .join(' ')}
       onClick={() => onPick(slug)}
-      // Empty lanes are intentionally kept in the strip so the
-      // overall workflow shape (Import / Create / Export / Share /
-      // Deploy / Refine / Extend) is visible at a glance, and
-      // clicking one surfaces a "Contribute a X plugin" card. The
-      // `data-empty` flag drives a faded treatment in CSS so users
-      // can tell at a glance which chips are populated vs which
-      // are open-invite buckets — without that hint, "Deploy 0"
-      // and "Create 375" read as the same kind of control.
+      // Planned child buckets stay visible even before the catalog
+      // has examples for each scene. The `data-empty` flag gives
+      // those zero-count buckets a lighter treatment without adding
+      // placeholder cards to the starter grid.
       data-empty={count === 0 ? 'true' : 'false'}
       data-testid={testId ?? `plugins-home-pill-category-${slug ?? 'all'}`}
     >
@@ -450,8 +499,50 @@ function pluginFacetLabel(slug: string, fallback: string, t: ReturnType<typeof u
     case 'public-link': return t('pluginsHome.facet.publicLink');
     case 'github-pr': return t('pluginsHome.facet.githubPr');
     case 'github-gist': return t('pluginsHome.facet.githubGist');
-    default: return fallback;
+    // Subcategory pills render through the same CategoryPill, so unknown
+    // top-level slugs fall through to the subfacet table before giving up.
+    default: return pluginSubfacetLabel(slug, fallback, t);
   }
+}
+
+interface SortToggleProps {
+  value: PluginSortOrder;
+  onChange: (next: PluginSortOrder) => void;
+}
+
+// Hot / newest ordering toggle that lives next to the search field.
+// Rendered as a compact two-segment radio group: "hot" keeps the
+// visual-appeal ranking the gallery leads with today, "newest" re-ranks
+// by record freshness. The picked order persists per browser via the
+// hook (`sortOrder.ts`).
+function SortToggle({ value, onChange }: SortToggleProps) {
+  const t = useT();
+  const segments: Array<{ order: PluginSortOrder; label: string }> = [
+    { order: 'hot', label: t('pluginsHome.sortHot') },
+    { order: 'newest', label: t('pluginsHome.sortNewest') },
+  ];
+  return (
+    <div
+      className="plugins-home__sort"
+      role="radiogroup"
+      aria-label={t('pluginsHome.sortAria')}
+      data-testid="plugins-home-sort"
+    >
+      {segments.map((segment) => (
+        <button
+          key={segment.order}
+          type="button"
+          role="radio"
+          aria-checked={value === segment.order}
+          className={`plugins-home__sort-segment${value === segment.order ? ' is-active' : ''}`}
+          onClick={() => onChange(segment.order)}
+          data-testid={`plugins-home-sort-${segment.order}`}
+        >
+          {segment.label}
+        </button>
+      ))}
+    </div>
+  );
 }
 
 interface SearchInputProps {
@@ -469,8 +560,8 @@ function SearchInput({ value, onChange }: SearchInputProps) {
   const t = useT();
   return (
     <div className="plugins-home__search">
-      <Icon name="search" size={12} className="plugins-home__search-icon" />
-      <input
+      <Icon name="search" size={14} className="plugins-home__search-icon" />
+      <Input
         type="search"
         className="plugins-home__search-input"
         value={value}
@@ -482,15 +573,15 @@ function SearchInput({ value, onChange }: SearchInputProps) {
         autoComplete="off"
       />
       {value ? (
-        <button
-          type="button"
+        <Button
+          variant="subtle"
           className="plugins-home__search-clear"
           onClick={() => onChange('')}
           aria-label={t('pluginsHome.clearSearch')}
           data-testid="plugins-home-search-clear"
         >
-          <Icon name="close" size={12} />
-        </button>
+          <Icon name="close" size={14} />
+        </Button>
       ) : null}
     </div>
   );

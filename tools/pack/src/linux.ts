@@ -1,7 +1,7 @@
 import { execFile, spawn } from "node:child_process";
 import { access, chmod, cp, mkdir, open, readFile, readdir, readlink, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, posix } from "node:path";
 import { promisify } from "node:util";
 
 import {
@@ -26,8 +26,12 @@ import {
   stopProcesses,
 } from "@open-design/platform";
 
-import type { ToolPackConfig } from "./config.js";
-import { copyBundledResourceTrees, linuxResources } from "./resources.js";
+import type { ToolPackConfig } from "./config/index.js";
+import { domToPptxBundleResource } from "./dom-to-pptx-resource.js";
+import { copyBundledResourceTrees, linuxResources, packBundledDshRuntime } from "./resources/index.js";
+import { copyOptionalVelaCliBinary } from "./vela-cli.js";
+import { electronBuilderVersionForAppVersion, readRuntimeAppVersion } from "./versioning/index.js";
+import { processWebSourcemaps } from "./web-sourcemaps.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -43,14 +47,20 @@ const CONTAINER_PNPM_HOME = "/tmp/pnpm-home";
 const CONTAINER_NODE_VERSION = "24.14.1";
 const CONTAINER_TOOLS_PACK_CLI_PATH = "tools/pack/bin/tools-pack.mjs";
 
-const INTERNAL_PACKAGES = [
+export const INTERNAL_PACKAGES = [
+  { directory: "packages/release", name: "@open-design/release" },
+  { directory: "packages/components", name: "@open-design/components" },
   { directory: "packages/contracts", name: "@open-design/contracts" },
   { directory: "packages/registry-protocol", name: "@open-design/registry-protocol" },
+  { directory: "packages/launcher-proto", name: "@open-design/launcher-proto" },
   { directory: "packages/sidecar-proto", name: "@open-design/sidecar-proto" },
   { directory: "packages/sidecar", name: "@open-design/sidecar" },
   { directory: "packages/platform", name: "@open-design/platform" },
+  { directory: "packages/download", name: "@open-design/download" },
+  { directory: "packages/host", name: "@open-design/host" },
   { directory: "packages/agui-adapter", name: "@open-design/agui-adapter" },
   { directory: "packages/plugin-runtime", name: "@open-design/plugin-runtime" },
+  { directory: "packages/diagnostics", name: "@open-design/diagnostics" },
   { directory: "apps/daemon", name: "@open-design/daemon" },
   { directory: "apps/web", name: "@open-design/web" },
   { directory: "apps/desktop", name: "@open-design/desktop" },
@@ -173,6 +183,9 @@ export function buildDockerArgs(
     `--namespace ${config.namespace}`,
     "--dir /tools-pack",
   ];
+  if (config.requireVelaCli) {
+    innerArgs.push("--require-vela-cli");
+  }
   if (config.portable) {
     innerArgs.push("--portable");
   }
@@ -208,6 +221,29 @@ export function buildDockerArgs(
   if (config.telemetryRelayUrl != null) {
     dockerArgs.push("-e", `OPEN_DESIGN_TELEMETRY_RELAY_URL=${config.telemetryRelayUrl}`);
   }
+  const velaBinHost = process.env.OPEN_DESIGN_VELA_CLI_BIN?.trim();
+  if (velaBinHost) {
+    // The container only mounts /project, /tools-pack and cache/home dirs by
+    // default, so a Vela CLI living outside those (a host path like
+    // `~/.local/bin/vela` is the common dev case) would be invisible inside.
+    // Bind-mount the containing directory read-only and rewrite the env to
+    // the container-side path so `copyOptionalVelaCliBinary` can actually
+    // read it.
+    const hostVelaDir = dirname(velaBinHost);
+    const velaBinBase = basename(velaBinHost);
+    const containerVelaDir = "/opt/vela-cli";
+    dockerArgs.push("-v", `${hostVelaDir}:${containerVelaDir}:ro`);
+    dockerArgs.push("-e", `OPEN_DESIGN_VELA_CLI_BIN=${containerVelaDir}/${velaBinBase}`);
+  }
+  if (config.amrProfile != null) {
+    dockerArgs.push("-e", `OPEN_DESIGN_AMR_PROFILE=${config.amrProfile}`);
+  }
+  // The vela web origin is resolved on the host (from the build-time secret)
+  // but the packaged config is written inside the container, so the containerized
+  // build needs it forwarded or the workspace-team gate stays closed.
+  if (config.velaWebUrl != null) {
+    dockerArgs.push("-e", `OD_VELA_WEB_URL=${config.velaWebUrl}`);
+  }
   dockerArgs.push(
     "-w",
     "/project",
@@ -232,6 +268,61 @@ export function renderDesktopTemplate(template: string, values: DesktopTemplateV
     .replace(/@@ICON_PATH@@/g, values.iconName);
 }
 
+export function renderLinuxPackagedMainEntry(): string {
+  return 'import("@open-design/packaged").catch((error) => {\n  console.error("packaged entry failed", error);\n  process.exit(1);\n});\n';
+}
+
+export function renderLinuxAppImageAppRun(): string {
+  return `#!/bin/bash
+set -e
+
+THIS="$0"
+args=("$@")
+NUMBER_OF_ARGS="$#"
+
+if [ -z "$APPDIR" ] ; then
+  path="$(dirname "$(readlink -f "\${THIS}")")"
+  while [[ "$path" != "" && ! -e "$path/AppRun" ]]; do
+    path=\${path%/*}
+  done
+  APPDIR="$path"
+fi
+
+export PATH="\${APPDIR}:\${APPDIR}/usr/sbin:\${PATH}"
+export XDG_DATA_DIRS="./share/:/usr/share/gnome:/usr/local/share/:/usr/share/:\${XDG_DATA_DIRS}"
+export LD_LIBRARY_PATH="\${APPDIR}/usr/lib:\${LD_LIBRARY_PATH}"
+export XDG_DATA_DIRS="\${APPDIR}"/usr/share/:"\${XDG_DATA_DIRS}":/usr/share/gnome/:/usr/local/share/:/usr/share/
+export GSETTINGS_SCHEMA_DIR="\${APPDIR}/usr/share/glib-2.0/schemas:\${GSETTINGS_SCHEMA_DIR}"
+
+BIN="$APPDIR/${PRODUCT_NAME}"
+
+if [ -z "$APPIMAGE_EXIT_AFTER_INSTALL" ] ; then
+  trap atexit EXIT
+fi
+
+isEulaAccepted=1
+
+atexit()
+{
+  if [ $isEulaAccepted == 1 ] ; then
+    unset ELECTRON_RUN_AS_NODE
+    if [ $NUMBER_OF_ARGS -eq 0 ] ; then
+      exec "$BIN"
+    else
+      exec "$BIN" "\${args[@]}"
+    fi
+  fi
+}
+
+if [ -z "$APPIMAGE" ] ; then
+  export APPIMAGE="$APPDIR/AppRun"
+  # not running from within an AppImage; hence using the AppRun for Exec=
+fi
+`;
+}
+
+export const LINUX_APPIMAGE_EXECUTABLE_ARGS = ["--no-sandbox"] as const;
+
 export type AppImageProcessSnapshot = {
   pid: number;
   executable: string;
@@ -249,8 +340,16 @@ export function matchesAppImageProcess(
   // In both cases the AppImage runtime sets $APPIMAGE to the original install path.
   const isMountedRunner = /^\/tmp\/\.mount_[^/]+\/AppRun$/.test(snapshot.executable);
   const isExtractedRunner = /^\/tmp\/appimage_extracted_[^/]+\/[^/]+$/.test(snapshot.executable);
-  if (!isMountedRunner && !isExtractedRunner) return false;
-  return snapshot.env.APPIMAGE === installPath;
+  if ((isMountedRunner || isExtractedRunner) && snapshot.env.APPIMAGE === installPath) {
+    return true;
+  }
+
+  // Direct AppRun launches do not know the installed .AppImage path. Our AppRun
+  // fallback sets $APPIMAGE to the sibling AppRun before execing Electron.
+  return (
+    posix.basename(snapshot.executable) === PRODUCT_NAME &&
+    snapshot.env.APPIMAGE === posix.join(posix.dirname(snapshot.executable), "AppRun")
+  );
 }
 
 // --- Step 1: LinuxPaths type and resolveLinuxPaths ---
@@ -258,6 +357,7 @@ export function matchesAppImageProcess(
 type LinuxPaths = {
   appBuilderConfigPath: string;
   appBuilderOutputRoot: string;
+  appImageAppRunPath: string;
   appImagePath: string;
   assembledAppRoot: string;
   assembledMainEntryPath: string;
@@ -289,6 +389,7 @@ function resolveLinuxPaths(config: ToolPackConfig): LinuxPaths {
   return {
     appBuilderConfigPath: join(namespaceRoot, "builder-config.json"),
     appBuilderOutputRoot,
+    appImageAppRunPath: join(namespaceRoot, "appimage", "AppRun"),
     appImagePath: "",
     assembledAppRoot: join(namespaceRoot, "assembled", "app"),
     assembledMainEntryPath: join(namespaceRoot, "assembled", "app", "main.cjs"),
@@ -356,30 +457,37 @@ async function runProductionInstall(appRoot: string): Promise<void> {
 }
 
 async function readPackagedVersion(config: ToolPackConfig): Promise<string> {
-  if (config.appVersion != null) return config.appVersion;
-  const packageJsonPath = join(config.workspaceRoot, "apps", "packaged", "package.json");
-  const packageJson = JSON.parse(await readFile(packageJsonPath, "utf8")) as { version?: unknown };
-  if (typeof packageJson.version !== "string" || packageJson.version.length === 0) {
-    throw new Error(`missing apps/packaged package version in ${packageJsonPath}`);
-  }
-  return packageJson.version;
+  return readRuntimeAppVersion(config);
 }
 
 async function buildWorkspaceArtifacts(config: ToolPackConfig): Promise<void> {
   const webNextEnvPath = join(config.workspaceRoot, "apps", "web", "next-env.d.ts");
   const previousWebNextEnv = await readFile(webNextEnvPath, "utf8").catch(() => null);
 
+  await runPnpm(config, ["--filter", "@open-design/release", "build"]);
   await runPnpm(config, ["--filter", "@open-design/contracts", "build"]);
   await runPnpm(config, ["--filter", "@open-design/registry-protocol", "build"]);
   await runPnpm(config, ["--filter", "@open-design/sidecar-proto", "build"]);
+  await runPnpm(config, ["--filter", "@open-design/launcher-proto", "build"]);
   await runPnpm(config, ["--filter", "@open-design/sidecar", "build"]);
   await runPnpm(config, ["--filter", "@open-design/platform", "build"]);
+  await runPnpm(config, ["--filter", "@open-design/host", "build"]);
+  await runPnpm(config, ["--filter", "@open-design/download", "build"]);
   await runPnpm(config, ["--filter", "@open-design/agui-adapter", "build"]);
   await runPnpm(config, ["--filter", "@open-design/plugin-runtime", "build"]);
+  await runPnpm(config, ["--filter", "@open-design/download", "build"]);
+  await runPnpm(config, ["--filter", "@open-design/host", "build"]);
+  await runPnpm(config, ["--filter", "@open-design/diagnostics", "build"]);
+  await runPnpm(config, ["--filter", "@open-design/dsh-runtime", "build"]);
+  await runPnpm(config, ["--filter", "@open-design/components", "build"]);
   await runPnpm(config, ["--filter", "@open-design/daemon", "build"]);
   try {
     await runPnpm(config, ["--filter", "@open-design/web", "build"], { OD_WEB_OUTPUT_MODE: "server" });
     await runPnpm(config, ["--filter", "@open-design/web", "build:sidecar"]);
+    // Inject chunk IDs + upload browser sourcemaps to PostHog, then strip
+    // .map files before AppImage packaging. See
+    // `tools/pack/src/web-sourcemaps.ts`.
+    await processWebSourcemaps(config);
   } finally {
     if (previousWebNextEnv == null) {
       await rm(webNextEnvPath, { force: true });
@@ -426,9 +534,18 @@ async function copyResourceTree(config: ToolPackConfig, paths: LinuxPaths): Prom
     workspaceRoot: config.workspaceRoot,
     resourceRoot: paths.resourceRoot,
   });
+  await packBundledDshRuntime({
+    workspaceRoot: config.workspaceRoot,
+    resourceRoot: paths.resourceRoot,
+  });
   await mkdir(join(paths.resourceRoot, "bin"), { recursive: true });
   await cp(process.execPath, join(paths.resourceRoot, "bin", "node"));
   await chmod(join(paths.resourceRoot, "bin", "node"), 0o755);
+  await copyOptionalVelaCliBinary({
+    platform: "linux",
+    requireBundled: config.requireVelaCli,
+    resourceRoot: paths.resourceRoot,
+  });
 }
 
 // --- Step 4: writeAssembledApp helper ---
@@ -440,6 +557,10 @@ async function writeAssembledApp(
 ): Promise<void> {
   await rm(paths.assembledAppRoot, { force: true, recursive: true });
   await mkdir(paths.assembledAppRoot, { recursive: true });
+  await cp(
+    join(config.workspaceRoot, "apps", "desktop", "dist", "main", "preload.cjs"),
+    join(paths.assembledAppRoot, "preload.cjs"),
+  );
 
   const dependencies: Record<string, string> = {};
   for (const tarball of packed) {
@@ -447,28 +568,37 @@ async function writeAssembledApp(
   }
 
   const version = await readPackagedVersion(config);
+  const packageVersion = electronBuilderVersionForAppVersion(version);
   const packageJson = {
     name: "open-design-packaged",
-    version,
+    version: packageVersion,
     private: true,
     main: "main.cjs",
     dependencies,
+    description: "Local-first design product: detects your installed code-agent CLI, runs design skills + design systems, streams artifacts into a sandboxed preview.",
+    author: "Open Design Team",
+    repository: {
+      type: "git",
+      url: "https://github.com/nexu-io/open-design.git"
+    }
   };
   await writeFile(paths.assembledPackageJsonPath, `${JSON.stringify(packageJson, null, 2)}\n`, "utf8");
 
-  const mainStub = `"use strict";\nrequire("@open-design/packaged");\n`;
-  await writeFile(paths.assembledMainEntryPath, mainStub, "utf8");
+  await writeFile(paths.assembledMainEntryPath, renderLinuxPackagedMainEntry(), "utf8");
 
   await writeFile(
     paths.packagedConfigPath,
     `${JSON.stringify(
       {
+        ...(config.amrProfile == null ? {} : { amrProfile: config.amrProfile }),
         appVersion: version,
         namespace: config.namespace,
         nodeCommandRelative: "open-design/bin/node",
         ...(config.telemetryRelayUrl == null ? {} : { telemetryRelayUrl: config.telemetryRelayUrl }),
         ...(config.posthogKey == null ? {} : { posthogKey: config.posthogKey }),
         ...(config.posthogHost == null ? {} : { posthogHost: config.posthogHost }),
+        ...(config.velaWebUrl == null ? {} : { velaWebUrl: config.velaWebUrl }),
+        ...(config.velaWebUrls == null ? {} : { velaWebUrls: config.velaWebUrls }),
         ...(config.portable ? {} : { namespaceBaseRoot: config.roots.runtime.namespaceBaseRoot }),
       },
       null,
@@ -480,12 +610,19 @@ async function writeAssembledApp(
   await runProductionInstall(paths.assembledAppRoot);
 }
 
+async function writeLinuxAppImageAppRun(paths: LinuxPaths): Promise<void> {
+  await mkdir(dirname(paths.appImageAppRunPath), { recursive: true });
+  await writeFile(paths.appImageAppRunPath, renderLinuxAppImageAppRun(), "utf8");
+  await chmod(paths.appImageAppRunPath, 0o755);
+}
+
 // --- Step 5: writeLinuxBuilderConfig helper ---
 
 async function writeLinuxBuilderConfig(config: ToolPackConfig, paths: LinuxPaths): Promise<void> {
   const target = config.to === "dir" ? ["dir"] : ["AppImage"];
   const namespaceToken = sanitizeNamespace(config.namespace);
   const packagedVersion = await readPackagedVersion(config);
+  const packageVersion = electronBuilderVersionForAppVersion(packagedVersion);
 
   const builderConfig: Record<string, unknown> = {
     appId: "io.open-design.desktop",
@@ -499,19 +636,34 @@ async function writeLinuxBuilderConfig(config: ToolPackConfig, paths: LinuxPaths
       buildResources: dirname(linuxResources.icon),
     },
     electronVersion: config.electronVersion.replace(/^[^\d]*/, ""),
-    electronDist: config.electronDistPath,
+    // See tools/pack/src/win/builder.ts: rely on electron-builder's own
+    // Electron download rather than node_modules' dist, which pnpm does not
+    // reliably materialize on CI runners.
     executableName: PRODUCT_NAME,
     extraMetadata: {
       main: "./main.cjs",
       name: "open-design-packaged-app",
       productName: PRODUCT_NAME,
-      version: packagedVersion,
+      version: packageVersion,
       ...(config.portable ? {} : { odToolsPackRuntimeRoot: config.roots.runtime.namespaceBaseRoot }),
     },
     extraResources: [
       { from: paths.resourceRoot, to: "open-design" },
       { from: paths.packagedConfigPath, to: "open-design-config.json" },
+      // Vendored dom-to-pptx browser bundle for editable PPTX export (read from
+      // process.resourcesPath by the desktop main at runtime).
+      domToPptxBundleResource(config),
     ],
+    ...(config.to === "dir"
+      ? {}
+      : {
+          extraFiles: [
+            {
+              from: paths.appImageAppRunPath,
+              to: "AppRun",
+            },
+          ],
+        }),
     files: ["**/*", "!**/node_modules/.bin", "!**/node_modules/electron{,/**/*}"],
     icon: linuxResources.icon,
     linux: {
@@ -520,6 +672,12 @@ async function writeLinuxBuilderConfig(config: ToolPackConfig, paths: LinuxPaths
       category: "Development",
       synopsis: "Open Design",
       maintainer: "Open Design Contributors",
+    },
+    // Keep the AppImage launch fallback explicit. Our top-level AppRun wrapper
+    // clears ELECTRON_RUN_AS_NODE before these Chromium flags reach Electron,
+    // including for AppImageLauncher-generated desktop entries.
+    appImage: {
+      executableArgs: [...LINUX_APPIMAGE_EXECUTABLE_ARGS],
     },
     nodeGypRebuild: false,
     npmRebuild: false,
@@ -589,6 +747,9 @@ export async function packLinux(config: ToolPackConfig): Promise<LinuxPackResult
   await copyResourceTree(config, paths);
   const tarballs = await collectWorkspaceTarballs(config, paths);
   await writeAssembledApp(config, paths, tarballs);
+  if (config.to !== "dir") {
+    await writeLinuxAppImageAppRun(paths);
+  }
   await writeLinuxBuilderConfig(config, paths);
   await runElectronBuilderLinux(config, paths);
 
@@ -929,6 +1090,21 @@ function linuxDesktopStamp(config: ToolPackConfig): SidecarStamp {
   };
 }
 
+export function createLinuxDesktopLaunchEnv(
+  config: ToolPackConfig,
+  stamp: SidecarStamp,
+  baseEnv: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  const env = createSidecarLaunchEnv({
+    base: join(config.roots.runtime.namespaceRoot, "runtime"),
+    contract: OPEN_DESIGN_SIDECAR_CONTRACT,
+    extraEnv: { ...baseEnv, [DESKTOP_LOG_ECHO_ENV]: "0" },
+    stamp,
+  });
+  delete env.ELECTRON_RUN_AS_NODE;
+  return env;
+}
+
 async function waitForMarker(markerPath: string, timeoutMs: number): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -984,12 +1160,7 @@ export async function startPackedLinuxApp(config: ToolPackConfig): Promise<Linux
     args,
     command: appImagePath,
     cwd: dirname(appImagePath),
-    env: createSidecarLaunchEnv({
-      base: join(config.roots.runtime.namespaceRoot, "runtime"),
-      contract: OPEN_DESIGN_SIDECAR_CONTRACT,
-      extraEnv: { ...process.env, [DESKTOP_LOG_ECHO_ENV]: "0" },
-      stamp,
-    }),
+    env: createLinuxDesktopLaunchEnv(config, stamp),
     logFd: null,
   });
 

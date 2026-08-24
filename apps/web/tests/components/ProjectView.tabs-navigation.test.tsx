@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, waitFor } from '@testing-library/react';
-import type { ReactNode } from 'react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { useEffect, type ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ProjectView } from '../../src/components/ProjectView';
@@ -15,14 +15,20 @@ import type {
   SkillSummary,
 } from '../../src/types';
 import {
+  cacheTabsLocally,
   createConversation,
   listConversations,
   listMessages,
   loadTabs,
 } from '../../src/state/projects';
-import { fetchPreviewComments } from '../../src/providers/registry';
+import { fetchPreviewComments, fetchProjectFiles } from '../../src/providers/registry';
 
 vi.mock('../../src/i18n', () => ({
+  useI18n: () => ({
+    locale: 'en',
+    setLocale: () => undefined,
+    t: (key: string) => key,
+  }),
   useT: () => (key: string) => key,
 }));
 
@@ -37,6 +43,8 @@ vi.mock('../../src/providers/anthropic', () => ({
 vi.mock('../../src/providers/daemon', () => ({
   fetchChatRunStatus: vi.fn(),
   listActiveChatRuns: vi.fn().mockResolvedValue([]),
+  listProjectRuns: vi.fn().mockResolvedValue([]),
+  publishDaemonRunFinishedEvent: vi.fn(),
   reattachDaemonRun: vi.fn(),
   streamViaDaemon: vi.fn(),
 }));
@@ -70,12 +78,14 @@ vi.mock('../../src/state/projects', async () => {
   );
   return {
     ...actual,
+    cacheTabsLocally: vi.fn((_projectId: string, state: { tabs: string[]; active: string | null }) => state),
     createConversation: vi.fn(),
     listConversations: vi.fn(),
     listMessages: vi.fn(),
     loadTabs: vi.fn(),
     patchConversation: vi.fn(),
     patchProject: vi.fn(),
+    persistTabsToDaemonNow: vi.fn(),
     saveMessage: vi.fn(),
     saveTabs: vi.fn(),
   };
@@ -92,7 +102,35 @@ vi.mock('../../src/components/AvatarMenu', () => ({
 }));
 
 vi.mock('../../src/components/FileWorkspace', () => ({
-  FileWorkspace: () => <div data-testid="file-workspace" />,
+  DESIGN_SYSTEM_TAB: '__design_system__',
+  FileWorkspace: ({ tabsState, onTabsStateChange, designSystemProject, openRequest }: {
+    tabsState: { tabs: string[]; active: string | null };
+    onTabsStateChange: (state: { tabs: string[]; active: string | null }) => void;
+    designSystemProject?: DesignSystemSummary | null;
+    openRequest?: { name: string; nonce: number } | null;
+  }) => {
+    useEffect(() => {
+      if (!openRequest?.name) return;
+      if (tabsState.active === openRequest.name && tabsState.tabs.includes(openRequest.name)) return;
+      const tabs = tabsState.tabs.includes(openRequest.name)
+        ? tabsState.tabs
+        : [...tabsState.tabs, openRequest.name];
+      onTabsStateChange({ tabs, active: openRequest.name });
+    }, [onTabsStateChange, openRequest?.name, openRequest?.nonce, tabsState.tabs]);
+    return (
+      <div data-testid="file-workspace">
+        <output data-testid="workspace-active-tab">{tabsState.active ?? ''}</output>
+        <output data-testid="workspace-design-system-id">{designSystemProject?.id ?? ''}</output>
+        <button
+          type="button"
+          data-testid="close-all-tabs"
+          onClick={() => onTabsStateChange({ tabs: [], active: null })}
+        >
+          close all tabs
+        </button>
+      </div>
+    );
+  },
 }));
 
 vi.mock('../../src/components/Loading', () => ({
@@ -107,7 +145,9 @@ const mockedListConversations = vi.mocked(listConversations);
 const mockedCreateConversation = vi.mocked(createConversation);
 const mockedListMessages = vi.mocked(listMessages);
 const mockedLoadTabs = vi.mocked(loadTabs);
+const mockedCacheTabsLocally = vi.mocked(cacheTabsLocally);
 const mockedFetchPreviewComments = vi.mocked(fetchPreviewComments);
+const mockedFetchProjectFiles = vi.mocked(fetchProjectFiles);
 const mockedNavigate = vi.mocked(navigate);
 
 const config: AppConfig = {
@@ -137,16 +177,22 @@ const conversation: Conversation = {
   updatedAt: 1,
 };
 
-function renderProjectView() {
+function renderProjectView(props?: {
+  project?: Project;
+  designSystems?: DesignSystemSummary[];
+  routeFileName?: string | null;
+  routeConversationId?: string | null;
+}) {
   return render(
     <ProjectView
-      project={project}
-      routeFileName={null}
+      project={props?.project ?? project}
+      routeFileName={props?.routeFileName ?? null}
+      routeConversationId={props?.routeConversationId ?? null}
       config={config}
       agents={[] as AgentInfo[]}
       skills={[] as SkillSummary[]}
       designTemplates={[] as SkillSummary[]}
-      designSystems={[] as DesignSystemSummary[]}
+      designSystems={props?.designSystems ?? ([] as DesignSystemSummary[])}
       daemonLive
       onModeChange={vi.fn()}
       onAgentChange={vi.fn()}
@@ -168,6 +214,7 @@ describe('ProjectView tab URL hydration', () => {
     mockedCreateConversation.mockResolvedValue(conversation);
     mockedListMessages.mockResolvedValue([]);
     mockedLoadTabs.mockResolvedValue({ tabs: ['index.html'], active: 'index.html' });
+    mockedFetchProjectFiles.mockResolvedValue([]);
     mockedFetchPreviewComments.mockResolvedValue([]);
   });
 
@@ -196,16 +243,112 @@ describe('ProjectView tab URL hydration', () => {
     });
   });
 
-  it('re-pushes /conversations/:cid when activeConversationId hydrates after the active tab has already synced (lefarcen P1 on PR #1508)', async () => {
+  it('passes brand-extracted backing systems to the in-project Design System tab', async () => {
+    const extractedSystem: DesignSystemSummary = {
+      id: 'user:baidu',
+      title: '百度一下，你就知道',
+      category: 'Custom',
+      summary: 'Programmatic extraction from DESIGN.md.',
+      swatches: [],
+      surface: 'web',
+      source: 'user',
+      status: 'draft',
+      isEditable: true,
+    };
+    renderProjectView({
+      project: {
+        ...project,
+        name: '百度一下，你就知道',
+        designSystemId: null,
+        metadata: {
+          kind: 'brand',
+          importedFrom: 'brand-extraction',
+          brandDesignSystemId: 'user:baidu',
+        },
+      },
+      designSystems: [extractedSystem],
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('workspace-design-system-id').textContent).toBe('user:baidu');
+    });
+  });
+
+  it('does not auto-open the brand design system over a routed file', async () => {
+    mockedLoadTabs.mockResolvedValue({ tabs: [], active: null });
+    const extractedSystem: DesignSystemSummary = {
+      id: 'user:baidu',
+      title: '百度一下，你就知道',
+      category: 'Custom',
+      summary: 'Programmatic extraction from DESIGN.md.',
+      swatches: [],
+      surface: 'web',
+      source: 'user',
+      status: 'draft',
+      isEditable: true,
+    };
+    renderProjectView({
+      project: {
+        ...project,
+        name: '百度一下，你就知道',
+        metadata: {
+          kind: 'brand',
+          importedFrom: 'brand-extraction',
+          brandDesignSystemId: 'user:baidu',
+        },
+      },
+      designSystems: [extractedSystem],
+      routeFileName: 'brand.html',
+    });
+
+    await waitFor(() => expect(screen.getByTestId('workspace-active-tab').textContent).toBe('brand.html'));
+    expect(mockedCacheTabsLocally.mock.calls.at(-1)).toEqual([
+      project.id,
+      { tabs: ['brand.html'], active: 'brand.html' },
+      null,
+    ]);
+  });
+
+  it('does not auto-open the brand design system over a persisted active tab', async () => {
+    mockedLoadTabs.mockResolvedValue({ tabs: ['brand.html'], active: 'brand.html', hasSavedState: true });
+    const extractedSystem: DesignSystemSummary = {
+      id: 'user:baidu',
+      title: '百度一下，你就知道',
+      category: 'Custom',
+      summary: 'Programmatic extraction from DESIGN.md.',
+      swatches: [],
+      surface: 'web',
+      source: 'user',
+      status: 'draft',
+      isEditable: true,
+    };
+    renderProjectView({
+      project: {
+        ...project,
+        name: '百度一下，你就知道',
+        metadata: {
+          kind: 'brand',
+          importedFrom: 'brand-extraction',
+          brandDesignSystemId: 'user:baidu',
+        },
+      },
+      designSystems: [extractedSystem],
+    });
+
+    await waitFor(() => expect(screen.getByTestId('workspace-active-tab').textContent).toBe('brand.html'));
+    expect(mockedCacheTabsLocally).not.toHaveBeenCalledWith(
+      project.id,
+      expect.objectContaining({ active: '__design_system__' }),
+    );
+  });
+
+  it('preserves a restarted deep-linked conversation while its DB conversation list hydrates', async () => {
     // Race shape: `loadTabs` resolves and sets the active tab BEFORE
-    // `listConversations` resolves and sets `activeConversationId`.
-    // The first navigate fires with `conversationId: null` because
-    // the conversation hasn't loaded yet; the second navigate must
-    // fire with `conversationId: 'conv-1'` even though the active
-    // tab is identical. A ref guard that keys only on the file
-    // target skips the second call and the URL never gains the
-    // `/conversations/:cid` segment. The composite-key guard
-    // (`${activeConversationId}:${target}`) catches it.
+    // `listConversations` resolves and restores `activeConversationId`. The
+    // route already identifies the persisted DB conversation, so the interim
+    // tab sync must retain it instead of replacing
+    // `/projects/:id/conversations/:cid/files/...` with `/projects/:id/files/...`.
+    // Once the list resolves, the same id becomes active and remains canonical.
     let resolveConversations: (value: Conversation[]) => void = () => {};
     const conversationsPromise = new Promise<Conversation[]>((resolve) => {
       resolveConversations = resolve;
@@ -213,24 +356,28 @@ describe('ProjectView tab URL hydration', () => {
     mockedListConversations.mockReturnValue(conversationsPromise);
     mockedLoadTabs.mockResolvedValue({ tabs: ['index.html'], active: 'index.html' });
 
-    renderProjectView();
+    renderProjectView({ routeConversationId: conversation.id });
 
-    // First navigate: active tab synced, conversation still loading.
+    // First navigate: active tab synced, conversation still loading. The
+    // existing route is the only conversation authority available.
     await waitFor(() => {
       expect(mockedNavigate).toHaveBeenCalledWith(
         {
           kind: 'project',
           projectId: project.id,
-          conversationId: null,
+          conversationId: conversation.id,
           fileName: 'index.html',
         },
         { replace: true },
       );
     });
+    expect(mockedNavigate).not.toHaveBeenCalledWith(
+      expect.objectContaining({ conversationId: null }),
+      { replace: true },
+    );
 
-    // Now resolve the conversation list. The active tab is unchanged
-    // but `activeConversationId` flips from `null` to `'conv-1'`, so
-    // a second navigate must fire.
+    // Now resolve the conversation list. The routed conversation is present in
+    // DB and becomes the active conversation without an intermediate route loss.
     resolveConversations([conversation]);
 
     await waitFor(() => {
@@ -244,5 +391,84 @@ describe('ProjectView tab URL hydration', () => {
         { replace: true },
       );
     });
+  });
+
+  it('does not reopen the primary file after the user closes the last tab', async () => {
+    mockedLoadTabs.mockResolvedValue({ tabs: [], active: null });
+    mockedFetchProjectFiles.mockResolvedValue([
+      {
+        name: 'index.html',
+        path: 'index.html',
+        type: 'file',
+        size: 1,
+        mtime: 1,
+        mime: 'text/html',
+        kind: 'html',
+        artifactManifest: {
+          version: 1,
+          kind: 'html',
+          title: 'Index',
+          entry: 'index.html',
+          renderer: 'html',
+          primary: true,
+          exports: ['html'],
+        },
+      },
+    ]);
+
+    renderProjectView();
+
+    await waitFor(() => expect(screen.getByTestId('workspace-active-tab').textContent).toBe('index.html'));
+    // Tab state persists synchronously through cacheTabsLocally (the daemon PUT
+    // is debounced via persistTabsToDaemonNow); assert on the synchronous cache
+    // write so the test stays deterministic without driving the debounce timer.
+    expect(mockedCacheTabsLocally).toHaveBeenCalledWith(
+      project.id,
+      { tabs: ['index.html'], active: 'index.html' },
+      null,
+    );
+
+    fireEvent.click(screen.getByTestId('close-all-tabs'));
+
+    await waitFor(() => expect(screen.getByTestId('workspace-active-tab').textContent).toBe(''));
+    await waitFor(() => {
+      expect(mockedCacheTabsLocally.mock.calls.at(-1)).toEqual([
+        project.id,
+        { tabs: [], active: null },
+        null,
+      ]);
+    });
+    // Exactly two writes — the initial primary open and the close-all — proving
+    // the primary file is not silently reopened after the last tab closes.
+    expect(mockedCacheTabsLocally).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not auto-open the primary file when saved tabs were explicitly empty', async () => {
+    mockedLoadTabs.mockResolvedValue({ tabs: [], active: null, hasSavedState: true });
+    mockedFetchProjectFiles.mockResolvedValue([
+      {
+        name: 'index.html',
+        path: 'index.html',
+        type: 'file',
+        size: 1,
+        mtime: 1,
+        mime: 'text/html',
+        kind: 'html',
+        artifactManifest: {
+          version: 1,
+          kind: 'html',
+          title: 'Index',
+          entry: 'index.html',
+          renderer: 'html',
+          primary: true,
+          exports: ['html'],
+        },
+      },
+    ]);
+
+    renderProjectView();
+
+    await waitFor(() => expect(screen.getByTestId('workspace-active-tab').textContent).toBe(''));
+    expect(mockedCacheTabsLocally).not.toHaveBeenCalled();
   });
 });

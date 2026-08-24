@@ -1,3 +1,5 @@
+import { randomBytes } from "node:crypto";
+
 import {
   APP_KEYS,
   OPEN_DESIGN_SIDECAR_CONTRACT,
@@ -5,8 +7,13 @@ import {
   SIDECAR_MESSAGES,
   normalizeDaemonSidecarMessage,
   type DaemonStatusSnapshot,
+  type DesktopExportArtifactInput,
+  type DesktopExportArtifactResult,
   type DesktopExportPdfInput,
   type DesktopExportPdfResult,
+  type DesktopRenderSlidesInput,
+  type DesktopRenderSlidesResult,
+  type MintImportTokenResult,
   type SidecarStamp,
 } from "@open-design/sidecar-proto";
 import {
@@ -18,7 +25,13 @@ import {
 } from "@open-design/sidecar";
 
 import { startDaemonRuntime, type StartedDaemonRuntime } from "../daemon-startup.js";
-import { isDesktopAuthGateActive, setDesktopAuthSecret } from "../desktop-auth.js";
+import {
+  getDesktopAuthSecret,
+  isDesktopAuthGateActive,
+  isDesktopAuthRegistered,
+  setDesktopAuthSecret,
+  signDesktopImportToken,
+} from "../desktop-auth.js";
 
 /**
  * PR #974 round 6 (mrcfps): pure wrapper that overlays the live
@@ -34,7 +47,9 @@ export function withCurrentDesktopAuthGate(snapshot: DaemonStatusSnapshot): Daem
 }
 
 const DAEMON_PORT_ENV = SIDECAR_ENV.DAEMON_PORT;
+const WEB_PORT_ENV = SIDECAR_ENV.WEB_PORT;
 const TOOLS_DEV_PARENT_PID_ENV = SIDECAR_ENV.TOOLS_DEV_PARENT_PID;
+const DESKTOP_IMPORT_TOKEN_TTL_MS = 60_000;
 
 export type DaemonSidecarHandle = {
   status(): Promise<DaemonStatusSnapshot>;
@@ -49,6 +64,11 @@ function parsePort(value: string | undefined): number {
     throw new Error(`${DAEMON_PORT_ENV} must be an integer between 0 and 65535`);
   }
   return port;
+}
+
+function parseOptionalTrustedWebPort(value: string | undefined): number | null {
+  const port = parsePort(value);
+  return port > 0 ? port : null;
 }
 
 function isProcessAlive(pid: number): boolean {
@@ -72,6 +92,33 @@ function attachParentMonitor(stop: () => Promise<void>): void {
   timer.unref();
 }
 
+export function mintImportTokenForCli(baseDir: string): MintImportTokenResult {
+  if (!isDesktopAuthGateActive()) {
+    return {
+      ok: false,
+      code: "DESKTOP_AUTH_INACTIVE",
+      message: "desktop import auth gate is inactive",
+      retryable: false,
+    };
+  }
+  const secret = getDesktopAuthSecret();
+  if (secret == null || !isDesktopAuthRegistered()) {
+    return {
+      ok: false,
+      code: "DESKTOP_AUTH_PENDING",
+      message: "desktop auth required but secret not yet registered",
+      retryable: true,
+    };
+  }
+  const nonce = randomBytes(16).toString("base64url");
+  const expiresAt = new Date(Date.now() + DESKTOP_IMPORT_TOKEN_TTL_MS).toISOString();
+  return {
+    ok: true,
+    expiresAt,
+    token: signDesktopImportToken(secret, baseDir, { nonce, exp: expiresAt }),
+  };
+}
+
 export async function startDaemonSidecar(runtime: SidecarRuntimeContext<SidecarStamp>): Promise<DaemonSidecarHandle> {
   const serverHandle: StartedDaemonRuntime = await startDaemonRuntime({
     desktopPdfExporter: async (input: DesktopExportPdfInput): Promise<DesktopExportPdfResult> => {
@@ -86,7 +133,32 @@ export async function startDaemonSidecar(runtime: SidecarRuntimeContext<SidecarS
         { timeoutMs: 600_000 },
       );
     },
+    desktopSlideRenderer: async (input: DesktopRenderSlidesInput): Promise<DesktopRenderSlidesResult> => {
+      const desktopIpc = resolveAppIpcPath({
+        app: APP_KEYS.DESKTOP,
+        contract: OPEN_DESIGN_SIDECAR_CONTRACT,
+        namespace: runtime.namespace,
+      });
+      return await requestJsonIpc<DesktopRenderSlidesResult>(
+        desktopIpc,
+        { input, type: SIDECAR_MESSAGES.RENDER_SLIDES },
+        { timeoutMs: 600_000 },
+      );
+    },
+    desktopArtifactExporter: async (input: DesktopExportArtifactInput): Promise<DesktopExportArtifactResult> => {
+      const desktopIpc = resolveAppIpcPath({
+        app: APP_KEYS.DESKTOP,
+        contract: OPEN_DESIGN_SIDECAR_CONTRACT,
+        namespace: runtime.namespace,
+      });
+      return await requestJsonIpc<DesktopExportArtifactResult>(
+        desktopIpc,
+        { input, type: SIDECAR_MESSAGES.EXPORT_ARTIFACT },
+        { timeoutMs: 600_000 },
+      );
+    },
     port: parsePort(process.env[DAEMON_PORT_ENV]),
+    runtime,
   });
 
   // PR #974 round 6 (mrcfps): tools-dev's split-start hardening reads
@@ -99,6 +171,7 @@ export async function startDaemonSidecar(runtime: SidecarRuntimeContext<SidecarS
     desktopAuthGateActive: isDesktopAuthGateActive(),
     pid: process.pid,
     state: "running",
+    trustedWebOriginPort: parseOptionalTrustedWebPort(process.env[WEB_PORT_ENV]),
     updatedAt: new Date().toISOString(),
     url: serverHandle.url,
   };
@@ -144,6 +217,21 @@ export async function startDaemonSidecar(runtime: SidecarRuntimeContext<SidecarS
           // renderer→arbitrary-baseDir→shell.openPath bypass.
           setDesktopAuthSecret(Buffer.from(request.input.secret, "base64"));
           return { accepted: true };
+        case SIDECAR_MESSAGES.MINT_IMPORT_TOKEN:
+          return mintImportTokenForCli(request.input.baseDir);
+        case SIDECAR_MESSAGES.REGISTER_WEB_URL: {
+          // Packaged startup binds the web sidecar only after the daemon is
+          // ready, so its dynamic port cannot be delivered in the daemon spawn
+          // environment. The namespace-scoped control plane registers the
+          // actual URL here as soon as web reports ready. Keep OD_WEB_PORT as
+          // the daemon-wide live source because origin validation and MCP
+          // install-info already resolve it per request.
+          const webPort = Number(new URL(request.input.url).port);
+          process.env[WEB_PORT_ENV] = String(webPort);
+          state.trustedWebOriginPort = webPort;
+          state.updatedAt = new Date().toISOString();
+          return { accepted: true };
+        }
       }
     },
   });

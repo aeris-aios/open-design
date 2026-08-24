@@ -2,17 +2,13 @@
 // and live artifact refreshers. The daemon still stores these as routines;
 // the UI presents them as scheduled agent conversations.
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
-  AutomationContentPacket,
   AutomationEvolutionProposal,
   AutomationEvolutionProposalListResponse,
-  AutomationSourceIngestionResponse,
-  AutomationSourceKind,
-  AutomationSourcePacketListResponse,
+  AutomationsClickProps,
   AutomationTemplate as ContractAutomationTemplate,
   AutomationTemplateListResponse,
-  AutomationTokenCompressionMode,
   ConnectorDetail,
   Routine,
   RoutineRun,
@@ -21,13 +17,25 @@ import type {
 
 import { Icon, type IconName } from './Icon';
 import { navigate } from '../router';
+import { useT } from '../i18n';
 import type { SkillSummary } from '../types';
+
+type TranslateFn = ReturnType<typeof useT>;
+import { useAnalytics } from '../analytics/provider';
+import { trackAutomationsClick, trackPageView } from '../analytics/events';
 import {
   NewAutomationModal,
-  describeScheduleSummary,
   type AutomationTemplate,
   type AutomationTemplateKind,
 } from './NewAutomationModal';
+import { describeRoutineSchedule } from './routineScheduleLabels';
+import { useWorkspaceContext } from '../collab/useWorkspaceContext';
+import { listProjects } from '../state/projects';
+import {
+  workspaceIdentityCacheKey,
+  workspaceProjectHeaders,
+} from '../collab/workspace-identity';
+import type { WorkspaceCollabContext } from '@open-design/contracts';
 
 type ProjectSummary = { id: string; name: string };
 type TemplateFilter =
@@ -54,160 +62,132 @@ interface Props {
   connectorsLoading?: boolean;
 }
 
-const STATIC_TEMPLATES: ReadonlyArray<AutomationTemplate> = [
-  {
-    id: 'memory-refresh',
-    category: 'memory',
-    kind: 'routine',
-    icon: 'sparkles',
-    title: 'Refresh project memory from recent work.',
-    description: 'Turns repeated decisions, preferences, and feedback into reusable memory updates.',
-    defaultName: 'Memory refresh',
-    prompt:
-      'Review recent chats, PR comments, design feedback, and project changes. Extract durable preferences, repeated decisions, and workflow lessons. Propose concise memory updates with source links and separate one-off notes from reusable guidance.',
-  },
-  {
-    id: 'design-system-refresh',
-    category: 'design-system',
-    kind: 'routine',
-    icon: 'sliders',
-    title: 'Update design systems from shipped artifacts.',
-    description: 'Finds reusable tokens, components, and rules across recent design work.',
-    defaultName: 'Design system maintainer',
-    prompt:
-      'Inspect recent generated artifacts, review feedback, and accepted revisions. Identify patterns that should become design-system tokens, component rules, examples, or anti-patterns. Draft precise updates to DESIGN.md and call out anything that needs human approval.',
-  },
-  {
-    id: 'live-artifact-registry',
-    category: 'live-artifact',
-    kind: 'routine',
-    icon: 'file-code',
-    title: 'Audit live artifacts and refresh stale versions.',
-    description: 'Keeps persistent dashboards, reports, and previews current instead of duplicating them.',
-    defaultName: 'Live artifact maintainer',
-    prompt:
-      'List live artifacts for this project, find stale or failed refreshes, and update the highest-value artifact in place. Preserve artifact ids, summarize what changed, and flag artifacts that need connector access or human review.',
-  },
-  {
-    id: 'orbit-dashboard',
-    category: 'orbit',
-    kind: 'routine',
-    icon: 'orbit',
-    title: 'Build a connector activity dashboard.',
-    description: 'Aggregates selected connectors into an Orbit-style live dashboard.',
-    defaultName: 'Connector activity dashboard',
-    prompt:
-      'Use the selected connectors to build or refresh a live dashboard of recent activity. Group by people, projects, decisions, risks, and follow-ups. Prefer connected read-only tools, cite sources, and keep the dashboard refreshable.',
-  },
-  {
-    id: 'release-notes',
-    category: 'release',
-    kind: 'routine',
-    icon: 'present',
-    title: 'Draft release notes from shipped design work.',
-    description: 'Connects merged PRs, artifacts, and product-facing changes into release notes.',
-    defaultName: 'Weekly release notes',
-    prompt:
-      "Draft user-facing release notes covering merged PRs, updated artifacts, and design-system changes from the last 7 days. Group by 'New', 'Improved', and 'Fixed'. Include links when available and keep the copy user-readable.",
-  },
-  {
-    id: 'quality-regression-watch',
-    category: 'quality',
-    kind: 'routine',
-    icon: 'bell',
-    title: 'Watch for design and implementation regressions.',
-    description: 'Compares recent changes against benchmarks, traces, and accepted references.',
-    defaultName: 'Regression watch',
-    prompt:
-      'Compare recent project changes against accepted artifacts, design-system rules, benchmarks, and traces. Flag regressions in behavior, layout, accessibility, or product intent. Suggest the smallest fix and cite the evidence.',
-  },
-];
-
-const FALLBACK_ORBIT_TEMPLATE: AutomationTemplate = {
-  id: 'orbit-daily',
-  category: 'orbit',
-  kind: 'orbit',
-  icon: 'orbit',
-  title: 'Daily connector digest.',
-  description: 'Refreshes a connector activity digest on a schedule.',
-  defaultName: 'Daily connector digest',
-  prompt:
-    'Survey every connected integration and produce a daily digest of what changed in the last 24 hours. Group the result by people, projects, decisions, and follow-ups. Save the output as a live artifact named `daily_digest.md` and update it in place on each run.',
-};
-
-const FALLBACK_LIVE_TEMPLATE: AutomationTemplate = {
-  id: 'live-status-board',
-  category: 'live-artifact',
-  kind: 'live-artifact',
-  icon: 'file-code',
-  title: 'Keep a live status artifact fresh.',
-  description: 'Updates one persistent artifact instead of creating a new report each run.',
-  defaultName: 'Live status board',
-  prompt:
-    "Maintain a single live artifact named `status_board.md`. On each run, update the sections for 'In flight', 'Shipped this week', 'Risks', and 'Decisions made'. Edit in place so the artifact stays stable.",
-};
-
-const TEMPLATE_FILTERS: ReadonlyArray<{ id: TemplateFilter; label: string }> = [
-  { id: 'all', label: 'All' },
-  { id: 'orbit', label: 'Orbit' },
-  { id: 'live-artifact', label: 'Live artifacts' },
-  { id: 'memory', label: 'Memory' },
-  { id: 'design-system', label: 'Design systems' },
-  { id: 'skills', label: 'Skills' },
-  { id: 'connectors', label: 'Connectors' },
-  { id: 'compression', label: 'Compression' },
-  { id: 'release', label: 'Release' },
-  { id: 'quality', label: 'Quality' },
-];
-
-const SOURCE_KIND_OPTIONS: ReadonlyArray<{ id: AutomationSourceKind; label: string }> = [
-  { id: 'connector', label: 'Connector' },
-  { id: 'url', label: 'URL' },
-  { id: 'repo', label: 'Repo' },
-  { id: 'artifact', label: 'Artifact' },
-  { id: 'chat', label: 'Chat' },
-  { id: 'upload', label: 'Upload' },
-];
-
-const COMPRESSION_OPTIONS: ReadonlyArray<{ id: AutomationTokenCompressionMode; label: string }> = [
-  { id: 'balanced', label: 'Balanced' },
-  { id: 'aggressive', label: 'Aggressive' },
-  { id: 'off', label: 'Off' },
-];
-
-type SourceIngestionForm = {
-  templateId: string;
-  sourceKind: AutomationSourceKind;
-  sourceRef: string;
-  title: string;
-  bodyMarkdown: string;
-  connectorId: string;
-  tokenCompression: AutomationTokenCompressionMode;
-};
-
-const DEFAULT_SOURCE_FORM: SourceIngestionForm = {
-  templateId: 'ingest-source-memory-tree',
-  sourceKind: 'connector',
-  sourceRef: '',
-  title: '',
-  bodyMarkdown: '',
-  connectorId: '',
-  tokenCompression: 'balanced',
-};
-
-function scheduleStatusLabel(routine: Routine): string {
-  if (!routine.enabled) return 'Paused';
-  return describeScheduleSummary(routine.schedule);
+function buildStaticTemplates(t: TranslateFn): ReadonlyArray<AutomationTemplate> {
+  return [
+    {
+      id: 'memory-refresh',
+      category: 'memory',
+      kind: 'routine',
+      icon: 'sparkles',
+      title: t('automations.tpl.memoryRefresh.title'),
+      description: t('automations.tpl.memoryRefresh.desc'),
+      defaultName: 'Memory refresh',
+      prompt:
+        'Review recent chats, PR comments, design feedback, and project changes. Extract durable preferences, repeated decisions, and workflow lessons. Propose concise memory updates with source links and separate one-off notes from reusable guidance.',
+    },
+    {
+      id: 'design-system-refresh',
+      category: 'design-system',
+      kind: 'routine',
+      icon: 'sliders',
+      title: t('automations.tpl.designSystemRefresh.title'),
+      description: t('automations.tpl.designSystemRefresh.desc'),
+      defaultName: 'Design system maintainer',
+      prompt:
+        'Inspect recent generated artifacts, review feedback, and accepted revisions. Identify patterns that should become design-system tokens, component rules, examples, or anti-patterns. Draft precise updates to DESIGN.md and call out anything that needs human approval.',
+    },
+    {
+      id: 'live-artifact-registry',
+      category: 'live-artifact',
+      kind: 'routine',
+      icon: 'file-code',
+      title: t('automations.tpl.liveArtifactRegistry.title'),
+      description: t('automations.tpl.liveArtifactRegistry.desc'),
+      defaultName: 'Live artifact maintainer',
+      prompt:
+        'List live artifacts for this project, find stale or failed refreshes, and update the highest-value artifact in place. Preserve artifact ids, summarize what changed, and flag artifacts that need connector access or human review.',
+    },
+    {
+      id: 'orbit-dashboard',
+      category: 'orbit',
+      kind: 'routine',
+      icon: 'orbit',
+      title: t('automations.tpl.orbitDashboard.title'),
+      description: t('automations.tpl.orbitDashboard.desc'),
+      defaultName: 'Connector activity dashboard',
+      prompt:
+        'Use the selected connectors to build or refresh a live dashboard of recent activity. Group by people, projects, decisions, risks, and follow-ups. Prefer connected read-only tools, cite sources, and keep the dashboard refreshable.',
+    },
+    {
+      id: 'release-notes',
+      category: 'release',
+      kind: 'routine',
+      icon: 'present',
+      title: t('automations.tpl.releaseNotes.title'),
+      description: t('automations.tpl.releaseNotes.desc'),
+      defaultName: 'Weekly release notes',
+      prompt:
+        "Draft user-facing release notes covering merged PRs, updated artifacts, and design-system changes from the last 7 days. Group by 'New', 'Improved', and 'Fixed'. Include links when available and keep the copy user-readable.",
+    },
+    {
+      id: 'quality-regression-watch',
+      category: 'quality',
+      kind: 'routine',
+      icon: 'bell',
+      title: t('automations.tpl.qualityRegressionWatch.title'),
+      description: t('automations.tpl.qualityRegressionWatch.desc'),
+      defaultName: 'Regression watch',
+      prompt:
+        'Compare recent project changes against accepted artifacts, design-system rules, benchmarks, and traces. Flag regressions in behavior, layout, accessibility, or product intent. Suggest the smallest fix and cite the evidence.',
+    },
+  ];
 }
 
-function nextRunLabel(routine: Routine): string {
-  if (!routine.enabled) return 'Manual only';
-  if (!routine.nextRunAt) return 'Scheduled';
+function fallbackOrbitTemplate(t: TranslateFn): AutomationTemplate {
+  return {
+    id: 'orbit-daily',
+    category: 'orbit',
+    kind: 'orbit',
+    icon: 'orbit',
+    title: t('automations.tpl.orbitDaily.title'),
+    description: t('automations.tpl.orbitDaily.desc'),
+    defaultName: 'Daily connector digest',
+    prompt:
+      'Survey every connected integration and produce a daily digest of what changed in the last 24 hours. Group the result by people, projects, decisions, and follow-ups. Save the output as a live artifact named `daily_digest.md` and update it in place on each run.',
+  };
+}
+
+function fallbackLiveTemplate(t: TranslateFn): AutomationTemplate {
+  return {
+    id: 'live-status-board',
+    category: 'live-artifact',
+    kind: 'live-artifact',
+    icon: 'file-code',
+    title: t('automations.tpl.liveStatusBoard.title'),
+    description: t('automations.tpl.liveStatusBoard.desc'),
+    defaultName: 'Live status board',
+    prompt:
+      "Maintain a single live artifact named `status_board.md`. On each run, update the sections for 'In flight', 'Shipped this week', 'Risks', and 'Decisions made'. Edit in place so the artifact stays stable.",
+  };
+}
+
+function templateFilters(t: TranslateFn): ReadonlyArray<{ id: TemplateFilter; label: string }> {
+  return [
+    { id: 'all', label: t('automations.filterAll') },
+    { id: 'orbit', label: t('automations.filterOrbit') },
+    { id: 'live-artifact', label: t('automations.filterLiveArtifacts') },
+    { id: 'memory', label: t('automations.filterMemory') },
+    { id: 'design-system', label: t('automations.filterDesignSystems') },
+    { id: 'skills', label: t('automations.filterSkills') },
+    { id: 'connectors', label: t('automations.filterConnectors') },
+    { id: 'compression', label: t('automations.filterCompression') },
+    { id: 'release', label: t('automations.filterRelease') },
+    { id: 'quality', label: t('automations.filterQuality') },
+  ];
+}
+
+function scheduleStatusLabel(routine: Routine, t: TranslateFn): string {
+  if (!routine.enabled) return t('automations.scheduleStatusPaused');
+  return describeRoutineSchedule(routine.schedule, t, routine.nextRunAt);
+}
+
+function nextRunLabel(routine: Routine, t: TranslateFn): string {
+  if (!routine.enabled) return t('automations.nextRunManualOnly');
+  if (!routine.nextRunAt) return t('automations.nextRunScheduled');
   const date = new Date(routine.nextRunAt);
-  return `Next ${date.toLocaleString(undefined, {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  })}`;
+  return t('automations.nextRunAt', {
+    time: date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }),
+  });
 }
 
 function formatAutomationTimestamp(ts: number | null | undefined): string {
@@ -218,8 +198,8 @@ function formatAutomationTimestamp(ts: number | null | undefined): string {
   });
 }
 
-function formatRunDuration(run: RoutineRun): string {
-  if (!run.completedAt) return 'In progress';
+function formatRunDuration(run: RoutineRun, t: TranslateFn): string {
+  if (!run.completedAt) return t('automations.runInProgress');
   const seconds = Math.max(1, Math.round((run.completedAt - run.startedAt) / 1000));
   if (seconds < 60) return `${seconds}s`;
   const minutes = Math.floor(seconds / 60);
@@ -227,16 +207,16 @@ function formatRunDuration(run: RoutineRun): string {
   return remainder > 0 ? `${minutes}m ${remainder}s` : `${minutes}m`;
 }
 
-function statusLabel(status: RoutineRun['status']): string {
-  if (status === 'succeeded') return 'Succeeded';
-  if (status === 'failed') return 'Failed';
-  if (status === 'running') return 'Running';
-  if (status === 'queued') return 'Queued';
-  return 'Canceled';
+function statusLabel(status: RoutineRun['status'], t: TranslateFn): string {
+  if (status === 'succeeded') return t('automations.statusSucceeded');
+  if (status === 'failed') return t('automations.statusFailed');
+  if (status === 'running') return t('automations.statusRunning');
+  if (status === 'queued') return t('automations.statusQueued');
+  return t('automations.statusCanceled');
 }
 
-function StatusPill({ status }: { status: RoutineRun['status'] }) {
-  return <span className={`automation-status is-${status}`}>{statusLabel(status)}</span>;
+function StatusPill({ status, t }: { status: RoutineRun['status']; t: TranslateFn }) {
+  return <span className={`automation-status is-${status}`}>{statusLabel(status, t)}</span>;
 }
 
 function templateFromSkill(skill: SkillSummary, kind: AutomationTemplateKind): AutomationTemplate {
@@ -332,6 +312,7 @@ function dedupeTemplates(templates: AutomationTemplate[]): AutomationTemplate[] 
 function buildAutomationTemplates(
   designTemplates: SkillSummary[],
   automationCatalog: ContractAutomationTemplate[],
+  t: TranslateFn,
 ): AutomationTemplate[] {
   const orbit = designTemplates
     .filter((skill) => skill.scenario === 'orbit')
@@ -342,9 +323,9 @@ function buildAutomationTemplates(
 
   return dedupeTemplates([
     ...automationCatalog.map(templateFromAutomationCatalog),
-    ...(orbit.length > 0 ? orbit : [FALLBACK_ORBIT_TEMPLATE]),
-    ...(live.length > 0 ? live : [FALLBACK_LIVE_TEMPLATE]),
-    ...STATIC_TEMPLATES,
+    ...(orbit.length > 0 ? orbit : [fallbackOrbitTemplate(t)]),
+    ...(live.length > 0 ? live : [fallbackLiveTemplate(t)]),
+    ...buildStaticTemplates(t),
   ]);
 }
 
@@ -356,10 +337,10 @@ function filterTemplates(templates: AutomationTemplate[], filter: TemplateFilter
   return templates.filter((template) => template.category === filter);
 }
 
-function kindLabel(kind: AutomationTemplateKind): string {
-  if (kind === 'orbit') return 'Orbit';
-  if (kind === 'live-artifact') return 'Live artifact';
-  return 'Automation';
+function kindLabel(kind: AutomationTemplateKind, t: TranslateFn): string {
+  if (kind === 'orbit') return t('automations.kindOrbit');
+  if (kind === 'live-artifact') return t('automations.kindLiveArtifact');
+  return t('automations.kindAutomation');
 }
 
 function kindIcon(kind: AutomationTemplateKind): IconName {
@@ -368,23 +349,92 @@ function kindIcon(kind: AutomationTemplateKind): IconName {
   return 'history';
 }
 
-function proposalTargetLabel(target: AutomationEvolutionProposal['targetKind']): string {
-  if (target === 'memory-node') return 'Memory';
-  if (target === 'design-system') return 'Design system';
-  if (target === 'skill') return 'Skill';
-  return 'Automation template';
+function proposalTargetLabel(target: AutomationEvolutionProposal['targetKind'], t: TranslateFn): string {
+  if (target === 'memory-node') return t('automations.proposalTargetMemory');
+  if (target === 'design-system') return t('automations.proposalTargetDesignSystem');
+  if (target === 'skill') return t('automations.proposalTargetSkill');
+  return t('automations.proposalTargetTemplate');
 }
 
-function proposalActionLabel(action: AutomationEvolutionProposal['action']): string {
-  if (action === 'create') return 'Create';
-  if (action === 'update') return 'Update';
-  if (action === 'merge') return 'Merge';
-  if (action === 'move') return 'Move';
-  if (action === 'delete') return 'Delete';
-  return 'Promote';
+function proposalActionLabel(action: AutomationEvolutionProposal['action'], t: TranslateFn): string {
+  if (action === 'create') return t('automations.proposalActionCreate');
+  if (action === 'update') return t('automations.proposalActionUpdate');
+  if (action === 'merge') return t('automations.proposalActionMerge');
+  if (action === 'move') return t('automations.proposalActionMove');
+  if (action === 'delete') return t('automations.proposalActionDelete');
+  return t('automations.proposalActionPromote');
+}
+
+function mergeAutomationProposals(
+  current: AutomationEvolutionProposal[],
+  incoming: AutomationEvolutionProposal[],
+): AutomationEvolutionProposal[] {
+  const merged = new Map(current.map((proposal) => [proposal.id, proposal]));
+  for (const proposal of incoming) {
+    merged.set(proposal.id, proposal);
+  }
+  return Array.from(merged.values()).sort((a, b) => {
+    const bTime = Date.parse(b.createdAt);
+    const aTime = Date.parse(a.createdAt);
+    return (Number.isNaN(bTime) ? 0 : bTime) - (Number.isNaN(aTime) ? 0 : aTime);
+  });
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
 export function TasksView({ skills = [], designTemplates = [], connectors = [] }: Props) {
+  const t = useT();
+  const analytics = useAnalytics();
+  // Attaches the same workspace identity headers project reads already carry,
+  // so the daemon's `GET /api/workspaces/:id/projects` returns the caller's
+  // team projects instead of falling back to the no-scope `GET /api/projects`
+  // catalog (spec 04 §10), which now only lists never-claimed projects.
+  // `useWorkspaceContext` is a coalesced read shared across the nav shell, so
+  // calling it again here does not fan out an extra fetch.
+  //
+  // `workspaceView: 'all'` below matters: this picker needs every project the
+  // caller can attach an automation to (own drafts AND team-shared), not just
+  // the `'drafts'` fallback `listProjects` otherwise defaults to when the view
+  // is omitted (that default is right for the Home "Drafts" tab, wrong here —
+  // see `workspaceProjectListViewForRoute` in App.tsx for the same per-surface
+  // view choice made project-browsing routes).
+  const { context: tasksWorkspaceContext } = useWorkspaceContext();
+  const tasksWorkspaceIdentity = workspaceIdentityCacheKey(tasksWorkspaceContext);
+  const routineHeaders = useMemo(
+    () => tasksWorkspaceContext
+      ? workspaceProjectHeaders(tasksWorkspaceContext)
+      : undefined,
+    // The identity contains every authority field placed on the wire.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [tasksWorkspaceIdentity],
+  );
+  // P2 page_view page_name=automations. Ref-keyed so re-renders don't
+  // double-fire while the user is on the page.
+  const pageViewFiredRef = useState<{ fired: boolean }>(() => ({ fired: false }))[0];
+  useEffect(() => {
+    if (pageViewFiredRef.fired) return;
+    pageViewFiredRef.fired = true;
+    trackPageView(analytics.track, { page_name: 'automations' });
+  }, [analytics.track, pageViewFiredRef]);
+  // P2 ui_click page_name=automations. Fire on every actionable click inside
+  // the tab before running the handler, so navigations that unmount the view
+  // still report.
+  const fireClick = useCallback(
+    (
+      element: AutomationsClickProps['element'],
+      extra?: Pick<AutomationsClickProps, 'type_id' | 'filter_id' | 'template_kind'>,
+    ) => {
+      trackAutomationsClick(analytics.track, {
+        page_name: 'automations',
+        area: 'automations',
+        element,
+        ...extra,
+      });
+    },
+    [analytics.track],
+  );
   const [routines, setRoutines] = useState<Routine[]>([]);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [loading, setLoading] = useState(true);
@@ -394,24 +444,24 @@ export function TasksView({ skills = [], designTemplates = [], connectors = [] }
   const [templateFilter, setTemplateFilter] = useState<TemplateFilter>('all');
   const [automationCatalog, setAutomationCatalog] = useState<ContractAutomationTemplate[]>([]);
   const [proposals, setProposals] = useState<AutomationEvolutionProposal[]>([]);
-  const [sourcePackets, setSourcePackets] = useState<AutomationContentPacket[]>([]);
-  const [sourceForm, setSourceForm] = useState<SourceIngestionForm>(DEFAULT_SOURCE_FORM);
   const [proposalBusyId, setProposalBusyId] = useState<string | null>(null);
-  const [ingestingSource, setIngestingSource] = useState(false);
   const [crystallizingRunId, setCrystallizingRunId] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [focusRoutineId, setFocusRoutineId] = useState<string | null>(null);
+  const routineRowRefs = useRef<Record<string, HTMLLIElement | null>>({});
   const [historyTick, setHistoryTick] = useState(0);
 
   const templates = useMemo(
-    () => buildAutomationTemplates(designTemplates, automationCatalog),
-    [automationCatalog, designTemplates],
+    () => buildAutomationTemplates(designTemplates, automationCatalog, t),
+    [automationCatalog, designTemplates, t],
   );
   const filteredTemplates = useMemo(
     () => filterTemplates(templates, templateFilter),
     [templates, templateFilter],
   );
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (): Promise<{ proposalRefreshFailed: boolean }> => {
+    let proposalRefreshFailed = false;
     try {
       const templateRequest = fetch('/api/automation-templates')
         .then(async (res) => {
@@ -421,51 +471,47 @@ export function TasksView({ skills = [], designTemplates = [], connectors = [] }
         .catch(() => null);
       const proposalRequest = fetch('/api/automation-proposals?status=pending-review')
         .then(async (res) => {
-          if (!res.ok) return null;
+          if (!res.ok) {
+            proposalRefreshFailed = true;
+            return null;
+          }
           return (await res.json()) as AutomationEvolutionProposalListResponse;
         })
-        .catch(() => null);
-      const sourcePacketRequest = fetch('/api/automation-source-packets?limit=3')
-        .then(async (res) => {
-          if (!res.ok) return null;
-          return (await res.json()) as AutomationSourcePacketListResponse;
-        })
-        .catch(() => null);
-      const [rRes, pRes, tJson, proposalJson, sourcePacketJson] = await Promise.all([
-        fetch('/api/routines'),
-        fetch('/api/projects'),
+        .catch(() => {
+          proposalRefreshFailed = true;
+          return null;
+        });
+      const [rRes, projectList, tJson, proposalJson] = await Promise.all([
+        fetch('/api/routines', routineHeaders ? { headers: routineHeaders } : undefined),
+        listProjects({ workspaceContext: tasksWorkspaceContext, workspaceView: 'all' }),
         templateRequest,
         proposalRequest,
-        sourcePacketRequest,
       ]);
       if (!rRes.ok) throw new Error(`routines: ${rRes.status}`);
       const rJson = await rRes.json();
       setRoutines(rJson.routines ?? []);
-      if (pRes.ok) {
-        const pJson = await pRes.json();
-        setProjects(
-          (pJson.projects ?? []).map((p: ProjectSummary) => ({
-            id: p.id,
-            name: p.name,
-          })),
-        );
-      }
+      setProjects(projectList.map((p) => ({ id: p.id, name: p.name })));
       if (tJson) {
         setAutomationCatalog(Array.isArray(tJson.templates) ? tJson.templates : []);
       }
       if (proposalJson) {
         setProposals(Array.isArray(proposalJson.proposals) ? proposalJson.proposals : []);
       }
-      if (sourcePacketJson) {
-        setSourcePackets(Array.isArray(sourcePacketJson.packets) ? sourcePacketJson.packets : []);
-      }
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorMessage(err));
     } finally {
       setLoading(false);
     }
-  }, []);
+    return { proposalRefreshFailed };
+    // Re-run (and re-effect below, via the `refresh` identity change) on
+    // workspace switch, not just mount — same as PluginsView/RoutinesSection —
+    // so the project picker reflects the newly active workspace's projects.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // `tasksWorkspaceIdentity` partitions this callback on every authority
+    // field. The captured context belongs to that exact identity.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [routineHeaders, tasksWorkspaceIdentity]);
 
   useEffect(() => {
     void refresh();
@@ -477,63 +523,22 @@ export function TasksView({ skills = [], designTemplates = [], connectors = [] }
     return map;
   }, [projects]);
 
-  const activeCount = routines.filter((routine) => routine.enabled).length;
-  const pausedCount = routines.length - activeCount;
-  const sourceIngestionTemplates = useMemo(
-    () =>
-      automationCatalog.filter((template) =>
-        template.stages.some((stage) => stage.kind === 'ingest' || stage.kind === 'propose'),
-      ),
-    [automationCatalog],
+  // Sort routines by creation time, newest first
+  const sortedRoutines = useMemo(
+    () => sortRoutinesNewestFirst(routines),
+    [routines],
   );
 
-  const patchSourceForm = (patch: Partial<SourceIngestionForm>) => {
-    setSourceForm((current) => ({ ...current, ...patch }));
-  };
+  useEffect(() => {
+    if (!focusRoutineId) return;
+    const node = routineRowRefs.current[focusRoutineId];
+    node?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    const timer = window.setTimeout(() => setFocusRoutineId(null), 4000);
+    return () => window.clearTimeout(timer);
+  }, [focusRoutineId, sortedRoutines]);
 
-  const submitSourceIngestion = async () => {
-    if (!sourceForm.bodyMarkdown.trim()) {
-      setError('Paste source content before ingesting it.');
-      return;
-    }
-    setIngestingSource(true);
-    setError(null);
-    try {
-      const res = await fetch('/api/automation-ingestions', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          templateId: sourceForm.templateId || undefined,
-          sourceKind: sourceForm.sourceKind,
-          sourceRef: sourceForm.sourceRef || undefined,
-          title: sourceForm.title || undefined,
-          bodyMarkdown: sourceForm.bodyMarkdown,
-          connectorId:
-            sourceForm.sourceKind === 'connector' && sourceForm.connectorId
-              ? sourceForm.connectorId
-              : undefined,
-          tokenCompression: sourceForm.tokenCompression,
-        }),
-      });
-      if (!res.ok) {
-        const j = await res.json().catch(() => ({}));
-        throw new Error(j.error || `ingestion failed: ${res.status}`);
-      }
-      const json = (await res.json()) as AutomationSourceIngestionResponse;
-      setSourcePackets((current) => [json.packet, ...current].slice(0, 3));
-      setSourceForm((current) => ({
-        ...current,
-        title: '',
-        sourceRef: '',
-        bodyMarkdown: '',
-      }));
-      await refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setIngestingSource(false);
-    }
-  };
+  const activeCount = sortedRoutines.filter((routine) => routine.enabled).length;
+  const pausedCount = sortedRoutines.length - activeCount;
 
   const reviewProposal = async (id: string, action: 'apply' | 'reject') => {
     setProposalBusyId(id);
@@ -542,7 +547,7 @@ export function TasksView({ skills = [], designTemplates = [], connectors = [] }
       const res = await fetch(`/api/automation-proposals/${id}/${action}`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: action === 'reject' ? JSON.stringify({ reason: 'Dismissed in Automations' }) : '{}',
+        body: action === 'reject' ? JSON.stringify({ reason: t('automations.proposalsDismissReason') }) : '{}',
       });
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
@@ -550,7 +555,7 @@ export function TasksView({ skills = [], designTemplates = [], connectors = [] }
       }
       await refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorMessage(err));
     } finally {
       setProposalBusyId(null);
     }
@@ -560,7 +565,10 @@ export function TasksView({ skills = [], designTemplates = [], connectors = [] }
     setBusyId(id);
     setError(null);
     try {
-      const res = await fetch(`/api/routines/${id}/run`, { method: 'POST' });
+      const res = await fetch(`/api/routines/${id}/run`, {
+        method: 'POST',
+        ...(routineHeaders ? { headers: routineHeaders } : {}),
+      });
       if (!res.ok && res.status !== 202) {
         const j = await res.json().catch(() => ({}));
         throw new Error(j.error || `run failed: ${res.status}`);
@@ -579,7 +587,7 @@ export function TasksView({ skills = [], designTemplates = [], connectors = [] }
       setExpandedId(id);
       setHistoryTick((tick) => tick + 1);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorMessage(err));
     } finally {
       setBusyId(null);
     }
@@ -591,16 +599,29 @@ export function TasksView({ skills = [], designTemplates = [], connectors = [] }
     try {
       const res = await fetch(`/api/routines/${routineId}/runs/${runId}/crystallize`, {
         method: 'POST',
+        ...(routineHeaders ? { headers: routineHeaders } : {}),
       });
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
         throw new Error(j.error || `crystallize failed: ${res.status}`);
       }
       const json = (await res.json()) as RoutineRunCrystallizeResponse;
-      setSourcePackets((current) => [json.packet, ...current].slice(0, 3));
-      await refresh();
+      const createdProposals = Array.isArray(json.proposals) ? json.proposals : [];
+      if (createdProposals.length > 0) {
+        setProposals((current) => mergeAutomationProposals(current, createdProposals));
+      }
+      const { proposalRefreshFailed } = await refresh();
+      if (proposalRefreshFailed) {
+        setError(
+          createdProposals.length > 0
+            ? t('automations.crystallizePartialSuccess')
+            : t('automations.crystallizeRefreshFailed'),
+        );
+      } else if (createdProposals.length === 0) {
+        setError(t('automations.crystallizeNoProposals'));
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(t('automations.crystallizeFailed', { error: errorMessage(err) }));
     } finally {
       setCrystallizingRunId(null);
     }
@@ -611,7 +632,10 @@ export function TasksView({ skills = [], designTemplates = [], connectors = [] }
     try {
       const res = await fetch(`/api/routines/${routine.id}`, {
         method: 'PATCH',
-        headers: { 'content-type': 'application/json' },
+        headers: {
+          'content-type': 'application/json',
+          ...(routineHeaders ?? {}),
+        },
         body: JSON.stringify({ enabled: !routine.enabled }),
       });
       if (!res.ok) {
@@ -620,18 +644,21 @@ export function TasksView({ skills = [], designTemplates = [], connectors = [] }
       }
       void refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorMessage(err));
     } finally {
       setBusyId(null);
     }
   };
 
   const remove = async (id: string) => {
-    if (!window.confirm('Delete this automation? Past runs and their projects are kept.'))
+    if (!window.confirm(t('automations.deleteConfirm')))
       return;
     setBusyId(id);
     try {
-      const res = await fetch(`/api/routines/${id}`, { method: 'DELETE' });
+      const res = await fetch(`/api/routines/${id}`, {
+        method: 'DELETE',
+        ...(routineHeaders ? { headers: routineHeaders } : {}),
+      });
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
         throw new Error(j.error || `delete failed: ${res.status}`);
@@ -639,7 +666,7 @@ export function TasksView({ skills = [], designTemplates = [], connectors = [] }
       if (expandedId === id) setExpandedId(null);
       void refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorMessage(err));
     } finally {
       setBusyId(null);
     }
@@ -649,28 +676,31 @@ export function TasksView({ skills = [], designTemplates = [], connectors = [] }
     <section className="automations-view" aria-labelledby="automations-title" data-testid="tasks-view">
       <header className="automations-hero">
         <div className="automations-hero__copy">
-          <span className="automations-hero__eyebrow">Scheduled agent sessions</span>
+          <span className="automations-hero__eyebrow">{t('automations.eyebrow')}</span>
           <h1 id="automations-title" className="automations-hero__title">
-            Automations
+            {t('automations.title')}
           </h1>
           <p className="automations-hero__lede">
-            Plan recurring conversations for project work, Orbit digests, and live artifacts.
+            {t('automations.lede')}
           </p>
         </div>
         <div className="automations-hero__actions">
-          <div className="automations-metrics" aria-label="Automation summary">
-            <Metric label="Active" value={activeCount} />
-            <Metric label="Paused" value={pausedCount} />
-            <Metric label="Templates" value={templates.length} />
+          <div className="automations-metrics" aria-label={t('automations.summaryAria')}>
+            <Metric label={t('automations.metricActive')} value={activeCount} />
+            <Metric label={t('automations.metricPaused')} value={pausedCount} />
+            <Metric label={t('automations.metricTemplates')} value={templates.length} />
           </div>
           <button
             type="button"
             className="automations-view__new"
-            onClick={() => setModal({ kind: 'create' })}
+            onClick={() => {
+              fireClick('new_automation');
+              setModal({ kind: 'create' });
+            }}
             data-testid="automations-new"
           >
             <Icon name="plus" size={14} />
-            <span>New automation</span>
+            <span>{t('automations.newAutomation')}</span>
           </button>
         </div>
       </header>
@@ -681,39 +711,46 @@ export function TasksView({ skills = [], designTemplates = [], connectors = [] }
         </div>
       ) : null}
 
-      <section className="automations-saved" aria-label="Your automations">
+      <section className="automations-saved" aria-label={t('automations.yourAutomations')}>
         <div className="automations-section-head">
-          <h2 className="automations-section__label">Your automations</h2>
-          {loading ? <span className="automations-section__meta">Loading</span> : null}
+          <h2 className="automations-section__label">{t('automations.yourAutomations')}</h2>
+          {loading ? <span className="automations-section__meta">{t('automations.loading')}</span> : null}
         </div>
-        {!loading && routines.length === 0 ? (
+        {!loading && sortedRoutines.length === 0 ? (
           <button
             type="button"
             className="automation-empty"
-            onClick={() => setModal({ kind: 'create' })}
+            onClick={() => {
+              fireClick('new_automation');
+              setModal({ kind: 'create' });
+            }}
           >
             <span className="automation-empty__icon">
               <Icon name="plus" size={16} />
             </span>
             <span className="automation-empty__body">
-              <strong>No automations yet</strong>
-              <span>Create one from a template or start with a blank schedule.</span>
+              <strong>{t('automations.emptyTitle')}</strong>
+              <span>{t('automations.emptyBody')}</span>
             </span>
           </button>
         ) : null}
-        {routines.length > 0 ? (
+        {sortedRoutines.length > 0 ? (
           <ul className="automations-saved__list">
-            {routines.map((r) => {
+            {sortedRoutines.map((r) => {
               const isBusy = busyId === r.id;
               const targetLabel =
                 r.target.mode === 'reuse'
                   ? projectsById.get(r.target.projectId) ?? r.target.projectId
-                  : 'New project each run';
+                  : t('automations.targetNewEachRun');
               const isExpanded = expandedId === r.id;
               return (
                 <li
                   key={r.id}
-                  className={`automation-row${r.enabled ? '' : ' is-paused'}`}
+                  ref={(node) => {
+                    routineRowRefs.current[r.id] = node;
+                  }}
+                  data-testid={`automation-row-${r.id}`}
+                  className={`automation-row${r.enabled ? '' : ' is-paused'}${focusRoutineId === r.id ? ' is-focused' : ''}`}
                 >
                   <div className="automation-row__main">
                     <span className="automation-row__icon">
@@ -722,33 +759,34 @@ export function TasksView({ skills = [], designTemplates = [], connectors = [] }
                     <span className="automation-row__content">
                       <span className="automation-row__title">{r.name}</span>
                       <span className="automation-row__meta">
-                        <span>{scheduleStatusLabel(r)}</span>
+                        <span>{scheduleStatusLabel(r, t)}</span>
                         <span aria-hidden="true">·</span>
                         <span>{targetLabel}</span>
                         <span aria-hidden="true">·</span>
-                        <span>{nextRunLabel(r)}</span>
+                        <span>{nextRunLabel(r, t)}</span>
                       </span>
                       {r.prompt ? (
                         <span className="automation-row__prompt">{r.prompt}</span>
                       ) : null}
                       {r.lastRun ? (
                         <span className="automation-row__last-run">
-                          <StatusPill status={r.lastRun.status} />
-                          <span>Last run {formatAutomationTimestamp(r.lastRun.startedAt)}</span>
+                          <StatusPill status={r.lastRun.status} t={t} />
+                          <span>{t('automations.lastRun', { time: formatAutomationTimestamp(r.lastRun.startedAt) })}</span>
                           <span aria-hidden="true">·</span>
                           <button
                             type="button"
                             className="automation-inline-link"
-                            onClick={() =>
+                            onClick={() => {
+                              fireClick('open_artifact');
                               navigate({
                                 kind: 'project',
                                 projectId: r.lastRun!.projectId,
                                 conversationId: r.lastRun!.conversationId,
                                 fileName: null,
-                              })
-                            }
+                              });
+                            }}
                           >
-                            Open result
+                            {t('automations.openResult')}
                           </button>
                         </span>
                       ) : null}
@@ -758,59 +796,75 @@ export function TasksView({ skills = [], designTemplates = [], connectors = [] }
                     <button
                       type="button"
                       className="automation-row__btn"
-                      onClick={() => runNow(r.id)}
+                      onClick={() => {
+                        fireClick('run_now');
+                        runNow(r.id);
+                      }}
                       disabled={isBusy}
-                      title="Run now and open the conversation"
+                      title={t('automations.runNowTitle')}
                     >
-                      <Icon name="play" size={12} />
-                      <span>Run</span>
+                      <Icon name="play" size={14} />
+                      <span>{t('automations.run')}</span>
                     </button>
                     <button
                       type="button"
                       className="automation-row__btn"
                       onClick={() => {
+                        fireClick('history');
                         setExpandedId(isExpanded ? null : r.id);
                         if (!isExpanded) setHistoryTick((tick) => tick + 1);
                       }}
                       aria-expanded={isExpanded}
                     >
-                      <Icon name="history" size={12} />
-                      <span>{isExpanded ? 'Hide history' : 'History'}</span>
+                      <Icon name="history" size={14} />
+                      <span>{isExpanded ? t('automations.hideHistory') : t('automations.history')}</span>
                     </button>
                     <button
                       type="button"
                       className="automation-row__btn"
-                      onClick={() => setModal({ kind: 'edit', routine: r })}
+                      onClick={() => {
+                        fireClick('edit');
+                        setModal({ kind: 'edit', routine: r });
+                      }}
                       disabled={isBusy}
                     >
-                      <Icon name="edit" size={12} />
-                      <span>Edit</span>
+                      <Icon name="edit" size={14} />
+                      <span>{t('automations.edit')}</span>
                     </button>
                     <button
                       type="button"
                       className="automation-row__btn"
-                      onClick={() => togglePaused(r)}
+                      onClick={() => {
+                        fireClick(r.enabled ? 'pause' : 'resume');
+                        togglePaused(r);
+                      }}
                       disabled={isBusy}
                     >
-                      {r.enabled ? 'Pause' : 'Resume'}
+                      {r.enabled ? t('automations.pause') : t('automations.resume')}
                     </button>
                     <button
                       type="button"
                       className="automation-row__btn automation-row__btn--danger"
-                      onClick={() => remove(r.id)}
+                      onClick={() => {
+                        fireClick('delete');
+                        remove(r.id);
+                      }}
                       disabled={isBusy}
-                      aria-label="Delete automation"
-                      title="Delete this automation"
+                      aria-label={t('automations.deleteAria')}
+                      title={t('automations.deleteTitle')}
                     >
-                      <Icon name="trash" size={12} />
+                      <Icon name="trash" size={14} />
                     </button>
                   </div>
                   {isExpanded ? (
                     <AutomationRunHistory
                       routineId={r.id}
                       refreshKey={historyTick}
+                      workspaceContext={tasksWorkspaceContext}
                       crystallizingRunId={crystallizingRunId}
                       onCrystallizeRun={crystallizeRun}
+                      onFireClick={fireClick}
+                      t={t}
                     />
                   ) : null}
                 </li>
@@ -820,148 +874,16 @@ export function TasksView({ skills = [], designTemplates = [], connectors = [] }
         ) : null}
       </section>
 
-      <section className="automations-ingest" aria-label="Source ingestion">
-        <div className="automations-section-head">
-          <div>
-            <h2 className="automations-section__label">Ingest source</h2>
-            <p className="automations-section__sub">
-              Turn connector, repo, artifact, or chat context into reviewable evolution proposals.
-            </p>
-          </div>
-          <span className="automations-section__meta">{sourcePackets.length} recent</span>
-        </div>
-        <div className="automation-ingest-panel">
-          <div className="automation-ingest-controls">
-            <label className="automation-ingest-field">
-              <span>Template</span>
-              <select
-                value={sourceForm.templateId}
-                onChange={(event) => patchSourceForm({ templateId: event.currentTarget.value })}
-              >
-                {sourceIngestionTemplates.length === 0 ? (
-                  <option value={sourceForm.templateId}>{sourceForm.templateId}</option>
-                ) : null}
-                {sourceIngestionTemplates.map((template) => (
-                  <option key={template.id} value={template.id}>
-                    {template.title}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="automation-ingest-field">
-              <span>Source</span>
-              <select
-                value={sourceForm.sourceKind}
-                onChange={(event) =>
-                  patchSourceForm({ sourceKind: event.currentTarget.value as AutomationSourceKind })
-                }
-              >
-                {SOURCE_KIND_OPTIONS.map((option) => (
-                  <option key={option.id} value={option.id}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="automation-ingest-field">
-              <span>Compression</span>
-              <select
-                value={sourceForm.tokenCompression}
-                onChange={(event) =>
-                  patchSourceForm({
-                    tokenCompression: event.currentTarget.value as AutomationTokenCompressionMode,
-                  })
-                }
-              >
-                {COMPRESSION_OPTIONS.map((option) => (
-                  <option key={option.id} value={option.id}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            {sourceForm.sourceKind === 'connector' ? (
-              <label className="automation-ingest-field">
-                <span>Connector</span>
-                <select
-                  value={sourceForm.connectorId}
-                  onChange={(event) => patchSourceForm({ connectorId: event.currentTarget.value })}
-                >
-                  <option value="">Any connected source</option>
-                  {connectors.map((connector) => (
-                    <option key={connector.id} value={connector.id}>
-                      {connector.name}
-                      {connector.accountLabel ? ` · ${connector.accountLabel}` : ''}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            ) : null}
-          </div>
-          <div className="automation-ingest-fields">
-            <label className="automation-ingest-field">
-              <span>Title</span>
-              <input
-                value={sourceForm.title}
-                onChange={(event) => patchSourceForm({ title: event.currentTarget.value })}
-                placeholder="Decision, brand notes, workflow pattern..."
-              />
-            </label>
-            <label className="automation-ingest-field">
-              <span>Source ref</span>
-              <input
-                value={sourceForm.sourceRef}
-                onChange={(event) => patchSourceForm({ sourceRef: event.currentTarget.value })}
-                placeholder="URL, repo path, connector event id, artifact id..."
-              />
-            </label>
-          </div>
-          <label className="automation-ingest-field automation-ingest-field--body">
-            <span>Content</span>
-            <textarea
-              value={sourceForm.bodyMarkdown}
-              onChange={(event) => patchSourceForm({ bodyMarkdown: event.currentTarget.value })}
-              placeholder="Paste the content to canonicalize into a source packet and proposals."
-            />
-          </label>
-          <div className="automation-ingest-footer">
-            {sourcePackets.length > 0 ? (
-              <ul className="automation-ingest-recent" aria-label="Recent source packets">
-                {sourcePackets.map((packet) => (
-                  <li key={packet.id}>
-                    <span>{packet.title}</span>
-                    <small>
-                      {packet.sourceKind} · {packet.tokenStats.originalTokens} tokens
-                    </small>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <span className="automation-ingest-empty">No source packets yet.</span>
-            )}
-            <button
-              type="button"
-              className="automations-view__new"
-              onClick={submitSourceIngestion}
-              disabled={ingestingSource}
-            >
-              <Icon name="sparkles" size={14} />
-              <span>{ingestingSource ? 'Ingesting' : 'Ingest'}</span>
-            </button>
-          </div>
-        </div>
-      </section>
-
       {proposals.length > 0 ? (
-        <section className="automations-saved" aria-label="Automation evolution proposals">
+        <section className="automations-saved" aria-label={t('automations.proposalsAria')}>
           <div className="automations-section-head">
             <div>
-              <h2 className="automations-section__label">Evolution proposals</h2>
+              <h2 className="automations-section__label">{t('automations.proposalsTitle')}</h2>
               <p className="automations-section__sub">
-                Review automation output before it changes memory, skills, or design systems.
+                {t('automations.proposalsSub')}
               </p>
             </div>
-            <span className="automations-section__meta">{proposals.length} pending</span>
+            <span className="automations-section__meta">{t('automations.proposalsPending', { n: proposals.length })}</span>
           </div>
           <ul className="automations-saved__list">
             {proposals.map((proposal) => {
@@ -978,9 +900,9 @@ export function TasksView({ skills = [], designTemplates = [], connectors = [] }
                     <span className="automation-row__content">
                       <span className="automation-row__title">{proposal.title}</span>
                       <span className="automation-row__meta">
-                        <span>{proposalTargetLabel(proposal.targetKind)}</span>
+                        <span>{proposalTargetLabel(proposal.targetKind, t)}</span>
                         <span aria-hidden="true">·</span>
-                        <span>{proposalActionLabel(proposal.action)}</span>
+                        <span>{proposalActionLabel(proposal.action, t)}</span>
                         <span aria-hidden="true">·</span>
                         <span>{proposal.reviewPolicy}</span>
                       </span>
@@ -996,19 +918,25 @@ export function TasksView({ skills = [], designTemplates = [], connectors = [] }
                     <button
                       type="button"
                       className="automation-row__btn"
-                      onClick={() => reviewProposal(proposal.id, 'apply')}
+                      onClick={() => {
+                        fireClick('proposal_apply');
+                        reviewProposal(proposal.id, 'apply');
+                      }}
                       disabled={isBusy}
                     >
-                      <Icon name="check" size={12} />
-                      <span>Apply</span>
+                      <Icon name="check" size={14} />
+                      <span>{t('automations.apply')}</span>
                     </button>
                     <button
                       type="button"
                       className="automation-row__btn automation-row__btn--danger"
-                      onClick={() => reviewProposal(proposal.id, 'reject')}
+                      onClick={() => {
+                        fireClick('proposal_reject');
+                        reviewProposal(proposal.id, 'reject');
+                      }}
                       disabled={isBusy}
                     >
-                      Reject
+                      {t('automations.reject')}
                     </button>
                   </div>
                 </li>
@@ -1018,51 +946,80 @@ export function TasksView({ skills = [], designTemplates = [], connectors = [] }
         </section>
       ) : null}
 
-      <section className="automations-templates" aria-label="Automation templates">
-        <div className="automations-section-head">
-          <div>
-            <h2 className="automations-section__label">Templates</h2>
+      <section className="automations-templates" aria-label={t('automations.templatesAria')}>
+        <div className="automations-templates__head">
+          <div className="automations-templates__head-copy">
+            <h2 className="automations-section__label">{t('automations.templatesTitle')}</h2>
             <p className="automations-section__sub">
-              Orbit and live artifacts are templates inside the same automation flow.
+              {t('automations.templatesSub')}
             </p>
           </div>
-          <div className="automations-template-tabs" role="tablist" aria-label="Template filters">
-            {TEMPLATE_FILTERS.map((filter) => (
+          <span className="automations-section__meta">
+            {t('automations.templatesCount', { filtered: filteredTemplates.length, total: templates.length })}
+          </span>
+        </div>
+        <div
+          className="automations-template-tabs"
+          role="tablist"
+          aria-label={t('automations.templateFiltersAria')}
+        >
+          {templateFilters(t).map((filter) => {
+            const count = filterTemplates(templates, filter.id).length;
+            const isActive = templateFilter === filter.id;
+            return (
               <button
                 key={filter.id}
                 type="button"
                 role="tab"
-                aria-selected={templateFilter === filter.id}
-                className={`automations-template-tab${templateFilter === filter.id ? ' is-active' : ''}`}
-                onClick={() => setTemplateFilter(filter.id)}
+                aria-selected={isActive}
+                className={`automations-template-tab${isActive ? ' is-active' : ''}`}
+                onClick={() => {
+                  fireClick('filter_tab', { filter_id: filter.id });
+                  setTemplateFilter(filter.id);
+                }}
               >
-                {filter.label}
+                <span className="automations-template-tab__label">{filter.label}</span>
+                <span className="automations-template-tab__count">{count}</span>
               </button>
-            ))}
-          </div>
+            );
+          })}
         </div>
 
-        <div className="automations-templates__grid">
+        {filteredTemplates.length === 0 ? (
+          <div className="automations-templates__empty" role="status">
+            <span className="automations-templates__empty-icon" aria-hidden="true">
+              <Icon name="sparkles" size={16} />
+            </span>
+            <div>
+              <strong>{t('automations.templatesEmptyTitle')}</strong>
+              <p>{t('automations.templatesEmptyBody')}</p>
+            </div>
+          </div>
+        ) : null}
+        <div className="automations-templates__grid" key={templateFilter}>
           {filteredTemplates.map((template) => (
             <button
               key={template.id}
               type="button"
               className={`automation-template-card is-${template.kind}`}
-              onClick={() => setModal({ kind: 'create', template })}
+              onClick={() => {
+                fireClick('type_card', { template_kind: template.kind });
+                setModal({ kind: 'create', template });
+              }}
             >
               <span className="automation-template-card__icon" aria-hidden="true">
                 <Icon name={template.icon} size={16} />
               </span>
               <span className="automation-template-card__body">
                 <span className="automation-template-card__kicker">
-                  <Icon name={kindIcon(template.kind)} size={11} />
-                  {kindLabel(template.kind)}
+                  <Icon name={kindIcon(template.kind)} size={14} />
+                  {kindLabel(template.kind, t)}
                 </span>
                 <span className="automation-template-card__title">{template.title}</span>
                 <span className="automation-template-card__desc">{template.description}</span>
                 <span className="automation-template-card__cta">
-                  Use template
-                  <Icon name="chevron-right" size={12} />
+                  {t('automations.useTemplate')}
+                  <Icon name="chevron-right" size={14} />
                 </span>
               </span>
             </button>
@@ -1084,12 +1041,20 @@ export function TasksView({ skills = [], designTemplates = [], connectors = [] }
         skills={skills}
         connectors={connectors}
         onClose={() => setModal(null)}
-        onSaved={() => {
-          void refresh();
+        onSaved={(routine) => {
+          void (async () => {
+            await refresh();
+            setExpandedId(routine.id);
+            setFocusRoutineId(routine.id);
+          })();
         }}
       />
     </section>
   );
+}
+
+export function sortRoutinesNewestFirst(routines: Routine[]): Routine[] {
+  return [...routines].sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
 }
 
 function Metric({ label, value }: { label: string; value: number }) {
@@ -1104,22 +1069,31 @@ function Metric({ label, value }: { label: string; value: number }) {
 function AutomationRunHistory({
   routineId,
   refreshKey,
+  workspaceContext,
   crystallizingRunId,
   onCrystallizeRun,
+  onFireClick,
+  t,
 }: {
   routineId: string;
   refreshKey: number;
+  workspaceContext: WorkspaceCollabContext | null;
   crystallizingRunId: string | null;
   onCrystallizeRun: (routineId: string, runId: string) => void;
+  onFireClick: (element: AutomationsClickProps['element']) => void;
+  t: TranslateFn;
 }) {
   const [runs, setRuns] = useState<RoutineRun[] | null>(null);
+  const workspaceIdentity = workspaceIdentityCacheKey(workspaceContext);
 
   useEffect(() => {
     let cancelled = false;
     setRuns(null);
     void (async () => {
       try {
-        const res = await fetch(`/api/routines/${routineId}/runs?limit=10`);
+        const res = await fetch(`/api/routines/${routineId}/runs?limit=10`, workspaceContext
+          ? { headers: workspaceProjectHeaders(workspaceContext) }
+          : undefined);
         if (!res.ok) throw new Error(`runs: ${res.status}`);
         const json = await res.json();
         if (!cancelled) setRuns(json.runs ?? []);
@@ -1130,33 +1104,36 @@ function AutomationRunHistory({
     return () => {
       cancelled = true;
     };
-  }, [refreshKey, routineId]);
+    // The captured context is exact for this identity; object churn with the
+    // same authority must not restart the history request.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshKey, routineId, workspaceIdentity]);
 
   if (runs === null) {
-    return <div className="automation-history automation-history--empty">Loading run history...</div>;
+    return <div className="automation-history automation-history--empty">{t('automations.runHistoryLoading')}</div>;
   }
 
   if (runs.length === 0) {
-    return <div className="automation-history automation-history--empty">No runs yet.</div>;
+    return <div className="automation-history automation-history--empty">{t('automations.runHistoryEmpty')}</div>;
   }
 
   return (
-    <div className="automation-history" aria-label="Automation run history">
+    <div className="automation-history" aria-label={t('automations.runHistoryAria')}>
       <div className="automation-history__head">
-        <span>Run history</span>
-        <span>Latest 10</span>
+        <span>{t('automations.runHistoryTitle')}</span>
+        <span>{t('automations.runHistoryLatest')}</span>
       </div>
       <ul className="automation-history__list">
         {runs.map((run) => (
           <li key={run.id} className="automation-history__row">
             <div className="automation-history__status">
-              <StatusPill status={run.status} />
+              <StatusPill status={run.status} t={t} />
               <span>{run.trigger}</span>
             </div>
             <div className="automation-history__meta">
               <span>{formatAutomationTimestamp(run.startedAt)}</span>
               <span aria-hidden="true">·</span>
-              <span>{formatRunDuration(run)}</span>
+              <span>{formatRunDuration(run, t)}</span>
               <span aria-hidden="true">·</span>
               <span>{run.agentRunId}</span>
             </div>
@@ -1170,28 +1147,32 @@ function AutomationRunHistory({
                 <button
                   type="button"
                   className="automation-history__open"
-                  onClick={() => onCrystallizeRun(routineId, run.id)}
+                  onClick={() => {
+                    onFireClick('crystallize');
+                    onCrystallizeRun(routineId, run.id);
+                  }}
                   disabled={crystallizingRunId === run.id}
-                  title="Draft skill and memory proposals from this run"
+                  title={t('automations.crystallizeTitle')}
                 >
-                  <Icon name="sparkles" size={12} />
-                  <span>{crystallizingRunId === run.id ? 'Crystallizing' : 'Crystallize'}</span>
+                  <Icon name="sparkles" size={14} />
+                  <span>{crystallizingRunId === run.id ? t('automations.crystallizing') : t('automations.crystallize')}</span>
                 </button>
               ) : null}
               <button
                 type="button"
                 className="automation-history__open"
-                onClick={() =>
+                onClick={() => {
+                  onFireClick('view_progress');
                   navigate({
                     kind: 'project',
                     projectId: run.projectId,
                     conversationId: run.conversationId,
                     fileName: null,
-                  })
-                }
+                  });
+                }}
               >
-                Open conversation
-                <Icon name="chevron-right" size={12} />
+                {t('automations.openConversation')}
+                <Icon name="chevron-right" size={14} />
               </button>
             </div>
           </li>

@@ -12,6 +12,7 @@ interface Props {
 // only ships a rasterised icon on devin.ai). New brand: drop the optimised
 // file in that folder and add the id here.
 const ICON_EXT: Record<string, 'svg' | 'png'> = {
+  amr: 'svg',
   claude: 'svg',
   codex: 'svg',
   gemini: 'svg',
@@ -21,6 +22,7 @@ const ICON_EXT: Record<string, 'svg' | 'png'> = {
   qwen: 'svg',
   qoder: 'svg',
   deepseek: 'svg',
+  reasonix: 'svg',
   mimo: 'svg',
   hermes: 'svg',
   'grok-build': 'svg',
@@ -29,7 +31,16 @@ const ICON_EXT: Record<string, 'svg' | 'png'> = {
   kiro: 'svg',
   kilo: 'svg',
   vibe: 'svg',
+  antigravity: 'svg',
+  aider: 'png',
+  'trae-cli': 'png',
   devin: 'png',
+};
+
+// Runtime variants that share the same vendor mark. Keep one bundled asset
+// instead of duplicating identical SVG files under transport-specific ids.
+const ICON_ASSET_ID: Record<string, string> = {
+  'deepseek-harness': 'deepseek',
 };
 
 // SVG marks that are single-color silhouettes (no baked brand colors).
@@ -45,17 +56,17 @@ const MONO_ICONS = new Set([
   'opencode',
   'hermes',
   'mimo',
-  'pi',
   'kilo',
   'grok-build',
 ]);
 
 export function AgentIcon({ id, size = 36, className }: Props) {
   const cls = 'agent-icon' + (className ? ' ' + className : '');
-  const ext = ICON_EXT[id];
+  const assetId = ICON_ASSET_ID[id] ?? id;
+  const ext = ICON_EXT[assetId];
   if (ext) {
-    if (ext === 'svg' && MONO_ICONS.has(id)) {
-      const src = `/agent-icons/${id}.svg`;
+    if (ext === 'svg' && MONO_ICONS.has(assetId)) {
+      const src = `/agent-icons/${assetId}.svg`;
       const style: CSSProperties = {
         width: size,
         height: size,
@@ -72,7 +83,7 @@ export function AgentIcon({ id, size = 36, className }: Props) {
     }
     return (
       <img
-        src={`/agent-icons/${id}.${ext}`}
+        src={`/agent-icons/${assetId}.${ext}`}
         alt=""
         width={size}
         height={size}

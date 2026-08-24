@@ -14,8 +14,17 @@ const DEFAULT_COMPOSIO_TIMEOUT_MS = 30_000;
 const DEFAULT_COMPOSIO_USER_ID = 'open-design-local-user';
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
 const DISCOVERY_CACHE_TTL_MS = 60_000;
-const CUSTOM_AUTH_REQUIRED_MESSAGE = 'Composio does not have managed credentials for this toolkit.';
 const PERSISTED_CATALOG_REFRESH_MS = 24 * 60 * 60 * 1000;
+
+const COMPOSIO_READ_ONLY_TOOL_SAFETY_OVERRIDES = new Set([
+  'notion:notion_search_notion_page',
+]);
+
+const COMPOSIO_READ_ONLY_TOOL_SAFETY = {
+  sideEffect: 'read',
+  approval: 'auto',
+  reason: 'Provider-specific override: this Composio tool is a read-only search/list operation.',
+} as const;
 
 interface ComposioToolkitCatalogEntry {
   name: string;
@@ -677,14 +686,17 @@ export class ComposioConnectorProvider {
   async prepareAuthConfig(definition: ConnectorCatalogDefinition, signal?: AbortSignal): Promise<ComposioAuthConfigPrepareResult> {
     if (definition.authentication !== 'composio') return { status: 'error', message: 'connector is not backed by Composio' };
     const unsupported = this.unsupportedManagedAuthConfigs.get(definition.id);
-    if (unsupported) return { status: 'custom_required', message: unsupported };
+    if (unsupported) {
+      const authConfigId = await this.getExistingAuthConfigIdForToolkit(definition, signal);
+      return authConfigId ? { status: 'ready', authConfigId } : { status: 'custom_required', message: unsupported };
+    }
     try {
       const resolution = await this.getOrCreateManagedAuthConfigId(definition, signal);
       return { status: 'ready', authConfigId: resolution.authConfigId };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      if (isCustomAuthRequiredMessage(message)) {
-        const customMessage = normalizeCustomAuthRequiredMessage(message);
+      const customMessage = getCustomAuthRequiredMessage(error, definition);
+      if (customMessage) {
         this.unsupportedManagedAuthConfigs.set(definition.id, customMessage);
         return { status: 'custom_required', message: customMessage };
       }
@@ -866,14 +878,26 @@ export class ComposioConnectorProvider {
     if (!toolkitSlug) {
       throw new ConnectorServiceError('CONNECTOR_EXECUTION_FAILED', 'Composio connector is missing a toolkit slug', 500, { connectorId: definition.id });
     }
-    return this.requestJson<ComposioAuthConfigResponse>('/api/v3.1/auth_configs', {
-      method: 'POST',
-      body: JSON.stringify({
-        toolkit: { slug: toolkitSlug },
-        auth_config: { type: 'use_composio_managed_auth' },
-      }),
-      ...(signal === undefined ? {} : { signal }),
-    });
+    try {
+      return await this.requestJson<ComposioAuthConfigResponse>('/api/v3.1/auth_configs', {
+        method: 'POST',
+        body: JSON.stringify({
+          toolkit: { slug: toolkitSlug },
+          auth_config: { type: 'use_composio_managed_auth' },
+        }),
+        ...(signal === undefined ? {} : { signal }),
+      });
+    } catch (error) {
+      const customMessage = getCustomAuthRequiredMessage(error, definition);
+      if (!customMessage) throw error;
+      this.unsupportedManagedAuthConfigs.set(definition.id, customMessage);
+      throw new ConnectorServiceError('CONNECTOR_AUTH_CONFIG_REQUIRED', customMessage, 409, {
+        connectorId: definition.id,
+        provider: 'composio',
+        reason: 'managed_auth_unavailable',
+        upstreamMessage: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   private async getAuthConfigIdForToolkit(definition: ConnectorCatalogDefinition, signal?: AbortSignal): Promise<string | undefined> {
@@ -891,6 +915,20 @@ export class ComposioConnectorProvider {
       return authConfigId;
     }
     return undefined;
+  }
+
+  private async getExistingAuthConfigIdForToolkit(definition: ConnectorCatalogDefinition, signal?: AbortSignal): Promise<string | undefined> {
+    const persisted = this.getPersistedAuthConfigId(definition.id);
+    if (persisted) return persisted;
+
+    const discovered = this.discoveredAuthConfigIds?.[definition.id];
+    if (discovered) return discovered;
+
+    const existing = await this.getAuthConfigIdForToolkit(definition, signal);
+    if (!existing) return undefined;
+
+    this.storeAuthConfigId(definition, existing);
+    return existing;
   }
 
   private async createConnectedAccountLink(authConfigId: string, state: string, callbackUrl: string, signal?: AbortSignal): Promise<ComposioConnectedAccountResponse> {
@@ -1363,17 +1401,17 @@ function isGenericComposioDescription(description: string): boolean {
 
 function fallbackComposioDescription(name: string, category: string | undefined): string {
   const normalizedCategory = category?.trim().toLowerCase();
-  if (normalizedCategory?.includes('project')) return `Coordinate ${name} projects, tasks, and workflow data inside Open Design.`;
-  if (normalizedCategory?.includes('communication')) return `Bring ${name} conversations, channels, and collaboration context into Open Design.`;
-  if (normalizedCategory?.includes('documentation')) return `Search and reuse ${name} knowledge, pages, and documentation in Open Design.`;
-  if (normalizedCategory?.includes('storage')) return `Find and reference ${name} files, folders, and document metadata from Open Design.`;
-  if (normalizedCategory?.includes('developer')) return `Inspect ${name} developer resources, activity, and operational context from Open Design.`;
-  if (normalizedCategory?.includes('crm') || normalizedCategory?.includes('sales')) return `Use ${name} customer, deal, and account context in Open Design artifacts.`;
-  if (normalizedCategory?.includes('marketing')) return `Analyze ${name} campaigns, audiences, and marketing activity from Open Design.`;
-  if (normalizedCategory?.includes('finance') || normalizedCategory?.includes('commerce')) return `Work with ${name} business, billing, and transaction data in Open Design.`;
-  if (normalizedCategory?.includes('observability')) return `Surface ${name} incidents, metrics, and operational signals in Open Design.`;
-  if (normalizedCategory?.includes('data')) return `Query ${name} datasets and platform metadata for data-backed Open Design artifacts.`;
-  return `Use ${name} tools and data directly from Open Design.`;
+  if (normalizedCategory?.includes('project')) return `Coordinate ${name} projects, tasks, and workflow data inside OpenDesign.`;
+  if (normalizedCategory?.includes('communication')) return `Bring ${name} conversations, channels, and collaboration context into OpenDesign.`;
+  if (normalizedCategory?.includes('documentation')) return `Search and reuse ${name} knowledge, pages, and documentation in OpenDesign.`;
+  if (normalizedCategory?.includes('storage')) return `Find and reference ${name} files, folders, and document metadata from OpenDesign.`;
+  if (normalizedCategory?.includes('developer')) return `Inspect ${name} developer resources, activity, and operational context from OpenDesign.`;
+  if (normalizedCategory?.includes('crm') || normalizedCategory?.includes('sales')) return `Use ${name} customer, deal, and account context in OpenDesign artifacts.`;
+  if (normalizedCategory?.includes('marketing')) return `Analyze ${name} campaigns, audiences, and marketing activity from OpenDesign.`;
+  if (normalizedCategory?.includes('finance') || normalizedCategory?.includes('commerce')) return `Work with ${name} business, billing, and transaction data in OpenDesign.`;
+  if (normalizedCategory?.includes('observability')) return `Surface ${name} incidents, metrics, and operational signals in OpenDesign.`;
+  if (normalizedCategory?.includes('data')) return `Query ${name} datasets and platform metadata for data-backed OpenDesign artifacts.`;
+  return `Use ${name} tools and data directly from OpenDesign.`;
 }
 
 function getComposioAuthConfigId(response: ComposioAuthConfigResponse): string | undefined {
@@ -1421,7 +1459,19 @@ function applyComposioToolCuration(
   const overlay = COMPOSIO_CURATION_OVERLAY[connectorKey];
   const toolKey = providerToolId ? normalizeProviderToolId(providerToolId) : undefined;
   const curation = toolKey ? overlay?.[toolKey] : undefined;
-  return curation === undefined ? tool : { ...tool, curation: { ...(tool.curation ?? {}), ...curation } };
+  const safetyOverride = toolKey
+    ? COMPOSIO_READ_ONLY_TOOL_SAFETY_OVERRIDES.has(`${connectorKey}:${toolKey}`)
+    : false;
+  const curated = curation === undefined
+    ? tool
+    : { ...tool, curation: { ...(tool.curation ?? {}), ...curation } };
+  return safetyOverride
+    ? {
+        ...curated,
+        safety: { ...COMPOSIO_READ_ONLY_TOOL_SAFETY },
+        refreshEligible: true,
+      }
+    : curated;
 }
 
 function titleFromSlug(value: string): string {
@@ -1448,8 +1498,11 @@ function isCustomAuthRequiredMessage(message: string): boolean {
   return /default auth config not found/i.test(message) || /does not have managed credentials/i.test(message);
 }
 
-function normalizeCustomAuthRequiredMessage(message: string): string {
-  return message || CUSTOM_AUTH_REQUIRED_MESSAGE;
+function getCustomAuthRequiredMessage(error: unknown, definition: ConnectorCatalogDefinition): string | undefined {
+  if (error instanceof ConnectorServiceError && error.code === 'CONNECTOR_AUTH_CONFIG_REQUIRED') return error.message;
+  const upstreamMessage = error instanceof Error ? error.message : String(error);
+  if (!isCustomAuthRequiredMessage(upstreamMessage)) return undefined;
+  return `${definition.name} requires a custom Composio auth config. Create or enable a ${definition.name} auth config in Composio with your own OAuth credentials, then retry this connection.`;
 }
 
 async function getComposioErrorMessage(response: Response): Promise<string | undefined> {
