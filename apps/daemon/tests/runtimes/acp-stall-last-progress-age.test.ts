@@ -26,6 +26,7 @@
 
 import type { Server } from 'node:http';
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -131,9 +132,10 @@ describe('ACP stall progress age', () => {
     // The turn streamed its text and then went silent for the whole stage
     // window. The reported progress age must cover that silence.
     expect(typeof finished.last_progress_age_ms).toBe('number');
-    expect(finished.last_progress_age_ms).toBeGreaterThanOrEqual(
-      ACP_STAGE_TIMEOUT_MS * 0.8,
-    );
+    expect(
+      finished.last_progress_age_ms,
+      progressAgeFailureContext(finished, run),
+    ).toBeGreaterThanOrEqual(ACP_STAGE_TIMEOUT_MS * 0.8);
   }, 60_000);
 
   // The stall that matters most is the one WITH a tool in flight — that is the
@@ -193,11 +195,59 @@ describe('ACP stall progress age', () => {
     // The synthetic flush pair that the daemon emitted on the way out is not
     // agent progress, so the reported age must still cover the whole silence.
     expect(typeof finished.last_progress_age_ms).toBe('number');
-    expect(finished.last_progress_age_ms).toBeGreaterThanOrEqual(
-      ACP_STAGE_TIMEOUT_MS * 0.8,
-    );
+    expect(
+      finished.last_progress_age_ms,
+      progressAgeFailureContext(finished, run),
+    ).toBeGreaterThanOrEqual(ACP_STAGE_TIMEOUT_MS * 0.8);
   }, 60_000);
 });
+
+/**
+ * A bare "expected 16 to be >= 1600" cannot say WHICH emission re-stamped the
+ * progress clock, and this failure has already proven environment-sensitive
+ * (green locally, red on CI). Name the suspects directly: the persisted run
+ * event tail identifies the last thing the daemon recorded before finalizing.
+ */
+function progressAgeFailureContext(
+  finished: Record<string, any>,
+  run: RunStatus,
+): string {
+  const summary = {
+    last_progress_age_ms: finished.last_progress_age_ms,
+    terminal_trigger: finished.terminal_trigger,
+    last_observed_phase: finished.last_observed_phase,
+    tool_call_count: finished.tool_call_count,
+    attempt_index: finished.attempt_index,
+    total_duration_ms: finished.total_duration_ms,
+    error_code: finished.error_code,
+  };
+  return [
+    `run_finished: ${JSON.stringify(summary)}`,
+    `run event tail: ${JSON.stringify(readRunEventTail(run.eventsLogPath))}`,
+  ].join('\n');
+}
+
+function readRunEventTail(eventsLogPath: string | null | undefined): unknown[] {
+  if (!eventsLogPath) return ['<no eventsLogPath>'];
+  try {
+    return readFileSync(eventsLogPath, 'utf8')
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => {
+        try {
+          const record = JSON.parse(line) as { event?: string; data?: { type?: string } };
+          return record?.data?.type
+            ? `${record.event}:${record.data.type}`
+            : String(record?.event);
+        } catch {
+          return '<unparsable>';
+        }
+      })
+      .slice(-30);
+  } catch (error) {
+    return [`<unreadable: ${(error as Error).message}>`];
+  }
+}
 
 async function waitForRunFinished(runId: string): Promise<Record<string, any>> {
   const deadline = Date.now() + 15_000;
