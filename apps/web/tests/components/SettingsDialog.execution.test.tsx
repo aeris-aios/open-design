@@ -1259,7 +1259,12 @@ describe('SettingsDialog execution settings BYOK interactions', () => {
       expect(screen.getByText('Saving…')).toBeTruthy();
     });
     await waitFor(() => {
-      expect(screen.getByText('All changes saved')).toBeTruthy();
+      const savedLabel = screen.getByText('All changes saved');
+      const savedStatus = savedLabel.closest('[role="status"]');
+      const settingsChrome = savedStatus?.parentElement;
+
+      expect(settingsChrome?.classList.contains('settings-chrome')).toBe(true);
+      expect(settingsChrome?.firstElementChild).toBe(savedStatus);
     });
     expect(first.onPersist).toHaveBeenCalledWith(
       expect.objectContaining({ apiKey: 'sk-ant-saved' }),
