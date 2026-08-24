@@ -866,6 +866,7 @@ export const ko: Dict = {
   'entry.authExpiredBody': 'Your sign-in has expired. Sign in to continue using OpenDesign Cloud.',
   'home.createFailed': 'Failed to start the run. Try again.',
   'home.daemonRecovering': 'Local service connection interrupted. Recovering automatically…',
+  'home.bundledScenarioMissing': 'Bundled scenario "{scenarioId}" is not installed. Reinstall the daemon to restore the default plugin set.',
   "entry.cloudCalloutBody": "로그인하여 OpenDesign Cloud를 사용하고 클라우드에서 협업하세요",
   "entry.cloudCalloutDismissAria": "OpenDesign Cloud 안내 닫기",
   'entry.workspaceLockedNote': 'This workspace is locked. Restore billing to resume editing shared projects.',
