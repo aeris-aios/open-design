@@ -19,6 +19,19 @@ export type ProjectKind =
   | 'video'
   | 'audio';
 
+/**
+ * `metadata.videoModel` value that marks a project as HyperFrames.
+ *
+ * HyperFrames is a local HTML-to-video renderer, so a HyperFrames project is
+ * stored as `kind: 'video'` (the Home surface that offers it) even though the
+ * artifact the user authors, edits and previews is an HTML composition. Every
+ * surface that has to tell HyperFrames apart from a generative video provider
+ * — analytics `project_kind`, the system prompt's media contract, the Home
+ * starters, delivery validation — keys off this exact value, so it lives here
+ * next to `ProjectMetadata` rather than being re-declared per consumer.
+ */
+export const HYPERFRAMES_VIDEO_MODEL = 'hyperframes-html';
+
 export type MediaAspect = '1:1' | '16:9' | '9:16' | '4:3' | '3:4';
 
 export type ProjectPlatform =
