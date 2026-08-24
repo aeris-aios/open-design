@@ -3346,6 +3346,26 @@ describe('FileViewer SVG artifacts', () => {
     expect(writes).toHaveLength(2);
     expect(writes.at(-1)).toContain('Edited after return');
     expect(writes.at(-1)).toContain('translate(12px, 8px)');
+    const editResults = analyticsTrackMock.mock.calls
+      .filter(([eventName]) => eventName === 'artifact_edit_result')
+      .map(([, properties]) => properties);
+    expect(editResults).toHaveLength(2);
+    expect(editResults).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        action: 'apply',
+        edit_kind: 'style',
+        result: 'success',
+        project_id: 'project-1',
+        project_kind: 'prototype',
+      }),
+      expect.objectContaining({
+        action: 'apply',
+        edit_kind: 'text',
+        result: 'success',
+        project_id: 'project-1',
+        project_kind: 'prototype',
+      }),
+    ]));
   });
 
   it('keeps the edit iframe stable across save watcher echoes, then consumes the latest revision on exit', async () => {
@@ -3476,6 +3496,18 @@ describe('FileViewer SVG artifacts', () => {
     // The save error is surfaced and edit mode stays open instead of tearing down.
     expect(await screen.findByText(/Could not save the edited file/)).toBeTruthy();
     expect(toggle.getAttribute('aria-pressed')).toBe('true');
+    expect(analyticsTrackMock).toHaveBeenCalledWith(
+      'artifact_edit_result',
+      expect.objectContaining({
+        action: 'apply',
+        edit_kind: 'text',
+        result: 'failed',
+        error_code: 'save_failed',
+        project_id: 'project-1',
+        project_kind: 'prototype',
+      }),
+      undefined,
+    );
   });
 
   it('keeps edit mode open when inline finish times out without an ack or commit witness', async () => {
@@ -5067,6 +5099,8 @@ describe('FileViewer SVG artifacts', () => {
       expect(views[0]).toMatchObject({
         page_name: 'artifact',
         area: 'deck_viewer',
+        project_id: 'project-1',
+        project_kind: 'prototype',
       });
       // slide_count is snapshotted at first deck recognition, before the
       // iframe reports its real total — so we assert it is a resolved number
@@ -5098,6 +5132,8 @@ describe('FileViewer SVG artifacts', () => {
         area: 'deck_viewer',
         element: 'thumbnail_rail_toggle',
         action: 'collapse',
+        project_id: 'project-1',
+        project_kind: 'prototype',
       });
       expect(toggles[1]).toMatchObject({ action: 'expand' });
     });
@@ -5126,6 +5162,8 @@ describe('FileViewer SVG artifacts', () => {
         page_name: 'artifact',
         area: 'deck_viewer',
         element: 'slide_next',
+        project_id: 'project-1',
+        project_kind: 'prototype',
       });
       expect(typeof nexts[0].slide_index).toBe('number');
     });
@@ -5154,6 +5192,8 @@ describe('FileViewer SVG artifacts', () => {
         page_name: 'artifact',
         area: 'deck_viewer',
         element: 'speaker_notes_edit',
+        project_id: 'project-1',
+        project_kind: 'prototype',
       });
     });
 
@@ -5197,6 +5237,8 @@ describe('FileViewer SVG artifacts', () => {
         edit_surface: 'preview',
         result: 'success',
         has_content: true,
+        project_id: 'project-1',
+        project_kind: 'prototype',
       });
     });
   });
@@ -8068,6 +8110,25 @@ describe('FileViewer tweaks toolbar', () => {
     expect(screen.queryByRole('button', { name: 'Click' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Undo' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Redo' })).toBeTruthy();
+
+    const editClicks = analyticsTrackMock.mock.calls
+      .filter(([eventName]) => eventName === 'ui_click')
+      .map(([, properties]) => properties)
+      .filter((properties) => properties?.element === 'mark' || properties?.element === 'pen');
+    expect(editClicks).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        area: 'artifact_toolbar',
+        element: 'mark',
+        project_id: 'project-1',
+        project_kind: 'prototype',
+      }),
+      expect.objectContaining({
+        area: 'draw_toolbar',
+        element: 'pen',
+        project_id: 'project-1',
+        project_kind: 'prototype',
+      }),
+    ]));
 
     clickAgentTool('draw-overlay-toggle');
     expect(screen.queryByPlaceholderText('Add a note for this mark')).toBeNull();

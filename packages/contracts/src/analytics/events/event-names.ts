@@ -42,6 +42,7 @@ export type AnalyticsEventName =
   | 'context_link_result'
   | 'speaker_notes_save_result'
   // Artifact
+  | 'artifact_edit_result'
   | 'artifact_export_result'
   | 'artifact_deploy_result'
   | 'artifact_publish_result'

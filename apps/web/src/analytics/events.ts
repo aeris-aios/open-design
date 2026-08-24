@@ -135,6 +135,7 @@ import type {
   FileUploadResultProps,
   ContextLinkResultProps,
   SpeakerNotesSaveResultProps,
+  ArtifactEditResultProps,
   ArtifactExportResultProps,
   ArtifactDeployResultProps,
   ArtifactPublishResultProps,
@@ -1176,6 +1177,13 @@ export function trackArtifactExportResult(
   options?: { requestId?: string },
 ): void {
   send(track, 'artifact_export_result', props, options);
+}
+
+export function trackArtifactEditResult(
+  track: Track,
+  props: ArtifactEditResultProps,
+): void {
+  send(track, 'artifact_edit_result', props);
 }
 
 export function trackArtifactDeployResult(

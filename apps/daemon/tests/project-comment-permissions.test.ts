@@ -53,7 +53,13 @@ function asMember(memberId: string): { authorization: string } {
 async function startServer({ shared = true }: { shared?: boolean } = {}) {
   tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'od-comment-perms-'));
   const db = openDatabase(tempDir);
-  insertProject(db, { id: PROJECT, name: 'Project', createdAt: 1, updatedAt: 1 });
+  insertProject(db, {
+    id: PROJECT,
+    name: 'Project',
+    metadata: { kind: 'prototype' },
+    createdAt: 1,
+    updatedAt: 1,
+  });
   insertConversation(db, { id: CONVERSATION, projectId: PROJECT, title: 'Chat', createdAt: 1, updatedAt: 1 });
 
   const updated: string[] = [];
@@ -175,6 +181,8 @@ describe('preview comment permission gating', () => {
           result: 'success',
           target_project_relation: 'self',
           comment_level: 'top_level',
+          project_id: PROJECT,
+          project_kind: 'prototype',
         }),
       },
       {
@@ -183,6 +191,8 @@ describe('preview comment permission gating', () => {
           result: 'success',
           target_project_relation: 'other',
           comment_level: 'top_level',
+          project_id: PROJECT,
+          project_kind: 'prototype',
         }),
       },
     ]);

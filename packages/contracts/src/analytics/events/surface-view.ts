@@ -228,6 +228,8 @@ export interface FileVersionModalSurfaceViewProps {
   entry_from: 'toolbar' | 'more_menu';
   artifact_id: string;
   artifact_kind: TrackingArtifactKind;
+  project_id: string;
+  project_kind: TrackingProjectKind;
 }
 
 // Fires once when an HTML artifact is recognized as a slide deck and the
@@ -241,6 +243,8 @@ export interface DeckViewerSurfaceViewProps {
   area: 'deck_viewer';
   artifact_id: string;
   artifact_kind: TrackingArtifactKind;
+  project_id: string;
+  project_kind: TrackingProjectKind;
   slide_count?: number;
 }
 
