@@ -19,6 +19,7 @@ const repoRoot = fileURLToPath(new URL('../../', import.meta.url));
 const INSTALL_SH = `${repoRoot}apps/landing-page/public/install-dsh.sh`;
 const INSTALL_PS1 = `${repoRoot}apps/landing-page/public/install-dsh.ps1`;
 const AGENT_DEF = `${repoRoot}apps/daemon/src/runtimes/defs/deepseek-harness.ts`;
+const PEER_MANIFEST = `${repoRoot}packages/dsh-runtime/package.json`;
 
 function requireMatch(source: string, pattern: RegExp, what: string): string {
   const found = pattern.exec(source);
@@ -79,5 +80,92 @@ describe('DeepSeek Harness installer and daemon version policy agree', () => {
 
     expect(accepts(def, '0.0.9')).toBe(false);
     expect(accepts(def, 'not-a-version')).toBe(false);
+  });
+});
+
+/**
+ * The peer ranges in `packages/dsh-runtime/package.json`, reduced to the only
+ * thing that decides whether a prerelease can install: for each
+ * `major.minor.patch` tuple that carries a prerelease comparator, the lowest
+ * release candidate it admits.
+ *
+ * semver refuses a prerelease unless some comparator shares its exact tuple AND
+ * carries a prerelease of its own, so a tuple missing from this map cannot
+ * install at all, however high its number.
+ */
+function peerPrereleaseFloors(manifest: string): Map<string, number> {
+  const floors = new Map<string, number>();
+  for (const match of manifest.matchAll(/>=(\d+\.\d+\.\d+)-rc\.(\d+)/gu)) {
+    const tuple = match[1];
+    const floor = Number(match[2]);
+    if (!tuple || Number.isNaN(floor)) continue;
+    const current = floors.get(tuple);
+    if (current === undefined || floor < current) floors.set(tuple, floor);
+  }
+  return floors;
+}
+
+function peerCanInstall(floors: Map<string, number>, version: string): boolean {
+  const parsed = /^(\d+\.\d+\.\d+)-rc\.(\d+)$/u.exec(version);
+  if (!parsed) return true; // stable releases need no prerelease comparator
+  const tuple = parsed[1];
+  const candidate = Number(parsed[2]);
+  if (tuple === undefined || Number.isNaN(candidate)) return false;
+  const floor = floors.get(tuple);
+  return floor !== undefined && candidate >= floor;
+}
+
+// Two authorities decide whether a DeepSeek Harness version works, and they can
+// disagree silently in the direction that hurts: the daemon suppressing the
+// "untested" warning for a version whose companion cannot install is worse than
+// the warning, because the user is told everything is fine and then it is not.
+//
+// Widening the accepted line without widening the peers is exactly how that
+// happens, so the matrix runs both sides over the versions upstream has shipped
+// or plausibly will.
+describe('accepted DeepSeek Harness versions can actually install their companion', () => {
+  const MATRIX = [
+    '0.1.0-rc.2',
+    '0.1.0-rc.3',
+    '0.1.0-rc.6',
+    '0.1.0-rc.8',
+    '0.1.0-rc.12',
+    '0.1.1-rc.1',
+    '0.1.1-rc.2',
+    '0.1.1',
+    '0.1.2',
+    '0.1.2-rc.1',
+    '0.2.0-rc.1',
+  ];
+
+  it('never claims support for a version the peer ranges reject', async () => {
+    const [def, manifest] = await Promise.all([
+      readFile(AGENT_DEF, 'utf8'),
+      readFile(PEER_MANIFEST, 'utf8'),
+    ]);
+    const floors = peerPrereleaseFloors(manifest);
+    expect(floors.size).toBeGreaterThan(0);
+
+    const overclaimed = MATRIX.filter(
+      (version) => accepts(def, version) && !peerCanInstall(floors, version),
+    );
+
+    expect(overclaimed).toEqual([]);
+  });
+
+  // The two versions the review named, pinned explicitly so a future widening
+  // has to face them rather than quietly passing a filter that matches nothing.
+  it('accepts what upstream serves and refuses the line the peers cannot reach', async () => {
+    const [def, manifest] = await Promise.all([
+      readFile(AGENT_DEF, 'utf8'),
+      readFile(PEER_MANIFEST, 'utf8'),
+    ]);
+    const floors = peerPrereleaseFloors(manifest);
+
+    expect(accepts(def, '0.1.1-rc.2')).toBe(true);
+    expect(peerCanInstall(floors, '0.1.1-rc.2')).toBe(true);
+
+    expect(peerCanInstall(floors, '0.1.2-rc.1')).toBe(false);
+    expect(accepts(def, '0.1.2-rc.1')).toBe(false);
   });
 });

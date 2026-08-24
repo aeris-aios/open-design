@@ -170,16 +170,68 @@ function signedEnvelope(card: Record<string, unknown>): Record<string, unknown> 
   return { sign, timestamp, ...body };
 }
 
+export interface FeishuDelivery {
+  code: number | null;
+  delivered: boolean;
+  retryable: boolean;
+}
+
+/**
+ * Decide whether Feishu actually accepted the card.
+ *
+ * A rejected webhook request still comes back HTTP 200 with a nonzero `code`,
+ * so treating every 2xx as success loses the one message this workflow exists
+ * to send — silently, which is the worst way to lose an alert. Same contract as
+ * the landing notifier: code 0 (or absent) is delivered; 429, 5xx and Feishu's
+ * 9499 are worth another attempt.
+ */
+export function interpretFeishuResponse(args: {
+  status: number;
+  text: string;
+}): FeishuDelivery {
+  let code: number | null = null;
+  try {
+    const parsed = JSON.parse(args.text) as { StatusCode?: unknown; code?: unknown };
+    const raw = parsed.code ?? parsed.StatusCode ?? null;
+    code = typeof raw === "number" ? raw : null;
+  } catch {
+    // Feishu normally returns JSON; fall back to the HTTP status alone.
+  }
+  const ok = args.status >= 200 && args.status < 300;
+  if (ok && (code === 0 || code === null)) {
+    return { code, delivered: true, retryable: false };
+  }
+  return {
+    code,
+    delivered: false,
+    retryable: args.status === 429 || args.status >= 500 || code === 9499,
+  };
+}
+
 async function postFeishu(card: Record<string, unknown>): Promise<void> {
   const webhook = requiredEnv("FEISHU_WEBHOOK");
-  const response = await fetch(webhook, {
-    body: JSON.stringify(signedEnvelope(card)),
-    headers: { "content-type": "application/json" },
-    method: "POST",
-  });
-  const text = await response.text();
-  if (!response.ok) {
-    throw new Error(`Feishu returned HTTP ${response.status}: ${text.slice(0, 200)}`);
+  for (let attempt = 1; attempt <= 5; attempt += 1) {
+    const response = await fetch(webhook, {
+      body: JSON.stringify(signedEnvelope(card)),
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    });
+    const text = await response.text();
+    const delivery = interpretFeishuResponse({ status: response.status, text });
+    if (delivery.delivered) {
+      console.log(`[dsh-drift] delivered (HTTP ${response.status}, code ${delivery.code ?? "n/a"})`);
+      return;
+    }
+    console.warn(
+      `[dsh-drift] attempt ${attempt}/5 failed: HTTP ${response.status} ` +
+        `code ${String(delivery.code)} ${text.slice(0, 300)}`,
+    );
+    if (!delivery.retryable || attempt === 5) {
+      throw new Error(
+        `Feishu webhook failed: HTTP ${response.status} code ${String(delivery.code)}`,
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1000 * attempt));
   }
 }
 
@@ -253,12 +305,21 @@ function selfCheck(): void {
   console.log("[dsh-drift] self-check passed");
 }
 
-const command = process.argv[2] ?? "run";
-if (command === "self-check") {
-  selfCheck();
-} else if (command === "run") {
-  await run(process.argv.includes("--dry-run"));
-} else {
-  console.error(`unknown command: ${command}`);
-  process.exit(2);
+// Only dispatch when this file is the process entrypoint. Without the guard,
+// importing it to reuse the pure helpers executes `run`: a live registry
+// request during test collection, and — once drift exists — an attempted
+// Feishu post before a single assertion has run.
+const entry = process.argv[1];
+const invokedDirectly = entry !== undefined && path.resolve(entry) === import.meta.filename;
+
+if (invokedDirectly) {
+  const command = process.argv[2] ?? "run";
+  if (command === "self-check") {
+    selfCheck();
+  } else if (command === "run") {
+    await run(process.argv.includes("--dry-run"));
+  } else {
+    console.error(`unknown command: ${command}`);
+    process.exit(2);
+  }
 }
