@@ -25,11 +25,14 @@ import {
 } from "@open-design/sidecar";
 import {
   APP_KEYS,
+  SIDECAR_ENV,
   SIDECAR_MODES,
   SIDECAR_SOURCES,
   type DesktopStatusSnapshot,
   type SidecarSource,
 } from "@open-design/sidecar-proto";
+
+import { holdParentMonitorExit } from "./parent-monitor-gate.js";
 
 const HANDOFF_CONFIRM_TIMEOUT_MS = 60_000;
 const HANDOFF_POLL_INTERVAL_MS = 100;
@@ -41,6 +44,7 @@ const SIDECAR_ONLY_ENV_KEYS = [
   "OD_SIDECAR_IPC_PATH",
   "OD_SIDECAR_NAMESPACE",
   "OD_SIDECAR_SOURCE",
+  SIDECAR_ENV.TOOLS_DEV_PARENT_PID,
 ] as const;
 
 type LauncherPayloadManifest = {
@@ -419,6 +423,7 @@ export async function executeLegacyPayloadDesktopHandoff(
     requestDesktop?: (message: "shutdown" | "status") => Promise<unknown>;
     sleep?: (durationMs: number) => Promise<unknown>;
     launch?: typeof launchSidecar;
+    writeJsonFile?: typeof writeJsonFile;
   } = {},
 ): Promise<LegacyPayloadDesktopHandoffResult> {
   if (options.requestDesktop == null) throw new Error("desktop sidecar client is required");
@@ -479,8 +484,11 @@ export async function executeLegacyPayloadDesktopHandoff(
     }),
     ...buildLauncherHandoffResumeArgs({ handoffId: prepared.descriptor.handoffId }),
   ];
+  const persist = options.writeJsonFile ?? writeJsonFile;
+  const releaseParentMonitor = holdParentMonitorExit();
   try {
-    await (options.launch ?? launchSidecar)({
+    try {
+      await (options.launch ?? launchSidecar)({
       args,
       command: prepared.descriptor.payloadExecutablePath,
       cwd: dirname(prepared.descriptor.payloadExecutablePath),
@@ -493,16 +501,16 @@ export async function executeLegacyPayloadDesktopHandoff(
         runtimeRoot: prepared.runtimeRoot,
       },
       stamp: desktopStamp,
-    });
-  } catch {
-    return { kind: "aborted", reason: "spawn-failed" };
-  }
+      });
+    } catch {
+      return { kind: "aborted", reason: "spawn-failed" };
+    }
 
-  try {
-    await requestDesktop("shutdown");
-  } catch {
-    return { kind: "aborted", reason: "shutdown-failed" };
-  }
+    try {
+      await requestDesktop("shutdown");
+    } catch {
+      return { kind: "aborted", reason: "shutdown-failed" };
+    }
 
   // Commit the armed journal and rewritten runtime/attempt state only after both
   // the payload child has actually spawned and the old desktop has accepted the
@@ -512,9 +520,12 @@ export async function executeLegacyPayloadDesktopHandoff(
   // install stays pinned to the old desktop generation. The old desktop is still
   // alive while it acks the shutdown, and the payload waits for its pid to exit
   // before resuming, so these writes still land before the payload reads them.
-  await writeJsonFile(prepared.launcherPaths.handoffPath, armed);
-  await writeJsonFile(prepared.launcherPaths.attemptsPath, attempt);
-  await writeJsonFile(prepared.launcherPaths.runtimePath, runtime);
+    await persist(prepared.launcherPaths.handoffPath, armed);
+    await persist(prepared.launcherPaths.attemptsPath, attempt);
+    await persist(prepared.launcherPaths.runtimePath, runtime);
 
-  return { kind: "scheduled", target };
+    return { kind: "scheduled", target };
+  } finally {
+    releaseParentMonitor();
+  }
 }

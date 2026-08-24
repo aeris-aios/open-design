@@ -1,4 +1,5 @@
 import type { ChildProcess } from "node:child_process";
+import { lstat, rm } from "node:fs/promises";
 
 import type { SpawnProcessRequest, StopProcessesOptions, StopProcessesResult } from "@open-design/platform";
 import {
@@ -188,7 +189,18 @@ export async function invokeSidecar<TResult = unknown>(
 export async function stopSidecar(stamp: SidecarStamp, options: StopProcessesOptions = {}): Promise<SidecarStopResult> {
   const exact = normalizeSidecarStamp(stamp);
   const initial = await captureStampedProcessSnapshot(exact, SIDECAR_STAMP_CONTRACT);
-  return await stopSidecarRoots(exact, initial.roots.map(({ pid }) => pid), options, initial.processes);
+  const result = await stopSidecarRoots(exact, initial.roots.map(({ pid }) => pid), options, initial.processes);
+  if (result.remainingPids.length === 0 && (await findSidecarProcesses(exact)).length === 0) {
+    await removeStalePrivateEndpoint(exact);
+  }
+  return result;
+}
+
+async function removeStalePrivateEndpoint(stamp: SidecarStamp): Promise<void> {
+  if (process.platform === "win32") return;
+  const endpoint = resolvePrivateIpcPath(stamp);
+  const entry = await lstat(endpoint).catch(() => null);
+  if (entry?.isSocket()) await rm(endpoint, { force: true });
 }
 
 /**

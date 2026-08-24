@@ -14,6 +14,7 @@ import {
   executeLegacyPayloadDesktopHandoff,
   prepareLegacyPayloadDesktopHandoff,
 } from "../../src/sidecar/payload-desktop-handoff.js";
+import { isParentMonitorExitHeld } from "../../src/sidecar/parent-monitor-gate.js";
 
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), "od-daemon-payload-handoff-"));
@@ -92,17 +93,25 @@ describe("legacy payload desktop handoff", () => {
       }));
       await rm(value.launcherPaths.attemptsPath, { force: true });
 
-      const launch = vi.fn(async () => ({ pid: 7654 }));
+      const lifecycleHoldObservations: boolean[] = [];
+      const launch = vi.fn(async () => {
+        lifecycleHoldObservations.push(isParentMonitorExitHeld());
+        return { pid: 7654 };
+      });
       const requestDesktop = vi.fn(async (message: "shutdown" | "status") =>
         message === "status"
           ? { executablePath: value.outerExecutablePath, pid: 4321, state: "running" }
-          : { accepted: true });
+          : (lifecycleHoldObservations.push(isParentMonitorExitHeld()), { accepted: true }));
       await expect(executeLegacyPayloadDesktopHandoff(prepared, {
         confirmTimeoutMs: 100,
         launch,
         now: () => new Date("2026-07-15T02:00:00.000Z"),
         requestDesktop,
         sleep: async () => undefined,
+        writeJsonFile: async (filePath, payload) => {
+          lifecycleHoldObservations.push(isParentMonitorExitHeld());
+          await writeFile(filePath, `${JSON.stringify(payload)}\n`, "utf8");
+        },
       })).resolves.toMatchObject({
         kind: "scheduled",
         target: { generation: 2, version: value.version },
@@ -125,6 +134,8 @@ describe("legacy payload desktop handoff", () => {
         },
       }));
       expect(requestDesktop).toHaveBeenLastCalledWith("shutdown");
+      expect(lifecycleHoldObservations).toEqual([true, true, true, true, true]);
+      expect(isParentMonitorExitHeld()).toBe(false);
       expect(JSON.parse(await readFile(value.launcherPaths.handoffPath, "utf8"))).toMatchObject({
         state: "armed",
         target: { generation: 2, version: value.version },

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { lstat, mkdtemp, readFile, rm } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -24,6 +24,7 @@ import {
   type SidecarResources,
   type SidecarStamp,
 } from "../src/index.js";
+import { resolvePrivateIpcPath } from "../src/stamp.js";
 
 const originalArgv = [...process.argv];
 const originalResources = process.env.OD_SIDECAR_RESOURCES;
@@ -444,6 +445,31 @@ describe("server-side atomic operations", () => {
       await stopSidecar(beta, { killGraceMs: 2_000, termGraceMs: 0 }).catch(() => undefined);
     }
   });
+
+  it("removes an unresponsive generation and its stale private endpoint", async () => {
+    if (process.platform === "win32") return;
+    const fixture = fileURLToPath(new URL("./fixtures/unresponsive-sidecar.ts", import.meta.url));
+    const staleStamp = { ...stamp, app: "web", namespace: `stale-endpoint-${process.pid}` };
+    const endpoint = resolvePrivateIpcPath(staleStamp);
+    await launchSidecar({
+      args: [fixture],
+      command: process.execPath,
+      env: { ...process.env, OD_TEST_STALE_ENDPOINT: endpoint },
+      resources: { dataRoot: "/tmp/open-design-stale", ownerPid: null, port: 0, runtimeRoot: "/tmp/open-design-stale-runtime" },
+      stamp: staleStamp,
+    });
+
+    try {
+      await vi.waitFor(async () => {
+        expect((await lstat(endpoint)).isSocket()).toBe(true);
+      });
+      const result = await stopSidecar(staleStamp, { killGraceMs: 2_000, termGraceMs: 0 });
+      expect(result.remainingPids).toEqual([]);
+      await expect(lstat(endpoint)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await stopSidecar(staleStamp, { killGraceMs: 2_000, termGraceMs: 0 }).catch(() => undefined);
+    }
+  }, 10_000);
 
   it("does not let an earlier stop terminate a replacement with the same stamp", async () => {
     const fixture = fileURLToPath(new URL("./fixtures/stamped-child.ts", import.meta.url));

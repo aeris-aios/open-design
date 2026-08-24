@@ -563,6 +563,14 @@ async function retireExistingSidecar(stamp: SidecarStamp, logPath: string): Prom
   try {
     status = await getSidecarStatus<{ pid?: number | null }>(stamp, { timeoutMs: 350 });
   } catch {
+    await appendSidecarLifecycleLog(
+      logPath,
+      `[open-design packaged] ${stamp.app} endpoint is unavailable; retiring any stale stamped generation before relaunch`,
+    );
+    const stopped = await stopSidecar(stamp, { termGraceMs: 2_500 });
+    if (stopped.remainingPids.length > 0) {
+      throw new Error(`cannot relaunch ${stamp.app}; stale generation remains: ${stopped.remainingPids.join(", ")}`);
+    }
     return;
   }
 
@@ -817,7 +825,10 @@ export function createPackagedSidecarSpawnOptions(input: {
 async function closeManagedChild(child: ManagedSidecarChild): Promise<void> {
   const appendLifecycleLog = async (message: string): Promise<void> => appendSidecarLifecycleLog(child.logPath, message);
   await appendLifecycleLog(`[open-design packaged] shutdown requested app=${child.app} pid=${child.child.pid ?? "unknown"}`);
-  const stop = await child.generation.stop();
+  // A daemon may briefly hold shutdown while committing a desktop handoff.
+  // The sidecar generation boundary still owns escalation; packaged only
+  // supplies a bounded grace appropriate for that lifecycle operation.
+  const stop = await child.generation.stop({ termGraceMs: child.app === APP_KEYS.DAEMON ? 30_000 : 5_000 });
   if (stop.forcedPids.length > 0) {
     await appendLifecycleLog(`[open-design packaged] graceful shutdown timed out app=${child.app} pid=${child.child.pid ?? "unknown"}; forced=${stop.forcedPids.join(",")}`);
   }

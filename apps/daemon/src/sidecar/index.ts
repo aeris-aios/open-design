@@ -6,6 +6,7 @@ import {
   executeLegacyPayloadDesktopHandoff,
   prepareLegacyPayloadDesktopHandoff,
 } from "./payload-desktop-handoff.js";
+import { waitForParentMonitorRelease } from "./parent-monitor-gate.js";
 
 async function main(): Promise<void> {
   let runtimeHandle: DaemonSidecarHandle | null = null;
@@ -42,6 +43,7 @@ async function main(): Promise<void> {
         return await runtime.status();
       },
       async stop(runtime) {
+        await waitForParentMonitorRelease();
         await runtime.stop();
         runtimeHandle = null;
       },
