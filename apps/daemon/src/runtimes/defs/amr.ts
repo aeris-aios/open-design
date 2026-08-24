@@ -670,9 +670,21 @@ export const amrAgentDef = {
   // provider is still working. Keep the outer chat watchdog aligned with the
   // 30-minute ACP stage timeout so the daemon does not fail the run first.
   inactivityTimeoutMs: 30 * 60 * 1000,
-  // Once the ACP handshake has completed and session/prompt is waiting on the
-  // provider, transport/status heartbeats must not leave the UI in Preparing
-  // indefinitely. Two minutes leaves conservative provider-startup headroom
-  // while still bounding the user's wait and one safe same-run retry.
-  firstOutputTimeoutMs: 2 * 60 * 1000,
+  // Absolute budget from `session/prompt` to the first substantive output.
+  // Unlike `inactivityTimeoutMs` above this one is NOT re-armed by activity,
+  // so it still bounds the wait when vela's transport/status heartbeats keep
+  // the sliding watchdogs fed forever without a token ever arriving.
+  //
+  // The budget is the Cloud budget from 《Open Design 报错体验设计方案》 §3
+  // 统一规则 —「10 分钟（Cloud 30 分钟）没输出才报超时」— because AMR
+  // (`amr_cloud`) IS that document's Cloud runtime. It therefore matches the
+  // sliding inactivity watchdog and the ACP stage watchdog above: one wait,
+  // one ceiling, whichever shape the silence takes.
+  //
+  // It used to be two minutes, which declared healthy runs dead: first-token
+  // latency tracks context size (p90 = 277s past 600k tokens), and across 14
+  // days 968 runs emitted their first output more than ten minutes in and
+  // then SUCCEEDED. Cutting those off killed the child, burned a same-run
+  // retry, and showed a failure for a turn that was still working.
+  firstOutputTimeoutMs: 30 * 60 * 1000,
 } satisfies RuntimeAgentDef;
