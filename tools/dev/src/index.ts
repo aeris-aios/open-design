@@ -750,6 +750,9 @@ async function restartDaemon(config: ToolDevConfig, options: CliOptions) {
   const restartOptions: CliOptions = {
     ...options,
     ...(runningWebPort == null ? {} : { webPort: runningWebPort }),
+    ...(requestedDaemonPort == null && runningDaemonPort != null
+      ? { daemonPort: runningDaemonPort }
+      : {}),
   };
   const desktopAlreadyRunning = await inspectDesktopRuntime(runtimeLookup(config));
   const restarted = await spawnDaemonRuntime(config, restartOptions, {

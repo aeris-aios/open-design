@@ -247,15 +247,14 @@ describe("server-side atomic operations", () => {
 
   it("keeps an adjacent proxy and namespace healthy across a daemon restart (TD-06)", async () => {
     const fixture = fileURLToPath(new URL("./fixtures/managed-child.ts", import.meta.url));
-    const daemonPort = (await allocatePort()).port;
-    const adjacentDaemonPort = (await allocatePort({ reserved: new Set([daemonPort]) })).port;
-    const webPort = (await allocatePort({ reserved: new Set([daemonPort, adjacentDaemonPort]) })).port;
+    const adjacentDaemonPort = (await allocatePort()).port;
+    const webPort = (await allocatePort({ reserved: new Set([adjacentDaemonPort]) })).port;
     const daemonStamp = { ...stamp, namespace: `td06-a-${process.pid}` };
     const adjacentStamp = { ...stamp, namespace: `td06-b-${process.pid}` };
     const resources = {
       dataRoot: "/tmp/open-design-td06-a",
       ownerPid: null,
-      port: daemonPort,
+      port: 0,
       runtimeRoot: "/tmp/open-design-td06-a-runtime",
     };
     const adjacentResources = {
@@ -276,8 +275,10 @@ describe("server-side atomic operations", () => {
       resources: adjacentResources,
       stamp: adjacentStamp,
     });
+    let daemonPort: number | null = null;
     const web = createServer(async (request, response) => {
       try {
+        if (daemonPort == null) throw new Error("daemon port is not resolved");
         const upstream = await fetch(`http://127.0.0.1:${daemonPort}${request.url ?? "/"}`);
         response.writeHead(upstream.status, { "content-type": upstream.headers.get("content-type") ?? "application/json" });
         response.end(await upstream.text());
@@ -288,10 +289,15 @@ describe("server-side atomic operations", () => {
     });
 
     try {
+      let daemonStatus!: { pid: number; port: number };
       await vi.waitFor(async () => {
-        await expect(getSidecarStatus(daemonStamp)).resolves.toEqual({ pid: daemon.pid, port: daemonPort });
+        daemonStatus = await getSidecarStatus(daemonStamp);
+        expect(daemonStatus.pid).toBe(daemon.pid);
+        expect(daemonStatus.port).toBeGreaterThan(0);
         await expect(getSidecarStatus(adjacentStamp)).resolves.toEqual({ pid: adjacent.pid, port: adjacentDaemonPort });
       });
+      const resolvedDaemonPort = daemonStatus.port;
+      daemonPort = resolvedDaemonPort;
       await new Promise<void>((resolve, reject) => {
         web.once("error", reject);
         web.listen(webPort, "127.0.0.1", resolve);
@@ -302,12 +308,12 @@ describe("server-side atomic operations", () => {
       const restarted = await restartSidecar({
         args: ["--import", "tsx", fixture],
         command: process.execPath,
-        resources: { ...resources, port: 0 },
+        resources: { ...resources, port: resolvedDaemonPort },
         stamp: daemonStamp,
-      });
-      expect(restarted.reusedPort).toBe(true);
+      }, { requireConcretePort: true });
+      expect(restarted.reusedPort).toBe(false);
       await vi.waitFor(async () => {
-        await expect(getSidecarStatus(daemonStamp)).resolves.toEqual({ pid: restarted.pid, port: daemonPort });
+        await expect(getSidecarStatus(daemonStamp)).resolves.toEqual({ pid: restarted.pid, port: resolvedDaemonPort });
       });
 
       expect(web.address()).toEqual(expect.objectContaining({ port: webPort }));
