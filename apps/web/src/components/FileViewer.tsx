@@ -18,7 +18,6 @@ import {
   OPEN_DESIGN_GITHUB_REPO_URL,
   workspaceContextHasTeamIdentity,
   type CollabCloudMemberDirectoryEntry,
-  type CollabMemberRole,
   type AgentInfo,
   type ProjectFileVersion,
   type SocialShareRequest,
@@ -245,7 +244,6 @@ import {
   liveSnapshotForComment,
   overlayBoundsFromSnapshot,
   planLostAnchorWriteBacks,
-  provisionalNextPinNumber,
   resolveCommentAnchor,
   selectionKindLabel,
   targetFromSnapshot,
@@ -258,7 +256,11 @@ import {
 } from '../collab/collab-context';
 import { currentUserDirectoryEntry, useTeamMembers } from '../collab/useTeamMembers';
 import { applyPodMemberRemoval } from '../lib/pod-members';
-import { AnnotationHoverPopover, BoardComposerPopover } from './BoardComposerPopover';
+import {
+  AnnotationHoverPopover,
+  BoardComposerPopover,
+  type CommentUiReply,
+} from './BoardComposerPopover';
 import {
   OD_PREVIEW_KEEP_ALIVE,
   PooledIframe,
@@ -4417,16 +4419,17 @@ function commentTargetIntersectsPreview(
 
 // Stable avatar palette for comment authors — a member always gets the same
 // swatch (hash of their id), so the same person reads consistently across cards
-// and sessions. The demo's orange circle lives here as the first entry.
+// and sessions. Keep the review surface on the current neutral/green/cool
+// palette; the previous orange comment color belongs to the retired system.
 const COMMENT_AUTHOR_AVATAR_COLORS = [
-  '#f97316',
-  '#e11d48',
-  '#7c3aed',
+  '#202020',
+  '#166534',
+  '#365314',
   '#2563eb',
   '#0891b2',
   '#059669',
-  '#ca8a04',
-  '#db2777',
+  '#475569',
+  '#6d28d9',
   '#4f46e5',
   '#0d9488',
 ] as const;
@@ -4448,26 +4451,6 @@ function commentAuthorInitials(name: string): string {
   return (first ?? '?').toUpperCase();
 }
 
-function commentAuthorRoleLabel(role: CollabMemberRole): string {
-  return role.charAt(0).toUpperCase() + role.slice(1);
-}
-
-function commentDisplayLabel(comment: PreviewComment, t: TranslateFn): string {
-  if (comment.elementId.startsWith('pin-')) return t('chat.comments.pin');
-  const label = String(comment.label || '').trim().toLowerCase();
-  const htmlHint = String(comment.htmlHint || '').trim().toLowerCase();
-  const elementId = String(comment.elementId || '').trim().toLowerCase();
-  const source = `${label} ${htmlHint} ${elementId}`;
-  if (/\b(?:img|picture|video|canvas|svg)\b/.test(source)) return t('chat.comments.targetImage');
-  if (/\b(?:button|input|textarea|select|label)\b/.test(source)) return t('chat.comments.targetControl');
-  if (/^<a\b/.test(htmlHint)) return t('chat.comments.targetLink');
-  if (/\b(?:h1|h2|h3|h4|h5|h6|p|span|strong|em|small|li|dt|dd)\b/.test(source)) return t('chat.comments.targetText');
-  if (/\b(?:section|main|header|footer|nav|article|aside)\b/.test(source)) return t('chat.comments.targetSection');
-  if (label.endsWith('.html') || elementId.startsWith('file-comment-')) return t('chat.comments.targetPage');
-  if (comment.text.trim()) return t('chat.comments.targetText');
-  return t('chat.comments.targetArea');
-}
-
 export function CommentSidePanel({
   comments,
   projectId,
@@ -4479,8 +4462,9 @@ export function CommentSidePanel({
   onToggleSelect,
   onSelectAll,
   onClearSelection,
-  onReorder,
   onReply,
+  onResolveComment,
+  onSubmitReply,
   onSendSelected,
   onCreateComment,
   canSendComment,
@@ -4493,6 +4477,7 @@ export function CommentSidePanel({
   renderCreateForm = true,
   t,
   composer,
+  repliesByCommentId,
 }: {
   comments: PreviewComment[];
   projectId?: string;
@@ -4515,6 +4500,8 @@ export function CommentSidePanel({
   onClearSelection: () => void;
   onReorder?: (orderedIds: string[], draggedId: string) => void;
   onReply: (comment: PreviewComment) => void;
+  onResolveComment?: (comment: PreviewComment) => void | Promise<void>;
+  onSubmitReply?: (comment: PreviewComment, reply: string) => void | Promise<void>;
   onSendSelected: () => void | Promise<void>;
   onCreateComment?: (note: string) => boolean | Promise<boolean>;
   sending: boolean;
@@ -4525,32 +4512,18 @@ export function CommentSidePanel({
   renderCreateForm?: boolean;
   t: TranslateFn;
   composer?: ReactNode;
+  repliesByCommentId?: ReadonlyMap<string, readonly CommentUiReply[]>;
 }) {
   const { workspaceContext } = useProjectCollabContext();
   const [newCommentDraft, setNewCommentDraft] = useState('');
-  const [dragState, setDragState] = useState<CommentSideDragState | null>(null);
+  const [replyingCommentId, setReplyingCommentId] = useState<string | null>(null);
+  const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({});
   // Collab-cloud member directory: turns a comment's authorMemberId into a
   // display name + role for the author line + avatar. The viewer's own identity
   // resolves through `currentUser` even when the directory is empty; an unknown
   // OTHER member still renders without an author line, exactly as before.
   const { resolve: resolveCommentAuthor } = useTeamMembers(currentUser);
   const sorted = comments;
-  // recvq5BVsolIxi: the inline "N." prefix must match the canvas pin number
-  // (comment.pinSeq) so the two surfaces always agree, even when this panel
-  // displays comments in a different order than they were created (the
-  // sidebar sorts by sortKey, newest first by default; pinSeq never moves).
-  // A comment with no pinSeq yet (legacy row / test fixture) falls back to
-  // its rank in CREATION order — independent of `comments`' own order here —
-  // computed locally so this component stays self-sufficient for callers
-  // that pass in an arbitrary (not FileViewer-derived) comment list.
-  const creationRankById = useMemo(() => {
-    const byCreation = [...comments].sort((a, b) => commentCreatedAt(a) - commentCreatedAt(b));
-    return new Map(byCreation.map((comment, index) => [comment.id, index + 1]));
-  }, [comments]);
-  function displayCommentNumber(comment: PreviewComment, fallbackIndex: number): number {
-    if (typeof comment.pinSeq === 'number') return comment.pinSeq;
-    return creationRankById.get(comment.id) ?? fallbackIndex + 1;
-  }
   const visibleSelectedIds = new Set(comments.filter((comment) => selectedIds.has(comment.id)).map((comment) => comment.id));
   const selectedCount = visibleSelectedIds.size;
   // Team-collab send-to-agent gate: only the author or the project owner may
@@ -4563,59 +4536,10 @@ export function CommentSidePanel({
   const allSelected = sendableCount > 0 && selectedCount === sendableCount;
   const commentsLabel = t('chat.tabComments');
   const canCreateComment = Boolean(onCreateComment) && newCommentDraft.trim().length > 0 && !sending;
-  const canReorder = Boolean(onReorder && sorted.length > 1);
   const collapsedRailRef = useRef<HTMLButtonElement | null>(null);
   const expandedToggleRef = useRef<HTMLButtonElement | null>(null);
   const pendingToggleFocusRef = useRef<'collapsed' | 'expanded' | null>(null);
   const panelId = useId();
-  const handleDragStart = (event: ReactDragEvent<HTMLButtonElement>, comment: PreviewComment) => {
-    if (!canReorder) return;
-    event.dataTransfer.effectAllowed = 'move';
-    event.dataTransfer.setData(COMMENT_SIDE_DRAG_MIME, comment.id);
-    event.dataTransfer.setData('text/plain', comment.id);
-    setDragState({ draggingId: comment.id, overId: comment.id, edge: null });
-  };
-  const handleDragOver = (event: ReactDragEvent<HTMLDivElement>, targetId: string) => {
-    if (!canReorder) return;
-    const draggingId = dragState?.draggingId || event.dataTransfer.getData(COMMENT_SIDE_DRAG_MIME);
-    if (!draggingId) return;
-    event.preventDefault();
-    event.dataTransfer.dropEffect = 'move';
-    if (draggingId === targetId) {
-      if (dragState?.overId !== targetId || dragState.edge !== null) {
-        setDragState({ draggingId, overId: targetId, edge: null });
-      }
-      return;
-    }
-    const edge = commentSideDropEdgeForEvent(event);
-    if (
-      dragState?.draggingId !== draggingId ||
-      dragState.overId !== targetId ||
-      dragState.edge !== edge
-    ) {
-      setDragState({ draggingId, overId: targetId, edge });
-    }
-  };
-  const handleDrop = (event: ReactDragEvent<HTMLDivElement>, targetId: string) => {
-    if (!canReorder) return;
-    event.preventDefault();
-    const draggingId =
-      dragState?.draggingId ||
-      event.dataTransfer.getData(COMMENT_SIDE_DRAG_MIME) ||
-      event.dataTransfer.getData('text/plain');
-    if (!draggingId || draggingId === targetId) {
-      setDragState(null);
-      return;
-    }
-    const edge = dragState?.overId === targetId && dragState.edge
-      ? dragState.edge
-      : commentSideDropEdgeForEvent(event);
-    const nextIds = reorderPreviewCommentIds(sorted, draggingId, targetId, edge);
-    if (nextIds.join('\0') !== sorted.map((comment) => comment.id).join('\0')) {
-      onReorder?.(nextIds, draggingId);
-    }
-    setDragState(null);
-  };
   const submitNewComment = async () => {
     if (!onCreateComment || !newCommentDraft.trim()) return;
     const saved = await onCreateComment(newCommentDraft.trim());
@@ -4702,52 +4626,30 @@ export function CommentSidePanel({
           </button>
         </div>
       </div>
-      {sendableCount > 0 ? (
-        <div className="comment-side-toolbar">
-          <button
-            type="button"
-            className="comment-side-select-all"
-            disabled={allSelected}
-            onClick={onSelectAll}
-          >
-            {t('chat.comments.selectAll')}
-          </button>
-        </div>
-      ) : null}
-      <div
-        className="comment-side-list"
-        onDragLeave={(event) => {
-          const related = event.relatedTarget;
-          if (related instanceof Node && event.currentTarget.contains(related)) return;
-          setDragState(null);
-        }}
-      >
+      <div className="comment-side-list">
         {sorted.length === 0 ? (
           <div className="comment-side-empty">
             {t('chat.comments.emptySaved')}
           </div>
-        ) : sorted.map((comment, index) => {
+        ) : sorted.map((comment) => {
           const selected = visibleSelectedIds.has(comment.id);
-          const active = comment.id === activeCommentId;
+          const active = selectedCount === 0 && comment.id === activeCommentId;
           const sendable = canSend(comment);
-          const author = resolveCommentAuthor(comment.authorMemberId);
-          const isDragging = dragState?.draggingId === comment.id;
-          const dropClass = dragState?.overId === comment.id &&
-            dragState.draggingId !== comment.id &&
-            dragState.edge
-            ? ` comment-side-item-drop-${dragState.edge}`
-            : '';
+          const author = resolveCommentAuthor(comment.authorMemberId)
+            ?? (!comment.authorMemberId ? currentUser ?? null : null);
+          const authorName = author?.displayName || comment.authorMemberId || t('chat.you');
+          const replyOpen = replyingCommentId === comment.id;
+          const replyDraft = replyDrafts[comment.id] ?? '';
+          const replies = repliesByCommentId?.get(comment.id) ?? [];
           return (
             <div
               key={comment.id}
-              className={`comment-side-item${selected ? ' selected' : ''}${active ? ' active' : ''}${isDragging ? ' dragging' : ''}${dropClass}`}
+              className={`comment-side-item${selected ? ' selected' : ''}${active ? ' active' : ''}`}
               data-testid="comment-side-item"
               data-comment-id={comment.id}
               aria-current={active ? 'true' : undefined}
               role="button"
               tabIndex={0}
-              onDragOver={(event) => handleDragOver(event, comment.id)}
-              onDrop={(event) => handleDrop(event, comment.id)}
               onClick={() => onReply(comment)}
               onKeyDown={(event) => {
                 if (event.key !== 'Enter' && event.key !== ' ') return;
@@ -4756,41 +4658,30 @@ export function CommentSidePanel({
               }}
             >
               <div className="comment-side-item-head">
-                <button
-                  type="button"
-                  className="comment-side-drag-handle"
-                  title={t('chat.queuedReorder')}
-                  aria-label={t('chat.queuedReorder')}
-                  draggable={canReorder}
-                  disabled={!canReorder}
-                  onClick={(event) => event.stopPropagation()}
-                  onDragStart={(event) => handleDragStart(event, comment)}
-                  onDragEnd={() => setDragState(null)}
+                <span
+                  className="comment-side-avatar"
+                  style={{ background: commentAuthorAvatarColor(comment.authorMemberId ?? author?.memberId ?? comment.id) }}
+                  aria-hidden="true"
                 >
-                  <Icon name="grip-vertical" size={13} />
-                </button>
-                <span className="comment-side-author">
-                  {author ? (
-                    <span
-                      className="comment-side-avatar"
-                      style={{ background: commentAuthorAvatarColor(comment.authorMemberId ?? author.memberId) }}
-                      aria-hidden="true"
-                    >
-                      {commentAuthorInitials(author.displayName)}
-                    </span>
-                  ) : null}
-                  <span className="comment-side-author-copy">
-                    <strong>{`${displayCommentNumber(comment, index)}. ${commentDisplayLabel(comment, t)}`}</strong>
-                    {author ? (
-                      <small>
-                        {author.displayName}
-                        {' · '}
-                        {commentAuthorRoleLabel(author.role)}
-                      </small>
-                    ) : null}
-                  </span>
+                  {commentAuthorInitials(authorName)}
                 </span>
-                <span className="comment-side-time">{formatCommentTime(commentActivityAt(comment), t)}</span>
+                <span className="comment-side-author">
+                  <strong>{authorName}</strong>
+                  <span className="comment-side-time">{formatCommentTime(commentActivityAt(comment), t)}</span>
+                </span>
+                {onResolveComment && sendable ? (
+                  <button
+                    type="button"
+                    className="comment-side-item-resolve"
+                    disabled={sending}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      void onResolveComment(comment);
+                    }}
+                  >
+                    {t('chat.comments.resolve')}
+                  </button>
+                ) : null}
                 {sendable ? (
                   <button
                     type="button"
@@ -4833,6 +4724,71 @@ export function CommentSidePanel({
                   })}
                 </div>
               ) : null}
+              {replies.length > 0 ? (
+                <div className="comment-side-replies">
+                  {replies.map((reply) => (
+                    <p key={reply.id} className="comment-side-reply-item">
+                      <strong>{reply.authorName}</strong>
+                      {reply.text}
+                    </p>
+                  ))}
+                </div>
+              ) : null}
+              {!replyOpen ? (
+                <div className="comment-side-item-actions">
+                  <button
+                    type="button"
+                    className="comment-side-reply-trigger"
+                    aria-expanded="false"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setReplyingCommentId(comment.id);
+                    }}
+                  >
+                    {t('chat.comments.replyPlaceholder').replace(/…$/, '')}
+                  </button>
+                </div>
+              ) : (
+                <div className="comment-side-reply-compose" onClick={(event) => event.stopPropagation()}>
+                  <Input
+                    autoFocus
+                    className="comment-side-reply-input"
+                    data-testid="comment-side-reply"
+                    value={replyDraft}
+                    placeholder={t('chat.comments.replyPlaceholder')}
+                    aria-label={t('chat.comments.replyPlaceholder')}
+                    onChange={(event) => setReplyDrafts((current) => ({
+                      ...current,
+                      [comment.id]: event.target.value,
+                    }))}
+                    onKeyDown={(event) => {
+                      event.stopPropagation();
+                      if (event.key === 'Escape') {
+                        setReplyingCommentId(null);
+                        return;
+                      }
+                      if (event.key !== 'Enter' || !replyDraft.trim() || !onSubmitReply) return;
+                      event.preventDefault();
+                      void Promise.resolve(onSubmitReply(comment, replyDraft.trim())).then(() => {
+                        setReplyDrafts((current) => ({ ...current, [comment.id]: '' }));
+                        setReplyingCommentId(null);
+                      });
+                    }}
+                  />
+                  <button
+                    type="button"
+                    className="comment-side-reply-send"
+                    aria-label={t('chat.comments.replyPlaceholder')}
+                    disabled={!replyDraft.trim() || !onSubmitReply}
+                    onClick={() => void Promise.resolve(onSubmitReply?.(comment, replyDraft.trim())).then(() => {
+                      setReplyDrafts((current) => ({ ...current, [comment.id]: '' }));
+                      setReplyingCommentId(null);
+                    })}
+                  >
+                    <Icon name="arrow-up" size={14} />
+                  </button>
+                </div>
+              )}
             </div>
           );
         })}
@@ -4840,7 +4796,15 @@ export function CommentSidePanel({
       {selectedCount > 0 ? (
         <div className="comment-side-selectbar" data-testid="comment-side-selectbar">
           <span className="comment-side-selectcount">{t('chat.comments.nSelected', { n: selectedCount })}</span>
-          <Button variant="ghost" onClick={onClearSelection}>
+          <button
+            type="button"
+            className="comment-side-select-all"
+            disabled={allSelected}
+            onClick={onSelectAll}
+          >
+            {t('chat.comments.selectAll')}
+          </button>
+          <Button variant="ghost" className="comment-side-clear" onClick={onClearSelection}>
             {t('chat.comments.clear')}
           </Button>
           {allowSendToChat ? (
@@ -4913,39 +4877,9 @@ export function CommentSidePanel({
   );
 }
 
-const COMMENT_SIDE_DRAG_MIME = 'application/x-open-design-preview-comment';
-const COMMENT_FLOAT_PANEL_MIN_WIDTH = 260;
+const COMMENT_FLOAT_PANEL_MIN_WIDTH = 300;
 const COMMENT_FLOAT_PANEL_DEFAULT_WIDTH = 360;
 const COMMENT_FLOAT_PANEL_MAX_WIDTH = 480;
-
-type CommentSideDropEdge = 'before' | 'after';
-
-interface CommentSideDragState {
-  draggingId: string;
-  overId: string | null;
-  edge: CommentSideDropEdge | null;
-}
-
-function commentSideDropEdgeForEvent(event: ReactDragEvent<HTMLElement>): CommentSideDropEdge {
-  const rect = event.currentTarget.getBoundingClientRect();
-  return event.clientY < rect.top + rect.height / 2 ? 'before' : 'after';
-}
-
-function reorderPreviewCommentIds(
-  comments: PreviewComment[],
-  draggingId: string,
-  targetId: string,
-  edge: CommentSideDropEdge,
-): string[] {
-  const ids = comments.map((comment) => comment.id);
-  const from = ids.indexOf(draggingId);
-  if (from < 0) return ids;
-  const [draggedId] = ids.splice(from, 1);
-  const targetIndex = ids.indexOf(targetId);
-  if (targetIndex < 0 || !draggedId) return comments.map((comment) => comment.id);
-  ids.splice(edge === 'after' ? targetIndex + 1 : targetIndex, 0, draggedId);
-  return ids;
-}
 
 /**
  * The persisted sort_key to write for a drag-reorder (recvq5BVsolIxi Phase
@@ -4990,6 +4924,8 @@ function CommentSideDock({
   onClearSelection,
   onReorder,
   onReply,
+  onResolveComment,
+  onSubmitReply,
   onSendSelected,
   onCreateComment,
   canSendComment,
@@ -5002,6 +4938,7 @@ function CommentSideDock({
   renderCreateForm = true,
   t,
   composer,
+  repliesByCommentId,
   floatingPanelWidth,
   onFloatingPanelWidthChange,
 }: {
@@ -5017,6 +4954,8 @@ function CommentSideDock({
   onClearSelection: () => void;
   onReorder?: (orderedIds: string[], draggedId: string) => void;
   onReply: (comment: PreviewComment) => void;
+  onResolveComment?: (comment: PreviewComment) => void | Promise<void>;
+  onSubmitReply?: (comment: PreviewComment, reply: string) => void | Promise<void>;
   onSendSelected: () => void | Promise<void>;
   onCreateComment?: (note: string) => boolean | Promise<boolean>;
   /** Team-collab gate: which comments the viewer may send to the agent (author
@@ -5032,6 +4971,7 @@ function CommentSideDock({
   renderCreateForm?: boolean;
   t: TranslateFn;
   composer?: ReactNode;
+  repliesByCommentId?: ReadonlyMap<string, readonly CommentUiReply[]>;
   /** The width and resize callback are supplied only for the floating panel. */
   floatingPanelWidth?: number;
   onFloatingPanelWidthChange?: (width: number) => void;
@@ -5110,6 +5050,8 @@ function CommentSideDock({
         onClearSelection={onClearSelection}
         onReorder={onReorder}
         onReply={onReply}
+        onResolveComment={onResolveComment}
+        onSubmitReply={onSubmitReply}
         onSendSelected={onSendSelected}
         onCreateComment={onCreateComment}
         canSendComment={canSendComment}
@@ -5122,6 +5064,7 @@ function CommentSideDock({
         renderCreateForm={renderCreateForm}
         t={t}
         composer={composer}
+        repliesByCommentId={repliesByCommentId}
       />
     </div>
   );
@@ -5845,7 +5788,6 @@ function anchorStateLabel(state: PreviewCommentAnchorState): string {
 
 function CommentPreviewOverlays({
   comments,
-  provisionalPinNumber,
   liveTargets,
   hoveredTarget,
   hoveredPodMemberId,
@@ -5862,12 +5804,9 @@ function CommentPreviewOverlays({
   currentVersion,
   onLostAnchors,
   onOpenComment,
+  authorNameForComment,
 }: {
   comments: PreviewComment[];
-  /** Next pin number for a brand-new comment. Computed by the caller over the
-   *  file's comments across ALL statuses (see `provisionalNextPinNumber`) —
-   *  wider than `comments`, which carries only the open ones the canvas pins. */
-  provisionalPinNumber: number;
   liveTargets: Map<string, PreviewCommentSnapshot>;
   hoveredTarget: PreviewCommentSnapshot | null;
   hoveredPodMemberId: string | null;
@@ -5889,29 +5828,21 @@ function CommentPreviewOverlays({
    *  ghost pin survives reload. Only fires in drift-ladder mode. */
   onLostAnchors?: (writeBacks: AnchorWriteBack[]) => void;
   onOpenComment: (comment: PreviewComment, snapshot: PreviewCommentSnapshot) => void;
+  authorNameForComment: (comment: PreviewComment) => string;
 }) {
   const overlayOffset = useMemo(() => ({ x: offsetX, y: offsetY }), [offsetX, offsetY]);
   const visibleComments = useMemo(
     () =>
       comments
-        .map((comment, globalIndex) => {
-          // recvq5BVsolIxi: the server-assigned pin_seq is the source of
-          // truth (stable across edits, reconciled across devices); a
-          // comment that doesn't carry one yet (a legacy row from before
-          // this field existed, or a test fixture) falls back to its index
-          // in `comments` — which the caller passes in stable CREATION
-          // order (see FileViewer's creationSortedSideComments), so the
-          // fallback matches exactly what `pinSeq` would have assigned.
-          const markerNumber = typeof comment.pinSeq === 'number' ? comment.pinSeq : globalIndex + 1;
+        .map((comment) => {
           if (driftLadder) {
             // Keep stale/lost comments and carry their state so the marker can
             // badge them, instead of silently dropping a drifted anchor.
             const resolution = resolveCommentAnchor(comment, liveTargets, currentVersion);
-            return { comment, markerNumber, snapshot: resolution.snapshot, anchorState: resolution.state };
+            return { comment, snapshot: resolution.snapshot, anchorState: resolution.state };
           }
           return {
             comment,
-            markerNumber,
             snapshot: liveSnapshotForComment(comment, liveTargets),
             anchorState: 'anchored' as PreviewCommentAnchorState,
           };
@@ -5919,7 +5850,6 @@ function CommentPreviewOverlays({
         .filter(
           (item): item is {
             comment: PreviewComment;
-            markerNumber: number;
             snapshot: PreviewCommentSnapshot;
             anchorState: PreviewCommentAnchorState;
           } => Boolean(item.snapshot),
@@ -5958,10 +5888,11 @@ function CommentPreviewOverlays({
   // comments reuses the whole subtree and React skips reconciling it.
   const savedMarkers = useMemo(
     () =>
-      visibleComments.map(({ comment, markerNumber, snapshot, anchorState }) => {
+      visibleComments.map(({ comment, snapshot, anchorState }) => {
         const bounds = overlayBoundsFromSnapshot(snapshot, scale, overlayOffset);
         const label = commentTargetDisplayName(comment);
         const drifted = anchorState !== 'anchored';
+        const authorName = authorNameForComment(comment);
         return (
           <div
             key={comment.id}
@@ -5979,37 +5910,22 @@ function CommentPreviewOverlays({
             <div className="comment-saved-outline" />
             <button
               type="button"
-              className="comment-saved-pin"
+              className={`comment-saved-pin${activeExistingCommentId === comment.id ? ' is-active' : ''}`}
               onClick={(event) => {
                 event.stopPropagation();
                 onOpenCommentRef.current(comment, snapshot);
               }}
-              title={
-                drifted
-                  ? `${markerNumber}. ${label} · ${anchorStateLabel(anchorState)}`
-                  : `${markerNumber}. ${label}: ${comment.note}`
-              }
-              aria-label={`Open comment for ${label}`}
+              aria-label={drifted
+                ? `Open ${anchorStateLabel(anchorState)} comment from ${authorName} for ${label}`
+                : `Open comment from ${authorName} for ${label}`}
             >
-              {markerNumber}
+              {commentAuthorInitials(authorName)}
             </button>
           </div>
         );
       }),
-    [visibleComments, scale, overlayOffset],
+    [visibleComments, scale, overlayOffset, activeExistingCommentId, authorNameForComment],
   );
-  const activeSavedIndex = activeExistingCommentId
-    ? comments.findIndex((comment) => comment.id === activeExistingCommentId)
-    : -1;
-  const activeSavedComment = activeSavedIndex >= 0 ? comments[activeSavedIndex] : undefined;
-  const activePinNumber = activeSavedComment
-    ? (typeof activeSavedComment.pinSeq === 'number' ? activeSavedComment.pinSeq : activeSavedIndex + 1)
-    // A brand-new, not-yet-saved comment: provisional guess at what the
-    // daemon will assign on create — `MAX(pin_seq)+1` across ALL of the
-    // file's comments regardless of status, never open-count+1 (pin
-    // numbers are permanent; deletion or resolution retires them, so a
-    // count-based guess would collide with or resurrect a taken number).
-    : provisionalPinNumber;
   const targetOverlay = activeTarget ?? hoveredTarget;
   return (
     <div className="comment-overlay-layer" aria-hidden={false}>
@@ -6030,7 +5946,7 @@ function CommentPreviewOverlays({
           data-testid="comment-active-pin"
           aria-hidden="true"
         >
-          {activePinNumber}
+          <Icon name="plus" size={18} />
         </div>
       ) : null}
       {boardTool === 'pod' && strokePoints.length > 1 ? (
@@ -9118,6 +9034,12 @@ function HtmlViewer({
   const [shareLinkFeedback, setShareLinkFeedback] = useState<'copied' | 'failed' | null>(null);
   const [shareGuideToast, setShareGuideToast] = useState<string | null>(null);
   const [selectedSideCommentIds, setSelectedSideCommentIds] = useState<Set<string>>(() => new Set());
+  // Reply persistence is a backend follow-up. Keeping the reply rows in the
+  // viewer state makes the production interaction fully testable without
+  // inventing a second comment record or mutating the original note.
+  const [commentRepliesById, setCommentRepliesById] = useState<Map<string, CommentUiReply[]>>(
+    () => new Map(),
+  );
   const [commentSidePanelCollapsed, setCommentSidePanelCollapsed] = useState(false);
   const [strokePoints, setStrokePoints] = useState<StrokePoint[]>([]);
   const previewStateKey = `${projectId}:${file.name}`;
@@ -11675,6 +11597,7 @@ function HtmlViewer({
     setInspectSavedAt(null);
     setInspectError(null);
     setQueuedBoardNotes([]);
+    setCommentRepliesById(new Map());
     setStrokePoints([]);
     setManualEditFrozenSource(null);
     setManualEditViewportWidth(null);
@@ -13911,12 +13834,9 @@ function HtmlViewer({
       ?? commentPanelToggleRef.current
       ?? toolbarMoreTriggerRef.current;
     setCommentPanelOpen(false);
-    // Dismissing the panel must not close an active composer popover. The
-    // panel may have been opened from that popover's View all comments action,
-    // so tearing down board mode here would interrupt composition.
-    if (activeCommentTarget) return;
-    setCommentCreateMode(false);
-    setBoardMode(false);
+    // The toolbar is the owner of the persistent comment-placement mode.
+    // Closing View all dismisses only the list and returns to point picking;
+    // the reviewer exits the tool by pressing the toolbar entry again.
     clearBoardComposer();
   }
 
@@ -14056,17 +13976,18 @@ function HtmlViewer({
     }
   }
 
-  async function savePersistentComment() {
+  async function savePersistentComment(noteOverride?: string) {
     if (!activeCommentTarget || !onSavePreviewComment) return;
+    const note = noteOverride?.trim() ?? commentDraft.trim();
     // Allow saving when there is text OR an attached image (image-only notes).
-    if (!commentDraft.trim() && boardImages.length === 0 && currentActiveComposerAttachments().length === 0) return;
+    if (!note && boardImages.length === 0 && currentActiveComposerAttachments().length === 0) return;
     const isFreePin = activeCommentTarget.elementId.startsWith('pin-');
     setSendingBoardBatch(true);
     try {
       const target = withDeckSlideIndex(targetFromSnapshot(activeCommentTarget));
       const saved = await onSavePreviewComment(
         target,
-        commentDraft.trim(),
+        note,
         false,
         boardImages,
         activeComposerComment?.id,
@@ -14634,36 +14555,18 @@ function HtmlViewer({
       imageExportInFlightRef.current = false;
     }
   }
-  // Stable creation-order list (recvq5BVsolIxi): NOT the sidebar's visual
-  // order any more (see `visibleSideComments` below) — kept purely so the
-  // canvas pin numbering (CommentPreviewOverlays, activePinNumber) has a
-  // stable fallback index for a comment that has no server-assigned
-  // `pinSeq` yet (a legacy row, or a test fixture), independent of whatever
-  // order the sidebar happens to display things in.
+  // Keep the canvas and list fed from one stable set of open comments. The
+  // canvas now identifies each comment by author avatar instead of a pin
+  // number, while the list may still honor a persisted server sort order.
   const creationSortedSideComments = useMemo(
     () => previewComments
       .filter((comment) => comment.filePath === file.name && comment.status === 'open')
       .sort((a, b) => commentCreatedAt(a) - commentCreatedAt(b)),
     [file.name, previewComments],
   );
-  // Provisional number for the next (not-yet-saved) pin. Computed over the
-  // file's comments across ALL statuses — a resolved/attached/failed comment
-  // keeps its pin_seq row in the daemon DB, so its number stays retired even
-  // though the canvas renders no marker for it (see provisionalNextPinNumber).
-  const nextProvisionalPinNumber = useMemo(
-    () => provisionalNextPinNumber(
-      previewComments
-        .filter((comment) => comment.filePath === file.name)
-        .sort((a, b) => commentCreatedAt(a) - commentCreatedAt(b)),
-    ),
-    [file.name, previewComments],
-  );
-  // Sidebar display order: descending by `sortKey` (a fresh comment gets the
-  // largest sortKey, so it shows first by default — "newest at the front").
-  // A legacy/un-migrated row without a sortKey falls back to its createdAt,
-  // which reproduces the exact same "newest first" default. Persisted
-  // server-side (see the `/reorder` route) instead of living only in React
-  // state, so a drag survives a refresh/tab-switch/device-switch.
+  // Sidebar display order: descending by persisted `sortKey`, with creation
+  // time as the legacy fallback. The review UI deliberately exposes no
+  // reorder affordance; this only preserves ordering written by older builds.
   const visibleSideComments = useMemo(
     () =>
       [...creationSortedSideComments].sort(
@@ -15070,8 +14973,27 @@ function HtmlViewer({
     [workspaceContext, projectResourceReadBlocked],
   );
   const { resolve: resolveCommentAuthor } = useTeamMembers(commentAuthorSelf);
+  const commentAuthorNameFor = useCallback((comment: PreviewComment) => (
+    resolveCommentAuthor(comment.authorMemberId)?.displayName
+    || (!comment.authorMemberId ? commentAuthorSelf?.displayName : '')
+    || comment.authorMemberId
+    || t('chat.you')
+  ), [commentAuthorSelf, resolveCommentAuthor, t]);
+  const addLocalCommentReply = useCallback((commentId: string, rawReply: string) => {
+    const text = rawReply.trim();
+    if (!text) return;
+    const authorName = commentAuthorSelf?.displayName || t('chat.you');
+    setCommentRepliesById((current) => {
+      const next = new Map(current);
+      next.set(commentId, [
+        ...(current.get(commentId) ?? []),
+        { id: `${commentId}-${Date.now()}`, authorName, text },
+      ]);
+      return next;
+    });
+  }, [commentAuthorSelf, t]);
   const activeComposerAuthorLabel = activeComposerComment
-    ? resolveCommentAuthor(activeComposerComment.authorMemberId)?.displayName
+    ? commentAuthorNameFor(activeComposerComment)
     : undefined;
   const commentComposerPortalMetrics = (() => {
     if (!commentComposerHost || !commentPreviewCanvasNode) return null;
@@ -15119,14 +15041,19 @@ function HtmlViewer({
       canSendToAgent={canSendActiveComment}
       draft={commentDraft}
       notes={queuedBoardNotes}
+      replies={activeComposerComment ? commentRepliesById.get(activeComposerComment.id) ?? [] : []}
       onDraft={setCommentDraft}
       onAddDraft={queueCurrentDraft}
       onRemoveQueuedNote={(index) =>
         setQueuedBoardNotes((current) => current.filter((_, currentIndex) => currentIndex !== index))
       }
       onClose={clearBoardComposer}
-      onSaveComment={() => { fireCommentPopoverClick('save_comment'); return savePersistentComment(); }}
+      onSaveComment={(noteOverride) => {
+        fireCommentPopoverClick('save_comment');
+        return savePersistentComment(noteOverride);
+      }}
       onSendBatch={(reply) => { fireCommentPopoverClick('send_to_chat'); return sendBoardBatch(reply); }}
+      onSubmitReply={addLocalCommentReply}
       images={boardImagePreviews}
       existingImages={
         activeComposerAttachments.map((attachment) => ({
@@ -15160,12 +15087,22 @@ function HtmlViewer({
       } : undefined}
       onViewAllComments={(returnFocusTarget) => {
         commentPanelReturnFocusRef.current = returnFocusTarget ?? null;
+        // A target is not a saved comment until it has content. Moving from
+        // the composer to View all must therefore remove the provisional plus
+        // marker instead of leaving an inert point behind the list.
+        clearBoardComposer();
         setCommentPanelOpen(true);
         setCommentSidePanelCollapsed(false);
       }}
       onDeleteComment={onRemovePreviewComment ? async (commentId) => {
         const removed = await onRemovePreviewComment(commentId);
         if (!removed) return;
+        setCommentRepliesById((current) => {
+          if (!current.has(commentId)) return current;
+          const next = new Map(current);
+          next.delete(commentId);
+          return next;
+        });
         clearBoardComposer();
         setSelectedSideCommentIds((current) => {
           if (!current.has(commentId)) return current;
@@ -15241,10 +15178,10 @@ function HtmlViewer({
       // collapse — forcing `false` here made every click a no-op.
       collapsed={commentSidePanelCollapsed}
       onCollapsedChange={setCommentSidePanelCollapsed}
-      // On a floating card, collapse closes the card and mirrors the toolbar
-      // toggle's OFF branch so one click reopens it. Closing only the panel
-      // would leave create/board mode on and consume that next click. The local
-      // dock keeps its collapse-to-rail behaviour.
+      // On a floating card, collapse closes only View all and returns to the
+      // persistent point-comment flow. The toolbar entry remains the explicit
+      // way to leave comment mode. The local dock keeps its collapse-to-rail
+      // behaviour.
       onDismiss={commentPortalHost ? dismissFloatingCommentPanel : undefined}
       onToggleSelect={(commentId) => {
         setSelectedSideCommentIds((current) => {
@@ -15264,16 +15201,22 @@ function HtmlViewer({
         )
       }
       onClearSelection={() => setSelectedSideCommentIds(new Set())}
-      onReorder={(orderedIds, draggedId) => {
-        const sortKey = computeReorderedSortKey(visibleSideComments, orderedIds, draggedId);
-        void onReorderPreviewComment?.(draggedId, sortKey);
-      }}
+      onResolveComment={onResolvePreviewComment ? async (comment) => {
+        const resolved = await onResolvePreviewComment(comment.id);
+        if (!resolved) return;
+        setSelectedSideCommentIds((current) => {
+          if (!current.has(comment.id)) return current;
+          const next = new Set(current);
+          next.delete(comment.id);
+          return next;
+        });
+        if (activePreviewCommentId === comment.id) clearBoardComposer();
+      } : undefined}
+      onSubmitReply={(comment, reply) => addLocalCommentReply(comment.id, reply)}
       onReply={(comment) => {
-        // Reply == edit on a flat-thread model: prefill the
-        // popover with the existing note so the user sees and
-        // mutates the current text. Save runs through the
-        // same upsert path; matching project/conv/file/element
-        // updates note in place rather than creating a new row.
+        // Selecting a list row keeps the list visible and opens the matching
+        // focused thread on the canvas. This bidirectional selection is the
+        // review workflow's core orientation cue.
         const snapshot = liveSnapshotForComment(comment, liveCommentTargets) ?? {
           filePath: comment.filePath,
           elementId: comment.elementId,
@@ -15296,9 +15239,7 @@ function HtmlViewer({
         setActiveCommentExistingAttachments(comment.attachments ?? []);
         setBoardMode(true);
         setCommentCreateMode(true);
-        // A selected saved comment opens its focused review card. The list is
-        // an on-demand record (View all), not a second panel behind the card.
-        setCommentPanelOpen(false);
+        setCommentPanelOpen(true);
         setCommentSidePanelCollapsed(false);
       }}
       onSendSelected={async () => {
@@ -15353,6 +15294,7 @@ function HtmlViewer({
       renderCreateForm={!commentPortalHost}
       t={t}
       composer={null}
+      repliesByCommentId={commentRepliesById}
       floatingPanelWidth={commentPortalHost ? commentFloatingPanelWidth : undefined}
       onFloatingPanelWidthChange={commentPortalHost ? setCommentFloatingPanelWidth : undefined}
     />
@@ -16692,7 +16634,6 @@ function HtmlViewer({
               {boardMode ? (
                 <CommentPreviewOverlays
                   comments={commentCreateMode ? creationSortedSideComments : []}
-                  provisionalPinNumber={nextProvisionalPinNumber}
                   driftLadder={collab.enabled}
                   currentVersion={collab.publishedVersion ?? undefined}
                   {...(collab.onLostAnchors ? { onLostAnchors: collab.onLostAnchors } : {})}
@@ -16708,8 +16649,8 @@ function HtmlViewer({
                   offsetY={overlayPreviewTransform.offsetY}
                   strokePoints={strokePoints}
                   activeSlideIndex={effectiveDeck ? slideState?.active ?? null : null}
+                  authorNameForComment={commentAuthorNameFor}
                   onOpenComment={(comment, snapshot) => {
-                    setCommentPanelOpen(false);
                     setCommentSidePanelCollapsed(false);
                     setCommentCreateMode(true);
                     setBoardMode(true);
@@ -16741,6 +16682,7 @@ function HtmlViewer({
                 <div className="comment-toast-anchor">
                   <Toast
                     message={commentSavedToast}
+                    tone="success"
                     ttlMs={2200}
                     onDismiss={() => setCommentSavedToast(null)}
                   />
@@ -16820,6 +16762,18 @@ function HtmlViewer({
                     scheduleHoverCardDismiss();
                   }}
                 />
+              ) : null}
+              {boardMode
+                && commentCreateMode
+                && !activeCommentTarget
+                && !commentPanelOpen ? (
+                <div
+                  className="comment-create-hint"
+                  data-testid="comment-create-hint"
+                  role="status"
+                >
+                  {t('chat.inspect.commentHint')}
+                </div>
               ) : null}
               {/*
                 Hint banner for Inspect / Picker modes. The bridge in

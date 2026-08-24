@@ -9360,7 +9360,7 @@ describe('FileViewer tweaks toolbar', () => {
     expect(container.querySelector('.comment-preview-layer > .comment-side-panel')).toBeNull();
   });
 
-  it('closes a floating comment card in one action and restores focus for button and Escape dismissals', async () => {
+  it('closes a floating comment card in one action and resumes placement for button and Escape dismissals', async () => {
     const portalId = 'project-comments-float';
     render(
       <>
@@ -9385,15 +9385,13 @@ describe('FileViewer tweaks toolbar', () => {
 
     await waitFor(() => {
       expect(screen.queryByTestId('comment-side-panel')).toBeNull();
-      expect(screen.getByTestId('comment-popover')).toBeTruthy();
-      expect(document.activeElement).toBe(screen.getByTestId('comment-popover-view-all'));
+      expect(screen.queryByTestId('comment-popover')).toBeNull();
+      expect(screen.getByTestId('comment-create-hint')).toBeTruthy();
+      expect(document.activeElement).toBe(trigger);
     });
 
-    // Dismissing the list leaves the in-progress comment untouched. Closing
-    // that composer still leaves the already-armed review tool ready for the
-    // next target.
-    fireEvent.click(screen.getByTestId('comment-popover').querySelector('.comment-popover-title-close')!);
-    await waitFor(() => expect(screen.queryByTestId('comment-popover')).toBeNull());
+    // Dismissing the list drops its provisional point but keeps the already
+    // armed review tool ready for the next target.
     await openCommentListFromComposer();
     const secondDismiss = await screen.findByRole('button', { name: /hide comments/i });
     secondDismiss.focus();
@@ -9401,7 +9399,8 @@ describe('FileViewer tweaks toolbar', () => {
 
     await waitFor(() => {
       expect(screen.queryByTestId('comment-side-panel')).toBeNull();
-      expect(screen.getByTestId('comment-popover')).toBeTruthy();
+      expect(screen.queryByTestId('comment-popover')).toBeNull();
+      expect(screen.getByTestId('comment-create-hint')).toBeTruthy();
     });
   });
 
@@ -9431,14 +9430,14 @@ describe('FileViewer tweaks toolbar', () => {
     fireEvent.pointerUp(document, { pointerId: 1, clientX: 440 });
 
     await waitFor(() => {
-      expect(host.style.getPropertyValue('--comment-float-width')).toBe('260px');
-      expect(handle).toHaveAttribute('aria-valuenow', '260');
+      expect(host.style.getPropertyValue('--comment-float-width')).toBe('300px');
+      expect(handle).toHaveAttribute('aria-valuenow', '300');
     });
 
     fireEvent.keyDown(handle, { key: 'ArrowLeft' });
     await waitFor(() => {
-      expect(host.style.getPropertyValue('--comment-float-width')).toBe('276px');
-      expect(handle).toHaveAttribute('aria-valuenow', '276');
+      expect(host.style.getPropertyValue('--comment-float-width')).toBe('316px');
+      expect(handle).toHaveAttribute('aria-valuenow', '316');
     });
   });
 
@@ -10051,7 +10050,7 @@ describe('FileViewer tweaks toolbar', () => {
     fireEvent.change(input, { target: { value: 'Please tighten this heading.' } });
 
     expect(input).not.toHaveAttribute('readonly');
-    expect(screen.getByTestId('comment-popover-save')).toHaveTextContent('Comment');
+    expect(screen.getByTestId('comment-popover-save')).toHaveTextContent('Add comment');
     expect(screen.queryByTestId('comment-add-send')).toBeNull();
   });
 
@@ -10092,6 +10091,97 @@ describe('FileViewer tweaks toolbar', () => {
     );
     expect(dockBox.left).toBeGreaterThanOrEqual(canvasBox.right);
     expect(panelBox.left).toBeGreaterThanOrEqual(canvasBox.right);
+  });
+
+  it('keeps the comment list open while opening its matching canvas detail and dismisses only the detail outside', async () => {
+    const comment: PreviewComment = {
+      id: 'comment-list-canvas-sync',
+      projectId: 'project-1',
+      conversationId: 'conversation-1',
+      filePath: 'preview.html',
+      elementId: 'hero',
+      selector: '[data-od-id="hero"]',
+      label: 'Hero',
+      text: 'Hero',
+      htmlHint: '<main data-od-id="hero">Hero</main>',
+      position: { x: 8, y: 12, width: 120, height: 48 },
+      note: 'Keep the list and canvas thread in sync',
+      status: 'open',
+      createdAt: 10,
+      updatedAt: 10,
+    };
+
+    render(
+      <FileViewer
+        projectId="project-1"
+        projectKind="prototype"
+        file={htmlPreviewFile()}
+        liveHtml='<html><body><main data-od-id="hero">Hero</main></body></html>'
+        previewComments={[comment]}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId('comment-panel-toggle'));
+    await openCommentListFromComposer();
+    fireEvent.click(screen.getByText(comment.note).closest('[data-testid="comment-side-item"]')!);
+
+    expect(await screen.findByTestId('comment-detail-popover')).toHaveTextContent(comment.note);
+    expect(screen.getByTestId('comment-side-panel')).toBeTruthy();
+    expect(screen.getByTestId('comment-saved-marker-hero').querySelector('button')?.className)
+      .toContain('is-active');
+
+    fireEvent.pointerDown(document.body);
+
+    await waitFor(() => expect(screen.queryByTestId('comment-detail-popover')).toBeNull());
+    expect(screen.getByTestId('comment-side-panel')).toBeTruthy();
+  });
+
+  it('drops an unsaved comment point for View all and resumes persistent placement after closing the list', async () => {
+    const portalId = 'project-comments-unsaved-point';
+    render(
+      <>
+        <div id={portalId} />
+        <FileViewer
+          projectId="project-1"
+          projectKind="prototype"
+          file={htmlPreviewFile()}
+          liveHtml='<html><body><main data-od-id="hero">Hero</main></body></html>'
+          commentPortalId={portalId}
+        />
+      </>,
+    );
+
+    fireEvent.click(screen.getByTestId('comment-panel-toggle'));
+    const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+    window.dispatchEvent(new MessageEvent('message', {
+      source: frame.contentWindow,
+      data: {
+        type: 'od:comment-target',
+        elementId: 'hero',
+        selector: '[data-od-id="hero"]',
+        label: 'Hero',
+        text: 'Hero',
+        position: { x: 8, y: 12, width: 120, height: 48 },
+        hoverPoint: { x: 12, y: 16 },
+        htmlHint: '<main data-od-id="hero">Hero</main>',
+      },
+    }));
+
+    fireEvent.change(await screen.findByTestId('comment-popover-input'), {
+      target: { value: 'Not saved yet' },
+    });
+    expect(screen.getByTestId('comment-active-pin')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('comment-popover-view-all'));
+
+    expect(await screen.findByTestId('comment-side-panel')).toBeTruthy();
+    expect(screen.queryByTestId('comment-active-pin')).toBeNull();
+    expect(screen.queryByTestId('comment-popover')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: /hide comments/i }));
+
+    await waitFor(() => expect(screen.queryByTestId('comment-side-panel')).toBeNull());
+    expect(screen.getByTestId('comment-create-hint')).toBeTruthy();
+    expect(screen.getByTestId('comment-panel-toggle').getAttribute('aria-pressed')).toBe('true');
   });
 
   it('uses the narrow board layout when docking would leave too little canvas', async () => {
@@ -10164,8 +10254,8 @@ describe('FileViewer tweaks toolbar', () => {
     fireEvent.click(screen.getByTestId('comment-panel-toggle'));
 
     expect(screen.queryByTestId('comment-side-panel')).toBeNull();
-    expect(screen.getByTestId('comment-saved-marker-pin-older').textContent).toBe('1');
-    expect(screen.getByTestId('comment-saved-marker-pin-newer').textContent).toBe('2');
+    expect(screen.getByTestId('comment-saved-marker-pin-older').textContent).toBe('Y');
+    expect(screen.getByTestId('comment-saved-marker-pin-newer').textContent).toBe('Y');
 
     clickAgentTool('comment-panel-toggle');
 
@@ -10190,7 +10280,7 @@ describe('FileViewer tweaks toolbar', () => {
       },
     }));
 
-    expect((await screen.findByTestId('comment-active-pin')).textContent).toBe('3');
+    expect((await screen.findByTestId('comment-active-pin')).querySelector('svg')).toBeTruthy();
     expect(screen.getByTestId('comment-saved-marker-pin-newer')).toBeTruthy();
     expect(screen.getByTestId('comment-saved-marker-pin-older')).toBeTruthy();
 
@@ -10201,7 +10291,7 @@ describe('FileViewer tweaks toolbar', () => {
     expect(screen.queryByTestId('comment-active-pin')).toBeNull();
   });
 
-  it('uses the next comment number when adding another comment on the same element', async () => {
+  it('uses author avatars for saved comments and a plus for a new comment', async () => {
     const savedComment: PreviewComment = {
       id: 'comment-saved',
       projectId: 'project-1',
@@ -10248,7 +10338,7 @@ describe('FileViewer tweaks toolbar', () => {
     }));
 
     await waitFor(() => {
-      expect(screen.getByTestId('comment-saved-marker-hero').textContent).toBe('1');
+      expect(screen.getByTestId('comment-saved-marker-hero').textContent).toBe('Y');
     });
 
     window.dispatchEvent(new MessageEvent('message', {
@@ -10265,20 +10355,18 @@ describe('FileViewer tweaks toolbar', () => {
       },
     }));
 
-    expect((await screen.findByTestId('comment-active-pin')).textContent).toBe('2');
+    expect((await screen.findByTestId('comment-active-pin')).querySelector('svg')).toBeTruthy();
 
     fireEvent.click(screen.getByTestId('comment-saved-marker-hero'));
     await waitFor(() => {
-      expect(document.querySelector('[data-comment-id="comment-saved"]')?.className).toContain('active');
+      expect(screen.getByTestId('comment-saved-marker-hero').querySelector('button')?.className)
+        .toContain('is-active');
     });
-    expect(screen.getByTestId('comment-active-pin').textContent).toBe('1');
+    expect(await screen.findByTestId('comment-detail-popover')).toHaveTextContent('Existing note');
+    expect(screen.queryByTestId('comment-active-pin')).toBeNull();
   });
 
-  it('does not reuse a surviving pin number for a new comment after a deletion', async () => {
-    // One comment left whose server-assigned pinSeq is 2 (pin 1 was deleted).
-    // Pin numbers are permanent — the daemon assigns MAX(pin_seq)+1, never
-    // count+1 — so the provisional pin for a brand-new comment must read 3,
-    // not collide with the surviving marker 2.
+  it('keeps a saved author avatar distinct from a new-comment plus marker after deletion', async () => {
     const survivingComment: PreviewComment = {
       id: 'comment-surviving',
       projectId: 'project-1',
@@ -10326,7 +10414,7 @@ describe('FileViewer tweaks toolbar', () => {
     }));
 
     await waitFor(() => {
-      expect(screen.getByTestId('comment-saved-marker-hero').textContent).toBe('2');
+      expect(screen.getByTestId('comment-saved-marker-hero').textContent).toBe('Y');
     });
 
     window.dispatchEvent(new MessageEvent('message', {
@@ -10343,16 +10431,11 @@ describe('FileViewer tweaks toolbar', () => {
       },
     }));
 
-    expect((await screen.findByTestId('comment-active-pin')).textContent).toBe('3');
-    // The surviving marker keeps its permanent number.
-    expect(screen.getByTestId('comment-saved-marker-hero').textContent).toBe('2');
+    expect((await screen.findByTestId('comment-active-pin')).querySelector('svg')).toBeTruthy();
+    expect(screen.getByTestId('comment-saved-marker-hero').textContent).toBe('Y');
   });
 
-  it('does not reuse a retired pin number held by a non-open comment', async () => {
-    // A resolved comment keeps its pin_seq row in the daemon DB, so the
-    // daemon's MAX(pin_seq)+1 counts it even though the canvas renders no
-    // marker for it. The provisional pin for a brand-new comment must skip
-    // that retired number (here: resolved pinSeq 2 -> new pin reads 3, not 1).
+  it('does not render an avatar marker for a resolved comment', async () => {
     const resolvedComment: PreviewComment = {
       id: 'comment-resolved',
       projectId: 'project-1',
@@ -10398,12 +10481,12 @@ describe('FileViewer tweaks toolbar', () => {
       },
     }));
 
-    expect((await screen.findByTestId('comment-active-pin')).textContent).toBe('3');
-    // Resolved comments render no saved marker — their number is simply retired.
+    expect((await screen.findByTestId('comment-active-pin')).querySelector('svg')).toBeTruthy();
+    // Resolved comments render no saved marker.
     expect(screen.queryByTestId('comment-saved-marker-hero')).toBeNull();
   });
 
-  it('keeps comment marker numbers global across deck slides', async () => {
+  it('keeps author-avatar markers scoped to the active deck slide', async () => {
     const slideOneComment: PreviewComment = {
       id: 'comment-slide-one',
       projectId: 'project-1',
@@ -10483,7 +10566,7 @@ describe('FileViewer tweaks toolbar', () => {
     }));
 
     await waitFor(() => {
-      expect(screen.getByTestId('comment-saved-marker-slide-four-title').textContent).toBe('2');
+      expect(screen.getByTestId('comment-saved-marker-slide-four-title').textContent).toBe('Y');
     });
     expect(screen.queryByTestId('comment-saved-marker-slide-one-title')).toBeNull();
   });
@@ -10729,7 +10812,7 @@ describe('FileViewer tweaks toolbar', () => {
     expect(screen.queryByTestId('annotation-style-summary')).toBeNull();
   });
 
-  it('keeps the comment list closed after saving an annotation comment', async () => {
+  it('keeps the comment list closed and placement active after saving an annotation comment', async () => {
     function Harness() {
       const [comments, setComments] = useState<PreviewComment[]>([]);
       return (
@@ -10793,14 +10876,13 @@ describe('FileViewer tweaks toolbar', () => {
     await waitFor(() => expect(screen.queryByTestId('comment-popover')).toBeNull());
     expect(screen.queryByTestId('comment-side-panel')).toBeNull();
     expect(screen.getByText('Comment saved')).toBeTruthy();
+    expect(screen.getByTestId('comment-create-hint')).toBeTruthy();
+    expect(screen.getByTestId('comment-panel-toggle').getAttribute('aria-pressed')).toBe('true');
   });
 
-  it('keeps saved marker numbers stable after saving another comment', async () => {
-    // pinSeq is what actually pins the marker number now (recvq5BVsolIxi) —
-    // set explicitly here exactly as the daemon would assign it at creation
-    // (1, 2, then 3), independent of each fixture's deliberately-out-of-order
-    // createdAt below (which exists only to prove the number does NOT
-    // recompute from creation time or array position).
+  it('keeps saved author-avatar markers stable after saving another comment', async () => {
+    // The fixtures retain their historical pinSeq metadata, but the canvas
+    // now renders author identity rather than sequence numbers.
     const olderComment: PreviewComment = {
       id: 'comment-older',
       projectId: 'project-1',
@@ -10873,8 +10955,8 @@ describe('FileViewer tweaks toolbar', () => {
 
     fireEvent.click(screen.getByTestId('comment-panel-toggle'));
 
-    expect(screen.getByTestId('comment-saved-marker-pin-older').textContent).toBe('1');
-    expect(screen.getByTestId('comment-saved-marker-pin-newer').textContent).toBe('2');
+    expect(screen.getByTestId('comment-saved-marker-pin-older').textContent).toBe('Y');
+    expect(screen.getByTestId('comment-saved-marker-pin-newer').textContent).toBe('Y');
 
     const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
     window.dispatchEvent(new MessageEvent('message', {
@@ -10896,9 +10978,9 @@ describe('FileViewer tweaks toolbar', () => {
     fireEvent.click(screen.getByTestId('comment-popover-save'));
 
     await waitFor(() => {
-      expect(screen.getByTestId('comment-saved-marker-pin-older').textContent).toBe('1');
-      expect(screen.getByTestId('comment-saved-marker-pin-newer').textContent).toBe('2');
-      expect(screen.getByTestId('comment-saved-marker-hero').textContent).toBe('3');
+      expect(screen.getByTestId('comment-saved-marker-pin-older').textContent).toBe('Y');
+      expect(screen.getByTestId('comment-saved-marker-pin-newer').textContent).toBe('Y');
+      expect(screen.getByTestId('comment-saved-marker-hero').textContent).toBe('Y');
     });
   });
 
@@ -11093,7 +11175,7 @@ describe('FileViewer tweaks toolbar', () => {
     );
 
     fireEvent.click(screen.getByTestId('comment-panel-toggle'));
-    fireEvent.click(screen.getByRole('button', { name: 'Open comment for pin-transition' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open comment from You for pin-transition' }));
 
     expect(await screen.findByTestId('comment-detail-popover'))
       .toHaveTextContent('Do not recreate this stale comment');
@@ -11147,7 +11229,7 @@ describe('FileViewer tweaks toolbar', () => {
 
     fireEvent.click(screen.getByTestId('comment-panel-toggle'));
     fireEvent.click(screen.getByRole('button', {
-      name: 'Open comment for pin-delete-rejected',
+      name: 'Open comment from You for pin-delete-rejected',
     }));
     fireEvent.click(await screen.findByRole('button', { name: 'Comment actions' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Delete' }));
@@ -11188,7 +11270,7 @@ describe('FileViewer tweaks toolbar', () => {
     );
 
     fireEvent.click(screen.getByTestId('comment-panel-toggle'));
-    fireEvent.click(screen.getByRole('button', { name: 'Open comment for pin-resolve-detail' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open comment from You for pin-resolve-detail' }));
 
     const detail = await screen.findByTestId('comment-detail-popover');
     expect(detail).toHaveTextContent('Tighten the spacing here');
@@ -11237,16 +11319,20 @@ describe('FileViewer tweaks toolbar', () => {
 
     fireEvent.click(screen.getByTestId('comment-panel-toggle'));
     fireEvent.click(screen.getByRole('button', {
-      name: 'Open comment for pin-send-result',
+      name: 'Open comment from You for pin-send-result',
     }));
     fireEvent.change(await screen.findByTestId('comment-detail-reply'), {
       target: { value: 'Please fix this' },
     });
+    fireEvent.click(within(screen.getByTestId('comment-detail-popover')).getByRole('button', {
+      name: 'Reply…',
+    }));
+    expect(screen.getByTestId('comment-detail-popover')).toHaveTextContent('Please fix this');
     fireEvent.click(screen.getByTestId('comment-detail-send'));
 
     await waitFor(() => expect(onSendBoardCommentAttachments).toHaveBeenCalledTimes(1));
     expect(onSendBoardCommentAttachments.mock.calls[0]?.[0]?.[0]?.comment)
-      .toBe('Send me safely\n\nReply: Please fix this');
+      .toBe('Send me safely');
     expect(onRemovePreviewComment).not.toHaveBeenCalled();
     expect(screen.getByTestId('comment-detail-popover')).toBeTruthy();
 
@@ -11294,7 +11380,7 @@ describe('FileViewer tweaks toolbar', () => {
 
     fireEvent.click(screen.getByTestId('comment-panel-toggle'));
     fireEvent.click(screen.getByRole('button', {
-      name: 'Open comment for pin-send-without-removal',
+      name: 'Open comment from You for pin-send-without-removal',
     }));
     fireEvent.click(screen.getByTestId('comment-detail-send'));
 
@@ -11552,7 +11638,7 @@ describe('FileViewer tweaks toolbar', () => {
     expect(within(item).getByText(/琼羽/)).toBeTruthy();
   });
 
-  it('leaves a comment by an unresolved other member on its id-only rendering', async () => {
+  it('keeps an unresolved other member identifiable instead of labeling them as the viewer', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async (input: RequestInfo | URL) => {
@@ -11601,7 +11687,8 @@ describe('FileViewer tweaks toolbar', () => {
     );
 
     const item = await screen.findByTestId('comment-side-item');
-    expect(item.querySelector('.comment-side-avatar')).toBeNull();
+    expect(item.querySelector('.comment-side-avatar')?.textContent).toBe('W');
+    expect(within(item).getByText('wm-someone-else')).toBeTruthy();
     expect(within(item).queryByText(/琼羽/)).toBeNull();
   });
 
@@ -11612,7 +11699,7 @@ describe('FileViewer tweaks toolbar', () => {
     expect(rule).toContain('width: min(296px, calc(100% - 28px));');
   });
 
-  it('reorders saved comments with the drag handle for send sequence', () => {
+  it('does not expose drag ordering for saved comments', () => {
     const onReorder = vi.fn();
     const comments: PreviewComment[] = [
       {
@@ -11667,26 +11754,9 @@ describe('FileViewer tweaks toolbar', () => {
       />,
     );
 
-    const items = screen.getAllByTestId('comment-side-item');
-    items[0]!.getBoundingClientRect = vi.fn(() => ({
-      x: 0,
-      y: 0,
-      top: 0,
-      left: 0,
-      right: 300,
-      bottom: 40,
-      width: 300,
-      height: 40,
-      toJSON: () => ({}),
-    }));
-    const dataTransfer = createDragDataTransfer();
-    fireEvent.dragStart(screen.getAllByLabelText('chat.queuedReorder')[1]!, { dataTransfer });
-    fireDragEventWithClientY('dragOver', items[0]!, { dataTransfer, clientY: 0 });
-    fireDragEventWithClientY('drop', items[0]!, { dataTransfer, clientY: 0 });
-
-    // recvq5BVsolIxi Phase 2: onReorder now also reports WHICH comment moved,
-    // so the caller can persist just that one row's sort_key.
-    expect(onReorder).toHaveBeenCalledWith(['comment-2', 'comment-1'], 'comment-2');
+    expect(screen.getAllByTestId('comment-side-item')).toHaveLength(2);
+    expect(screen.queryByLabelText('chat.queuedReorder')).toBeNull();
+    expect(onReorder).not.toHaveBeenCalled();
   });
 
   it('computes a persisted sort_key for a drag-reorder as a midpoint between the new neighbors', () => {
@@ -11770,7 +11840,7 @@ describe('FileViewer tweaks toolbar', () => {
     expect(items[1]!.textContent).toContain('First comment ever');
   });
 
-  it('persists a drag reorder via sort_key and keeps it after the comment list refreshes (recvq5BVsolIxi)', async () => {
+  it('keeps persisted sort order read-only in the comment list', async () => {
     const onReorderPreviewComment = vi.fn().mockResolvedValue(undefined);
     const commentA: PreviewComment = {
       id: 'comment-a',
@@ -11791,7 +11861,7 @@ describe('FileViewer tweaks toolbar', () => {
     };
     const commentB: PreviewComment = { ...commentA, id: 'comment-b', note: 'Comment B', createdAt: 20, updatedAt: 20, sortKey: 20 };
 
-    const { rerender } = render(
+    render(
       <FileViewer
         projectId="project-1"
         projectKind="prototype"
@@ -11805,42 +11875,12 @@ describe('FileViewer tweaks toolbar', () => {
     await openCommentListFromComposer();
 
     // Default order: B (sortKey 20) first, A (sortKey 10) second.
-    let items = screen.getAllByTestId('comment-side-item');
+    const items = screen.getAllByTestId('comment-side-item');
     expect(items[0]!.getAttribute('data-comment-id')).toBe('comment-b');
     expect(items[1]!.getAttribute('data-comment-id')).toBe('comment-a');
 
-    // Drag A (currently second, the drag handle at index 1) above B.
-    items[0]!.getBoundingClientRect = vi.fn(() => ({
-      x: 0, y: 0, top: 0, left: 0, right: 300, bottom: 40, width: 300, height: 40, toJSON: () => ({}),
-    }));
-    const dataTransfer = createDragDataTransfer();
-    // FileViewer renders through the real i18n default (English), unlike the
-    // CommentSidePanel-direct tests above that inject a key-echoing `t` stub —
-    // so the accessible label is the actual translated copy, not the raw key.
-    fireEvent.dragStart(screen.getAllByLabelText('Drag to reorder')[1]!, { dataTransfer });
-    fireDragEventWithClientY('dragOver', items[0]!, { dataTransfer, clientY: 0 });
-    fireDragEventWithClientY('drop', items[0]!, { dataTransfer, clientY: 0 });
-
-    // No neighbor above A's new (front) position, so its sort_key becomes
-    // one past B's — a PATCH request, not a whole-list renumber.
-    await waitFor(() => expect(onReorderPreviewComment).toHaveBeenCalledWith('comment-a', 21));
-
-    // Simulate the daemon having persisted it and the parent re-fetching:
-    // re-render with the updated sortKey already applied, standing in for a
-    // refresh/tab-switch. The dragged order must survive it.
-    rerender(
-      <FileViewer
-        projectId="project-1"
-        projectKind="prototype"
-        file={htmlPreviewFile()}
-        liveHtml='<html><body><main data-od-id="hero">Hero</main></body></html>'
-        previewComments={[{ ...commentA, sortKey: 21 }, commentB]}
-        onReorderPreviewComment={onReorderPreviewComment}
-      />,
-    );
-    items = screen.getAllByTestId('comment-side-item');
-    expect(items[0]!.getAttribute('data-comment-id')).toBe('comment-a');
-    expect(items[1]!.getAttribute('data-comment-id')).toBe('comment-b');
+    expect(screen.queryByLabelText('Drag to reorder')).toBeNull();
+    expect(onReorderPreviewComment).not.toHaveBeenCalled();
   });
 
   it('does not classify text labels containing a standalone article as links', () => {
@@ -11878,7 +11918,8 @@ describe('FileViewer tweaks toolbar', () => {
       />,
     );
 
-    expect(screen.getByText('1. Text')).toBeTruthy();
+    expect(screen.getByText('Make this copy tighter.')).toBeTruthy();
+    expect(screen.queryByText('Text')).toBeNull();
     expect(screen.queryByText('Link')).toBeNull();
   });
 

@@ -163,7 +163,7 @@ describe('BoardComposerPopover keyboard submit', () => {
     expect(Number.parseInt(popover.style.maxHeight, 10)).toBeLessThanOrEqual(252);
   });
 
-  it('drags the composer and clamps it inside the preview bounds', () => {
+  it('keeps the composer anchored and does not expose a drag handle', () => {
     renderPopover({
       targetOverride: {
         hoverPoint: { x: 120, y: 120 },
@@ -172,13 +172,12 @@ describe('BoardComposerPopover keyboard submit', () => {
       bounds: { width: 800, height: 600 },
     });
 
-    const handle = screen.getByLabelText('Move comment box');
-    fireEvent.pointerDown(handle, { clientX: 10, clientY: 10, pointerId: 1 });
-    fireEvent.pointerMove(document, { clientX: 2000, clientY: 2000, pointerId: 1 });
-    fireEvent.pointerUp(document, { pointerId: 1 });
-
     const popover = screen.getByTestId('comment-popover');
+    const initialPosition = { left: popover.style.left, top: popover.style.top };
+    expect(screen.queryByLabelText('Move comment box')).toBeNull();
+    fireEvent.pointerMove(document, { clientX: 2000, clientY: 2000, pointerId: 1 });
     expect(Number.parseInt(popover.style.left, 10)).toBeLessThanOrEqual(466);
     expect(Number.parseInt(popover.style.top, 10)).toBeLessThanOrEqual(266);
+    expect({ left: popover.style.left, top: popover.style.top }).toEqual(initialPosition);
   });
 });

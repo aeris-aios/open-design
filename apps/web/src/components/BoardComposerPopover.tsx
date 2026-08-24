@@ -1,10 +1,11 @@
-import type { ChangeEvent, ClipboardEvent, CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
-import { Button, Textarea } from '@open-design/components';
+import type { ChangeEvent, ClipboardEvent, CSSProperties } from 'react';
+import { Button, Input, Textarea } from '@open-design/components';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import type { PreviewCommentSnapshot } from '../comments';
 import type { Dict } from '../i18n/types';
 import type { PreviewComment, PreviewCommentMember } from '../types';
+import { useDismissOnOutsideInteraction } from '../hooks/useDismissOnOutsideInteraction';
 import { isImeComposing } from '../utils/imeComposing';
 
 import { Icon } from './Icon';
@@ -49,8 +50,13 @@ type AnnotationStyleRow = { label: string; value: string; swatch?: string };
 type PopoverBounds = { width: number; height: number; scrollLeft?: number; scrollTop?: number };
 type PopoverOffset = { x: number; y: number };
 type PopoverSize = { width: number; height: number };
-type PopoverPosition = { left: number; top: number };
 type PopoverSide = 'top' | 'bottom' | 'left' | 'right';
+
+export interface CommentUiReply {
+  id: string;
+  authorName: string;
+  text: string;
+}
 
 const POPOVER_PAD = 14;
 const POPOVER_DEFAULT_WIDTH = 320;
@@ -164,14 +170,6 @@ function clampPopoverPositionStyle(
     style.maxHeight = Math.max(POPOVER_MIN_VISIBLE_HEIGHT, limitedHeight);
   }
   return style;
-}
-
-function numericStyleValue(style: CSSProperties, key: 'left' | 'top'): number | null {
-  const value = style[key];
-  if (typeof value === 'number' && Number.isFinite(value)) return value;
-  if (typeof value !== 'string') return null;
-  const parsed = Number.parseFloat(value);
-  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function popoverAnchorStyle(
@@ -442,7 +440,11 @@ function CommentDetailPopover({
   comment,
   authorLabel,
   existingImages = [],
+  replies = [],
   onClose,
+  onViewAllComments,
+  onEdit,
+  onSubmitReply,
   onResolve,
   onSendToChat,
   onDelete,
@@ -460,7 +462,11 @@ function CommentDetailPopover({
   comment: PreviewComment;
   authorLabel?: string;
   existingImages?: { url: string; name: string }[];
+  replies?: readonly CommentUiReply[];
   onClose: () => void;
+  onViewAllComments?: (returnFocusTarget?: HTMLElement | null) => void;
+  onEdit?: (note: string) => void | Promise<void>;
+  onSubmitReply?: (reply: string) => void | Promise<void>;
   onResolve?: () => void | Promise<unknown>;
   onSendToChat: (reply: string) => void | Promise<void>;
   onDelete?: () => void | Promise<unknown>;
@@ -478,6 +484,9 @@ function CommentDetailPopover({
   const [cardSize, setCardSize] = useState<PopoverSize | undefined>(undefined);
   const [reply, setReply] = useState('');
   const [moreOpen, setMoreOpen] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editDraft, setEditDraft] = useState(comment.note);
+  useDismissOnOutsideInteraction(true, cardRef, onClose);
   useLayoutEffect(() => {
     const node = cardRef.current;
     if (!node) return;
@@ -499,6 +508,8 @@ function CommentDetailPopover({
   const author = authorLabel?.trim() || t('chat.comments.comment');
   const time = commentRelativeTime(comment, t);
   const sendBlocked = sending || sendDisabled;
+  const submitReplyDisabled = sending || reply.trim().length === 0;
+  const saveEditDisabled = sending || editDraft.trim().length === 0 || editDraft.trim() === comment.note.trim();
   return (
     <div
       ref={cardRef}
@@ -514,6 +525,27 @@ function CommentDetailPopover({
         onClose();
       }}
     >
+      <div className="comment-popover-titlebar comment-detail-titlebar">
+        <span className="comment-popover-title">{t('chat.comments.comment')}</span>
+        {onViewAllComments ? (
+          <button
+            type="button"
+            className="comment-popover-view-all"
+            data-testid="comment-detail-view-all"
+            onClick={(event) => onViewAllComments(event.currentTarget)}
+          >
+            {t('chat.comments.viewAll')}
+          </button>
+        ) : null}
+        <button
+          type="button"
+          className="comment-popover-close comment-popover-title-close"
+          onClick={onClose}
+          aria-label={t('common.close')}
+        >
+          <Icon name="close" size={14} />
+        </button>
+      </div>
       <div className="comment-detail-header">
         <div className="comment-detail-meta">
           <strong>{author}</strong>
@@ -525,20 +557,58 @@ function CommentDetailPopover({
             className={`comment-detail-more${moreOpen ? ' is-open' : ''}`}
             aria-label={t('chat.comments.actions')}
             aria-expanded={moreOpen}
-            title={t('chat.comments.actions')}
             onClick={() => setMoreOpen((open) => !open)}
           >
             <Icon name="more-horizontal" size={16} />
           </button>
           {moreOpen ? (
             <div className="comment-detail-menu">
-              <Button variant="ghost" onClick={onClose}>{t('common.close')}</Button>
-              {onDelete ? <Button variant="ghost" onClick={() => void onDelete()}>{t('common.delete')}</Button> : null}
+              {onEdit ? (
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    setEditDraft(comment.note);
+                    setEditing(true);
+                    setMoreOpen(false);
+                  }}
+                >
+                  {t('chat.comments.edit')}
+                </Button>
+              ) : null}
+              {onDelete ? (
+                <Button className="comment-detail-menu-delete" variant="ghost" onClick={() => void onDelete()}>
+                  {t('common.delete')}
+                </Button>
+              ) : null}
             </div>
           ) : null}
         </div>
       </div>
-      <p className="comment-detail-note">{comment.note}</p>
+      {editing ? (
+        <div className="comment-detail-edit">
+          <Textarea
+            className="comment-detail-edit-input"
+            value={editDraft}
+            aria-label={t('chat.comments.edit')}
+            onChange={(event) => setEditDraft(event.target.value)}
+          />
+          <div className="comment-detail-edit-actions">
+            <Button variant="ghost" onClick={() => setEditing(false)}>{t('common.cancel')}</Button>
+            <Button
+              variant="primary"
+              disabled={saveEditDisabled}
+              onClick={async () => {
+                await onEdit?.(editDraft.trim());
+                setEditing(false);
+              }}
+            >
+              {t('common.save')}
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <p className="comment-detail-note">{comment.note}</p>
+      )}
       {existingImages.length > 0 ? (
         <div className="comment-popover-images">
           {existingImages.map((item) => (
@@ -556,26 +626,47 @@ function CommentDetailPopover({
           ))}
         </div>
       ) : null}
-      <Textarea
-        className="comment-detail-reply"
-        data-testid="comment-detail-reply"
-        value={reply}
-        placeholder={t('chat.comments.replyPlaceholder')}
-        aria-label={t('chat.comments.replyPlaceholder')}
-        onChange={(event) => setReply(event.target.value)}
-        onKeyDown={(event) => {
-          if ((event.metaKey || event.ctrlKey) && event.key === 'Enter' && !sendBlocked && canSendToChat) {
-            event.preventDefault();
-            void onSendToChat(reply.trim());
-          }
-        }}
-      />
+      {replies.length > 0 ? (
+        <div className="comment-detail-replies">
+          {replies.map((item) => (
+            <p key={item.id}>
+              <strong>{item.authorName}</strong>
+              {item.text}
+            </p>
+          ))}
+        </div>
+      ) : null}
+      <div className="comment-detail-reply-compose">
+        <Input
+          className="comment-detail-reply"
+          data-testid="comment-detail-reply"
+          value={reply}
+          placeholder={t('chat.comments.replyPlaceholder')}
+          aria-label={t('chat.comments.replyPlaceholder')}
+          onChange={(event) => setReply(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' && !submitReplyDisabled && onSubmitReply) {
+              event.preventDefault();
+              void Promise.resolve(onSubmitReply(reply.trim())).then(() => setReply(''));
+            }
+          }}
+        />
+        <button
+          type="button"
+          className="comment-detail-reply-send"
+          aria-label={t('chat.comments.replyPlaceholder')}
+          disabled={submitReplyDisabled || !onSubmitReply}
+          onClick={() => void Promise.resolve(onSubmitReply?.(reply.trim())).then(() => setReply(''))}
+        >
+          <Icon name="arrow-up" size={14} />
+        </button>
+      </div>
       <div className="comment-popover-actions comment-detail-actions">
         <div className="comment-popover-actions-end">
           {canResolve && onResolve ? (
             <Button
               variant="ghost"
-              className="comment-popover-add"
+              className="comment-detail-resolve-text"
               data-testid="comment-detail-resolve"
               disabled={sending}
               onClick={() => void onResolve()}
@@ -590,7 +681,7 @@ function CommentDetailPopover({
               data-testid="comment-detail-send"
               disabled={sendBlocked}
               title={sendDisabled ? sendDisabledReason : undefined}
-              onClick={() => void onSendToChat(reply.trim())}
+              onClick={() => void onSendToChat('')}
             >
               {sending ? t('chat.comments.sending') : t('chat.comments.sendToChat')}
             </Button>
@@ -620,9 +711,11 @@ export function BoardComposerPopover({
   existingAuthorLabel,
   images = [],
   existingImages = [],
+  replies = [],
   onAttachImages,
   onRemoveImage,
   onPreviewImage,
+  onSubmitReply,
   sending,
   queueOnSend = false,
   sendDisabled = false,
@@ -646,7 +739,7 @@ export function BoardComposerPopover({
   onAddDraft: () => void;
   onRemoveQueuedNote: (index: number) => void;
   onClose: () => void;
-  onSaveComment: () => void | Promise<void>;
+  onSaveComment: (noteOverride?: string) => void | Promise<void>;
   onSendBatch: (reply?: string) => void | Promise<void>;
   onRemoveMember: (elementId: string) => void;
   onHoverMember?: (elementId: string | null) => void;
@@ -660,9 +753,11 @@ export function BoardComposerPopover({
   images?: { file: File; url: string }[];
   /** Already-saved attachment thumbnails (read-only) for a re-opened comment. */
   existingImages?: { url: string; name: string }[];
+  replies?: readonly CommentUiReply[];
   onAttachImages?: (files: File[]) => void;
   onRemoveImage?: (index: number) => void;
   onPreviewImage?: (index: number) => void;
+  onSubmitReply?: (commentId: string, reply: string) => void | Promise<void>;
   sending: boolean;
   queueOnSend?: boolean;
   sendDisabled?: boolean;
@@ -698,29 +793,6 @@ export function BoardComposerPopover({
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const popoverRef = useRef<HTMLDivElement | null>(null);
   const [popoverSize, setPopoverSize] = useState<PopoverSize | undefined>(undefined);
-  const [manualPosition, setManualPosition] = useState<PopoverPosition | null>(null);
-  const [dragging, setDragging] = useState(false);
-  const targetPlacementKey = [
-    target.filePath,
-    target.elementId,
-    target.selector,
-    target.selectionKind,
-    target.position.x,
-    target.position.y,
-    target.position.width,
-    target.position.height,
-    target.hoverPoint?.x,
-    target.hoverPoint?.y,
-    bounds?.width,
-    bounds?.height,
-    bounds?.scrollLeft,
-    bounds?.scrollTop,
-    offset?.x,
-    offset?.y,
-  ].join('\0');
-  useEffect(() => {
-    setManualPosition(null);
-  }, [targetPlacementKey, docked]);
   useLayoutEffect(() => {
     const node = popoverRef.current;
     if (!node) return;
@@ -746,60 +818,9 @@ export function BoardComposerPopover({
     // ResizeObserver itself, so listing draft/images/notes here only churned a
     // teardown + re-observe + synchronous getBoundingClientRect on every keystroke.
   }, [commenting]);
-  const measuredPopover = popoverSizeForPositioning(commenting, popoverSize);
-  const autoStyle = docked
-    ? undefined
-    : popoverAnchorStyle(target, scale, bounds, offset, commenting, popoverSize);
   const popoverStyle = docked
     ? undefined
-    : manualPosition
-      ? clampPopoverPositionStyle(manualPosition.left, manualPosition.top, bounds, measuredPopover)
-      : autoStyle;
-  const startPopoverDrag = (event: ReactPointerEvent<HTMLButtonElement>) => {
-    if (docked) return;
-    event.preventDefault();
-    event.stopPropagation();
-    const node = popoverRef.current;
-    if (!node) return;
-    const startX = event.clientX;
-    const startY = event.clientY;
-    const startLeft = manualPosition?.left
-      ?? numericStyleValue(popoverStyle ?? {}, 'left')
-      ?? node.offsetLeft;
-    const startTop = manualPosition?.top
-      ?? numericStyleValue(popoverStyle ?? {}, 'top')
-      ?? node.offsetTop;
-    const ownerDocument = node.ownerDocument;
-    const handle = event.currentTarget;
-    const pointerId = event.pointerId;
-    const previousUserSelect = ownerDocument.body.style.userSelect;
-    ownerDocument.body.style.userSelect = 'none';
-    handle.setPointerCapture?.(pointerId);
-    setDragging(true);
-    const move = (moveEvent: PointerEvent) => {
-      const clamped = clampPopoverPositionStyle(
-        startLeft + moveEvent.clientX - startX,
-        startTop + moveEvent.clientY - startY,
-        bounds,
-        measuredPopover,
-      );
-      setManualPosition({
-        left: numericStyleValue(clamped, 'left') ?? startLeft,
-        top: numericStyleValue(clamped, 'top') ?? startTop,
-      });
-    };
-    const up = () => {
-      ownerDocument.body.style.userSelect = previousUserSelect;
-      handle.releasePointerCapture?.(pointerId);
-      setDragging(false);
-      ownerDocument.removeEventListener('pointermove', move);
-      ownerDocument.removeEventListener('pointerup', up);
-      ownerDocument.removeEventListener('pointercancel', up);
-    };
-    ownerDocument.addEventListener('pointermove', move);
-    ownerDocument.addEventListener('pointerup', up);
-    ownerDocument.addEventListener('pointercancel', up);
-  };
+    : popoverAnchorStyle(target, scale, bounds, offset, commenting, popoverSize);
   const trimmedDraft = draft.trim();
   const existingNote = existing?.note.trim() ?? '';
   const hasFreshImage = images.length > 0;
@@ -843,10 +864,17 @@ export function BoardComposerPopover({
         comment={existing}
         authorLabel={existingAuthorLabel}
         existingImages={existingImages}
+        replies={replies}
         onClose={onClose}
+        onViewAllComments={onViewAllComments}
+        onEdit={canEditComment ? async (note) => {
+          onDraft(note);
+          await onSaveComment(note);
+        } : undefined}
+        onSubmitReply={onSubmitReply ? (reply) => onSubmitReply(existing.id, reply) : undefined}
         onResolve={onResolveComment ? () => onResolveComment(existing.id) : undefined}
         onSendToChat={(reply) => onSendBatch(reply)}
-        onDelete={onDeleteComment && canDeleteComment ? () => onDeleteComment(existing.id) : undefined}
+        onDelete={onDeleteComment && canEditComment && canDeleteComment ? () => onDeleteComment(existing.id) : undefined}
         sending={sending}
         sendDisabled={sendDisabled}
         sendDisabledReason={sendDisabledReason}
@@ -862,7 +890,7 @@ export function BoardComposerPopover({
   return (
     <div
       ref={popoverRef}
-      className={`comment-popover comment-popover-composer${docked ? ' comment-popover-docked' : ''}${dragging ? ' comment-popover-dragging' : ''}`}
+      className={`comment-popover comment-popover-composer${docked ? ' comment-popover-docked' : ''}`}
       data-testid="comment-popover"
       role="dialog"
       aria-modal="false"
@@ -877,15 +905,6 @@ export function BoardComposerPopover({
     >
       {!docked ? (
         <div className="comment-popover-titlebar">
-          <button
-            type="button"
-            className="comment-popover-drag-handle"
-            aria-label="Move comment box"
-            title="Move comment box"
-            onPointerDown={startPopoverDrag}
-          >
-            <span aria-hidden />
-          </button>
           <span className="comment-popover-title">
             {t('chat.comments.comment')}
           </span>
@@ -903,7 +922,6 @@ export function BoardComposerPopover({
             type="button"
             className="comment-popover-close comment-popover-title-close"
             onClick={onClose}
-            title={t('common.close')}
             aria-label={t('common.close')}
           >
             <Icon name="close" size={14} />

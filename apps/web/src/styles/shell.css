@@ -2404,7 +2404,7 @@ a.avatar-item:visited {
   bottom: 16px;
   display: flex;
   width: min(var(--comment-float-width, 360px), calc(100vw - 32px));
-  min-width: min(260px, calc(100vw - 32px));
+  min-width: min(300px, calc(100vw - 32px));
   max-width: min(480px, calc(100vw - 32px));
   min-height: 0;
   overflow: hidden;
@@ -2448,7 +2448,7 @@ a.avatar-item:visited {
 .comment-float-host .comment-side-resize-handle::after {
   content: '';
   position: absolute;
-  left: 4px;
+  left: 5px;
   top: 32px;
   bottom: 32px;
   width: 2px;
