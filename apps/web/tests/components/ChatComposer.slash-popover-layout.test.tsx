@@ -36,6 +36,16 @@ const libraryCss = readFileSync(
   'utf8',
 );
 
+// The row height case needs the clamp it overrides to actually be in the
+// cascade. `button { height: 36px }` is what pins a row at 36px in production
+// while its two lines need 54px; injecting only `library.css` would let the
+// height compute to `auto` whether or not the override exists, which makes the
+// assertion prove nothing.
+const primitivesCss = readFileSync(
+  resolve(process.cwd(), 'src/styles/primitives.css'),
+  'utf8',
+);
+
 // Selectors of every rule that targets the slash palette shell or its rows,
 // in source order. Comment-stripped so a commented-out rule does not count.
 function slashPaletteRuleSelectors(css: string): string[] {
@@ -66,7 +76,7 @@ let styleEl: HTMLStyleElement | null = null;
 
 function injectComposerStyles(): void {
   styleEl = document.createElement('style');
-  styleEl.textContent = libraryCss;
+  styleEl.textContent = `${primitivesCss}\n${libraryCss}`;
   document.head.appendChild(styleEl);
 }
 
@@ -174,6 +184,15 @@ describe('slash command palette layout (OPEND-2236)', () => {
     // A row that flexbox may shrink is a row whose second line escapes its
     // own box — that is the reported "排版错乱".
     expect(rows.map(isSquashableFlexChild)).toEqual(rows.map(() => false));
+  });
+
+  it('lets a row outgrow the global button height clamp', () => {
+    // Guards the second half of the fix. The scroll port made the overflow
+    // reachable; this is what stops each row's description from painting
+    // outside its own box onto the row below.
+    expect(rows.map((row) => getComputedStyle(row).height)).toEqual(
+      rows.map(() => 'auto'),
+    );
   });
 
   it('puts the command rows in a scroll port so the overflow is reachable', () => {
