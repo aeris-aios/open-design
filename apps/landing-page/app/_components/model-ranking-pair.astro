@@ -34,7 +34,7 @@ const zhGap = /[A-Za-z0-9)\]]$/.test(group.label) ? ' ' : '';
 const rankingTitle = isZh ? `${group.label}${zhGap}排名` : `${group.label} ranking`;
 const costTitle = isZh ? `${group.label} PDR × 成本` : `${group.label} PDR vs cost`;
 const costDescription = isZh ? '左上象限代表用更低成本获得更高的通过率。' : 'The upper-left quadrant combines a higher PDR rate with a lower session cost.';
-const chartHeight = (value: number) => Math.max(12, Math.min(92, (value - 50) * 2));
+const chartHeight = (value: number) => Math.max(12, Math.min(84, (value - 50) * 1.7));
 
 // 高效区边界按本组真实数据推导，而不是写死象限：
 // 锚点 = PDR 第一梯队（前半）里成本最低的模型，区域刚好把它包进来。

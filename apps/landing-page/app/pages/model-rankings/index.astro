@@ -46,18 +46,15 @@ const copy = isZh ? {
   disclosures: [['公平对比', '所有模型均通过同一套 OpenDesign harness、私有基准和评分框架运行。'], ['基准边界', '任务集保持私有，以降低数据污染。排行榜仅公布模型级结果，不公开基准提示词。'], ['如何解读', '分数描述指定版本模型在 OpenDesign 中的表现，不代表通用智能水平排名。']],
   stripLead: '榜单上的每个模型，都能在 OpenDesign 里用你自己的 API Key 直接调用。',
   stripCta: '下载客户端',
-  ctaIndex: '05 / 上手试用',
   ctaKicker: '从榜单到你的桌面',
   ctaTitle: '亲手复现这份榜单',
   ctaBody: 'OpenDesign 是开源、BYOK 的设计工作台：接入你自己的 API Key，在榜单上的任意模型之间自由切换，把同样的设计任务跑在你自己的电脑上。',
   ctaDownload: '下载 OpenDesign',
   ctaDownloadNote: '免费开源 · macOS / Windows',
   ctaDiscord: '加入 Discord',
-  ctaDiscordNote: '讨论评测结果，提名下一个进入榜单的模型',
   ctaFeishu: '加入飞书群',
-  ctaFeishuNote: '中文社区交流',
 } : {
-  title: 'AI Design Model Rankings | OpenDesign', description: 'Independent model rankings for design work, evaluated with the same private OpenDesign benchmark and scoring framework.', kicker: 'OpenDesign Model Index', heading: 'AI Design Model Rankings', intro: 'One private benchmark and one scoring framework, comparing leading models on real design work in OpenDesign.', preview: 'Preview data', previewNote: 'Final launch scores will replace the demonstration dataset without changing this page structure.', overallIndex: '01 / Overall', leaderboard: 'Model Leaderboard', leaderboardDesc: 'Overall ranking on the OpenDesign benchmark. PDR is the primary score; D0, D1, and D2 explain the result.', metricAria: 'Ranking metric', metrics: [['pdr', 'PDR', 'Overall'], ['d0', 'D0', 'Renderability'], ['d1', 'D1', 'Requirement'], ['d2', 'D2', 'Design quality']], scoreAria: 'How to read the evaluation scores', primer: [['PDR', 'Headline result'], ['D0', 'Renderability gate'], ['D1 · 65', 'Requirement fulfillment'], ['D2 · 35', 'Design quality'], ['EFF', 'Reported separately']], valueFormatAria: 'Leaderboard value format', percentage: 'Percentage', score: 'Score', model: 'Model', taskIndex: '02 / Best by task', taskHeading: 'Top models by task', taskDesc: 'Go beyond the overall winner. See which model leads each design task on OpenDesign.', taskLegendAria: 'Task category share', taskGroups: { Visual: 'Visual', Product: 'Product', Interface: 'Interface', Data: 'Data' }, analysisIndex: '03 / Deep dive', analysisHeading: 'Explore model trade-offs', analysisDesc: 'Compare score composition, efficiency, and the balance between requirement fulfillment and design quality.', analysisAria: 'Model analysis view', profile: 'Score profile', speed: 'Speed', cost: 'Cost', calls: 'Tool calls', balance: 'D1 × D2', difficulty: 'Task difficulty', simple: 'Simple', general: 'General', difficult: 'Difficult', profileEyebrow: 'Score composition', profileHeading: 'Evaluation profile', profileDesc: 'Compare D0 renderability, D1 requirement fulfillment, and D2 design quality across all evaluated models.', profileAria: 'Evaluation profile by model', lowerBetter: 'lower is better', pdrVsSpeed: 'PDR vs Speed', chartDesc: 'Top-left quadrant shows models with stronger design performance and better efficiency.', pdrHigher: 'PDR (higher ↑)', runtimeSlower: 'Runtime (slower →)', idealZone: 'High PDR · High efficiency', models: 'Models', requirement: 'Requirement fulfillment', design: 'Design quality', showPareto: 'Show Pareto', topModels: 'Top 10 evaluated models', higherBetter: 'Higher is better ↗', balancedLeaders: 'Balanced leaders', methodIndex: '04 / Method', methodHeading: 'Evaluation framework', methodDesc: 'One end-to-end performance score, explained by three evaluation dimensions. Efficiency is reported separately.', primaryMetric: 'Primary metric', pdrName: 'Primary Design Result', pdrDesc: "The normalized headline index for a model's end-to-end design performance on the OpenDesign benchmark. D0, D1, and D2 explain where that result comes from.", flowAria: 'Evaluation sequence', flow: [['Run', 'Same private task set and OpenDesign harness'], ['Gate', 'D0 checks whether the result can render'], ['Score', 'D1 requirement, 65 points · D2 design, 35 points'], ['Report', 'PDR ranking plus separate efficiency metrics']], methods: [['D0', 'Hard gate', 'HTML renderability', 'Confirms that the generated result opens as a usable webpage before quality is judged.', ['HTML loads successfully', 'No blank or blocked result', 'No fatal runtime failure']], ['D1', '65 points', 'Requirement fulfillment', 'Measures whether the requested product and interaction requirements are actually implemented.', ['Page and module coverage', 'Required content and states', 'Interactions and constraints']], ['D2', '35 points', 'Design quality', 'Reviews the visible quality and usability of the final rendered experience.', ['Hierarchy and composition', 'Typography and visual finish', 'Readability and responsive behavior']], ['EFF', 'Separate', 'Model efficiency', 'Shows the resources required to reach the result and does not increase or reduce PDR.', ['Cost per design session', 'Tool-call count', 'Total runtime by task difficulty']]], disclosures: [['Fair comparison', 'Models run through the same OpenDesign harness, private benchmark, and scoring framework.'], ['Benchmark boundary', 'Tasks remain private to reduce contamination. The leaderboard publishes model-level results, not benchmark prompts.'], ['How to interpret it', 'Scores describe the evaluated model version in OpenDesign. This is not a general intelligence ranking.']], stripLead: 'Every model on this board runs in OpenDesign with your own API key.', stripCta: 'Download the app', ctaIndex: '05 / Try it', ctaKicker: 'From ranking to your desktop', ctaTitle: 'Reproduce this leaderboard yourself', ctaBody: 'OpenDesign is an open-source, BYOK design workspace: plug in your own API key, switch between any model ranked here, and run the same design tasks on your own machine.', ctaDownload: 'Download OpenDesign', ctaDownloadNote: 'Free & open source · macOS / Windows', ctaDiscord: 'Join the Discord', ctaDiscordNote: 'Discuss results and nominate the next model we evaluate', ctaFeishu: 'Join the Feishu group', ctaFeishuNote: 'Chinese community',
+  title: 'AI Design Model Rankings | OpenDesign', description: 'Independent model rankings for design work, evaluated with the same private OpenDesign benchmark and scoring framework.', kicker: 'OpenDesign Model Index', heading: 'AI Design Model Rankings', intro: 'One private benchmark and one scoring framework, comparing leading models on real design work in OpenDesign.', preview: 'Preview data', previewNote: 'Final launch scores will replace the demonstration dataset without changing this page structure.', overallIndex: '01 / Overall', leaderboard: 'Model Leaderboard', leaderboardDesc: 'Overall ranking on the OpenDesign benchmark. PDR is the primary score; D0, D1, and D2 explain the result.', metricAria: 'Ranking metric', metrics: [['pdr', 'PDR', 'Overall'], ['d0', 'D0', 'Renderability'], ['d1', 'D1', 'Requirement'], ['d2', 'D2', 'Design quality']], scoreAria: 'How to read the evaluation scores', primer: [['PDR', 'Headline result'], ['D0', 'Renderability gate'], ['D1 · 65', 'Requirement fulfillment'], ['D2 · 35', 'Design quality'], ['EFF', 'Reported separately']], valueFormatAria: 'Leaderboard value format', percentage: 'Percentage', score: 'Score', model: 'Model', taskIndex: '02 / Best by task', taskHeading: 'Top models by task', taskDesc: 'Go beyond the overall winner. See which model leads each design task on OpenDesign.', taskLegendAria: 'Task category share', taskGroups: { Visual: 'Visual', Product: 'Product', Interface: 'Interface', Data: 'Data' }, analysisIndex: '03 / Deep dive', analysisHeading: 'Explore model trade-offs', analysisDesc: 'Compare score composition, efficiency, and the balance between requirement fulfillment and design quality.', analysisAria: 'Model analysis view', profile: 'Score profile', speed: 'Speed', cost: 'Cost', calls: 'Tool calls', balance: 'D1 × D2', difficulty: 'Task difficulty', simple: 'Simple', general: 'General', difficult: 'Difficult', profileEyebrow: 'Score composition', profileHeading: 'Evaluation profile', profileDesc: 'Compare D0 renderability, D1 requirement fulfillment, and D2 design quality across all evaluated models.', profileAria: 'Evaluation profile by model', lowerBetter: 'lower is better', pdrVsSpeed: 'PDR vs Speed', chartDesc: 'Top-left quadrant shows models with stronger design performance and better efficiency.', pdrHigher: 'PDR (higher ↑)', runtimeSlower: 'Runtime (slower →)', idealZone: 'High PDR · High efficiency', models: 'Models', requirement: 'Requirement fulfillment', design: 'Design quality', showPareto: 'Show Pareto', topModels: 'Top 10 evaluated models', higherBetter: 'Higher is better ↗', balancedLeaders: 'Balanced leaders', methodIndex: '04 / Method', methodHeading: 'Evaluation framework', methodDesc: 'One end-to-end performance score, explained by three evaluation dimensions. Efficiency is reported separately.', primaryMetric: 'Primary metric', pdrName: 'Primary Design Result', pdrDesc: "The normalized headline index for a model's end-to-end design performance on the OpenDesign benchmark. D0, D1, and D2 explain where that result comes from.", flowAria: 'Evaluation sequence', flow: [['Run', 'Same private task set and OpenDesign harness'], ['Gate', 'D0 checks whether the result can render'], ['Score', 'D1 requirement, 65 points · D2 design, 35 points'], ['Report', 'PDR ranking plus separate efficiency metrics']], methods: [['D0', 'Hard gate', 'HTML renderability', 'Confirms that the generated result opens as a usable webpage before quality is judged.', ['HTML loads successfully', 'No blank or blocked result', 'No fatal runtime failure']], ['D1', '65 points', 'Requirement fulfillment', 'Measures whether the requested product and interaction requirements are actually implemented.', ['Page and module coverage', 'Required content and states', 'Interactions and constraints']], ['D2', '35 points', 'Design quality', 'Reviews the visible quality and usability of the final rendered experience.', ['Hierarchy and composition', 'Typography and visual finish', 'Readability and responsive behavior']], ['EFF', 'Separate', 'Model efficiency', 'Shows the resources required to reach the result and does not increase or reduce PDR.', ['Cost per design session', 'Tool-call count', 'Total runtime by task difficulty']]], disclosures: [['Fair comparison', 'Models run through the same OpenDesign harness, private benchmark, and scoring framework.'], ['Benchmark boundary', 'Tasks remain private to reduce contamination. The leaderboard publishes model-level results, not benchmark prompts.'], ['How to interpret it', 'Scores describe the evaluated model version in OpenDesign. This is not a general intelligence ranking.']], stripLead: 'Every model on this board runs in OpenDesign with your own API key.', stripCta: 'Download the app', ctaKicker: 'From ranking to your desktop', ctaTitle: 'Reproduce this leaderboard yourself', ctaBody: 'OpenDesign is an open-source, BYOK design workspace: plug in your own API key, switch between any model ranked here, and run the same design tasks on your own machine.', ctaDownload: 'Download OpenDesign', ctaDownloadNote: 'Free & open source · macOS / Windows', ctaDiscord: 'Join the Discord', ctaFeishu: 'Join the Feishu group',
 };
 const methodCards = copy.methods as Array<[string, string, string, string, string[]]>;
 
@@ -214,11 +211,24 @@ const clientCopyJson = JSON.stringify({
       </div>
 
       <ModelRankingPair group={leaderboardGroups[0]!} isZh={isZh} prominent />
+    </section>
 
-      <aside class="ranking-strip">
-        <p>{copy.stripLead}</p>
-        <a href={href(DOWNLOAD_HREF)}>{copy.stripCta}<span aria-hidden="true"> →</span></a>
-      </aside>
+    <section class="model-section model-cta-section" aria-labelledby="cta-title">
+      <div class="model-cta">
+        <p class="model-index-kicker">{copy.ctaKicker}</p>
+        <h2 id="cta-title">{copy.ctaTitle}</h2>
+        <p class="model-cta-body">{copy.ctaBody}</p>
+        <div class="model-cta-actions">
+          <a class="model-cta-btn model-cta-btn-primary" href={href(DOWNLOAD_HREF)}>
+            {copy.ctaDownload}<span class="model-cta-btn-arrow" aria-hidden="true">→</span>
+          </a>
+          <a class="model-cta-btn" href={OPEN_DESIGN_DISCORD} target="_blank" rel="noopener">{copy.ctaDiscord}</a>
+          {isZh ? (
+            <a class="model-cta-btn" href={OPEN_DESIGN_FEISHU} target="_blank" rel="noopener">{copy.ctaFeishu}</a>
+          ) : null}
+        </div>
+        <p class="model-cta-note">{copy.ctaDownloadNote}</p>
+      </div>
     </section>
 
     <section class="model-section scenario-rankings-section" aria-labelledby="task-title">
@@ -337,28 +347,10 @@ const clientCopyJson = JSON.stringify({
       </div>
     </section>
 
-    <section class="model-section model-cta-section" aria-labelledby="cta-title">
-      <div class="model-cta">
-        <div class="model-cta-copy">
-          <p class="model-index-kicker">{copy.ctaKicker}</p>
-          <h2 id="cta-title">{copy.ctaTitle}</h2>
-          <p>{copy.ctaBody}</p>
-        </div>
-        <div class="model-cta-actions">
-          <a class="model-cta-action model-cta-primary" href={href(DOWNLOAD_HREF)}>
-            <strong>{copy.ctaDownload}</strong><small>{copy.ctaDownloadNote}</small>
-          </a>
-          <a class="model-cta-action" href={OPEN_DESIGN_DISCORD} target="_blank" rel="noopener">
-            <strong>{copy.ctaDiscord}</strong><small>{copy.ctaDiscordNote}</small>
-          </a>
-          {isZh ? (
-            <a class="model-cta-action" href={OPEN_DESIGN_FEISHU} target="_blank" rel="noopener">
-              <strong>{copy.ctaFeishu}</strong><small>{copy.ctaFeishuNote}</small>
-            </a>
-          ) : null}
-        </div>
-      </div>
-    </section>
+    <aside class="ranking-strip">
+      <p>{copy.stripLead}</p>
+      <a href={href(DOWNLOAD_HREF)}>{copy.stripCta}<span aria-hidden="true"> →</span></a>
+    </aside>
   </article>
   <script is:inline type="application/json" id="model-rankings-data" set:html={modelsJson}></script>
   <script is:inline type="application/json" id="model-rankings-scenarios" set:html={scenariosJson}></script>
@@ -412,7 +404,7 @@ const clientCopyJson = JSON.stringify({
           const rows = [...card.querySelectorAll<HTMLElement>('[data-ranking-row]')].sort((a, b) => Number(b.dataset[view] || 0) - Number(a.dataset[view] || 0));
           rows.forEach((row, index) => {
             const value = Number(row.dataset[view] || 0);
-            const height = Math.max(12, Math.min(92, (value - 50) * 2));
+            const height = Math.max(12, Math.min(84, (value - 50) * 1.7));
             const position = row.querySelector<HTMLElement>('[data-ranking-position]');
             const valueNode = row.querySelector<HTMLElement>('.ranking-value');
             if (position) position.textContent = String(index + 1);
