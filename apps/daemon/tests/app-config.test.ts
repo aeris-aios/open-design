@@ -1217,15 +1217,41 @@ describe('app-config odNextStrategyMode', () => {
     }
   });
 
-  it('leaves the previous choice alone when handed something that is not a mode', async () => {
-    // A typo must not read as "opted out" — dropping the write keeps the
-    // installation on whatever it last deliberately chose.
+  it('refuses a write that is not a mode, and keeps the previous choice', async () => {
+    // A typo must not be able to switch the installation off while the CLI
+    // prints success. Every other preference here degrades to its default when
+    // it cannot store a value; this one decides whether OD Next runs, so a
+    // dropped value would be indistinguishable from an opt-out nobody asked
+    // for. It fails loudly instead.
     await writeAppConfig(dataDir, { odNextStrategyMode: 'active' });
-    for (const bad of ['acive', '', true, 1, [], {}]) {
-      await writeAppConfig(dataDir, { odNextStrategyMode: bad } as never);
-      expect((await readAppConfig(dataDir)).odNextStrategyMode).toBeUndefined();
-      await writeAppConfig(dataDir, { odNextStrategyMode: 'active' });
+    for (const bad of ['acive', '', 'ACTIVE', true, 1, [], {}]) {
+      await expect(writeAppConfig(dataDir, { odNextStrategyMode: bad } as never))
+        .rejects.toMatchObject({ code: 'INVALID_APP_CONFIG_VALUE' });
+      expect((await readAppConfig(dataDir)).odNextStrategyMode).toBe('active');
     }
+  });
+
+  it('does not reject the neighbouring keys of a refused write', async () => {
+    // The whole write is refused, so a rejected body must not half-apply.
+    await writeAppConfig(dataDir, { agentId: 'codex' });
+    await expect(writeAppConfig(dataDir, {
+      agentId: 'claude',
+      odNextStrategyMode: 'acive',
+    } as never)).rejects.toMatchObject({ code: 'INVALID_APP_CONFIG_VALUE' });
+    expect((await readAppConfig(dataDir)).agentId).toBe('codex');
+  });
+
+  it('reads a corrupted stored value as unconfigured rather than throwing', async () => {
+    // The read path stays fail-soft: a hand-edited or truncated file must not
+    // take the daemon down, and unconfigured is the safe answer (`off`).
+    await writeFile(
+      path.join(dataDir, 'app-config.json'),
+      JSON.stringify({ agentId: 'codex', odNextStrategyMode: 'acive' }),
+      'utf8',
+    );
+    const cfg = await readAppConfig(dataDir);
+    expect(cfg.odNextStrategyMode).toBeUndefined();
+    expect(cfg.agentId).toBe('codex');
   });
 
   it('opts back out when the key is cleared', async () => {

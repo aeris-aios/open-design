@@ -233,6 +233,21 @@ describe('OD Next automatic production through the real server', () => {
     expect((await optIn.json() as { config?: { odNextStrategyMode?: string } }).config?.odNextStrategyMode)
       .toBe('active');
 
+    // A typo is refused rather than absorbed. Dropping it would switch this
+    // installation back off while the caller saw success — the one failure
+    // mode a control switch must not have.
+    const typo = await fetch(`${started.url}/api/app-config`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ odNextStrategyMode: 'acive' }),
+    });
+    expect(typo.status).toBe(400);
+    expect((await typo.json() as { error?: { code?: string } }).error?.code)
+      .toBe('INVALID_APP_CONFIG_VALUE');
+    const stillActive = await fetch(`${started.url}/api/app-config`);
+    expect((await stillActive.json() as { config?: { odNextStrategyMode?: string } })
+      .config?.odNextStrategyMode).toBe('active');
+
     const afterOptIn = await postRun(started.url, publicRunRequest(
       fixture,
       'Run after this installation opted in.',
