@@ -107,6 +107,13 @@ export interface FreePlanCopy {
   features: string[];
 }
 
+export interface GoPlanCopy {
+  tagline: string;
+  ctaLabel: string;
+  allowance: string;
+  features: string[];
+}
+
 export interface PricingLabels {
   heroTitle: string;
   monthly: string;
@@ -163,6 +170,7 @@ export interface PersonalPricingCopy {
   customDomains: string;
   unlimitedCustomDomains: string;
   bringYourOwnApiKey: string;
+  goConcurrency: string;
   creatorDeveloperSupport: string;
   popularModels: string;
   flagshipModels: string;
@@ -189,7 +197,7 @@ export interface PersonalPricingCopy {
   comparisonTitle: string;
   category: string;
   model: string;
-  tierUse: Record<'free' | PlanTierId, string>;
+  tierUse: Record<'go' | PlanTierId, string>;
   aboutPopularAllowance: string;
   aboutModelEntitlements: string;
   otherModelsTitle: string;
@@ -199,6 +207,7 @@ export interface PersonalPricingCopy {
 export interface PricingContent {
   labels: PricingLabels;
   free: FreePlanCopy;
+  go: GoPlanCopy;
   plans: Record<PlanTierId, PlanCopy>;
   personal: PersonalPricingCopy;
 }
@@ -302,6 +311,7 @@ const PERSONAL_EN: PersonalPricingCopy = {
   customDomains: '{count} domains',
   unlimitedCustomDomains: 'Unlimited domains',
   bringYourOwnApiKey: 'Supports third-party API keys',
+  goConcurrency: '2 concurrent tasks',
   creatorDeveloperSupport: 'Creator / developer support',
   popularModels: 'Popular models',
   flagshipModels: 'Flagship models',
@@ -329,7 +339,7 @@ const PERSONAL_EN: PersonalPricingCopy = {
   category: 'Category',
   model: 'Model',
   tierUse: {
-    free: 'Free use',
+    go: 'Light use',
     plus: 'Independent',
     pro: 'Most popular',
     max: 'High volume',
@@ -348,6 +358,7 @@ const PERSONAL_ZH_CN: PersonalPricingCopy = {
   customDomains: '支持 {count} 个域名',
   unlimitedCustomDomains: '域名无限量',
   bringYourOwnApiKey: '支持接入第三方 API Key',
+  goConcurrency: '2 个并发任务',
   creatorDeveloperSupport: '创作者 / 开发者支持',
   popularModels: '热门模型',
   flagshipModels: '旗舰模型',
@@ -375,7 +386,7 @@ const PERSONAL_ZH_CN: PersonalPricingCopy = {
   category: '分类',
   model: '模型',
   tierUse: {
-    free: '免费使用',
+    go: '轻量使用',
     plus: '独立创作',
     pro: '最受欢迎',
     max: '高频生产',
@@ -394,6 +405,7 @@ const PERSONAL_ZH_TW: PersonalPricingCopy = {
   customDomains: '支援 {count} 個網域',
   unlimitedCustomDomains: '網域無限量',
   bringYourOwnApiKey: '支援接入第三方 API Key',
+  goConcurrency: '2 個並行任務',
   creatorDeveloperSupport: '創作者 / 開發者支援',
   popularModels: '熱門模型',
   flagshipModels: '旗艦模型',
@@ -421,7 +433,7 @@ const PERSONAL_ZH_TW: PersonalPricingCopy = {
   category: '分類',
   model: '模型',
   tierUse: {
-    free: '免費使用',
+    go: '輕量使用',
     plus: '獨立創作',
     pro: '最受歡迎',
     max: '高頻製作',
@@ -440,6 +452,7 @@ const PERSONAL_ES: PersonalPricingCopy = {
   customDomains: '{count} dominios personalizados',
   unlimitedCustomDomains: 'Dominios personalizados ilimitados',
   bringYourOwnApiKey: 'Usa tu propia clave API',
+  goConcurrency: '2 tareas simultáneas',
   creatorDeveloperSupport: 'Soporte para creadores / desarrolladores',
   popularModels: 'Modelos populares',
   flagshipModels: 'Modelos insignia',
@@ -467,7 +480,7 @@ const PERSONAL_ES: PersonalPricingCopy = {
   category: 'Categoría',
   model: 'Modelo',
   tierUse: {
-    free: 'Uso gratuito',
+    go: 'Uso ligero',
     plus: 'Independiente',
     pro: 'Más popular',
     max: 'Alto volumen',
@@ -486,6 +499,7 @@ const PERSONAL_PT_BR: PersonalPricingCopy = {
   customDomains: '{count} domínios personalizados',
   unlimitedCustomDomains: 'Domínios personalizados ilimitados',
   bringYourOwnApiKey: 'Use sua própria chave de API',
+  goConcurrency: '2 tarefas simultâneas',
   creatorDeveloperSupport: 'Suporte para criadores / desenvolvedores',
   popularModels: 'Modelos populares',
   flagshipModels: 'Modelos de ponta',
@@ -513,7 +527,7 @@ const PERSONAL_PT_BR: PersonalPricingCopy = {
   category: 'Categoria',
   model: 'Modelo',
   tierUse: {
-    free: 'Uso gratuito',
+    go: 'Uso leve',
     plus: 'Independente',
     pro: 'Mais popular',
     max: 'Alto volume',
@@ -532,6 +546,7 @@ const PERSONAL_RU: PersonalPricingCopy = {
   customDomains: '{count} пользовательских доменов',
   unlimitedCustomDomains: 'Неограниченные пользовательские домены',
   bringYourOwnApiKey: 'Подключение собственного API-ключа',
+  goConcurrency: '2 одновременные задачи',
   creatorDeveloperSupport: 'Поддержка авторов / разработчиков',
   popularModels: 'Популярные модели',
   flagshipModels: 'Флагманские модели',
@@ -559,7 +574,7 @@ const PERSONAL_RU: PersonalPricingCopy = {
   category: 'Категория',
   model: 'Модель',
   tierUse: {
-    free: 'Бесплатное использование',
+    go: 'Лёгкое использование',
     plus: 'Самостоятельно',
     pro: 'Самый популярный',
     max: 'Высокая нагрузка',
@@ -578,6 +593,7 @@ const PERSONAL_FR: PersonalPricingCopy = {
   customDomains: '{count} domaines personnalisés',
   unlimitedCustomDomains: 'Domaines personnalisés illimités',
   bringYourOwnApiKey: 'Utilisez votre propre clé API',
+  goConcurrency: '2 tâches simultanées',
   creatorDeveloperSupport: 'Support créateur / développeur',
   popularModels: 'Modèles populaires',
   flagshipModels: 'Modèles phares',
@@ -605,7 +621,7 @@ const PERSONAL_FR: PersonalPricingCopy = {
   category: 'Catégorie',
   model: 'Modèle',
   tierUse: {
-    free: 'Utilisation gratuite',
+    go: 'Usage léger',
     plus: 'Indépendant',
     pro: 'Le plus populaire',
     max: 'Volume élevé',
@@ -624,6 +640,7 @@ const PERSONAL_KO: PersonalPricingCopy = {
   customDomains: '사용자 지정 도메인 {count}개',
   unlimitedCustomDomains: '사용자 지정 도메인 무제한',
   bringYourOwnApiKey: '개인 API 키 사용',
+  goConcurrency: '동시 작업 2개',
   creatorDeveloperSupport: '크리에이터 / 개발자 지원',
   popularModels: '인기 모델',
   flagshipModels: '플래그십 모델',
@@ -651,7 +668,7 @@ const PERSONAL_KO: PersonalPricingCopy = {
   category: '분류',
   model: '모델',
   tierUse: {
-    free: '무료 사용',
+    go: '가벼운 사용',
     plus: '독립 작업',
     pro: '가장 인기 있음',
     max: '대량 작업',
@@ -670,6 +687,7 @@ const PERSONAL_DE: PersonalPricingCopy = {
   customDomains: '{count} benutzerdefinierte Domains',
   unlimitedCustomDomains: 'Unbegrenzte benutzerdefinierte Domains',
   bringYourOwnApiKey: 'Eigenen API-Schlüssel verwenden',
+  goConcurrency: '2 gleichzeitige Aufgaben',
   creatorDeveloperSupport: 'Support für Kreative / Entwickler',
   popularModels: 'Beliebte Modelle',
   flagshipModels: 'Flaggschiffmodelle',
@@ -697,7 +715,7 @@ const PERSONAL_DE: PersonalPricingCopy = {
   category: 'Kategorie',
   model: 'Modell',
   tierUse: {
-    free: 'Kostenlose Nutzung',
+    go: 'Leichte Nutzung',
     plus: 'Unabhängig',
     pro: 'Am beliebtesten',
     max: 'Hohes Volumen',
@@ -716,6 +734,7 @@ const PERSONAL_JA: PersonalPricingCopy = {
   customDomains: 'カスタムドメイン {count} 件',
   unlimitedCustomDomains: 'カスタムドメイン無制限',
   bringYourOwnApiKey: '自分の API キーを使用',
+  goConcurrency: '同時実行タスク 2 件',
   creatorDeveloperSupport: 'クリエイター / 開発者サポート',
   popularModels: '人気モデル',
   flagshipModels: 'フラッグシップモデル',
@@ -743,7 +762,7 @@ const PERSONAL_JA: PersonalPricingCopy = {
   category: 'カテゴリー',
   model: 'モデル',
   tierUse: {
-    free: '無料利用',
+    go: 'ライト利用',
     plus: '個人制作',
     pro: '一番人気',
     max: '大量制作',
@@ -791,6 +810,16 @@ const EN: PricingContent = {
     ctaLabel: 'Start free',
     concurrency: '1 concurrent task',
     features: ['BYOK provider keys · Local coding agents', 'Community support'],
+  },
+  go: {
+    tagline: 'Light needs · Easy delivery',
+    ctaLabel: 'Unavailable',
+    allowance: '8 popular models · ample allowance',
+    features: [
+      'Full design and coding capabilities',
+      'No provider API key required',
+      'Allowance resets automatically',
+    ],
   },
   plans: {
     plus: {
@@ -868,6 +897,12 @@ const ZH_CN: PricingContent = {
     concurrency: '1 个任务并发',
     features: ['BYOK 自带密钥，支持本地 Coding Agent', '社区支持'],
   },
+  go: {
+    tagline: '轻量需求，轻松交付',
+    ctaLabel: '已停售',
+    allowance: '8 个热门模型 · 充裕额度',
+    features: ['完整设计与 Coding 能力', '无需配置供应商 API Key', '额度自动恢复'],
+  },
   plans: {
     plus: {
       tagline: '独立项目、零散需求，单人交付',
@@ -943,6 +978,12 @@ const ZH_TW: PricingContent = {
     ctaLabel: '免費開始',
     concurrency: '1 個任務並行',
     features: ['BYOK 自帶密鑰，支援本機 Coding Agent', '社群支援'],
+  },
+  go: {
+    tagline: '輕量需求，輕鬆交付',
+    ctaLabel: '已停售',
+    allowance: '8 個熱門模型 · 充裕額度',
+    features: ['完整設計與 Coding 能力', '無需配置供應商 API Key', '額度自動恢復'],
   },
   plans: {
     plus: {
@@ -1020,6 +1061,12 @@ const ES: PricingContent = {
     concurrency: '1 tarea simultánea',
     features: ['Claves BYOK · Coding agents locales', 'Soporte de la comunidad'],
   },
+  go: {
+    tagline: 'Necesidades ligeras, entrega fácil · Sin configuración',
+    ctaLabel: 'No disponible',
+    allowance: '8 modelos populares · capacidad amplia',
+    features: ['Todas las funciones de diseño y coding', 'Sin configurar claves API', 'La capacidad se restablece automáticamente'],
+  },
   plans: {
     plus: {
       tagline: 'Proyectos independientes, entrega en solitario · Sin configuración',
@@ -1095,6 +1142,12 @@ const PT_BR: PricingContent = {
     ctaLabel: 'Começar grátis',
     concurrency: '1 tarefa simultânea',
     features: ['Chaves BYOK · Coding agents locais', 'Suporte da comunidade'],
+  },
+  go: {
+    tagline: 'Demandas leves, entrega fácil · Sem configuração',
+    ctaLabel: 'Indisponível',
+    allowance: '8 modelos populares · franquia ampla',
+    features: ['Recursos completos de design e coding', 'Sem configurar chaves de API', 'A franquia é renovada automaticamente'],
   },
   plans: {
     plus: {
@@ -1172,6 +1225,12 @@ const RU: PricingContent = {
     concurrency: '1 одновременная задача',
     features: ['Ключи BYOK · локальные coding-агенты', 'Поддержка сообщества'],
   },
+  go: {
+    tagline: 'Небольшие задачи без лишних усилий · Без настройки',
+    ctaLabel: 'Недоступно',
+    allowance: '8 популярных моделей · большой лимит',
+    features: ['Все функции дизайна и кодинга', 'Без настройки API-ключей', 'Лимит восстанавливается автоматически'],
+  },
   plans: {
     plus: {
       tagline: 'Самостоятельные проекты, в одиночку · Без настройки',
@@ -1247,6 +1306,12 @@ const FR: PricingContent = {
     ctaLabel: 'Commencer gratuitement',
     concurrency: '1 tâche simultanée',
     features: ['Clés BYOK · agents de code locaux', 'Support communautaire'],
+  },
+  go: {
+    tagline: 'Besoins légers, livraison facile · Zéro configuration',
+    ctaLabel: 'Indisponible',
+    allowance: '8 modèles populaires · quota généreux',
+    features: ['Toutes les fonctions design et coding', 'Aucune clé API à configurer', 'Le quota se réinitialise automatiquement'],
   },
   plans: {
     plus: {
@@ -1324,6 +1389,12 @@ const KO: PricingContent = {
     concurrency: '동시 작업 1개',
     features: ['BYOK 제공자 키 · 로컬 Coding Agent 지원', '커뮤니티 지원'],
   },
+  go: {
+    tagline: '가벼운 요구, 간편한 완성 · 설정 없이 사용',
+    ctaLabel: '이용 불가',
+    allowance: '인기 모델 8개 · 넉넉한 한도',
+    features: ['모든 디자인 및 Coding 기능', '공급자 API 키 설정 불필요', '한도 자동 복원'],
+  },
   plans: {
     plus: {
       tagline: '독립 프로젝트, 1인 납품 · 설정 없이 바로 사용',
@@ -1400,6 +1471,12 @@ const DE: PricingContent = {
     concurrency: '1 gleichzeitige Aufgabe',
     features: ['BYOK-Anbieterschlüssel · lokale Coding Agents', 'Community-Support'],
   },
+  go: {
+    tagline: 'Leichte Aufgaben, mühelose Ergebnisse · Ohne Einrichtung',
+    ctaLabel: 'Nicht verfügbar',
+    allowance: '8 beliebte Modelle · großzügiges Kontingent',
+    features: ['Alle Design- und Coding-Funktionen', 'Keine API-Schlüssel nötig', 'Kontingent wird automatisch erneuert'],
+  },
   plans: {
     plus: {
       tagline: 'Eigenständige Projekte, Lieferung im Alleingang · Ohne Einrichtung',
@@ -1475,6 +1552,12 @@ const JA: PricingContent = {
     ctaLabel: '無料で開始',
     concurrency: '同時実行タスク 1 件',
     features: ['BYOK プロバイダーキー・ローカル Coding Agent 対応', 'コミュニティサポート'],
+  },
+  go: {
+    tagline: '軽いニーズを手軽に完了 · 設定不要',
+    ctaLabel: '利用不可',
+    allowance: '人気モデル 8 種 · たっぷり使える',
+    features: ['すべてのデザイン・Coding 機能', 'プロバイダー API キー設定不要', '利用枠は自動回復'],
   },
   plans: {
     plus: {

@@ -612,7 +612,11 @@ export function EntryTopRightCluster({
     workspaceType: context?.workspaceType,
   });
 
-  const [accountOpen, setAccountOpen] = useState(false);
+  const [accountMenuMode, setAccountMenuMode] = useState<'closed' | 'hover' | 'pinned'>(
+    'closed',
+  );
+  const accountOpen = accountMenuMode !== 'closed';
+  const closeAccountMenu = () => setAccountMenuMode('closed');
   useEffect(() => {
     if (!accountOpen) return;
     trackWorkspaceSurfaceView(analytics.track, {
@@ -665,11 +669,13 @@ export function EntryTopRightCluster({
   };
   const openAccountMenu = () => {
     cancelAccountClose();
-    setAccountOpen(true);
+    setAccountMenuMode((mode) => (mode === 'closed' ? 'hover' : mode));
   };
   const scheduleAccountClose = () => {
     cancelAccountClose();
-    accountCloseTimer.current = window.setTimeout(() => setAccountOpen(false), 220);
+    accountCloseTimer.current = window.setTimeout(() => {
+      setAccountMenuMode((mode) => (mode === 'hover' ? 'closed' : mode));
+    }, 220);
   };
   useEffect(() => cancelAccountClose, []);
   // While open, track the pointer at the document level: anywhere outside the
@@ -689,14 +695,14 @@ export function EntryTopRightCluster({
     return () => document.removeEventListener('pointerover', onDocPointerOver, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accountOpen]);
-  // Hover-out alone leaves the menu open for anyone who never hovers: a touch
-  // user, or a click that lands somewhere else without the pointer crossing
-  // this container. Press-outside closes it now rather than 220ms later, and
+  // Hover-out does not cover anyone who never hovers: a touch user, or a click
+  // that lands somewhere else without the pointer crossing this container.
+  // Press-outside closes it immediately, and
   // Escape gives the keyboard the same exit. Still a listener, not a backdrop,
   // so the pointerover tracking above keeps receiving its events.
   useDismissOnOutsideInteraction(accountOpen, accountContainerRef, () => {
     cancelAccountClose();
-    setAccountOpen(false);
+    closeAccountMenu();
   });
 
   // One public comparison destination shared with the rail's invite dialog.
@@ -816,9 +822,11 @@ export function EntryTopRightCluster({
                     entry_from: 'sidebar',
                     ...workspaceDimensions,
                   });
-                  setAccountOpen((v) => !v);
+                  cancelAccountClose();
+                  setAccountMenuMode((mode) => (mode === 'pinned' ? 'closed' : 'pinned'));
                 }}
                 onMouseEnter={openAccountMenu}
+                aria-haspopup="menu"
                 aria-expanded={accountOpen}
                 aria-label={accountName}
                 data-testid="entry-nav-account"
@@ -860,7 +868,7 @@ export function EntryTopRightCluster({
                               className="entry-nav-rail__menu-credits-upgrade"
                               onClick={() => {
                                 trackAccountAction('upgrade');
-                                setAccountOpen(false);
+                                closeAccountMenu();
                                 openBillingUpgrade();
                               }}
                             >
@@ -877,7 +885,7 @@ export function EntryTopRightCluster({
                           data-testid="entry-nav-credits-row"
                           onClick={() => {
                             trackAccountAction('credits');
-                            setAccountOpen(false);
+                            closeAccountMenu();
                             if (billingConsoleUrl) {
                               window.open(billingConsoleUrl, '_blank', 'noopener,noreferrer');
                             }
@@ -899,7 +907,7 @@ export function EntryTopRightCluster({
                       role="menuitem"
                       onClick={() => {
                         trackAccountAction('settings');
-                        setAccountOpen(false);
+                        closeAccountMenu();
                         onOpenSettings?.();
                       }}
                     >
@@ -914,7 +922,7 @@ export function EntryTopRightCluster({
                       data-testid="account-menu-message-center"
                       onClick={() => {
                         trackAccountAction('message_center');
-                        setAccountOpen(false);
+                        closeAccountMenu();
                         setMessageCenterOpen(true);
                       }}
                     >
@@ -935,7 +943,7 @@ export function EntryTopRightCluster({
                       {...externalLinkProps}
                       onClick={() => {
                         trackAccountAction('github_help');
-                        setAccountOpen(false);
+                        closeAccountMenu();
                       }}
                     >
                       <Icon name="comment" size={15} /> {t('entry.accountGithubHelp')}
@@ -947,7 +955,7 @@ export function EntryTopRightCluster({
                       {...externalLinkProps}
                       onClick={() => {
                         trackAccountAction('feature_request');
-                        setAccountOpen(false);
+                        closeAccountMenu();
                       }}
                     >
                       <Icon name="sparkles" size={15} /> {t('entry.accountFeatureRequest')}
@@ -963,7 +971,7 @@ export function EntryTopRightCluster({
                       role="menuitem"
                       onClick={() => {
                         trackAccountAction('logout');
-                        setAccountOpen(false);
+                        closeAccountMenu();
                         // recvqgMWpJZqhL: never sign out on this click alone —
                         // arm the confirmation dialog and let it run the logout.
                         setConfirmSignOut(true);

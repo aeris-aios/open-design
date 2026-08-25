@@ -1,4 +1,6 @@
-export type PersonalPlanTier = 'free' | 'plus' | 'pro' | 'max';
+import { GO_PLAN_SOLD_OUT } from './pricing';
+
+export type PersonalPlanTier = 'go' | 'plus' | 'pro' | 'max';
 export type PersonalBillingInterval = 'monthly' | 'yearly';
 
 export interface PersonalPlanState {
@@ -26,6 +28,7 @@ export type PersonalPlanActionKind =
   | 'dual_change'
   | 'checkout_unavailable'
   | 'new_checkout'
+  | 'sold_out'
   | 'current'
   | 'upgrade'
   | 'downgrade_unavailable'
@@ -44,13 +47,13 @@ type PricingFetch = (
 ) => Promise<Response>;
 
 const PERSONAL_PLAN_TIERS = new Set<PersonalPlanTier>([
-  'free',
+  'go',
   'plus',
   'pro',
   'max',
 ]);
 const PERSONAL_PLAN_ORDER: readonly PersonalPlanTier[] = [
-  'free',
+  'go',
   'plus',
   'pro',
   'max',
@@ -90,6 +93,9 @@ export function resolvePersonalPlanAction(
   if (!context.current && !context.checkoutAllowed) {
     return { kind: 'checkout_unavailable', enabled: false };
   }
+  if (GO_PLAN_SOLD_OUT && target.tier === 'go' && context.current?.tier !== 'go') {
+    return { kind: 'sold_out', enabled: false };
+  }
   if (!context.current) {
     return { kind: 'new_checkout', enabled: true };
   }
@@ -98,15 +104,6 @@ export function resolvePersonalPlanAction(
     context.pendingChange.interval === target.interval
   ) {
     return { kind: 'scheduled', enabled: false };
-  }
-  if (context.current.tier === 'free' && target.tier === 'free') {
-    return { kind: 'current', enabled: false };
-  }
-  if (
-    context.current.tier === 'free' &&
-    personalPlanRelation(target.tier, context.current.tier) === 'higher'
-  ) {
-    return { kind: 'upgrade', enabled: true };
   }
   if (
     context.current.tier === target.tier &&

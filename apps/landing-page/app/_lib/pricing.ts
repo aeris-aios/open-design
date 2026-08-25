@@ -10,7 +10,7 @@
  * static landing-page contract.
  */
 
-export type PlanTier = 'free' | 'plus' | 'pro' | 'max';
+export type PlanTier = 'go' | 'plus' | 'pro' | 'max';
 export type TeamPlanTier =
   | 'team_basic'
   | 'team_plus'
@@ -146,6 +146,16 @@ export const CLOUD_BASE_URL = new URL(
 
 /** Public pricing contract served by the landing page. */
 export const PLANS_JSON_URL = '/pricing/plans.json';
+
+/** Confirmed Go launch prices shared by the page, SEO metadata, and tests. */
+export const GO_PLAN = {
+  tier: 'go',
+  monthly: { priceUsd: 10, introPriceUsd: 5 },
+  yearly: { priceUsd: 60 },
+} as const;
+
+/** New Go checkouts are closed; existing Go subscribers keep current-plan actions. */
+export const GO_PLAN_SOLD_OUT = true;
 
 /**
  * Stable Vela contract for opening the generic billing entry. Specific plan

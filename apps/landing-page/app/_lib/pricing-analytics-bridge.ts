@@ -1,4 +1,5 @@
 import {
+  GO_PLAN,
   HOSTED_CLOUD_CONSOLE_DOMAINS,
   PRICING_SNAPSHOT,
   type BillingInterval,
@@ -73,25 +74,25 @@ export type PricingBridgeEvent =
       payload: PricingClickInput;
     };
 
-const freeTier: PlanTierConfig = {
-  tier: 'free',
+const goTier: PlanTierConfig = {
+  tier: GO_PLAN.tier,
   rank: 0,
   recommended: false,
   monthly: {
-    priceUsd: 0,
-    introPriceUsd: 0,
+    priceUsd: GO_PLAN.monthly.priceUsd,
+    introPriceUsd: GO_PLAN.monthly.introPriceUsd,
     grantUsd: 0,
   },
   yearly: {
-    priceUsd: 0,
-    discountPct: 0,
+    priceUsd: GO_PLAN.yearly.priceUsd,
+    discountPct: 50,
     grantUsd: 0,
   },
-  deployLimit: 1,
+  deployLimit: 0,
 };
 
 export const PERSONAL_PRICING_TIERS: readonly PlanTierConfig[] = [
-  freeTier,
+  goTier,
   ...PRICING_SNAPSHOT.tiers,
 ];
 
@@ -179,7 +180,7 @@ function isBoundedId(value: unknown): value is string {
 
 function isPlanTier(value: unknown): value is PlanTier {
   return (
-    value === 'free' ||
+    value === 'go' ||
     value === 'plus' ||
     value === 'pro' ||
     value === 'max'

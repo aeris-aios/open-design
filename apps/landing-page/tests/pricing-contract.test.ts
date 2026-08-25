@@ -141,7 +141,7 @@ describe("pricing contract", () => {
       plans,
       /\.discount-corner-badge\s*\{[^}]*border:\s*0;/s,
     );
-    assert.match(plans, /\{tier !== 'free' && \(\s*<div class="plan-model-modules">/s);
+    assert.match(plans, /<div class="plan-model-modules">/);
     assert.match(
       plans,
       /\.plan-max \.plan-model-module li\.model-with-status em\.unlimited,[\s\S]*?background:\s*rgba\(120, 234, 87, 0\.14\);/,
@@ -163,13 +163,13 @@ describe("pricing contract", () => {
 
     assert.deepEqual(
       [
-        content.free.tagline,
+        content.go.tagline,
         content.plans.plus.tagline,
         content.plans.pro.tagline,
         content.plans.max.tagline,
       ],
       [
-        "Free with your own agent setup or BYOK",
+        "Light needs · Easy delivery",
         "Everyday design · Continuous delivery",
         "Complex projects · Efficient production",
         "High-volume creation · Consistent output",
@@ -178,7 +178,7 @@ describe("pricing contract", () => {
     for (const localizedContent of [zhContent, zhTwContent]) {
       assert.deepEqual(
         [
-          localizedContent.free.tagline,
+          localizedContent.go.tagline,
           localizedContent.plans.plus.tagline,
           localizedContent.plans.pro.tagline,
           localizedContent.plans.max.tagline,
@@ -190,12 +190,12 @@ describe("pricing contract", () => {
     assert.equal(content.labels.yearlySubline, "Billed {totalUsd}/year");
     assert.deepEqual(
       [
-        content.free.ctaLabel,
+        content.go.ctaLabel,
         content.plans.plus.ctaLabel,
         content.plans.pro.ctaLabel,
         content.plans.max.ctaLabel,
       ],
-      ["Start free", "Subscribe", "Subscribe", "Subscribe"],
+      ["Unavailable", "Subscribe", "Subscribe", "Subscribe"],
     );
     assert.match(
       individualPlans,
@@ -351,7 +351,7 @@ describe("pricing contract", () => {
     }
   });
 
-  it("restores the localized Free entry card without a paid checkout", async () => {
+  it("keeps the sold-out Go card instead of a Free entry card", async () => {
     const [page, individualPlans] = await Promise.all([
       readFile(PRICING_PAGE_PATH, "utf8"),
       readFile(PRICING_INDIVIDUAL_PATH, "utf8"),
@@ -360,13 +360,12 @@ describe("pricing contract", () => {
     assert.match(page, /<PricingIndividualPlans \/>/);
     assert.doesNotMatch(page, /\{false && \(/);
     assert.doesNotMatch(page, /<section class="pr-grid"/);
-    assert.match(individualPlans, /tier:\s*'free' as const/);
+    assert.match(individualPlans, /tier:\s*'go' as const/);
     assert.match(individualPlans, /data-pricing-cta\s+data-tier=\{tier\}/);
-    assert.match(individualPlans, /free:\s*content\.free/);
-    assert.match(individualPlans, /CLOUD_CONSOLE_URL/);
-    assert.match(individualPlans, /L\.freeForever/);
-    assert.match(page, /name:\s*'OpenDesign Free'/);
-    assert.match(page, /price:\s*'0'/);
+    assert.match(individualPlans, /go:\s*content\.go/);
+    assert.match(individualPlans, /GO_PLAN_SOLD_OUT/);
+    assert.match(page, /name:\s*'OpenDesign Go'/);
+    assert.match(page, /price:\s*String\(GO_PLAN\.monthly\.priceUsd\)/);
     assert.match(individualPlans, /DeepSeek V4 Flash/);
     assert.match(individualPlans, /GLM-5\.1/);
   });
@@ -374,8 +373,8 @@ describe("pricing contract", () => {
   it("renders the live Personal comparison from localized pricing content", async () => {
     const individualPlans = await readFile(PRICING_INDIVIDUAL_PATH, "utf8");
 
-    assert.equal(getPricingContent("zh").free.ctaLabel, "免费开始");
-    assert.equal(getPricingContent("zh").free.concurrency, "1 个任务并发");
+    assert.equal(getPricingContent("zh").go.ctaLabel, "已停售");
+    assert.equal(getPricingContent("zh-tw").go.ctaLabel, "已停售");
     assert.equal(getPricingContent("ja").plans.pro.ctaLabel, "Pro にアップグレード");
     assert.equal(getPricingContent("de").personal.upToResolution, "Bis zu {resolution}");
     assert.equal(getPricingContent("fr").personal.viewMoreBenefits, "Voir plus d’avantages");
@@ -486,11 +485,7 @@ describe("pricing contract", () => {
     );
     assert.match(
       individualPlans,
-      /\{tier !== 'free' && \(/,
-    );
-    assert.match(
-      individualPlans,
-      /<h4>\{fillTemplate\(P\.flagshipModelCount, \{ count: String\(flagship\.length\) \}\)\}<\/h4>/,
+      /\{tier === 'go' \? P\.flagshipModels : fillTemplate\(P\.flagshipModelCount, \{ count: String\(flagship\.length\) \}\)\}/,
     );
     assert.doesNotMatch(individualPlans, /\} · \$\{P\.flagshipModels\}/);
   });
@@ -823,14 +818,14 @@ describe("pricing contract", () => {
 
   it("disables the current personal plan and every downgrade target", () => {
     assert.deepEqual(
-      ["free", "plus", "pro", "max"].filter((tier) =>
+      ["go", "plus", "pro", "max"].filter((tier) =>
         isPersonalPlanAtOrBelow(tier, "pro"),
       ),
-      ["free", "plus", "pro"],
+      ["go", "plus", "pro"],
     );
     assert.equal(isPersonalPlanAtOrBelow("team", "pro"), false);
     assert.equal(isPersonalPlanAtOrBelow("max", "pro"), false);
-    assert.equal(personalPlanRelation("free", "pro"), "lower");
+    assert.equal(personalPlanRelation("go", "pro"), "lower");
     assert.equal(personalPlanRelation("pro", "pro"), "current");
     assert.equal(personalPlanRelation("max", "pro"), "higher");
     assert.equal(personalPlanRelation("team", "pro"), null);

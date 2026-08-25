@@ -206,7 +206,7 @@ function flattened(requests: BridgeRequest[]): BridgeEvent[] {
 }
 
 describe('authenticated Pricing compatibility browser wiring', { concurrency: false }, () => {
-  it('shows Free as the disabled current plan for a signed-out visitor', async (t) => {
+  it('shows Go as sold out for a signed-out visitor', async (t) => {
     const { page } = await openPricing({
       browserLocale: 'zh-CN',
       signedIn: false,
@@ -219,10 +219,10 @@ describe('authenticated Pricing compatibility browser wiring', { concurrency: fa
       ) === 'true',
     );
 
-    const free = page.locator('[data-pricing-cta][data-tier="free"]');
-    assert.equal((await free.textContent())?.trim(), '当前套餐');
-    assert.equal(await free.getAttribute('aria-disabled'), 'true');
-    assert.equal(await free.getAttribute('href'), null);
+    const go = page.locator('[data-pricing-cta][data-tier="go"]');
+    assert.equal((await go.textContent())?.trim(), '已停售');
+    assert.equal(await go.getAttribute('aria-disabled'), 'true');
+    assert.equal(await go.getAttribute('href'), null);
   });
 
   it('renders monthly first without an interval swap for a signed-out visitor', async (t) => {
@@ -271,10 +271,10 @@ describe('authenticated Pricing compatibility browser wiring', { concurrency: fa
     await page.locator('[data-interval-btn="monthly"]').click();
 
     const prices = await page.locator(
-      '.pricing-card:not([data-tier="free"]) [data-monthly-price]',
+      '.pricing-card:not([data-tier="go"]) [data-monthly-price]',
     ).allTextContents();
     const originalPrices = await page.locator(
-      '.pricing-card:not([data-tier="free"]) .price[data-when="monthly"] del',
+      '.pricing-card:not([data-tier="go"]) .price[data-when="monthly"] del',
     ).allTextContents();
 
     assert.deepEqual(prices.map((price) => price.trim()), ['16', '70', '120']);
@@ -284,7 +284,7 @@ describe('authenticated Pricing compatibility browser wiring', { concurrency: fa
     );
   });
 
-  it('keeps paid yearly upgrades enabled for a Free visitor', async (t) => {
+  it('keeps paid yearly upgrades enabled for a signed-out visitor', async (t) => {
     const { page } = await openPricing({
       browserLocale: 'zh-CN',
       signedIn: false,
@@ -306,10 +306,10 @@ describe('authenticated Pricing compatibility browser wiring', { concurrency: fa
       })),
     );
     assert.deepEqual(states, [
-      { tier: 'free', text: '当前套餐', disabled: 'true' },
-      { tier: 'plus', text: '升级 Plus', disabled: null },
-      { tier: 'pro', text: '升级 Pro', disabled: null },
-      { tier: 'max', text: '升级 Max', disabled: null },
+      { tier: 'go', text: '已停售', disabled: 'true' },
+      { tier: 'plus', text: '订阅', disabled: null },
+      { tier: 'pro', text: '订阅', disabled: null },
+      { tier: 'max', text: '订阅', disabled: null },
     ]);
   });
 
@@ -334,14 +334,14 @@ describe('authenticated Pricing compatibility browser wiring', { concurrency: fa
       })),
     );
     assert.deepEqual(states, [
-      { tier: 'free', text: '订阅', disabled: 'true' },
+      { tier: 'go', text: '已停售', disabled: 'true' },
       { tier: 'plus', text: '订阅', disabled: 'true' },
       { tier: 'pro', text: '当前套餐', disabled: 'true' },
       { tier: 'max', text: '升级 Max', disabled: null },
     ]);
   });
 
-  it('sends corrected Free Plus Pro Max context on the first trusted dashboard exposure', async (t) => {
+  it('sends corrected Go Plus Pro Max context on the first trusted dashboard exposure', async (t) => {
     const { page, requests, navigations } = await openPricing({
       billing: {
         membershipTier: 'pro',
@@ -366,7 +366,7 @@ describe('authenticated Pricing compatibility browser wiring', { concurrency: fa
     assert.ok(requests[0]?.sessionId);
     assert.deepEqual(
       requests[0]?.events.map((event) => event.payload.planId),
-      ['free', 'plus', 'pro', 'max'],
+      ['go', 'plus', 'pro', 'max'],
     );
     assert.deepEqual(
       requests[0]?.events.map((event) => [
@@ -376,7 +376,7 @@ describe('authenticated Pricing compatibility browser wiring', { concurrency: fa
         event.payload.isCurrentPlan,
       ]),
       [
-        ['free', 'monthly', false, false],
+        ['go', 'monthly', false, false],
         ['plus', 'monthly', false, false],
         ['pro', 'monthly', false, true],
         ['max', 'monthly', false, false],
@@ -409,7 +409,7 @@ describe('authenticated Pricing compatibility browser wiring', { concurrency: fa
     assert.equal(requests[0]?.sourceSurface, 'wallet');
     assert.deepEqual(
       requests[0]?.events.map((event) => event.payload.planId),
-      ['free', 'plus', 'pro', 'max'],
+      ['go', 'plus', 'pro', 'max'],
     );
   });
 
@@ -437,7 +437,7 @@ describe('authenticated Pricing compatibility browser wiring', { concurrency: fa
       requests[1]?.events.map((event) =>
         event.kind === 'pricing_click' ? event.payload.element : event.payload.planId,
       ),
-      ['change_interval', 'free', 'plus', 'pro', 'max'],
+      ['change_interval', 'go', 'plus', 'pro', 'max'],
     );
 
     await page.locator('[data-audience-btn="team"]').click();
@@ -445,7 +445,7 @@ describe('authenticated Pricing compatibility browser wiring', { concurrency: fa
     await waitForRequests(requests, 3);
     assert.deepEqual(
       requests[2]?.events.map((event) => event.payload.planId),
-      ['free', 'plus', 'pro', 'max'],
+      ['go', 'plus', 'pro', 'max'],
     );
   });
 

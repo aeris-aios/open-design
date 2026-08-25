@@ -4,8 +4,8 @@
  *
  * Card LAYOUT + COPY mirror the vela subscription modal (`pricing-plans.tsx`).
  * Plus/Pro/Max and Team NUMBERS come from `PRICING_SNAPSHOT` at build time.
- * Free is a content-only entry point; paid plan numbers come from the pricing
- * snapshot. The localized TEXT comes from
+ * Go's confirmed launch prices come from the colocated `GO_PLAN` source shared
+ * with SEO metadata. The localized TEXT comes from
  * app/_lib/pricing-content.ts and app/_lib/pricing-team-content.ts.
  */
 import Layout from '../../_components/sub-page-layout.astro';
@@ -15,6 +15,7 @@ import {
   CLOUD_CONSOLE_BASE_PARAM,
   CLOUD_CONSOLE_URL,
   DEFAULT_CLOUD_CONSOLE_BASE_URL,
+  GO_PLAN,
   HOSTED_CLOUD_CONSOLE_DOMAINS,
   PRICING_SNAPSHOT,
   cloudSubscribeUrl,
@@ -130,8 +131,8 @@ const jsonLd = [
     offers: [
       {
         '@type': 'Offer',
-        name: 'OpenDesign Free',
-        price: '0',
+        name: 'OpenDesign Go',
+        price: String(GO_PLAN.monthly.priceUsd),
         priceCurrency: 'USD',
         url: CLOUD_CONSOLE_URL,
       },
@@ -624,10 +625,6 @@ const jsonLd = [
             continue;
           }
           const tier = cta.getAttribute('data-tier') || '';
-          if (tier === 'free') {
-            cta.setAttribute('href', cloudConsoleDashboardUrl);
-            continue;
-          }
           if (tier === 'team') {
             const selectedTier = teamTiers.find(
               (candidate) =>
@@ -1094,7 +1091,7 @@ const jsonLd = [
     const pricingRoot = document.querySelector('[data-pricing-root]');
     if (pricingRoot?.getAttribute('data-cloud-console-environment') === 'production') {
       const apiOrigin = pricingRoot.getAttribute('data-billing-api-origin') || '';
-      const personalTiers = new Set(['free', 'plus', 'pro', 'max']);
+      const personalTiers = new Set(['go', 'plus', 'pro', 'max']);
       const actionLabels = {
         subscribe: pricingRoot.getAttribute('data-subscribe-plan-label') || '',
         current: pricingRoot.getAttribute('data-current-plan-label') || '',
@@ -1123,13 +1120,13 @@ const jsonLd = [
       const demoContext = (tier: PersonalPlanTier): PersonalPricingContext => ({
         current: {
           tier,
-          interval: tier === 'free' ? 'monthly' : 'yearly',
+          interval: 'yearly',
         },
         checkoutAllowed: true,
-        firstMonthIntroEligible: tier === 'free',
+        firstMonthIntroEligible: false,
         cancelAtPeriodEnd: false,
         pendingChange: null,
-        billingPortalAvailable: tier !== 'free',
+        billingPortalAvailable: true,
       });
       let pricingContext: PersonalPricingContext | null = null;
 
@@ -1224,8 +1221,14 @@ const jsonLd = [
       void loadPersonalPricingContext(apiOrigin).then((liveContext) => {
         const context = demoTier
           ? demoContext(demoTier)
-          : liveContext ?? demoContext('free');
-        if (!context) return;
+          : liveContext ?? {
+              current: null,
+              checkoutAllowed: true,
+              firstMonthIntroEligible: true,
+              cancelAtPeriodEnd: false,
+              pendingChange: null,
+              billingPortalAvailable: false,
+            };
         pricingContext = context;
         applyIntroEligibility();
         if (context.current) {

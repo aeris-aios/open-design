@@ -15,11 +15,11 @@ const exposureEvent: PricingBridgeEvent = {
   eventId: 'exposure-1',
   eventTime,
   payload: {
-    planId: 'free',
+    planId: 'go',
     billingInterval: 'monthly',
-    priceUsd: '0.00',
+    priceUsd: '10.00',
     creditsGrantedUsd: '0.00',
-    deployLimit: 1,
+    deployLimit: 0,
     introOfferApplied: false,
     firstMonthEligible: false,
     isCurrentPlan: false,
@@ -27,19 +27,19 @@ const exposureEvent: PricingBridgeEvent = {
   },
 };
 
-test('personal compatibility catalog contains free plus pro max', () => {
+test('personal compatibility catalog contains go plus pro max', () => {
   assert.deepEqual(
     PERSONAL_PRICING_TIERS.map((tier) => tier.tier),
-    ['free', 'plus', 'pro', 'max'],
+    ['go', 'plus', 'pro', 'max'],
   );
 
-  const free = PERSONAL_PRICING_TIERS[0];
-  assert.equal(free?.monthly.priceUsd, 0);
-  assert.equal(free?.yearly.priceUsd, 0);
-  assert.equal(free?.monthly.grantUsd, 0);
-  assert.equal(free?.yearly.grantUsd, 0);
-  assert.equal(free?.deployLimit, 1);
-  assert.equal(free?.recommended, false);
+  const go = PERSONAL_PRICING_TIERS[0];
+  assert.equal(go?.monthly.priceUsd, 10);
+  assert.equal(go?.yearly.priceUsd, 60);
+  assert.equal(go?.monthly.grantUsd, 0);
+  assert.equal(go?.yearly.grantUsd, 0);
+  assert.equal(go?.deployLimit, 0);
+  assert.equal(go?.recommended, false);
 });
 
 test('source resolver accepts only exact trusted wallet/dashboard routes', () => {

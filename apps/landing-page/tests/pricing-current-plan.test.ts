@@ -16,11 +16,11 @@ function billingFetcher(summary: Record<string, unknown>) {
     );
 }
 
-test('keeps a Free membership and its interval', async () => {
+test('loads the active personal plan and pricing capabilities without discarding its interval', async () => {
   const context = await loadPersonalPricingContext(
     'https://amr-api.open-design.ai/',
     billingFetcher({
-      membershipTier: 'free',
+      membershipTier: 'go',
       billingInterval: 'monthly',
       subscriptionStatus: 'active',
       subscriptionEntitlementStatus: 'active',
@@ -33,7 +33,7 @@ test('keeps a Free membership and its interval', async () => {
   );
 
   assert.deepEqual(context, {
-    current: { tier: 'free', interval: 'monthly' },
+    current: { tier: 'go', interval: 'monthly' },
     checkoutAllowed: true,
     firstMonthIntroEligible: false,
     cancelAtPeriodEnd: false,
@@ -62,28 +62,28 @@ test('does not treat a retained tier from a canceled entitlement as a current su
   assert.equal(context?.checkoutAllowed, true);
 });
 
-test('marks Free as current regardless of the selected billing interval', () => {
+test('keeps a same-tier monthly-to-yearly change actionable', () => {
   assert.deepEqual(
     resolvePersonalPlanAction(
       {
-        current: { tier: 'free', interval: 'monthly' },
+        current: { tier: 'go', interval: 'monthly' },
         checkoutAllowed: true,
         firstMonthIntroEligible: false,
         cancelAtPeriodEnd: false,
         pendingChange: null,
         billingPortalAvailable: true,
       },
-      { tier: 'free', interval: 'yearly' },
+      { tier: 'go', interval: 'yearly' },
     ),
-    { kind: 'current', enabled: false },
+    { kind: 'interval_upgrade', enabled: true },
   );
 });
 
-test('allows Free users to choose a paid yearly plan', () => {
+test('blocks a simultaneous tier and billing-interval upgrade', () => {
   assert.deepEqual(
     resolvePersonalPlanAction(
       {
-        current: { tier: 'free', interval: 'monthly' },
+        current: { tier: 'go', interval: 'monthly' },
         checkoutAllowed: true,
         firstMonthIntroEligible: false,
         cancelAtPeriodEnd: false,
@@ -92,7 +92,7 @@ test('allows Free users to choose a paid yearly plan', () => {
       },
       { tier: 'plus', interval: 'yearly' },
     ),
-    { kind: 'upgrade', enabled: true },
+    { kind: 'dual_change', enabled: false },
   );
 });
 
@@ -127,6 +127,50 @@ test('allows a brand-new personal checkout when no usable subscription exists', 
       { tier: 'plus', interval: 'monthly' },
     ),
     { kind: 'new_checkout', enabled: true },
+  );
+});
+
+test('marks new Go checkouts as sold out without blocking existing Go subscribers', () => {
+  const emptyContext = {
+    current: null,
+    checkoutAllowed: true,
+    firstMonthIntroEligible: true,
+    cancelAtPeriodEnd: false,
+    pendingChange: null,
+    billingPortalAvailable: false,
+  } as const;
+
+  assert.deepEqual(
+    resolvePersonalPlanAction(emptyContext, { tier: 'go', interval: 'monthly' }),
+    { kind: 'sold_out', enabled: false },
+  );
+  assert.deepEqual(
+    resolvePersonalPlanAction(
+      {
+        current: { tier: 'plus', interval: 'monthly' },
+        checkoutAllowed: true,
+        firstMonthIntroEligible: false,
+        cancelAtPeriodEnd: false,
+        pendingChange: null,
+        billingPortalAvailable: true,
+      },
+      { tier: 'go', interval: 'monthly' },
+    ),
+    { kind: 'sold_out', enabled: false },
+  );
+  assert.deepEqual(
+    resolvePersonalPlanAction(
+      {
+        current: { tier: 'go', interval: 'monthly' },
+        checkoutAllowed: true,
+        firstMonthIntroEligible: false,
+        cancelAtPeriodEnd: false,
+        pendingChange: null,
+        billingPortalAvailable: true,
+      },
+      { tier: 'go', interval: 'monthly' },
+    ),
+    { kind: 'current', enabled: false },
   );
 });
 
