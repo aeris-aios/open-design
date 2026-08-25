@@ -3368,6 +3368,120 @@ describe('FileViewer SVG artifacts', () => {
     ]));
   });
 
+  it('emits one result event when a user clicks manual edit undo and redo', async () => {
+    analyticsTrackMock.mockClear();
+    const file = baseFile({
+      name: 'history.html',
+      path: 'history.html',
+      mime: 'text/html',
+      kind: 'html',
+      artifactManifest: {
+        version: 1,
+        kind: 'html',
+        title: 'History',
+        entry: 'history.html',
+        renderer: 'html',
+        exports: ['html'],
+      },
+    });
+    const initialSource = '<html><body><main data-od-id="hero">Hero</main></body></html>';
+    let persistedSource = initialSource;
+    const writes: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/files/history.html/versions')) {
+        return new Response(JSON.stringify({ versions: [] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      if (url.endsWith('/api/projects/project-1/files') && init?.method === 'POST') {
+        const body = JSON.parse(String(init.body)) as { content: string };
+        persistedSource = body.content;
+        writes.push(body.content);
+        return new Response(JSON.stringify({ file: { ...file, mtime: file.mtime + writes.length } }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      if (url.includes('/api/projects/project-1/raw/history.html')) {
+        return new Response(persistedSource, { status: 200 });
+      }
+      return new Response(JSON.stringify({ deployments: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }));
+
+    render(
+      <FileViewer
+        projectId="project-1"
+        projectKind="prototype"
+        file={file}
+        liveHtml={initialSource}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId('manual-edit-mode-toggle'));
+    await waitFor(() => {
+      expect(screen.getByTestId('artifact-preview-frame').getAttribute('data-od-render-mode')).toBe('srcdoc');
+    });
+    const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+    const target = manualEditTarget('hero', 'Hero', 20);
+    window.dispatchEvent(new MessageEvent('message', {
+      source: frame.contentWindow,
+      data: { type: 'od-edit-select', target },
+    }));
+    window.dispatchEvent(new MessageEvent('message', {
+      source: frame.contentWindow,
+      data: {
+        type: 'od-edit-drag-commit',
+        id: 'hero',
+        transform: 'translate(12px, 8px)',
+        display: 'block',
+      },
+    }));
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(writes).toHaveLength(1));
+    window.dispatchEvent(new MessageEvent('message', {
+      source: frame.contentWindow,
+      data: { type: 'od-edit-select', target },
+    }));
+    const undo = await screen.findByRole('button', { name: 'Undo' });
+    await waitFor(() => expect(undo).toBeEnabled());
+    fireEvent.click(undo);
+    await waitFor(() => expect(writes).toHaveLength(2));
+
+    const redo = screen.getByRole('button', { name: 'Redo' });
+    await waitFor(() => expect(redo).toBeEnabled());
+    fireEvent.click(redo);
+    await waitFor(() => expect(writes).toHaveLength(3));
+
+    const historyResults = analyticsTrackMock.mock.calls
+      .filter(([eventName, properties]) => (
+        eventName === 'artifact_edit_result' &&
+        (properties?.action === 'undo' || properties?.action === 'redo')
+      ))
+      .map(([, properties]) => properties);
+    expect(historyResults).toEqual([
+      expect.objectContaining({
+        action: 'undo',
+        edit_kind: 'style',
+        result: 'success',
+        project_id: 'project-1',
+        project_kind: 'prototype',
+      }),
+      expect.objectContaining({
+        action: 'redo',
+        edit_kind: 'style',
+        result: 'success',
+        project_id: 'project-1',
+        project_kind: 'prototype',
+      }),
+    ]);
+  });
+
   it('keeps the edit iframe stable across save watcher echoes, then consumes the latest revision on exit', async () => {
     const file = baseFile({
       name: 'edit-save-watch.html',

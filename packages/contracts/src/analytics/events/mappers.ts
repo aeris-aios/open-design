@@ -116,6 +116,15 @@ export function projectKindFromMetadataToTracking(
   });
 }
 
+// Projects created before `metadata.kind` was persisted are prototype projects.
+// Keep that legacy fallback in the shared contract so web and daemon events do
+// not split the same project between `prototype` and a null cohort.
+export function projectKindFromMetadataToTrackingOrLegacyDefault(
+  metadata: Parameters<typeof projectKindFromMetadataToTracking>[0],
+): TrackingProjectKind {
+  return projectKindFromMetadataToTracking(metadata) ?? 'prototype';
+}
+
 // Code `CreateTab` from apps/web/src/components/NewProjectPanel.tsx:
 //   'prototype' | 'live-artifact' | 'deck' | 'template' | 'image' | 'video' | 'audio' | 'other'
 export function createTabToTracking(tab: string): TrackingNewProjectTab {

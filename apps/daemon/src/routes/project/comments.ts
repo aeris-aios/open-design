@@ -3,7 +3,7 @@ import type {
   PreviewComment,
   WorkspaceCollabContext,
 } from '@open-design/contracts';
-import { projectKindFromMetadataToTracking } from '@open-design/contracts/analytics';
+import { projectKindFromMetadataToTrackingOrLegacyDefault } from '@open-design/contracts/analytics';
 import type { RouteDeps } from '../../server-context.js';
 import type { BoundWorkspaceResourceMutationGate } from '../../collab/workspace-resource-mutation.js';
 import { getProject, isProjectCommentAnchorConversationId } from '../../db.js';
@@ -507,7 +507,7 @@ export function registerProjectCommentRoutes(app: Express, ctx: RegisterProjectC
             target_project_relation: targetProjectRelation,
             comment_level: 'top_level',
             project_id: req.params.id,
-            project_kind: projectKindFromMetadataToTracking(project?.metadata),
+            project_kind: projectKindFromMetadataToTrackingOrLegacyDefault(project?.metadata),
             ...(workspaceContext
               ? {
                   workspace_key: workspaceContext.workspaceId,

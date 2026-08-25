@@ -50,13 +50,19 @@ function asMember(memberId: string): { authorization: string } {
   return { authorization: `member:${memberId}` };
 }
 
-async function startServer({ shared = true }: { shared?: boolean } = {}) {
+async function startServer({
+  shared = true,
+  metadata = { kind: 'prototype' },
+}: {
+  shared?: boolean;
+  metadata?: Record<string, unknown>;
+} = {}) {
   tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'od-comment-perms-'));
   const db = openDatabase(tempDir);
   insertProject(db, {
     id: PROJECT,
     name: 'Project',
-    metadata: { kind: 'prototype' },
+    metadata,
     createdAt: 1,
     updatedAt: 1,
   });
@@ -212,6 +218,22 @@ describe('preview comment permission gating', () => {
     expect(edit.status).toBe(200);
     expect(ownComment.id).not.toBe(otherComment.id);
     expect(api.productEvents).toHaveLength(2);
+  });
+
+  it('uses the canonical prototype kind for a legacy project without metadata.kind', async () => {
+    const api = await startServer({ metadata: {} });
+
+    await api.createComment(OWNER, 'legacy project note');
+
+    expect(api.productEvents).toEqual([
+      {
+        eventName: 'project_comment_create_result',
+        properties: expect.objectContaining({
+          project_id: PROJECT,
+          project_kind: 'prototype',
+        }),
+      },
+    ]);
   });
 
   it('legacy comments in a shared project are owner-only', async () => {

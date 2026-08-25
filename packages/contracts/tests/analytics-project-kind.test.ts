@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   projectKindFromMetadataToTracking,
+  projectKindFromMetadataToTrackingOrLegacyDefault,
   projectKindToTracking,
 } from '../src/analytics/events.js';
 
@@ -103,5 +104,13 @@ describe('projectKindToTracking', () => {
     );
     expect(projectKindFromMetadataToTracking({ kind: 'deck' })).toBe('slide_deck');
     expect(projectKindFromMetadataToTracking(null)).toBeNull();
+  });
+
+  it('uses one prototype fallback for legacy metadata across runtimes', () => {
+    expect(projectKindFromMetadataToTrackingOrLegacyDefault({})).toBe('prototype');
+    expect(projectKindFromMetadataToTrackingOrLegacyDefault(null)).toBe('prototype');
+    expect(
+      projectKindFromMetadataToTrackingOrLegacyDefault({ kind: 'other', intent: 'document' }),
+    ).toBe('document');
   });
 });
