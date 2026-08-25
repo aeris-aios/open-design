@@ -9123,7 +9123,7 @@ describe('FileViewer tweaks toolbar', () => {
     }
   });
 
-  it('drops the first-load cover on exact visible paint before slow resources finish loading', () => {
+  it('drops the first-load cover on same-document visible paint before slow resources finish loading', () => {
     const teardownObserver = installPreviewIframeMessageObserver();
     try {
       render(
@@ -9139,6 +9139,8 @@ describe('FileViewer tweaks toolbar', () => {
       );
       const activeFrame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
       const inactiveFrame = screen.getByTestId('artifact-preview-frame-srcdoc') as HTMLIFrameElement;
+      const activeDocumentEpoch = new URL(activeFrame.src).searchParams.get('odPreviewEpoch');
+      expect(activeDocumentEpoch).toMatch(/^preview-document-\d+$/);
       expect(screen.getByTestId('artifact-preview-first-load')).toBeInTheDocument();
 
       act(() => {
@@ -9149,6 +9151,7 @@ describe('FileViewer tweaks toolbar', () => {
             version: 1,
             event: 'visible_paint',
             source_url: new URL(activeFrame.src).href,
+            document_epoch: activeDocumentEpoch,
             visible_element_count: 1,
           },
         }));
@@ -9162,7 +9165,8 @@ describe('FileViewer tweaks toolbar', () => {
             type: 'od:preview-observability',
             version: 1,
             event: 'visible_paint',
-            source_url: 'od://app/api/projects/project-1/raw/other.html?odPreviewEpoch=1',
+            source_url: `${new URL(activeFrame.src).origin}/same-document-route#cover`,
+            document_epoch: 'preview-document-stale',
             visible_element_count: 1,
           },
         }));
@@ -9176,7 +9180,8 @@ describe('FileViewer tweaks toolbar', () => {
             type: 'od:preview-observability',
             version: 1,
             event: 'visible_paint',
-            source_url: new URL(activeFrame.src).href,
+            source_url: `${new URL(activeFrame.src).origin}/same-document-route#cover`,
+            document_epoch: activeDocumentEpoch,
             visible_element_count: 1,
           },
         }));

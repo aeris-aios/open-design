@@ -91,6 +91,7 @@ export interface PreviewObservabilityMessage {
   message?: string;
   name?: string;
   source_url?: string;
+  document_epoch?: string;
   stack?: string;
   line?: number;
   column?: number;
@@ -119,6 +120,7 @@ type PreviewStringField =
   | 'message'
   | 'name'
   | 'source_url'
+  | 'document_epoch'
   | 'stack'
   | 'resource_tag'
   | 'resource_url'
@@ -129,6 +131,7 @@ const STRING_FIELD_LIMITS: ReadonlyArray<readonly [PreviewStringField, number]> 
   ['message', 500],
   ['name', 120],
   ['source_url', 1_000],
+  ['document_epoch', 200],
   ['stack', 2_000],
   ['resource_tag', 32],
   ['resource_url', 1_000],
@@ -211,6 +214,10 @@ export function buildPreviewObservabilityBridge(): string {
   var WHITE_SCREEN_TIMEOUT = ${PREVIEW_WHITE_SCREEN_TIMEOUT_MS};
   var WHITE_SCREEN_CONFIRMATION_DELAY = ${PREVIEW_WHITE_SCREEN_CONFIRMATION_MS};
   var HOST_STATE_TYPE = ${JSON.stringify(PREVIEW_OBSERVABILITY_HOST_STATE_MESSAGE_TYPE)};
+  var documentEpoch = '';
+  try {
+    documentEpoch = new URLSearchParams(window.location.search).get('odPreviewEpoch') || '';
+  } catch (_) {}
   var MAX_EVENTS = 12;
   var sentCount = 0;
   var sent = Object.create(null);
@@ -345,6 +352,7 @@ export function buildPreviewObservabilityBridge(): string {
         version: VERSION,
         event: 'visible_paint',
         source_url: text(String(window.location.href || ''), 1000),
+        document_epoch: documentEpoch,
         ready_state: text(document.readyState, 32),
         visibility_state: text(document.visibilityState, 32),
         body_child_count: document.body ? document.body.children.length : 0,

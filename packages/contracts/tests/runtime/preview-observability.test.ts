@@ -17,6 +17,7 @@ describe('preview observability contract', () => {
     expect(bridge).toContain("send('console_error'");
     expect(bridge).toContain("send('resource_error'");
     expect(bridge).toContain("event: 'visible_paint'");
+    expect(bridge).toContain('document_epoch: documentEpoch');
     expect(bridge).toContain("send('white_screen'");
     expect(bridge).toContain('stack: text(value.stack, 2000)');
     expect(bridge).toContain('detail.source_url = text(event && event.filename, 1000)');
@@ -36,9 +37,11 @@ describe('preview observability contract', () => {
       version: 1,
       event: 'visible_paint',
       source_url: 'od://app/api/projects/project-1/raw/index.html?odPreviewEpoch=1',
+      document_epoch: 'preview-document-1',
       visible_element_count: 1,
     })).toMatchObject({
       event: 'visible_paint',
+      document_epoch: 'preview-document-1',
       visible_element_count: 1,
     });
 
