@@ -490,7 +490,7 @@ describe('authenticated Pricing compatibility browser wiring', { concurrency: fa
     t.after(() => page.context().close());
     await waitForRequests(requests, 1);
 
-    await page.locator('[data-interval-btn="yearly"]').click();
+    await page.locator('[data-interval-btn="monthly"]').click();
     await waitForRequests(requests, 2);
     assert.deepEqual(
       requests[1]?.events.map((event) =>
