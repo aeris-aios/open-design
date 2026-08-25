@@ -1061,8 +1061,12 @@ describe('EntryShell onboarding OpenDesign AMR runtime', () => {
     await waitFor(() => {
       expect(props.onAgentChange).not.toHaveBeenCalledWith('amr');
     });
-    expect(screen.queryByRole('button', { name: /Local Agent/i })).toBeNull();
-    expect(screen.queryByRole('button', { name: /Bring Your Own Key/i })).toBeNull();
+    expect(
+      (screen.getByRole('button', { name: /Local Agent/i }) as HTMLButtonElement).disabled,
+    ).toBe(false);
+    expect(
+      (screen.getByRole('button', { name: /Bring Your Own Key/i }) as HTMLButtonElement).disabled,
+    ).toBe(false);
     expect(screen.queryByText('Sign in to continue')).toBeNull();
   });
 
@@ -1079,9 +1083,13 @@ describe('EntryShell onboarding OpenDesign AMR runtime', () => {
     expect(screen.queryByText('AMR v0.1.0')).toBeNull();
     expect(screen.queryByRole('button', { name: /Sign in to continue/i })).toBeNull();
     expect(screen.queryByRole('link', { name: /Authorize AMR/i })).toBeNull();
-    // Model-source choices stay behind the mandatory identity gate.
-    expect(screen.queryByRole('button', { name: /Local Agent/i })).toBeNull();
-    expect(screen.queryByRole('button', { name: /Bring Your Own Key/i })).toBeNull();
+    // Cloud stays primary while identity-independent setup paths remain available.
+    expect(
+      (screen.getByRole('button', { name: /Local Agent/i }) as HTMLButtonElement).disabled,
+    ).toBe(false);
+    expect(
+      (screen.getByRole('button', { name: /Bring Your Own Key/i }) as HTMLButtonElement).disabled,
+    ).toBe(false);
     expect(screen.queryByRole('button', { name: /OpenDesign AMR/i })).toBeNull();
     expect(screen.queryByRole('link', { name: /Authorize AMR/i })).toBeNull();
     expect(screen.queryByText('Not signed in')).toBeNull();
@@ -1285,6 +1293,8 @@ describe('EntryShell onboarding OpenDesign AMR runtime', () => {
     await act(async () => {});
     expect(screen.getByText('Signing in…')).toBeTruthy();
     expect(signIn.hasAttribute('disabled')).toBe(true);
+    expect(screen.queryByRole('button', { name: /Local Agent/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Bring Your Own Key/i })).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: /Cancel sign-in/i }));
     await act(async () => {});
@@ -1295,7 +1305,12 @@ describe('EntryShell onboarding OpenDesign AMR runtime', () => {
       name: /Sign in to OpenDesign/i,
     });
     expect(cloudButton.hasAttribute('disabled')).toBe(false);
-    expect(screen.queryByRole('button', { name: /Local Agent/i })).toBeNull();
+    expect(
+      (screen.getByRole('button', { name: /Local Agent/i }) as HTMLButtonElement).disabled,
+    ).toBe(false);
+    expect(
+      (screen.getByRole('button', { name: /Bring Your Own Key/i }) as HTMLButtonElement).disabled,
+    ).toBe(false);
 
     fireEvent.click(cloudButton);
     await act(async () => {});
@@ -1975,8 +1990,12 @@ describe('EntryShell onboarding OpenDesign AMR runtime', () => {
     expect((primary as HTMLButtonElement).disabled).toBe(true);
     expect(document.querySelector('.onboarding-view__card--skeleton')).toBeNull();
     expect(screen.queryByRole('button', { name: /OpenDesign AMR/i })).toBeNull();
-    expect(screen.queryByRole('button', { name: /Local Agent/i })).toBeNull();
-    expect(screen.queryByRole('button', { name: /Bring Your Own Key/i })).toBeNull();
+    expect(
+      (screen.getByRole('button', { name: /Local Agent/i }) as HTMLButtonElement).disabled,
+    ).toBe(false);
+    expect(
+      (screen.getByRole('button', { name: /Bring Your Own Key/i }) as HTMLButtonElement).disabled,
+    ).toBe(false);
   });
 
   it('renders the cloud sign-in CTA and no legacy AMR card once AMR is available', async () => {
