@@ -334,7 +334,7 @@ describe('OD Next controlled rollout', () => {
       // The latch only means anything on an installation that opted in, so the
       // event has to report the mode that run was admitted under rather than
       // the unconfigured default.
-      appConfig: { odNextStrategyMode: 'active' },
+      readAppConfig: () => ({ odNextStrategyMode: 'active' }),
     });
     await vi.waitFor(() => expect(capture).toHaveBeenCalledTimes(1));
     expect(capture).toHaveBeenCalledWith(expect.objectContaining({
@@ -349,6 +349,45 @@ describe('OD Next controlled rollout', () => {
         effective_mode: 'observe',
       },
     }));
+    db.close();
+  });
+
+  it('still latches when the app config cannot be read, and stays silent', async () => {
+    // The latch is the safety stop. It must land whether or not this daemon
+    // can read its own config — and the event must not claim the installation
+    // is `off` when what actually happened is that the disk did not answer.
+    const db = new Database(':memory:');
+    migrateOdNextRolloutStore(db);
+    const capture = vi.fn().mockResolvedValue(undefined);
+    latchOdNextRolloutStopOperationally({
+      db,
+      analytics: {
+        capture,
+        captureSafety: vi.fn(),
+        mergeAnonymousPerson: vi.fn(),
+        identifyGroup: vi.fn(),
+        shutdown: vi.fn(),
+      },
+      analyticsContext: {
+        deviceId: 'device',
+        sessionId: 'session',
+        clientType: 'web',
+        locale: 'en',
+        requestId: null,
+      },
+      appVersion: '0.19.2',
+      mode: 'off',
+      reasonCode: 'machine_contract_leak',
+      readAppConfig: () => {
+        throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+      },
+    });
+    expect(readOdNextRolloutStop(db)).toEqual({
+      mode: 'off',
+      reasonCode: 'machine_contract_leak',
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(capture).not.toHaveBeenCalled();
     db.close();
   });
 

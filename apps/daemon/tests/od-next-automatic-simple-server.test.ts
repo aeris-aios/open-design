@@ -274,7 +274,11 @@ describe('OD Next automatic production through the real server', () => {
       { method: 'POST' },
     );
     await waitForRunTerminal(started.url, afterOptIn.runId as string);
-  });
+    // Two full runs against a real server, plus config writes and a status
+    // read — the heaviest case in this file, and the only one that drives more
+    // than a single run. The suite default of 20s leaves it no headroom on a
+    // slow runner.
+  }, 60_000);
 
   it('keeps the automatic route when a named Skill cannot be resolved', async () => {
     const fixture = await createPublicRolloutFixture('prestart-skill-fallback', 'design');

@@ -1,5 +1,5 @@
 import http from 'node:http';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import express from 'express';
@@ -1239,6 +1239,16 @@ describe('app-config odNextStrategyMode', () => {
       odNextStrategyMode: 'acive',
     } as never)).rejects.toMatchObject({ code: 'INVALID_APP_CONFIG_VALUE' });
     expect((await readAppConfig(dataDir)).agentId).toBe('codex');
+  });
+
+  it('reports an unreadable config as an error, not as an unconfigured one', async () => {
+    // The premise the rollout wiring depends on: `readAppConfig` answers `{}`
+    // only for the states that legitimately mean "nothing configured", and
+    // surfaces a real I/O fault instead of flattening it into the same answer.
+    // A directory where the file belongs is EISDIR for any user, unlike a
+    // chmod that a root test runner would walk straight through.
+    await mkdir(path.join(dataDir, 'app-config.json'), { recursive: true });
+    await expect(readAppConfig(dataDir)).rejects.toThrow();
   });
 
   it('reads a corrupted stored value as unconfigured rather than throwing', async () => {
