@@ -22,6 +22,10 @@
       "types": "./dist/manual-edit.d.ts",
       "default": "./dist/manual-edit.mjs"
     },
+    "./manual-edit-source": {
+      "types": "./dist/manual-edit-source.d.ts",
+      "default": "./dist/manual-edit-source.mjs"
+    },
     "./srcdoc": {
       "types": "./dist/srcdoc.d.ts",
       "default": "./dist/srcdoc.mjs"
