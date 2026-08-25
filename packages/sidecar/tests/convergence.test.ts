@@ -25,6 +25,7 @@ import {
   type SidecarResources,
   type SidecarStamp,
 } from "../src/index.js";
+import { retireSidecarGeneration, sidecarGenerationRef } from "../src/generation.js";
 import { collectSidecarGenerationPids } from "../src/process-tree.js";
 import { resolvePrivateIpcPath } from "../src/stamp.js";
 
@@ -676,9 +677,9 @@ describe("server-side atomic operations", () => {
     try {
       await vi.waitFor(async () => {
         expect((await findSidecarProcesses(ownerStamp)).map(({ pid }) => pid)).toContain(spawned.process.pid);
+        generationPids = collectProcessTreePids(await captureProcessSnapshot(), [spawned.process.pid]);
+        expect(generationPids.length).toBeGreaterThan(1);
       }, { interval: 100, timeout: process.platform === "win32" ? 10_000 : 1_000 });
-      generationPids = collectProcessTreePids(await captureProcessSnapshot(), [spawned.process.pid]);
-      expect(generationPids.length).toBeGreaterThan(1);
       owner.kill("SIGKILL");
       await expect(waitForProcessExit(spawned.process.pid, 9_000)).resolves.toBe(true);
       await Promise.all(generationPids.map(async (pid) => {
@@ -693,6 +694,51 @@ describe("server-side atomic operations", () => {
       await stopSidecar(ownerStamp, { killGraceMs: 2_000, termGraceMs: 0 }).catch(() => undefined);
     }
   }, process.platform === "win32" ? 30_000 : 15_000);
+
+  it("force-stops fenced descendants when the supervisor root exits during retirement", async () => {
+    const fixture = fileURLToPath(new URL("./fixtures/stamped-child.ts", import.meta.url));
+    const orphanStamp = { ...stamp, namespace: `orphan-retirement-${process.pid}` };
+    const spawned = await spawnSidecar({
+      args: [fixture],
+      command: process.execPath,
+      resources: {
+        dataRoot: "/tmp/open-design-orphan-retirement",
+        ownerPid: null,
+        port: 0,
+        runtimeRoot: "/tmp/open-design-orphan-retirement-runtime",
+      },
+      stamp: orphanStamp,
+    });
+    let generationPids: number[] = [];
+    try {
+      let snapshots = await captureProcessSnapshot();
+      await vi.waitFor(async () => {
+        snapshots = await captureProcessSnapshot();
+        generationPids = collectProcessTreePids(snapshots, [spawned.process.pid]);
+        expect(generationPids.length).toBeGreaterThan(1);
+      }, { interval: 100, timeout: process.platform === "win32" ? 10_000 : 1_000 });
+
+      const stopping = retireSidecarGeneration(
+        sidecarGenerationRef(orphanStamp, spawned.process.pid),
+        { killGraceMs: 2_000, termGraceMs: 500 },
+        snapshots,
+      );
+      process.kill(spawned.process.pid, "SIGKILL");
+      await expect(waitForProcessExit(spawned.process.pid, 2_000)).resolves.toBe(true);
+
+      const result = await stopping;
+      expect(result.remainingPids).toEqual([]);
+      await Promise.all(generationPids.map(async (pid) => {
+        await expect(waitForProcessExit(pid, 2_000)).resolves.toBe(true);
+      }));
+    } finally {
+      for (const pid of generationPids) {
+        try { process.kill(pid, "SIGKILL"); } catch {}
+      }
+      await spawned.stop({ killGraceMs: 2_000, termGraceMs: 0 }).catch(() => undefined);
+      await stopSidecar(orphanStamp, { killGraceMs: 2_000, termGraceMs: 0 }).catch(() => undefined);
+    }
+  }, process.platform === "win32" ? 20_000 : 10_000);
 
   it("does not let an earlier stop terminate a replacement with the same stamp", async () => {
     const fixture = fileURLToPath(new URL("./fixtures/stamped-child.ts", import.meta.url));

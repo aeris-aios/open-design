@@ -220,16 +220,31 @@ export async function retireSidecarGeneration(
     ? collectSidecarGenerationPids(latestSnapshots, [ref.rootPid], ref.stamp)
     : [];
   if (latestGenerationPids.length === 0) {
-    // The root can exit while the refresh snapshot is being captured. Do not
-    // return the pre-refresh liveness sample as a false remaining generation.
+    // The root can exit while the refresh snapshot is being captured. Its
+    // already-fenced initial descendants still belong to this generation and
+    // must be force-stopped without adopting a replacement root.
     const remainingAfterRefresh = remainingInitialPids();
+    if (remainingAfterRefresh.length > 0) {
+      const forced = await stopProcesses(remainingAfterRefresh, {
+        killGraceMs: options.killGraceMs,
+        termGraceMs: 0,
+      });
+      return {
+        alreadyStopped: false,
+        forcedPids: forced.forcedPids,
+        gracefulAccepted,
+        matchedPids: initialPids,
+        remainingPids: forced.remainingPids,
+        stoppedPids: initialPids.filter((pid) => !forced.remainingPids.includes(pid)),
+      };
+    }
     return {
       alreadyStopped: false,
       forcedPids: [],
       gracefulAccepted,
       matchedPids: initialPids,
-      remainingPids: remainingAfterRefresh,
-      stoppedPids: initialPids.filter((pid) => !remainingAfterRefresh.includes(pid)),
+      remainingPids: [],
+      stoppedPids: initialPids,
     };
   }
   const forced = await stopProcesses(latestGenerationPids, {
