@@ -111,6 +111,7 @@ import {
 import { LibrarySection } from './LibrarySection';
 import { UpdaterPopup } from './UpdaterPopup';
 import { WhatsNewPopup } from './WhatsNewPopup';
+import { GoPlanSunsetDialog, isGoPlanSunsetDemo } from './GoPlanSunsetDialog';
 import { DeepSeekHarnessSetupDialog } from './DeepSeekHarnessSetupDialog';
 import { AmrBalanceDialog } from './AmrBalanceDialog';
 import { installDeepSeekHarnessCompanion } from '../providers/agent-companion';
@@ -662,6 +663,10 @@ export function EntryShell({
     workspaceBillingResponse,
     workspaceContext,
   );
+  const [goPlanSunsetDemo, setGoPlanSunsetDemo] = useState(false);
+  useEffect(() => {
+    setGoPlanSunsetDemo(isGoPlanSunsetDemo(window.location.search));
+  }, []);
   const deepSeekCampaignVisibility = useDeepSeekV4FlashCampaignVisibility();
   const goPlanCampaignVisibility = useGoPlanCampaignVisibility();
   // Same personal-vs-team accountPlan rule as App's `resolvedAmrPlan`.
@@ -1653,7 +1658,7 @@ export function EntryShell({
           }
           context={railWorkspaceContext}
           billing={workspaceBilling}
-          balanceUsd={workspaceBalanceUsd}
+          balanceUsd={goPlanSunsetDemo ? '0' : workspaceBalanceUsd}
           onOpenSettings={onOpenSettings}
           onInvite={() => changeView('members')}
           onSignInCloud={() => navigate({ kind: 'home', view: 'onboarding' })}
@@ -1681,6 +1686,7 @@ export function EntryShell({
               lives in the rail footer, and everything below is fixed-position
               or portalled so it occupies no layout space here. */}
           <WhatsNewPopup active={view === 'home'} />
+          <GoPlanSunsetDialog active={view === 'home' && goPlanSunsetDemo} />
           {/* The campaign badge lives in EntryNavRail's top-right cluster so it
               stays beside the account module across every entry tab. */}
           {amrBalanceGateBlock ? (
