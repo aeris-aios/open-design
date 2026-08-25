@@ -254,6 +254,12 @@ Every user-facing capability must be reachable through both the web UI **and** t
 
 - Git commits must not include `Co-authored-by` trailers or any other co-author metadata.
 
+## Odcrew GitHub operations
+
+- Use `odc gh pr ...` and `odc gh issue ...` for every supported pull-request or issue operation in this GitHub repository, including create, view, list, comment, review, edit, and PR push.
+- Do not fall back to native `gh pr ...` or `gh issue ...` when Odcrew authentication, repository registration, rewriting, or Worker calls fail. Stop and report the Odcrew error so the repository can be enabled or access can be restored.
+- Use `odc gh pr push [number]` when updating an existing PR branch so the short-lived GitHub App credential and audit trail remain authoritative.
+
 ## Pull request expectations
 
 - Opening a PR uses `.github/pull_request_template.md`; fill every section, not just the title.
