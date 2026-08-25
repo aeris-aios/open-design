@@ -1,9 +1,21 @@
 import type { PreviewRuntimeCapability } from '@open-design/contracts/runtime/preview-runtime';
+import {
+  buildDeckBridgeAssets,
+  buildDeckKeydownRegistryHook,
+  detectArtifactKeyboardNavigation,
+  type DeckBridgeOptions,
+} from '@open-design/preview-runtime/srcdoc';
 import type { PreviewRuntimeModuleSource } from './preview-runtime-bootstrap.js';
 
 function scriptBody(scriptTag: string): string {
   const match = scriptTag.match(/^<script\b[^>]*>([\s\S]*)<\/script>$/iu);
   if (!match?.[1]) throw new TypeError('preview runtime module must be built from one script element');
+  return match[1];
+}
+
+function styleBody(styleTag: string): string {
+  const match = styleTag.match(/^<style\b[^>]*>([\s\S]*)<\/style>$/iu);
+  if (!match?.[1]) throw new TypeError('preview runtime module must be built from one style element');
   return match[1];
 }
 
@@ -31,6 +43,40 @@ export function buildLazyScriptRuntimeModule(
     source: `/* ${marker} */\nregister(${JSON.stringify(capability)},function(){\n`
       + `var installed=false;return {enable:function(){if(installed)return;installed=true;\n`
       + `${scriptBody(scriptTag)}\n},disable:function(){}};});`,
+  };
+}
+
+/**
+ * Reuse the exact production Deck bridge in a real-URL document. The listener
+ * registry hook and layout fix install before authored startup; the bridge
+ * itself waits for both host negotiation and DOM readiness, so existing deck
+ * controls are present before it binds them.
+ */
+export function buildDeckRuntimeModule(
+  artifactHtml: string,
+  options: Omit<DeckBridgeOptions, 'artifactHasKeydownNavigation'> = {},
+): PreviewRuntimeModuleSource {
+  const assets = buildDeckBridgeAssets(artifactHtml, {
+    ...options,
+    artifactHasKeydownNavigation: detectArtifactKeyboardNavigation(artifactHtml),
+  });
+  return {
+    capabilities: ['deck'],
+    source: `${scriptBody(buildDeckKeydownRegistryHook())}\n`
+      + `var deckStyle=document.createElement('style');\n`
+      + `deckStyle.setAttribute('data-od-deck-fix','');\n`
+      + `deckStyle.textContent=${JSON.stringify(styleBody(assets.styleTag))};\n`
+      + `(document.head||document.documentElement).appendChild(deckStyle);\n`
+      + `var deckEnabled=false;var deckInstalled=false;\n`
+      + `function installDeckBridge(){if(!deckEnabled||deckInstalled)return;deckInstalled=true;\n`
+      + `${scriptBody(assets.scriptTag)}\n}\n`
+      + `function scheduleDeckBridge(){\n`
+      + `if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',installDeckBridge,{once:true});\n`
+      + `else installDeckBridge();}\n`
+      + `register('deck',function(){return {\n`
+      + `enable:function(){deckEnabled=true;scheduleDeckBridge();},\n`
+      + `disable:function(){deckEnabled=false;}\n`
+      + `};});`,
   };
 }
 

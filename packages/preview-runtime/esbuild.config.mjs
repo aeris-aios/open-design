@@ -3,7 +3,12 @@ import { build } from 'esbuild';
 await build({
   bundle: true,
   entryNames: '[dir]/[name]',
-  entryPoints: ['./src/index.ts', './src/manual-edit.ts'],
+  entryPoints: [
+    './src/index.ts',
+    './src/font-stylesheet.ts',
+    './src/manual-edit.ts',
+    './src/srcdoc.ts',
+  ],
   format: 'esm',
   outbase: './src',
   outdir: './dist',

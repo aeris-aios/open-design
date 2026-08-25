@@ -14,15 +14,26 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.mjs"
     },
+    "./font-stylesheet": {
+      "types": "./dist/font-stylesheet.d.ts",
+      "default": "./dist/font-stylesheet.mjs"
+    },
     "./manual-edit": {
       "types": "./dist/manual-edit.d.ts",
       "default": "./dist/manual-edit.mjs"
+    },
+    "./srcdoc": {
+      "types": "./dist/srcdoc.d.ts",
+      "default": "./dist/srcdoc.mjs"
     }
   },
   "scripts": {
     "build": "node ./esbuild.config.mjs && tsc -p tsconfig.json --emitDeclarationOnly",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@open-design/contracts": "workspace:*"
   },
   "devDependencies": {
     "esbuild": "0.28.0",

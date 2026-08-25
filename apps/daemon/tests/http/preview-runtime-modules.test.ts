@@ -5,6 +5,7 @@ import { buildPreviewRuntimeBootstrap } from '../../src/http/preview-runtime-boo
 import {
   buildInstalledScriptRuntimeModule,
   buildLazyScriptRuntimeModule,
+  buildDeckRuntimeModule,
   buildPaletteRuntimeModule,
   buildScrollAndMeasurementRuntimeModule,
   buildTweaksRuntimeModule,
@@ -16,6 +17,46 @@ const { JSDOM } = require('jsdom') as {
 };
 
 describe('preview runtime modules', () => {
+  it('keeps direct Deck page jumps atomic after URL-runtime negotiation', async () => {
+    const slides = Array.from({ length: 5 }, (_, index) =>
+      `<section class="slide${index === 0 ? ' active' : ''}" data-title="Slide ${index + 1}">${index + 1}</section>`,
+    ).join('');
+    const dom = new JSDOM(
+      `<!doctype html><html><head><style>.slide{display:none}.slide.active{display:block}</style></head>`
+        + `<body><main class="deck">${slides}</main></body></html>`,
+      { runScripts: 'outside-only', url: 'http://n-scope.localhost/index.html' },
+    );
+    let hooks: { enable: () => void; disable: () => void } | null = null;
+    const context = dom.getInternalVMContext() as vm.Context & Record<string, any>;
+    context.parent = dom.window;
+    context.register = (_capability: string, create: () => typeof hooks) => { hooks = create(); };
+    vm.runInContext(buildDeckRuntimeModule(dom.serialize()).source, context);
+    hooks!.enable();
+    dom.window.document.dispatchEvent(new dom.window.Event('DOMContentLoaded'));
+
+    const visibleHistory: number[] = [];
+    const observer = new dom.window.MutationObserver(() => {
+      const active = Array.from(dom.window.document.querySelectorAll('.slide'))
+        .findIndex((slide: any) => slide.classList.contains('active'));
+      if (active >= 0 && visibleHistory.at(-1) !== active) visibleHistory.push(active);
+    });
+    observer.observe(dom.window.document.body, {
+      attributes: true,
+      subtree: true,
+      attributeFilter: ['class', 'style', 'hidden'],
+    });
+    dom.window.dispatchEvent(new dom.window.MessageEvent('message', {
+      data: { type: 'od:slide', action: 'go', index: 4 },
+    }));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    const renderedSlides = Array.from(dom.window.document.querySelectorAll('.slide')) as any[];
+    expect(renderedSlides.findIndex((slide) => slide.classList.contains('active'))).toBe(4);
+    expect(visibleHistory.filter((index) => index > 0 && index < 4)).toEqual([]);
+    observer.disconnect();
+    dom.window.close();
+  });
+
   it('applies and restores palette state without replacing the document', () => {
     const dom = new JSDOM(
       '<!doctype html><html><head><style>:root{--accent:rgb(220,40,40)}</style></head>'
