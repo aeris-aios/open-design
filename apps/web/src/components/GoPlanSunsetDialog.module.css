@@ -110,6 +110,7 @@
 .footer {
   display: flex;
   flex: none;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
   gap: 12px;
@@ -156,5 +157,12 @@
 
   .footer {
     padding: 15px 22px 18px;
+  }
+}
+
+@media (max-width: 360px) {
+  .footer button {
+    flex: 1 1 100%;
+    min-width: 0;
   }
 }

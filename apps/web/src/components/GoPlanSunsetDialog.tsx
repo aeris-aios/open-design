@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Button, Dialog } from '@open-design/components';
 import styles from './GoPlanSunsetDialog.module.css';
@@ -14,14 +14,101 @@ export function isGoPlanSunsetDemo(search: string): boolean {
   return new URLSearchParams(search).get('demo') === 'go-plan-sunset';
 }
 
+export function shouldShowWhatsNewPopup(
+  homeActive: boolean,
+  goPlanSunsetDemo: boolean,
+): boolean {
+  return homeActive && !goPlanSunsetDemo;
+}
+
+type HomeCampaignModalAudience = 'unpaid' | 'paid' | 'unknown';
+type TopRightCampaignKind = 'go' | 'deepseek' | null;
+
+export function resolveGoPlanSunsetCampaigns(
+  enabled: boolean,
+  homeCampaignModalAudience: HomeCampaignModalAudience,
+  topRightCampaignKind: TopRightCampaignKind,
+): {
+  homeCampaignModalAudience: HomeCampaignModalAudience;
+  topRightCampaignKind: TopRightCampaignKind;
+} {
+  if (enabled) {
+    return {
+      homeCampaignModalAudience: 'unknown',
+      topRightCampaignKind: null,
+    };
+  }
+  return { homeCampaignModalAudience, topRightCampaignKind };
+}
+
 export function GoPlanSunsetDialog({ active }: Props) {
   const [open, setOpen] = useState(active);
+  const dismissedRef = useRef(false);
+  const dialogId = useId();
   const titleId = useId();
   const descriptionId = useId();
 
   useEffect(() => {
-    setOpen(active);
+    if (active && !dismissedRef.current) {
+      setOpen(true);
+    } else if (!active) {
+      setOpen(false);
+    }
   }, [active]);
+
+  useEffect(() => {
+    if (!active || !open || typeof document === 'undefined') return;
+    const panel = document.getElementById(dialogId);
+    const backdrop = panel?.parentElement;
+    if (!panel || !backdrop) return;
+
+    const previouslyFocused =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const previousBodyOverflow = document.body.style.overflow;
+    const inertSiblings = Array.from(document.body.children).filter(
+      (element) => element !== backdrop && !element.hasAttribute('inert'),
+    );
+    for (const element of inertSiblings) element.setAttribute('inert', '');
+    document.body.style.overflow = 'hidden';
+
+    panel.tabIndex = -1;
+    panel.focus({ preventScroll: true });
+
+    const handleTab = (event: KeyboardEvent) => {
+      if (event.key !== 'Tab') return;
+      const focusable = Array.from(panel.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      )).filter(
+        (element) => !element.hasAttribute('hidden') && element.getAttribute('aria-hidden') !== 'true',
+      );
+      if (focusable.length === 0) {
+        event.preventDefault();
+        return;
+      }
+
+      const first = focusable[0]!;
+      const last = focusable[focusable.length - 1]!;
+      const focused = document.activeElement;
+      if (focused === panel) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
+      } else if (event.shiftKey && (focused === first || !panel.contains(focused))) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && (focused === last || !panel.contains(focused))) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener('keydown', handleTab);
+
+    return () => {
+      document.removeEventListener('keydown', handleTab);
+      for (const element of inertSiblings) element.removeAttribute('inert');
+      document.body.style.overflow = previousBodyOverflow;
+      if (previouslyFocused?.isConnected) previouslyFocused.focus();
+    };
+  }, [active, dialogId, open]);
 
   if (!active || !open || typeof document === 'undefined') return null;
 
@@ -29,12 +116,18 @@ export function GoPlanSunsetDialog({ active }: Props) {
     window.open(GO_PLAN_PRICING_URL, '_blank', 'noopener,noreferrer');
   };
 
+  const dismiss = () => {
+    dismissedRef.current = true;
+    setOpen(false);
+  };
+
   return createPortal(
     <Dialog
+      id={dialogId}
       role="alertdialog"
       ariaLabelledBy={titleId}
       ariaDescribedBy={descriptionId}
-      onClose={() => setOpen(false)}
+      onClose={dismiss}
       closeOnEscape
       className={styles.panel}
       backdropClassName={styles.backdrop}
@@ -94,7 +187,7 @@ export function GoPlanSunsetDialog({ active }: Props) {
         <Button onClick={viewSubscriptions}>
           查看其他订阅
         </Button>
-        <Button variant="primary" onClick={() => setOpen(false)}>
+        <Button variant="primary" onClick={dismiss}>
           我知道了
         </Button>
       </footer>

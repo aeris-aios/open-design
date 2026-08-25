@@ -111,7 +111,12 @@ import {
 import { LibrarySection } from './LibrarySection';
 import { UpdaterPopup } from './UpdaterPopup';
 import { WhatsNewPopup } from './WhatsNewPopup';
-import { GoPlanSunsetDialog, isGoPlanSunsetDemo } from './GoPlanSunsetDialog';
+import {
+  GoPlanSunsetDialog,
+  isGoPlanSunsetDemo,
+  resolveGoPlanSunsetCampaigns,
+  shouldShowWhatsNewPopup,
+} from './GoPlanSunsetDialog';
 import { DeepSeekHarnessSetupDialog } from './DeepSeekHarnessSetupDialog';
 import { AmrBalanceDialog } from './AmrBalanceDialog';
 import { installDeepSeekHarnessCompanion } from '../providers/agent-companion';
@@ -690,13 +695,13 @@ export function EntryShell({
     plan: deepSeekCampaignPlan,
     loggedIn: amrLoggedIn,
   });
-  const homeCampaignModalAudience =
+  const resolvedHomeCampaignModalAudience =
     subscriptionAudience === 'unpaid' && goPlanCampaignVisibility.visible
       ? 'unpaid'
       : deepSeekV4FlashCampaignAudience === 'paid'
         ? 'paid'
         : 'unknown';
-  const topRightCampaignKind =
+  const resolvedTopRightCampaignKind =
     subscriptionAudience === 'unpaid'
       ? goPlanCampaignVisibility.visible
         ? 'go'
@@ -704,6 +709,14 @@ export function EntryShell({
       : deepSeekV4FlashCampaignAudience === 'paid'
         ? 'deepseek'
         : null;
+  const {
+    homeCampaignModalAudience,
+    topRightCampaignKind,
+  } = resolveGoPlanSunsetCampaigns(
+    goPlanSunsetDemo,
+    resolvedHomeCampaignModalAudience,
+    resolvedTopRightCampaignKind,
+  );
   const workspaceBalanceUsd = workspaceBillingBalanceUsd(
     workspaceBillingResponse,
     workspaceContext,
@@ -1659,6 +1672,7 @@ export function EntryShell({
           context={railWorkspaceContext}
           billing={workspaceBilling}
           balanceUsd={goPlanSunsetDemo ? '0' : workspaceBalanceUsd}
+          forceShowCreditsBalance={goPlanSunsetDemo}
           onOpenSettings={onOpenSettings}
           onInvite={() => changeView('members')}
           onSignInCloud={() => navigate({ kind: 'home', view: 'onboarding' })}
@@ -1685,7 +1699,7 @@ export function EntryShell({
               the workspace tabs bar (entryRailBridge), the updater popup host
               lives in the rail footer, and everything below is fixed-position
               or portalled so it occupies no layout space here. */}
-          <WhatsNewPopup active={view === 'home'} />
+          <WhatsNewPopup active={shouldShowWhatsNewPopup(view === 'home', goPlanSunsetDemo)} />
           <GoPlanSunsetDialog active={view === 'home' && goPlanSunsetDemo} />
           {/* The campaign badge lives in EntryNavRail's top-right cluster so it
               stays beside the account module across every entry tab. */}
