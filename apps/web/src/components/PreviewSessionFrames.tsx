@@ -14,16 +14,14 @@ import {
   PreviewSession,
   type PreviewSessionDocument,
 } from '../runtime/preview-session';
+import type { PreviewSessionNavigation } from '../runtime/preview-session-navigation';
+export type { PreviewSessionNavigation } from '../runtime/preview-session-navigation';
 import type { PreviewRuntimeMessageTarget } from '../runtime/preview-runtime-controller';
 import {
   PooledIframe,
   previewIframeKeepAliveKey,
   useIframeKeepAlivePool,
 } from './IframeKeepAlivePool';
-
-export interface PreviewSessionNavigation extends PreviewRuntimeDocumentIdentity {
-  url: string;
-}
 
 export interface PreviewSessionFramesProps extends Omit<
   ComponentPropsWithoutRef<'iframe'>,
