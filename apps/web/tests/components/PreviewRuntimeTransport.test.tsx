@@ -1,0 +1,197 @@
+// @vitest-environment jsdom
+
+import { act, cleanup, render, screen } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  PREVIEW_RUNTIME_PROTOCOL_VERSION,
+  type PreviewRuntimeCapability,
+} from '@open-design/contracts/runtime/preview-runtime';
+import { IframeKeepAliveProvider } from '../../src/components/IframeKeepAlivePool';
+import { PreviewRuntimeTransport } from '../../src/components/PreviewRuntimeTransport';
+import type { PreviewBridgeModeState } from '../../src/runtime/replay-preview-bridge-modes';
+import type { PreviewRuntimeViewerState } from '../../src/runtime/preview-runtime-capabilities';
+import type { PreviewSessionNavigation } from '../../src/runtime/preview-session-navigation';
+
+afterEach(cleanup);
+
+const navigation: PreviewSessionNavigation = {
+  sessionId: 'scope-0001',
+  documentVersion: 'v1',
+  url: 'http://n-scope-0001.localhost:17456/index.html?v=v1',
+};
+
+const defaultViewerState: PreviewRuntimeViewerState = {
+  deck: false,
+  comment: true,
+  inspect: false,
+  draw: false,
+  edit: false,
+};
+
+function bridgeModeState(overrides: Partial<PreviewBridgeModeState> = {}): PreviewBridgeModeState {
+  return {
+    active: true,
+    workspaceActive: true,
+    commentEnabled: true,
+    commentMode: 'inspect',
+    editEnabled: false,
+    selectedEditTargetId: null,
+    editLiveStyles: [],
+    inspectEnabled: false,
+    ...overrides,
+  };
+}
+
+function view(options: {
+  viewerState?: PreviewRuntimeViewerState;
+  modeState?: PreviewBridgeModeState;
+  active?: boolean;
+} = {}) {
+  return (
+    <IframeKeepAliveProvider>
+      <PreviewRuntimeTransport
+        projectId="project-1"
+        fileName="index.html"
+        navigation={navigation}
+        viewerState={options.viewerState ?? defaultViewerState}
+        bridgeModeState={options.modeState ?? bridgeModeState()}
+        active={options.active ?? true}
+      />
+    </IframeKeepAliveProvider>
+  );
+}
+
+function signal(
+  frame: HTMLIFrameElement,
+  type: 'od:preview:hello' | 'od:preview:capabilities-applied' | 'od:preview:visible-paint',
+  capabilities: readonly PreviewRuntimeCapability[],
+) {
+  act(() => {
+    window.dispatchEvent(new MessageEvent('message', {
+      source: frame.contentWindow,
+      data: {
+        type,
+        protocolVersion: PREVIEW_RUNTIME_PROTOCOL_VERSION,
+        sessionId: navigation.sessionId,
+        documentVersion: navigation.documentVersion,
+        ...(type === 'od:preview:hello' ? { availableCapabilities: capabilities } : {}),
+        ...(type === 'od:preview:capabilities-applied'
+          ? { enabledCapabilities: capabilities }
+          : {}),
+      },
+    }));
+  });
+}
+
+describe('PreviewRuntimeTransport', () => {
+  it('replays mode state only after the exact capability acknowledgement', () => {
+    render(view());
+    const frame = screen.getByTestId('preview-runtime-frame-standby') as HTMLIFrameElement;
+    const postMessage = vi.spyOn(frame.contentWindow!, 'postMessage');
+    const available: PreviewRuntimeCapability[] = ['observability', 'comment'];
+
+    signal(frame, 'od:preview:hello', available);
+    expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'od:preview:set-capabilities',
+      enabledCapabilities: available,
+    }), '*');
+    expect(postMessage).not.toHaveBeenCalledWith(expect.objectContaining({
+      type: 'od:comment-mode',
+    }), '*');
+
+    signal(frame, 'od:preview:capabilities-applied', available);
+    expect(postMessage).toHaveBeenCalledWith({
+      type: 'od:comment-mode',
+      enabled: true,
+      mode: 'inspect',
+    }, '*');
+  });
+
+  it('changes comment mode on the retained frame without changing its URL', () => {
+    const firstMode = bridgeModeState();
+    const { rerender } = render(view({ modeState: firstMode }));
+    const frame = screen.getByTestId('preview-runtime-frame-standby') as HTMLIFrameElement;
+    const postMessage = vi.spyOn(frame.contentWindow!, 'postMessage');
+    const available: PreviewRuntimeCapability[] = ['observability', 'comment'];
+    signal(frame, 'od:preview:hello', available);
+    signal(frame, 'od:preview:capabilities-applied', available);
+    signal(frame, 'od:preview:visible-paint', available);
+    const src = frame.getAttribute('src');
+
+    postMessage.mockClear();
+    rerender(view({ modeState: bridgeModeState({ commentMode: 'picker' }) }));
+
+    expect(screen.getByTestId('preview-runtime-frame-current')).toBe(frame);
+    expect(frame.getAttribute('src')).toBe(src);
+    expect(postMessage).toHaveBeenCalledWith({
+      type: 'od:comment-mode',
+      enabled: true,
+      mode: 'picker',
+    }, '*');
+  });
+
+  it('replays live edit state after enabling edit without replacing the frame', () => {
+    const { rerender } = render(view({
+      viewerState: { ...defaultViewerState, comment: false },
+      modeState: bridgeModeState({ commentEnabled: false }),
+    }));
+    const frame = screen.getByTestId('preview-runtime-frame-standby') as HTMLIFrameElement;
+    const postMessage = vi.spyOn(frame.contentWindow!, 'postMessage');
+    signal(frame, 'od:preview:hello', ['observability', 'edit']);
+    signal(frame, 'od:preview:capabilities-applied', ['observability']);
+    signal(frame, 'od:preview:visible-paint', ['observability']);
+    const src = frame.getAttribute('src');
+
+    postMessage.mockClear();
+    rerender(view({
+      viewerState: { ...defaultViewerState, comment: false, edit: true },
+      modeState: bridgeModeState({
+        commentEnabled: false,
+        editEnabled: true,
+        selectedEditTargetId: 'hero',
+        editLiveStyles: [{ id: 'hero', styles: { color: 'red' }, version: 4 }],
+      }),
+    }));
+    expect(frame.getAttribute('src')).toBe(src);
+    expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'od:preview:set-capabilities',
+      enabledCapabilities: ['observability', 'edit'],
+    }), '*');
+    expect(postMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'od-edit-preview-style' }),
+      '*',
+    );
+
+    signal(frame, 'od:preview:capabilities-applied', ['observability', 'edit']);
+    expect(frame.getAttribute('src')).toBe(src);
+    expect(postMessage).toHaveBeenCalledWith({
+      type: 'od-edit-preview-style',
+      id: 'hero',
+      styles: { color: 'red' },
+      version: 4,
+    }, '*');
+  });
+
+  it('suspends by visibility and reports inactive observability without navigation', () => {
+    const { rerender } = render(view());
+    const frame = screen.getByTestId('preview-runtime-frame-standby') as HTMLIFrameElement;
+    const postMessage = vi.spyOn(frame.contentWindow!, 'postMessage');
+    signal(frame, 'od:preview:hello', ['observability', 'comment']);
+    signal(frame, 'od:preview:capabilities-applied', ['observability', 'comment']);
+    signal(frame, 'od:preview:visible-paint', ['observability', 'comment']);
+    const src = frame.getAttribute('src');
+
+    postMessage.mockClear();
+    rerender(view({
+      active: false,
+      modeState: bridgeModeState({ active: false, workspaceActive: false }),
+    }));
+
+    expect(frame.getAttribute('src')).toBe(src);
+    expect(frame).toHaveAttribute('data-od-active', 'false');
+    expect(postMessage).toHaveBeenCalledWith({
+      type: 'od:preview-observability-host-state',
+      active: false,
+    }, '*');
+  });
+});
