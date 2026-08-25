@@ -364,6 +364,10 @@ describe("pricing contract", () => {
     assert.match(individualPlans, /data-pricing-cta\s+data-tier=\{tier\}/);
     assert.match(individualPlans, /go:\s*content\.go/);
     assert.match(individualPlans, /GO_PLAN_SOLD_OUT/);
+    assert.match(
+      individualPlans,
+      /tier !== 'go' && <em class="multimodal-status">\{fillTemplate\(P\.upToResolution/,
+    );
     assert.match(page, /name:\s*'OpenDesign Go'/);
     assert.match(page, /price:\s*String\(GO_PLAN\.monthly\.priceUsd\)/);
     assert.match(individualPlans, /DeepSeek V4 Flash/);

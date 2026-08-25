@@ -344,7 +344,7 @@ const cardData = [
                       <li class="model-with-status">
                         <span class:list={['model-logo', model.iconClass]}><img src={model.icon} alt="" loading="lazy" /></span>
                         <span>{model.name}</span>
-                        <em class="multimodal-status">{fillTemplate(P.upToResolution, { resolution: imageResolution })}</em>
+                        {tier !== 'go' && <em class="multimodal-status">{fillTemplate(P.upToResolution, { resolution: imageResolution })}</em>}
                       </li>
                     ))}
                   </ul>
