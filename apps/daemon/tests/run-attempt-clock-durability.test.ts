@@ -269,7 +269,10 @@ describe('per-attempt clock anchor durability (red spec)', () => {
 
     second.kill('SIGKILL');
     await waitForExit(second);
-  }, 120_000);
+    // Two cold `--import tsx` daemon boots plus a watchdog-driven retry. ~35s
+    // locally; the budget is sized for a loaded CI runner, not for the happy
+    // path, so a slow agent does not read as a product regression.
+  }, 180_000);
 
   function requireDataDir(): string {
     const dataDir = process.env.OD_DATA_DIR;
