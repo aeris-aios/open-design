@@ -6509,7 +6509,12 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
         ? await opened.read(buffer, 0, bytesToRead, 0)
         : { bytesRead: 0 };
       const text = buffer.subarray(0, result.bytesRead).toString('utf8');
-      const poweredPreview = await detectPoweredPreviewHint(meta);
+      const [poweredPreview, passiveGuardScan] = await Promise.all([
+        detectPoweredPreviewHint(meta),
+        /^text\/html(?:;|$)/i.test(meta.mime)
+          ? scanHtmlHeadForStreamingInjection(meta.filePath)
+          : null,
+      ]);
       const body: ProjectFileTextPreviewResponse = {
         text,
         truncated: meta.size > result.bytesRead,
@@ -6518,6 +6523,13 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
         mime: meta.mime,
         kind: meta.kind,
         poweredPreview,
+        passiveGuards: {
+          sandbox: passiveGuardScan?.needsSandboxShim === true || passiveGuardScan?.complete === false,
+          focus: passiveGuardScan?.needsFocusGuard === true || passiveGuardScan?.complete === false,
+          redirect: passiveGuardScan?.needsRedirectGuard === true || passiveGuardScan?.complete === false,
+          scannedBytes: passiveGuardScan?.scannedBytes ?? 0,
+          complete: passiveGuardScan?.complete ?? true,
+        },
       };
       res.setHeader('Cache-Control', 'no-store');
       res.json(body);

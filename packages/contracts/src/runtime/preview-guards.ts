@@ -16,11 +16,31 @@ export const PREVIEW_REDIRECT_LOOP_MESSAGE = 'od:redirect-loop-blocked';
  */
 export const PREVIEW_URL_GUARD_MAX_HTML_BYTES = 2 * 1024 * 1024;
 
+export function previewHtmlNeedsFocusGuard(source: string): boolean {
+  if (/\.\s*focus\s*\(/i.test(source)) return true;
+  if (/\bautofocus\b/i.test(source)) return true;
+  if (/<script\b[^>]*\bsrc\s*=/i.test(source)) return true;
+  return false;
+}
+
+export function previewHtmlNeedsSandboxShim(source: string): boolean {
+  if (/<script\s[^>]*\btype\s*=\s*["']?text\/babel\b/i.test(source)) return true;
+  if (/\b(?:local|session)Storage\b/.test(source)) return true;
+  if (/<script\s[^>]*?\bsrc\s*=/i.test(source)) return true;
+  return false;
+}
+
 export function previewHtmlHasLoadTimeLocationNavigation(source: string): boolean {
   if (/\blocation\s*\.\s*(?:reload|replace|assign)\s*\(/i.test(source)) return true;
   if (/\blocation\s*\.\s*href\s*=[^=]/i.test(source)) return true;
   if (/\b(?:window|document|self|top|parent)\s*\.\s*location\s*=[^=]/i.test(source)) return true;
   return false;
+}
+
+export function previewHtmlNeedsRedirectGuard(source: string | null | undefined): boolean {
+  if (!source) return false;
+  if (/<meta\b[^>]*\bhttp-equiv\s*=\s*["']?\s*refresh\b/i.test(source)) return true;
+  return previewHtmlHasLoadTimeLocationNavigation(source);
 }
 
 export function buildPreviewSandboxShim(): string {

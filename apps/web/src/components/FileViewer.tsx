@@ -417,6 +417,11 @@ const HTML_PASSIVE_PREVIEW_FULL_TEXT_LIMIT = 2 * 1024 * 1024;
 const HTML_ROUTING_TEXT_PREVIEW_LIMIT = 96 * 1024;
 const HTML_PREVIEW_ASSET_PREFLIGHT_LIMIT = 32;
 type HtmlSourceLoadMode = 'full' | 'routing-preview';
+type PassivePreviewGuards = {
+  sandbox: boolean;
+  focus: boolean;
+  redirect: boolean;
+};
 type PreviewAssetWarning = { filePath: string };
 
 function isPreviewRuntimeAttributeMap(value: unknown): value is Record<string, string> {
@@ -7839,6 +7844,10 @@ function HtmlViewer({
     scope: ProjectPreviewBaseScope;
   } | null>(null);
   const [serverPoweredPreviewRequired, setServerPoweredPreviewRequired] = useState(false);
+  const [serverPassivePreviewGuards, setServerPassivePreviewGuards] = useState<{
+    identity: string;
+    guards: PassivePreviewGuards;
+  } | null>(null);
   const [previewAssetWarning, setPreviewAssetWarning] = useState<PreviewAssetWarning | null>(null);
   const [inlinedSource, setInlinedSource] = useState<string | null>(null);
   const fileViewportKey = previewViewportStateKey(projectId, file);
@@ -8944,6 +8953,7 @@ function HtmlViewer({
     promise: Promise<{
       text: string | null;
       poweredPreviewRequired: boolean;
+      passiveGuards: PassivePreviewGuards;
       sourceLoadMode: HtmlSourceLoadMode;
     }>;
   } | null>(null);
@@ -8957,6 +8967,7 @@ function HtmlViewer({
     setRoutingSource(null);
     setRoutingSourceIdentity(null);
     setServerPoweredPreviewRequired(false);
+    setServerPassivePreviewGuards(null);
     sourceRef.current = null;
     sourceFileKeyRef.current = null;
     sourceEverLoadedRef.current = false;
@@ -9480,6 +9491,7 @@ function HtmlViewer({
       setRoutingSource(liveHtml);
       setRoutingSourceIdentity(sourceFileKey);
       setServerPoweredPreviewRequired(false);
+      setServerPassivePreviewGuards(null);
       sourceRef.current = liveHtml;
       return;
     }
@@ -9499,6 +9511,7 @@ function HtmlViewer({
       setRoutingSource(cachedSource);
       setRoutingSourceIdentity(cachedSource === null ? null : sourceFileKey);
       setServerPoweredPreviewRequired(false);
+      setServerPassivePreviewGuards(null);
       sourceRef.current = cachedSource;
       if (cachedSource !== null) {
         sourceEverLoadedRef.current = true;
@@ -9569,6 +9582,7 @@ function HtmlViewer({
               return {
                 text: fullText,
                 poweredPreviewRequired: preview?.poweredPreview.required === true,
+                passiveGuards: { sandbox: false, focus: false, redirect: false },
                 sourceLoadMode: 'full' as HtmlSourceLoadMode,
               };
             }
@@ -9576,6 +9590,11 @@ function HtmlViewer({
           return {
             text: previewText,
             poweredPreviewRequired: preview?.poweredPreview.required === true,
+            passiveGuards: {
+              sandbox: preview?.passiveGuards?.sandbox === true,
+              focus: preview?.passiveGuards?.focus === true,
+              redirect: preview?.passiveGuards?.redirect === true,
+            },
             sourceLoadMode: 'routing-preview' as HtmlSourceLoadMode,
           };
         })
@@ -9586,6 +9605,7 @@ function HtmlViewer({
         }).then((text) => ({
         text,
         poweredPreviewRequired: false,
+        passiveGuards: { sandbox: false, focus: false, redirect: false },
         sourceLoadMode: 'full' as HtmlSourceLoadMode,
       }));
       sourceLoad = { key: sourceLoadKey, promise };
@@ -9596,9 +9616,10 @@ function HtmlViewer({
         }
       });
     }
-    void sourceLoad.promise.then(({ text, poweredPreviewRequired, sourceLoadMode }) => {
+    void sourceLoad.promise.then(({ text, poweredPreviewRequired, passiveGuards, sourceLoadMode }) => {
       if (cancelled) return;
       setServerPoweredPreviewRequired(poweredPreviewRequired);
+      setServerPassivePreviewGuards({ identity: sourceFileKey, guards: passiveGuards });
       // Chokidar emits agent rewrites as unlink+add+change bursts; a
       // transient null mid-burst would blank source → srcDoc empty →
       // shell stays on prior frame. Keep the last good text instead.
@@ -9609,6 +9630,7 @@ function HtmlViewer({
           setRoutingSource('');
           setRoutingSourceIdentity(sourceFileKey);
           setServerPoweredPreviewRequired(false);
+          setServerPassivePreviewGuards(null);
           return;
         }
         // A srcDoc Reload may have cleared source to null just before this
@@ -9947,6 +9969,9 @@ function HtmlViewer({
   const manualEditPageStylesEnabled = typeof source === 'string' && isManualEditFullHtmlDocument(source);
   const urlModeBridge = hasUrlModeBridge(routingHtmlSource);
   const manualEditRequiresSrcDoc = manualEditMode || manualEditSrcDocActive;
+  const activeServerPassiveGuards = serverPassivePreviewGuards?.identity === currentSourceIdentity
+    ? serverPassivePreviewGuards.guards
+    : null;
   // When we URL-load the iframe directly, skip every in-host inlining /
   // srcDoc-rebuilding step. The browser does the asset resolution itself,
   // while the daemon injects passive document guards before authored scripts.
@@ -9957,18 +9982,18 @@ function HtmlViewer({
   // edit mode toggles, slide nav) don't re-scan the HTML each time.
   const needsSandboxShim = useMemo(() => {
     const s = routingHtmlSource;
-    return s != null && htmlNeedsSandboxShim(s);
-  }, [routingHtmlSource]);
+    return activeServerPassiveGuards?.sandbox === true || (s != null && htmlNeedsSandboxShim(s));
+  }, [activeServerPassiveGuards?.sandbox, routingHtmlSource]);
   const needsFocusGuard = useMemo(() => {
     const s = routingHtmlSource;
-    return s != null && htmlNeedsFocusGuard(s);
-  }, [routingHtmlSource]);
+    return activeServerPassiveGuards?.focus === true || (s != null && htmlNeedsFocusGuard(s));
+  }, [activeServerPassiveGuards?.focus, routingHtmlSource]);
   // A self-redirecting artifact needs the redirect-loop guard on whichever
   // transport owns the document (nexu-io/open-design#710).
   const needsRedirectGuard = useMemo(() => {
     const s = routingHtmlSource;
-    return s != null && htmlNeedsRedirectGuard(s);
-  }, [routingHtmlSource]);
+    return activeServerPassiveGuards?.redirect === true || (s != null && htmlNeedsRedirectGuard(s));
+  }, [activeServerPassiveGuards?.redirect, routingHtmlSource]);
   const urlDocumentGuardsAvailable = liveHtml === undefined;
   // Set by the injected guard's `od:redirect-loop-blocked` postMessage. The
   // browser makes `window.location` unforgeable, so a runaway reload can only be

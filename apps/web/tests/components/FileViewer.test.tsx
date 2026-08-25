@@ -1650,7 +1650,7 @@ describe('FileViewer SVG artifacts', () => {
     await waitFor(() => expect(sourceReads).toHaveLength(3));
   });
 
-  it('keeps large HTML files on the streamed URL path when the routing preview shows sandbox-unsafe scripts', async () => {
+  it('requests streamed passive guards detected after the routing-preview prefix', async () => {
     const file = baseFile({
       name: 'index.html',
       path: 'index.html',
@@ -1666,13 +1666,20 @@ describe('FileViewer SVG artifacts', () => {
         exports: ['html'],
       },
     });
-    const previewText = '<!doctype html><html><head><script src="./app.js"></script></head>';
+    const previewText = '<!doctype html><html><head><title>Safe prefix</title></head>';
     const fetchMock = vi.fn(async (input: string | URL | Request) => {
       const url = typeof input === 'string' ? input : input instanceof Request ? input.url : String(input);
       if (url.startsWith('/api/projects/project-1/text-preview/index.html')) {
         return new Response(JSON.stringify({
           text: previewText,
           poweredPreview: { required: false, reasons: [] },
+          passiveGuards: {
+            sandbox: true,
+            focus: true,
+            redirect: true,
+            scannedBytes: file.size,
+            complete: true,
+          },
         }), {
           status: 200,
           headers: { 'Content-Type': 'application/json' },
@@ -1699,6 +1706,7 @@ describe('FileViewer SVG artifacts', () => {
       expect(frame.getAttribute('src')).toContain('/api/projects/project-1/raw/index.html?');
       expect(frame.getAttribute('src')).toContain('odPreviewBridge=sandbox');
       expect(frame.getAttribute('src')).toContain('odPreviewBridge=focus');
+      expect(frame.getAttribute('src')).toContain('odPreviewBridge=redirect');
     });
     expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/api/projects/project-1/text-preview/index.html'), { cache: 'no-store' });
 

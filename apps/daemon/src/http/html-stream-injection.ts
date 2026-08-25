@@ -1,6 +1,11 @@
 import fs from 'node:fs';
 
-import { previewHtmlHasLoadTimeLocationNavigation } from '@open-design/contracts/runtime/preview-guards';
+import {
+  previewHtmlHasLoadTimeLocationNavigation,
+  previewHtmlNeedsFocusGuard,
+  previewHtmlNeedsRedirectGuard,
+  previewHtmlNeedsSandboxShim,
+} from '@open-design/contracts/runtime/preview-guards';
 
 const MAX_TAG_BYTES = 256 * 1024;
 const RAW_TEXT_TAGS = new Set(['noscript', 'script', 'style', 'title', 'textarea']);
@@ -24,6 +29,16 @@ export interface HtmlHeadScanResult {
   hasAuthoredBase: boolean;
   /** Whether an author script contains a load-time location navigation signal. */
   hasLoadTimeLocationNavigation: boolean;
+  /** Whether the complete streamed source requires the passive sandbox shim. */
+  needsSandboxShim: boolean;
+  /** Whether the complete streamed source requires load-time focus protection. */
+  needsFocusGuard: boolean;
+  /** Whether the complete streamed source requires redirect-loop protection. */
+  needsRedirectGuard: boolean;
+  /** Number of source bytes inspected for whole-document guard signals. */
+  scannedBytes: number;
+  /** Whether the scanner reached EOF instead of proving every guard early. */
+  complete: boolean;
 }
 
 function tagNameFromToken(token: string): { name: string; closing: boolean } | null {
@@ -82,6 +97,12 @@ export async function scanHtmlHeadForStreamingInjection(
   let scriptSignalTail = '';
   let hasAuthoredBase = false;
   let hasLoadTimeLocationNavigation = false;
+  let needsSandboxShim = false;
+  let needsFocusGuard = false;
+  let needsRedirectGuard = false;
+  let passiveSignalTail = '';
+  let scannedBytes = 0;
+  let complete = true;
   let prelude = true;
   let templateDepth = 0;
   let headScanDone = false;
@@ -92,16 +113,37 @@ export async function scanHtmlHeadForStreamingInjection(
     bufferOffset += length;
   };
 
+  const canStopWholeDocumentScan = (): boolean => (
+    headScanDone
+    && needsSandboxShim
+    && needsFocusGuard
+    && needsRedirectGuard
+    && hasLoadTimeLocationNavigation
+  );
+
   const finish = (): HtmlHeadScanResult => ({
     insertionOffset: explicitHead
       ? insertionOffset
       : (htmlOpenOffset ?? insertionOffset),
     hasAuthoredBase,
     hasLoadTimeLocationNavigation,
+    needsSandboxShim,
+    needsFocusGuard,
+    needsRedirectGuard,
+    scannedBytes,
+    complete,
   });
 
   for await (const chunk of fs.createReadStream(filePath, { highWaterMark: 64 * 1024 })) {
-    buffer += (Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)).toString('latin1');
+    const chunkBuffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    const chunkText = chunkBuffer.toString('latin1');
+    scannedBytes += chunkBuffer.byteLength;
+    const passiveSample = passiveSignalTail + chunkText;
+    if (!needsSandboxShim) needsSandboxShim = previewHtmlNeedsSandboxShim(passiveSample);
+    if (!needsFocusGuard) needsFocusGuard = previewHtmlNeedsFocusGuard(passiveSample);
+    if (!needsRedirectGuard) needsRedirectGuard = previewHtmlNeedsRedirectGuard(passiveSample);
+    passiveSignalTail = passiveSample.slice(-MAX_TAG_BYTES);
+    buffer += chunkText;
 
     while (buffer.length > 0 && !scanDone) {
       if (bufferOffset === 0 && buffer.startsWith('\u00ef\u00bb\u00bf')) {
@@ -136,7 +178,7 @@ export async function scanHtmlHeadForStreamingInjection(
           scriptSignalTail = sample.slice(-256);
         }
         consume(contentEnd);
-        if (headScanDone && hasLoadTimeLocationNavigation) {
+        if (canStopWholeDocumentScan()) {
           scanDone = true;
           break;
         }
@@ -204,7 +246,7 @@ export async function scanHtmlHeadForStreamingInjection(
       if (tag.closing) {
         if (tag.name === 'template' && templateDepth > 0) templateDepth -= 1;
         if (tag.name === 'head' && templateDepth === 0) headScanDone = true;
-        if (headScanDone && hasLoadTimeLocationNavigation) scanDone = true;
+        if (canStopWholeDocumentScan()) scanDone = true;
         continue;
       }
 
@@ -240,9 +282,12 @@ export async function scanHtmlHeadForStreamingInjection(
       if (RAW_TEXT_TAGS.has(tag.name)) {
         rawTextTag = tag.name;
       }
-      if (headScanDone && hasLoadTimeLocationNavigation) scanDone = true;
+      if (canStopWholeDocumentScan()) scanDone = true;
     }
-    if (scanDone) break;
+    if (scanDone) {
+      complete = false;
+      break;
+    }
   }
 
   return finish();

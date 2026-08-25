@@ -224,6 +224,18 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
         '</body></html>',
       ].join('')),
     );
+    await writeFile(
+      path.join(dir, 'large-late-guards.html'),
+      Buffer.from([
+        '<!doctype html><html><head><title>Late guards</title></head><body>',
+        'x'.repeat((96 * 1024) + 1),
+        '<input autofocus>',
+        '<script type="text/babel" src="./screen-1.jsx"></script>',
+        '<script>location.replace("./next.html")</script>',
+        'x'.repeat((2 * 1024 * 1024) + 256),
+        '</body></html>',
+      ].join('')),
+    );
     await writeFile(path.join(dir, 'styles.css'), 'body { color: rgb(1, 2, 3); }');
     await writeFile(path.join(dir, 'support.js'), 'window.__supportLoaded = true;');
     for (let index = 1; index <= 43; index += 1) {
@@ -415,6 +427,30 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
     expect(body.poweredPreview.scannedBytes).toBeGreaterThan(2 * 1024 * 1024);
   });
 
+  it('returns passive-guard hints when every signal is after the text-preview prefix', async () => {
+    const res = await fetch(`${baseUrl}/api/projects/${projectId}/text-preview/large-late-guards.html?limit=${96 * 1024}`);
+    expect(res.status).toBe(200);
+    const body = await res.json() as {
+      text: string;
+      passiveGuards: {
+        sandbox: boolean;
+        focus: boolean;
+        redirect: boolean;
+        scannedBytes: number;
+        complete: boolean;
+      };
+    };
+    expect(body.text).not.toContain('autofocus');
+    expect(body.text).not.toContain('text/babel');
+    expect(body.text).not.toContain('location.replace');
+    expect(body.passiveGuards).toMatchObject({
+      sandbox: true,
+      focus: true,
+      redirect: true,
+    });
+    expect(body.passiveGuards.scannedBytes).toBeGreaterThan(96 * 1024);
+  });
+
   it('streams URL preview bridges into large HTML while preserving range semantics', async () => {
     const url = `${rawUrl('large.html')}?odPreviewBridge=scroll&odPreviewBridge=selection&odPreviewBridge=snapshot&odPreviewBridge=observability`;
     const full = await fetch(url);
@@ -492,6 +528,19 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
     expect(html).toContain('data-od-preview-redirect-guard');
     expect(html).toContain('var BLOCK_LOAD_TIME_SCRIPT_REDIRECT = true;');
     expect(html).toContain('location.replace("./next.html")');
+  });
+
+  it('streams every requested passive guard for signals after the routing prefix', async () => {
+    const preview = await fetch(
+      `${rawUrl('large-late-guards.html')}?odPreviewBridge=sandbox&odPreviewBridge=focus&odPreviewBridge=redirect`,
+      { headers: { Connection: 'close' } },
+    );
+    expect(preview.status).toBe(200);
+    const html = await preview.text();
+    expect(html).toContain('data-od-sandbox-shim');
+    expect(html).toContain('data-od-preview-focus-guard');
+    expect(html).toContain('data-od-preview-redirect-guard');
+    expect(html).toContain('var BLOCK_LOAD_TIME_SCRIPT_REDIRECT = true;');
   });
 
   it('streams requested bridges into large powered HTML previews', async () => {

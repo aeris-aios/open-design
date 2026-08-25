@@ -1,3 +1,9 @@
+import {
+  previewHtmlNeedsFocusGuard,
+  previewHtmlNeedsRedirectGuard,
+  previewHtmlNeedsSandboxShim,
+} from '@open-design/contracts/runtime/preview-guards';
+
 /**
  * Decide between two HTML preview render strategies in FileViewer:
  *
@@ -211,10 +217,7 @@ export function parseForceInline(search: string | URLSearchParams | null | undef
  * False positives add a passive focus guard, which is the safe direction.
  */
 export function htmlNeedsFocusGuard(source: string): boolean {
-  if (/\.\s*focus\s*\(/i.test(source)) return true;
-  if (/\bautofocus\b/i.test(source)) return true;
-  if (/<script\b[^>]*\bsrc\s*=/i.test(source)) return true;
-  return false;
+  return previewHtmlNeedsFocusGuard(source);
 }
 
 /**
@@ -257,22 +260,7 @@ export function htmlNeedsPoweredPreview(source: string | null | undefined): bool
 }
 
 export function htmlNeedsSandboxShim(source: string): boolean {
-  // Quote-optional: HTML5 permits unquoted attribute values
-  // (`<script type=text/babel src=app.jsx>`). The trailing `\b` rejects
-  // same-prefix word continuations like `text/babelish`. Hyphenated variants
-  // (`text/babel-other`) still match because `\b` treats `-` as a non-word
-  // boundary, but that's a harmless false positive — srcDoc fallback is
-  // the safe direction. Tightening to a `(?=[\s>"'])` lookahead would also
-  // reject hyphenated variants if a real case ever surfaces.
-  if (/<script\s[^>]*\btype\s*=\s*["']?text\/babel\b/i.test(source)) return true;
-  if (/\b(?:local|session)Storage\b/.test(source)) return true;
-  // External `<script ... src=...>` — see issue #2361. `\s[^>]*?` requires at
-  // least one whitespace after `<script` (so we don't match `<scripts>`-like
-  // text or self-closing-ish edge cases) and stays non-greedy to keep the
-  // search bounded to the tag itself. Lazy match avoids spilling into
-  // unrelated `src=` attributes on later tags in the same document.
-  if (/<script\s[^>]*?\bsrc\s*=/i.test(source)) return true;
-  return false;
+  return previewHtmlNeedsSandboxShim(source);
 }
 
 /**
@@ -296,14 +284,5 @@ export function htmlNeedsSandboxShim(source: string): boolean {
  * false negative is the same unguarded preview as before.
  */
 export function htmlNeedsRedirectGuard(source: string | null | undefined): boolean {
-  if (!source) return false;
-  // <meta http-equiv="refresh" ...> in any attribute order / quoting.
-  if (/<meta\b[^>]*\bhttp-equiv\s*=\s*["']?\s*refresh\b/i.test(source)) return true;
-  // location.reload() / location.replace(...) / location.assign(...).
-  if (/\blocation\s*\.\s*(?:reload|replace|assign)\s*\(/i.test(source)) return true;
-  // location.href = ...  (an assignment, not a read — `=` not followed by `=`).
-  if (/\blocation\s*\.\s*href\s*=[^=]/i.test(source)) return true;
-  // window.location = ... / document.location = ... / self|top|parent.location = ...
-  if (/\b(?:window|document|self|top|parent)\s*\.\s*location\s*=[^=]/i.test(source)) return true;
-  return false;
+  return previewHtmlNeedsRedirectGuard(source);
 }

@@ -237,6 +237,13 @@ export interface ProjectFileTextPreviewResponse {
     scannedBytes: number;
     complete: boolean;
   };
+  passiveGuards: {
+    sandbox: boolean;
+    focus: boolean;
+    redirect: boolean;
+    scannedBytes: number;
+    complete: boolean;
+  };
 }
 
 export interface ProjectFolderResponse {

@@ -92,6 +92,20 @@ describe('scanHtmlHeadForStreamingInjection', () => {
     expect(fixture.result.hasLoadTimeLocationNavigation).toBe(true);
   });
 
+  it('detects passive guard signals after the routing-preview prefix', async () => {
+    const fixture = await scan([
+      '<!doctype html><html><head><title>Late guards</title></head><body>',
+      'x'.repeat((96 * 1024) + 1),
+      '<input autofocus>',
+      '<script type="text/babel" src="./app.jsx"></script>',
+      '<script>location.replace("./next.html")</script>',
+      '</body></html>',
+    ].join(''));
+    expect(fixture.result.needsSandboxShim).toBe(true);
+    expect(fixture.result.needsFocusGuard).toBe(true);
+    expect(fixture.result.needsRedirectGuard).toBe(true);
+  });
+
   it('does not close raw-text elements on end-tag-name prefixes', async () => {
     const fixture = await scan([
       '<html><head><script>',
