@@ -1,4 +1,5 @@
 import {
+  createPreviewRuntimeProbeMessage,
   createPreviewRuntimeSetCapabilitiesMessage,
   normalizePreviewRuntimeCapabilities,
   parsePreviewRuntimeMessage,
@@ -53,12 +54,18 @@ export class PreviewRuntimeController {
     this.#sendCapabilityCommand();
   }
 
+  probe(): void {
+    this.#target.postMessage(createPreviewRuntimeProbeMessage(this.#identity), '*');
+  }
+
   handleMessage(event: PreviewRuntimeMessageEvent): PreviewRuntimeMessage | null {
     if (event.source !== this.#target) return null;
     const message = parsePreviewRuntimeMessage(event.data);
     if (message === null || !previewRuntimeMessageMatchesDocument(message, this.#identity)) return null;
 
     switch (message.type) {
+      case 'od:preview:probe':
+        return null;
       case 'od:preview:hello':
         this.#available = message.availableCapabilities;
         this.#lastCommandKey = '';

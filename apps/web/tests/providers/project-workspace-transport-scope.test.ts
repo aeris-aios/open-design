@@ -186,6 +186,7 @@ describe('persisted project Workspace transport scope', () => {
       'project-1',
       'pages/brand.html',
     )).resolves.toEqual({
+      sessionId: 'scope-0001',
       normalUrl: 'http://n-scope-0001.localhost:17456/pages/brand.html',
       poweredUrl: 'http://p-scope-0001.localhost:17456/pages/brand.html',
       documentVersion: '120:456.5',

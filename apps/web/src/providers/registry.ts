@@ -2359,6 +2359,7 @@ export interface ProjectPreviewBaseScope {
 }
 
 export interface ProjectScopedPreviewNavigation {
+  sessionId: string;
   normalUrl: string;
   poweredUrl: string;
   documentVersion: string;
@@ -2437,13 +2438,15 @@ export async function fetchProjectScopedPreviewNavigation(
     const powered = new URL(body.scopedOrigin.poweredUrl);
     const normalMatch = /^n-([A-Za-z0-9_-]{8,128})\.localhost$/u.exec(normal.hostname);
     const poweredMatch = /^p-([A-Za-z0-9_-]{8,128})\.localhost$/u.exec(powered.hostname);
+    const sessionId = normalMatch?.[1];
     const expectedPath = `/${name.split('/').map(encodeURIComponent).join('/')}`;
     if (
       normal.protocol !== 'http:'
       || powered.protocol !== 'http:'
       || !normalMatch
       || !poweredMatch
-      || normalMatch[1] !== poweredMatch[1]
+      || !sessionId
+      || sessionId !== poweredMatch[1]
       || normal.port !== powered.port
       || normal.pathname !== expectedPath
       || powered.pathname !== expectedPath
@@ -2464,6 +2467,7 @@ export async function fetchProjectScopedPreviewNavigation(
       : Date.now() + LEGACY_PREVIEW_SCOPE_REFRESH_MS;
 
     return {
+      sessionId,
       normalUrl: normal.href,
       poweredUrl: powered.href,
       documentVersion: body.scopedOrigin.documentVersion,

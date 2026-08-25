@@ -88,7 +88,10 @@ var available=${safeInlineJson(availableCapabilities)};
 var availableSet=new Set(available);
 var modules=Object.create(null);
 var activeSet=new Set();
+var readySent=false;
+var visiblePaintSent=false;
 function send(type,extra){parent.postMessage(Object.assign({type:type},identity,extra||{}),'*');}
+function announce(){send('od:preview:hello',{availableCapabilities:available});}
 function normalize(input){if(!Array.isArray(input))return [];return available.filter(function(capability){return input.indexOf(capability)!==-1&&availableSet.has(capability);});}
 function register(capability,create){
   if(!availableSet.has(capability)||modules[capability])return;
@@ -114,13 +117,20 @@ ${moduleSources}
 window.addEventListener('message',function(event){
   if(event.source!==parent)return;
   var data=event.data;
+  if(data&&data.type==='od:preview:probe'&&data.protocolVersion===identity.protocolVersion&&data.sessionId===identity.sessionId&&data.documentVersion===identity.documentVersion){
+    announce();
+    if(readySent)send('od:preview:ready');
+    if(visiblePaintSent)send('od:preview:visible-paint');
+    return;
+  }
   if(!data||data.type!=='od:preview:set-capabilities'||data.protocolVersion!==identity.protocolVersion||data.sessionId!==identity.sessionId||data.documentVersion!==identity.documentVersion)return;
   send('od:preview:capabilities-applied',{enabledCapabilities:applyCapabilities(data.enabledCapabilities)});
 });
-send('od:preview:hello',{availableCapabilities:available});
+announce();
 function ready(){
+  readySent=true;
   send('od:preview:ready');
-  requestAnimationFrame(function(){requestAnimationFrame(function(){send('od:preview:visible-paint');});});
+  requestAnimationFrame(function(){requestAnimationFrame(function(){visiblePaintSent=true;send('od:preview:visible-paint');});});
 }
 if(document.readyState==='loading')window.addEventListener('DOMContentLoaded',ready,{once:true});else queueMicrotask(ready);
 })();</script>`;

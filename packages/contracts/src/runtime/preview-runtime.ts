@@ -25,6 +25,7 @@ export const PREVIEW_RUNTIME_CAPABILITIES = [
 export type PreviewRuntimeCapability = typeof PREVIEW_RUNTIME_CAPABILITIES[number];
 
 export const PREVIEW_RUNTIME_MESSAGE_TYPES = [
+  'od:preview:probe',
   'od:preview:hello',
   'od:preview:set-capabilities',
   'od:preview:capabilities-applied',
@@ -41,6 +42,10 @@ export interface PreviewRuntimeDocumentIdentity {
 
 interface PreviewRuntimeMessageBase extends PreviewRuntimeDocumentIdentity {
   protocolVersion: typeof PREVIEW_RUNTIME_PROTOCOL_VERSION;
+}
+
+export interface PreviewRuntimeProbeMessage extends PreviewRuntimeMessageBase {
+  type: 'od:preview:probe';
 }
 
 export interface PreviewRuntimeHelloMessage extends PreviewRuntimeMessageBase {
@@ -67,6 +72,7 @@ export interface PreviewRuntimeVisiblePaintMessage extends PreviewRuntimeMessage
 }
 
 export type PreviewRuntimeMessage =
+  | PreviewRuntimeProbeMessage
   | PreviewRuntimeHelloMessage
   | PreviewRuntimeSetCapabilitiesMessage
   | PreviewRuntimeCapabilitiesAppliedMessage
@@ -121,6 +127,8 @@ export function parsePreviewRuntimeMessage(value: unknown): PreviewRuntimeMessag
 
   const messageType = value.type as PreviewRuntimeMessageType;
   switch (messageType) {
+    case 'od:preview:probe':
+      return { type: messageType, ...base };
     case 'od:preview:hello': {
       const availableCapabilities = parseCapabilities(value.availableCapabilities);
       if (availableCapabilities === null) return null;
@@ -136,6 +144,20 @@ export function parsePreviewRuntimeMessage(value: unknown): PreviewRuntimeMessag
     case 'od:preview:visible-paint':
       return { type: messageType, ...base };
   }
+}
+
+export function createPreviewRuntimeProbeMessage(
+  input: PreviewRuntimeDocumentIdentity,
+): PreviewRuntimeProbeMessage {
+  if (!isBoundedIdentity(input.sessionId) || !isBoundedIdentity(input.documentVersion)) {
+    throw new TypeError('preview runtime document identity must be a non-empty bounded string');
+  }
+  return {
+    type: 'od:preview:probe',
+    protocolVersion: PREVIEW_RUNTIME_PROTOCOL_VERSION,
+    sessionId: input.sessionId,
+    documentVersion: input.documentVersion,
+  };
 }
 
 export function createPreviewRuntimeSetCapabilitiesMessage(

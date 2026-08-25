@@ -74,6 +74,33 @@ describe('preview runtime bootstrap', () => {
       { type: 'od:preview:visible-paint', protocolVersion: 1, ...identity },
     ]);
 
+    const probe = (overrides: Record<string, unknown> = {}) => {
+      for (const listener of listeners.get('message') ?? []) {
+        listener({
+          source: parent,
+          data: {
+            type: 'od:preview:probe',
+            protocolVersion: 1,
+            ...identity,
+            ...overrides,
+          },
+        });
+      }
+    };
+    probe({ sessionId: 'stale' });
+    expect(messages).toHaveLength(3);
+    probe();
+    expect(messages.slice(-3).map(parsePreviewRuntimeMessage)).toEqual([
+      {
+        type: 'od:preview:hello',
+        protocolVersion: 1,
+        ...identity,
+        availableCapabilities: ['snapshot', 'deck'],
+      },
+      { type: 'od:preview:ready', protocolVersion: 1, ...identity },
+      { type: 'od:preview:visible-paint', protocolVersion: 1, ...identity },
+    ]);
+
     const sendCommand = (overrides: Record<string, unknown> = {}) => {
       for (const listener of listeners.get('message') ?? []) {
         listener({
@@ -89,7 +116,7 @@ describe('preview runtime bootstrap', () => {
       }
     };
     sendCommand({ documentVersion: 'stale' });
-    expect(messages).toHaveLength(3);
+    expect(messages).toHaveLength(6);
     sendCommand();
     expect(parsePreviewRuntimeMessage(messages.at(-1))).toEqual({
       type: 'od:preview:capabilities-applied',

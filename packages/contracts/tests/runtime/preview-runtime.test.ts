@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   PREVIEW_RUNTIME_PROTOCOL_VERSION,
+  createPreviewRuntimeProbeMessage,
   createPreviewRuntimeSetCapabilitiesMessage,
   normalizePreviewRuntimeCapabilities,
   parsePreviewRuntimeMessage,
@@ -60,6 +61,11 @@ describe('preview runtime protocol', () => {
   });
 
   it('creates a canonical host capability command', () => {
+    expect(createPreviewRuntimeProbeMessage(identity)).toEqual({
+      type: 'od:preview:probe',
+      protocolVersion: 1,
+      ...identity,
+    });
     expect(createPreviewRuntimeSetCapabilitiesMessage({
       ...identity,
       enabledCapabilities: ['edit', 'selection', 'edit'],

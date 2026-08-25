@@ -84,6 +84,7 @@ export class PreviewSession {
       }),
     };
     this.#standby = managed;
+    managed.controller.probe();
     this.#emitSnapshot();
   }
 

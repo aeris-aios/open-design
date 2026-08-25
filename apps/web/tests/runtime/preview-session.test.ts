@@ -36,6 +36,12 @@ describe('PreviewSession', () => {
     const first = document('v1');
 
     session.stageDocument(first);
+    expect(first.target.postMessage).toHaveBeenCalledWith({
+      type: 'od:preview:probe',
+      protocolVersion: PREVIEW_RUNTIME_PROTOCOL_VERSION,
+      sessionId: 'session-1',
+      documentVersion: 'v1',
+    }, '*');
     session.handleMessage(event(first, 'od:preview:ready'));
     expect(session.snapshot()).toMatchObject({ current: null, standbyReady: true });
 
