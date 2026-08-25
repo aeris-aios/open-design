@@ -81,9 +81,18 @@ describe('first_visible_output is stamped at emission, not at first token', () =
     const timing = await runOnceAndReadTiming(bin, 'direct-text');
 
     expect(timing.time_to_first_token_ms).toBeTypeOf('number');
-    expect(timing.time_to_first_visible_output_ms).toBe(
-      timing.time_to_first_token_ms,
-    );
+    expect(timing.time_to_first_visible_output_ms).toBeTypeOf('number');
+    const gap =
+      timing.time_to_first_visible_output_ms! - timing.time_to_first_token_ms!;
+    // Never negative: the daemon cannot show bytes before it has the token they
+    // are made of. This held only by accident while both marks shared one
+    // timestamp; now that they are stamped independently it is enforced by
+    // reading the decode clock BEFORE the emit at every text_delta site.
+    expect(gap).toBeGreaterThanOrEqual(0);
+    // And no manufactured gap. The residue is the daemon's own SSE fan-out for
+    // one delta — sub-millisecond when idle, a few ms on a loaded box — which is
+    // an order of magnitude below the withheld window the metric reports.
+    expect(gap).toBeLessThan(100);
   }, 90_000);
 
   it('keeps the first-token fallback when the run never emits visible output', async () => {

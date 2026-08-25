@@ -13947,8 +13947,16 @@ export async function startServer({
       noteAgentActivity();
       // Role-marker guard for qoder / json-event-stream / pi-rpc (#3247).
       if (ev?.type === 'text_delta' && typeof ev.delta === 'string') {
+        // Decode time, captured BEFORE the emit. The gate has to run first to
+        // learn whether these bytes are a token at all, but the emit inside it
+        // fans the delta out to every SSE client and stamps
+        // `first_visible_output` on the way — reading the clock afterwards
+        // charges our own write latency to TTFT and can leave the visible-output
+        // mark a millisecond AHEAD of the token that produced it. See the
+        // matching sites in the Copilot and ACP handlers.
+        const decodedAt = Date.now();
         if (emitTitleFilteredGuardedTextDelta(ev.delta)) {
-          noteFirstTokenAt();
+          noteFirstTokenAt(decodedAt);
           agentProducedOutput = true;
         }
         return;
@@ -14167,8 +14175,10 @@ export async function startServer({
         lastAgentEventPhase = summarizeAgentEventForInactivity(ev);
         noteAgentActivity();
         if (ev?.type === 'text_delta' && typeof ev.delta === 'string') {
+          // Decode time, read before the emit — see `sendAgentEvent`.
+          const decodedAt = Date.now();
           if (emitTitleFilteredGuardedTextDelta(ev.delta)) {
-            noteFirstTokenAt();
+            noteFirstTokenAt(decodedAt);
           }
           return;
         }
@@ -14351,8 +14361,10 @@ export async function startServer({
             return;
           }
           if (event === 'agent' && data?.type === 'text_delta' && typeof data.delta === 'string') {
+            // Decode time, read before the emit — see `sendAgentEvent`.
+            const decodedAt = Date.now();
             if (emitTitleFilteredGuardedTextDelta(data.delta)) {
-              noteFirstTokenAt();
+              noteFirstTokenAt(decodedAt);
             }
             return;
           }
