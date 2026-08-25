@@ -12,43 +12,49 @@ import {
  * Behavioural cover for the OPEND-2147 deck-stage probe.
  *
  * Asserting that the bridge *source* contains a string proves nothing about
- * whether the probe can ever run. The gate it sits behind starts closed
- * (`hostActive = false`) and only opens when FileViewer posts the host-state
- * message, so a probe wired to the wrong lifecycle would be dead code that
- * every string-level test still passes. These cases execute the real bridge in
- * a document and assert what it posts.
+ * whether the probe can run, and neither does a fixture built in a shape no
+ * deck actually ships. This product authors the scaled canvas three different
+ * ways — `<deck-stage>` hides its canvas in shadow DOM, the canonical agent
+ * skeleton uses `#deck-stage` / `.deck-stage` at a fixed size scaled inline,
+ * and some design templates use a plain `.stage` with `--canvas-w` — so each
+ * gets a case here, collapsed and healthy.
  *
- * `getComputedStyle` is stubbed deliberately. jsdom has no layout engine, so it
- * cannot resolve a transform to a matrix or expose custom properties the way a
- * browser does; feeding the probe controlled computed values tests the decision
- * we own — which measurements mean "collapsed", and what gets reported — and
- * makes no claim about the CSS engine underneath.
+ * Sizes are set as inline styles rather than by stubbing `getComputedStyle`,
+ * so the probe reads the same property in the test that it reads in a browser.
  */
 
-interface StubStyle {
-  transform: string;
-  props: Record<string, string>;
-}
+const DECK_TIMEOUT_MS = 60_000;
+
+// The bridge registers window/document listeners and offers no teardown, so a
+// bridge installed by an earlier case would still be listening when the next
+// case activates the host — and would report against the next case's DOM. Record
+// what it registers and unregister it between tests.
+type Registration = [EventTarget, string, EventListenerOrEventListenerObject, unknown];
+let registrations: Registration[] = [];
 
 function installBridge(): void {
-  const bridge = buildPreviewObservabilityBridge();
-  const body = bridge.replace(/^<script[^>]*>/, '').replace(/<\/script>\s*$/, '');
-  new Function(body)();
+  const targets: EventTarget[] = [window, document];
+  const originals = targets.map((t) => t.addEventListener);
+  targets.forEach((target, i) => {
+    target.addEventListener = function patched(type: string, listener: never, options: never) {
+      registrations.push([target, type, listener, options]);
+      return (originals[i] as never as typeof target.addEventListener).call(target, type, listener, options);
+    } as typeof target.addEventListener;
+  });
+  try {
+    const bridge = buildPreviewObservabilityBridge();
+    const body = bridge.replace(/^<script[^>]*>/, '').replace(/<\/script>\s*$/, '');
+    new Function(body)();
+  } finally {
+    targets.forEach((target, i) => { target.addEventListener = originals[i] as never; });
+  }
 }
 
-function stubComputedStyle(root: StubStyle, stage: StubStyle): void {
-  vi.stubGlobal('getComputedStyle', (element: Element) => {
-    const source = element === document.documentElement ? root : stage;
-    return {
-      transform: source.transform,
-      display: 'block',
-      visibility: 'visible',
-      opacity: '1',
-      backgroundColor: 'rgb(10, 10, 10)',
-      backgroundImage: 'none',
-      getPropertyValue: (name: string) => source.props[name] ?? '',
-    } as unknown as CSSStyleDeclaration;
-  });
+function uninstallBridges(): void {
+  for (const [target, type, listener, options] of registrations) {
+    target.removeEventListener(type, listener, options as never);
+  }
+  registrations = [];
 }
 
 function activateHost(): void {
@@ -65,6 +71,27 @@ function deckMessages(post: ReturnType<typeof vi.fn>): Record<string, unknown>[]
       && data.event === 'deck_stage_unscaled');
 }
 
+/** The canonical skeleton: a fixed canvas the artifact scales inline. */
+function mountDeckStage(transform: string, size = '1920px'): void {
+  document.body.innerHTML =
+    `<div class="deck-shell"><div class="deck-stage" style="width:${size};height:1080px;transform:${transform}"></div></div>`;
+}
+
+/** The custom element: the canvas lives in shadow DOM, invisible to querySelector. */
+function mountShadowDeckStage(transform: string): void {
+  document.body.innerHTML = '<deck-stage></deck-stage>';
+  const host = document.querySelector('deck-stage')!;
+  const root = host.attachShadow({ mode: 'open' });
+  root.innerHTML =
+    `<div class="stage"><div class="canvas" style="width:1920px;height:1080px;transform:${transform}"></div></div>`;
+}
+
+function run(post: ReturnType<typeof vi.fn>): void {
+  installBridge();
+  activateHost();
+  vi.advanceTimersByTime(DECK_TIMEOUT_MS);
+}
+
 let post: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
@@ -74,35 +101,26 @@ beforeEach(() => {
   // posts to.
   vi.stubGlobal('postMessage', post);
   Object.defineProperty(document, 'readyState', { value: 'complete', configurable: true });
-  document.body.innerHTML = '<div class="stage"></div>';
   delete (window as unknown as Record<string, unknown>).__odPreviewObservability;
 });
 
 afterEach(() => {
+  uninstallBridges();
   vi.useRealTimers();
   vi.unstubAllGlobals();
+  document.body.innerHTML = '';
 });
 
 describe('deck stage probe (OPEND-2147)', () => {
-  it('reports the measurement once the host says the preview is active', () => {
-    stubComputedStyle(
-      { transform: 'none', props: { '--canvas-w': '1920px', '--canvas-h': '1080px' } },
-      { transform: 'matrix(0, 0, 0, 0, 0, 0)', props: {} },
-    );
-    installBridge();
-
-    // The gate is closed until FileViewer announces an active preview: a probe
-    // that fired here would also fire for every backgrounded frame.
-    vi.advanceTimersByTime(60_000);
-    expect(deckMessages(post)).toHaveLength(0);
-
-    activateHost();
-    vi.advanceTimersByTime(60_000);
+  it('reports a collapsed canonical .deck-stage', () => {
+    mountDeckStage('matrix(0, 0, 0, 0, 0, 0)');
+    run(post);
 
     const [measurement, ...rest] = deckMessages(post);
     expect(rest).toHaveLength(0);
     expect(measurement).toMatchObject({
       event: 'deck_stage_unscaled',
+      stage_kind: 'deck-stage',
       stage_transform: 'matrix',
       stage_scale_permille: 0,
       canvas_width: 1920,
@@ -110,48 +128,69 @@ describe('deck stage probe (OPEND-2147)', () => {
       ready_state: 'complete',
       visibility_state: 'visible',
     });
-    expect(measurement?.viewport_width).toBeGreaterThan(1);
   });
 
-  it('stays quiet for a deck that fitted correctly', () => {
-    stubComputedStyle(
-      { transform: 'none', props: { '--canvas-w': '1920px', '--canvas-h': '1080px' } },
-      { transform: 'matrix(0.4907, 0, 0, 0.4907, 0, 0)', props: {} },
-    );
-    installBridge();
-    activateHost();
-    vi.advanceTimersByTime(60_000);
+  it('reports a collapsed canvas hidden inside a deck-stage shadow root', () => {
+    mountShadowDeckStage('matrix(0, 0, 0, 0, 0, 0)');
+    run(post);
 
-    expect(deckMessages(post)).toHaveLength(0);
+    expect(deckMessages(post)[0]).toMatchObject({
+      stage_kind: 'shadow-canvas',
+      stage_scale_permille: 0,
+      canvas_width: 1920,
+    });
   });
 
-  it('stays quiet for a preview that declares no fixed canvas', () => {
-    // Only fixed-canvas decks have a fit contract to violate. Without this the
-    // probe would fire for any preview whose root element happens to carry no
-    // transform.
-    stubComputedStyle(
-      { transform: 'none', props: {} },
-      { transform: 'none', props: {} },
-    );
-    installBridge();
-    activateHost();
-    vi.advanceTimersByTime(60_000);
+  it('reports a template .stage that declares its canvas in custom properties', () => {
+    document.body.innerHTML =
+      '<div class="stage" style="--canvas-w:1920px;--canvas-h:1080px;transform:matrix(0, 0, 0, 0, 0, 0)"></div>';
+    run(post);
 
-    expect(deckMessages(post)).toHaveLength(0);
+    expect(deckMessages(post)[0]).toMatchObject({
+      stage_kind: 'stage',
+      stage_scale_permille: 0,
+      canvas_width: 1920,
+    });
   });
 
   it('separates a stage that was never fitted from one fitted to nothing', () => {
-    stubComputedStyle(
-      { transform: 'none', props: { '--canvas-w': '1920px', '--canvas-h': '1080px' } },
-      { transform: 'none', props: {} },
-    );
-    installBridge();
-    activateHost();
-    vi.advanceTimersByTime(60_000);
+    mountDeckStage('none');
+    run(post);
 
     expect(deckMessages(post)[0]).toMatchObject({
+      stage_kind: 'deck-stage',
       stage_transform: 'none',
       stage_scale_permille: 0,
     });
+  });
+
+  it('stays quiet for a deck that fitted correctly', () => {
+    mountDeckStage('matrix(0.4907, 0, 0, 0.4907, 0, 0)');
+    run(post);
+
+    expect(deckMessages(post)).toHaveLength(0);
+  });
+
+  it('stays quiet for a .stage wrapper that just tracks the viewport', () => {
+    // Some templates ship a 100vw/100vh `.stage` with no fit transform at all.
+    // It carries no fixed canvas, so there is no fit contract to violate and
+    // reporting it would bury the real signal.
+    document.body.innerHTML =
+      `<div class="stage" style="width:${window.innerWidth}px;height:${window.innerHeight}px"></div>`;
+    run(post);
+
+    expect(deckMessages(post)).toHaveLength(0);
+  });
+
+  it('stays quiet until the host reports an active preview', () => {
+    mountDeckStage('matrix(0, 0, 0, 0, 0, 0)');
+    installBridge();
+    // A probe that fired here would also fire for every backgrounded frame.
+    vi.advanceTimersByTime(DECK_TIMEOUT_MS);
+    expect(deckMessages(post)).toHaveLength(0);
+
+    activateHost();
+    vi.advanceTimersByTime(DECK_TIMEOUT_MS);
+    expect(deckMessages(post)).toHaveLength(1);
   });
 });

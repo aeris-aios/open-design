@@ -118,6 +118,7 @@ export interface PreviewObservabilityMessage {
   // at all", which one number cannot express.
   stage_scale_permille?: number;
   stage_transform?: string;
+  stage_kind?: string;
   stage_width?: number;
   stage_height?: number;
   canvas_width?: number;
@@ -143,7 +144,8 @@ type PreviewStringField =
   | 'resource_url'
   | 'ready_state'
   | 'visibility_state'
-  | 'stage_transform';
+  | 'stage_transform'
+  | 'stage_kind';
 
 const STRING_FIELD_LIMITS: ReadonlyArray<readonly [PreviewStringField, number]> = [
   ['message', 500],
@@ -155,6 +157,7 @@ const STRING_FIELD_LIMITS: ReadonlyArray<readonly [PreviewStringField, number]> 
   ['ready_state', 32],
   ['visibility_state', 32],
   ['stage_transform', 32],
+  ['stage_kind', 32],
 ];
 
 type PreviewNumberField =
@@ -429,12 +432,34 @@ export function buildPreviewObservabilityBridge(): string {
   // this reports the measurement instead of guessing a cause: frame size,
   // authored canvas size, resolved scale and document state together are what
   // separate a collapsed stage from a frame legitimately laid out at no width.
-  function readCanvasPx(style, name){
-    if (!style) return 0;
-    var raw = String(style.getPropertyValue(name) || '').trim();
-    if (!raw) return 0;
-    var parsed = parseFloat(raw);
+  function px(value){
+    var parsed = parseFloat(String(value || '').trim());
     return isFinite(parsed) && parsed > 0 ? Math.round(parsed) : 0;
+  }
+  function readCanvasPx(style, name){
+    return style ? px(style.getPropertyValue(name)) : 0;
+  }
+  // The scaled canvas is authored in three shapes across this product, and a
+  // probe that knows only one is a probe that stays silent on the others:
+  //   - <deck-stage> keeps its canvas in shadow DOM, so document.querySelector
+  //     cannot see it at all (runtime/deck-stage-fallback.ts).
+  //   - the canonical agent skeleton authors #deck-stage / .deck-stage at a
+  //     fixed 1920x1080 and scales it inline (prompts/deck-framework.ts). This
+  //     is the shape the export path already targets via DECK_STAGE_SELECTOR.
+  //   - some design templates use a plain .stage plus --canvas-w / --canvas-h.
+  // Size comes from the computed width/height rather than a custom property so
+  // all three resolve through one path.
+  function resolveDeckCanvas(){
+    var host = document.querySelector('deck-stage');
+    if (host && host.shadowRoot) {
+      var shadowCanvas = host.shadowRoot.querySelector('.canvas');
+      if (shadowCanvas) return { el: shadowCanvas, kind: 'shadow-canvas' };
+    }
+    var authored = document.querySelector('#deck-stage, .deck-stage');
+    if (authored) return { el: authored, kind: 'deck-stage' };
+    var stage = document.querySelector('.stage');
+    if (stage) return { el: stage, kind: 'stage' };
+    return null;
   }
   function resolvedScale(style){
     // transform computes to a matrix whose first component is the horizontal
@@ -451,31 +476,36 @@ export function buildPreviewObservabilityBridge(): string {
   }
   function checkDeckStage(){
     if (deckStageReported || !whiteScreenCheckEligible()) return;
-    var stage = document.querySelector('.stage');
-    if (!stage) return;
+    var found = resolveDeckCanvas();
+    if (!found) return;
+    var stage = found.el;
     var rootStyle, stageStyle, rect;
     try {
       rootStyle = window.getComputedStyle(document.documentElement);
       stageStyle = window.getComputedStyle(stage);
       rect = stage.getBoundingClientRect();
     } catch (_) { return; }
-    var canvasW = readCanvasPx(rootStyle, '--canvas-w') || readCanvasPx(stageStyle, '--canvas-w');
-    var canvasH = readCanvasPx(rootStyle, '--canvas-h') || readCanvasPx(stageStyle, '--canvas-h');
-    // No authored canvas means this is not a fixed-canvas deck, so there is no
-    // fit contract to violate and nothing to report.
-    if (!canvasW) return;
+    var canvasW = px(stageStyle.width) || readCanvasPx(rootStyle, '--canvas-w') || readCanvasPx(stageStyle, '--canvas-w');
+    var canvasH = px(stageStyle.height) || readCanvasPx(rootStyle, '--canvas-h') || readCanvasPx(stageStyle, '--canvas-h');
+    var frameW = Math.max(0, Math.round(window.innerWidth || 0));
+    var frameH = Math.max(0, Math.round(window.innerHeight || 0));
+    // Only a fixed canvas has a fit contract to violate. A wrapper sized to the
+    // viewport (a 100vw/100vh .stage, which some templates ship) legitimately
+    // carries no transform, and reporting those would bury the real signal.
+    if (canvasW < 640 || Math.abs(canvasW - frameW) <= 1) return;
     var scale = resolvedScale(stageStyle);
     if (scale > DECK_STAGE_MIN_SCALE) { deckStageReported = true; return; }
     deckStageReported = true;
     send('deck_stage_unscaled', {
+      stage_kind: found.kind,
       stage_transform: scale < 0 ? 'none' : 'matrix',
       stage_scale_permille: scale < 0 ? 0 : Math.round(scale * 1000),
       stage_width: Math.round(rect.width),
       stage_height: Math.round(rect.height),
       canvas_width: canvasW,
       canvas_height: canvasH,
-      viewport_width: Math.max(0, Math.round(window.innerWidth || 0)),
-      viewport_height: Math.max(0, Math.round(window.innerHeight || 0)),
+      viewport_width: frameW,
+      viewport_height: frameH,
       ready_state: text(document.readyState, 32),
       visibility_state: text(document.visibilityState, 32),
       elapsed_ms: Math.max(0, Date.now() - bridgeStartedAt)

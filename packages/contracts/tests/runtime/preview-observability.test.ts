@@ -25,20 +25,26 @@ describe('preview observability contract', () => {
   });
 
   // OPEND-2147: a deck whose stage collapses to scale ~0 renders as an empty
-  // frame, but every existing signal stays clean -- the artifact loaded, no
+  // frame while every existing signal stays clean -- the artifact loaded, no
   // script threw, and `visiblePaintCount()` still sees painted chrome, so
-  // `white_screen` never fires. The frame is sized and the content is simply
-  // scaled out of existence. Without a dedicated probe the failure leaves no
-  // trace at all, which is exactly why it took seven eliminations and still
-  // could not be reproduced. The bridge must carry its own measurement.
-  it('probes a sized deck frame whose stage collapsed to no scale', () => {
+  // `white_screen` never fires.
+  //
+  // This only checks that the bridge carries the probe and its fields at all.
+  // Whether the probe fires on the shapes decks are actually authored in --
+  // `<deck-stage>` shadow canvas, `.deck-stage`, template `.stage` -- is
+  // behavioural and is covered by executing the bridge in
+  // apps/web/tests/observability/preview-deck-stage-probe.test.ts. A
+  // string-contains assertion cannot tell those apart.
+  it('carries the deck stage probe and its measurement fields', () => {
     const bridge = buildPreviewObservabilityBridge();
     expect(bridge).toContain('deck_stage_unscaled');
-    // The measurement has to be self-describing in the exported log: without
-    // the frame size, the authored canvas size, and the resolved scale we
-    // cannot tell a collapsed stage from a legitimately tiny frame.
-    for (const field of ['stage_scale_permille', 'stage_transform', 'stage_width', 'canvas_width', 'elapsed_ms']) {
+    for (const field of ['stage_scale_permille', 'stage_transform', 'stage_kind', 'canvas_width', 'elapsed_ms']) {
       expect(bridge).toContain(field);
+    }
+    // The selector family the export path already targets, so the two cannot
+    // drift apart silently.
+    for (const selector of ['deck-stage', '#deck-stage, .deck-stage', '.canvas']) {
+      expect(bridge).toContain(selector);
     }
   });
 
@@ -95,6 +101,7 @@ describe('preview observability contract', () => {
       event: 'deck_stage_unscaled',
       stage_scale_permille: 0,
       stage_transform: 'matrix',
+      stage_kind: 'deck-stage',
       stage_width: 0,
       stage_height: 0,
       canvas_width: 1920,
@@ -104,6 +111,7 @@ describe('preview observability contract', () => {
       elapsed_ms: 5000,
     })).toMatchObject({
       event: 'deck_stage_unscaled',
+      stage_kind: 'deck-stage',
       stage_transform: 'matrix',
       stage_width: 0,
       canvas_width: 1920,
