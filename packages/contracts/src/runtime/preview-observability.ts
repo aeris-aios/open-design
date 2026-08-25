@@ -485,8 +485,17 @@ export function buildPreviewObservabilityBridge(): string {
       stageStyle = window.getComputedStyle(stage);
       rect = stage.getBoundingClientRect();
     } catch (_) { return; }
-    var canvasW = px(stageStyle.width) || readCanvasPx(rootStyle, '--canvas-w') || readCanvasPx(stageStyle, '--canvas-w');
-    var canvasH = px(stageStyle.height) || readCanvasPx(rootStyle, '--canvas-h') || readCanvasPx(stageStyle, '--canvas-h');
+    // .stage is not a deck marker -- plain pages use that class too (see
+    // design-templates/social-carousel, a max-width: 1280px article shell with
+    // no fit transform). Only the shapes that ARE markers may treat their
+    // computed width as an authored canvas; the generic fallback has to declare
+    // one explicitly, or it is not a fixed-canvas deck and there is no fit
+    // contract to violate.
+    var declaredW = readCanvasPx(rootStyle, '--canvas-w') || readCanvasPx(stageStyle, '--canvas-w');
+    var declaredH = readCanvasPx(rootStyle, '--canvas-h') || readCanvasPx(stageStyle, '--canvas-h');
+    var markedDeck = found.kind !== 'stage';
+    var canvasW = declaredW || (markedDeck ? px(stageStyle.width) : 0);
+    var canvasH = declaredH || (markedDeck ? px(stageStyle.height) : 0);
     var frameW = Math.max(0, Math.round(window.innerWidth || 0));
     var frameH = Math.max(0, Math.round(window.innerHeight || 0));
     // Only a fixed canvas has a fit contract to violate. A wrapper sized to the

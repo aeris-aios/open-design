@@ -171,6 +171,19 @@ describe('deck stage probe (OPEND-2147)', () => {
     expect(deckMessages(post)).toHaveLength(0);
   });
 
+  it('stays quiet for a non-deck page that happens to use .stage', () => {
+    // `.stage` is not a deck marker. design-templates/social-carousel is a plain
+    // page whose `.stage { max-width: 1280px; margin: 0 auto }` carries no fit
+    // transform and no authored canvas — reading its computed width as a canvas
+    // would file every healthy render of it as a collapsed deck and poison both
+    // the frequency signal and the exported log.
+    document.body.innerHTML =
+      '<div class="stage" style="width:1280px;padding:60px 32px 80px"></div>';
+    run(post);
+
+    expect(deckMessages(post)).toHaveLength(0);
+  });
+
   it('stays quiet for a .stage wrapper that just tracks the viewport', () => {
     // Some templates ship a 100vw/100vh `.stage` with no fit transform at all.
     // It carries no fixed canvas, so there is no fit contract to violate and
