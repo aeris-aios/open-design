@@ -1957,7 +1957,11 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
         explicitExecutablePlugin
         || suppliedContextPluginWasNamed
       );
-      const rolloutPolicy = readOdNextRolloutPolicy();
+      // Read per request, not at boot: `odNextStrategyMode` is how a user opts
+      // this installation into OD Next, and "configure it and it takes effect"
+      // has to mean the next run, not the next daemon restart.
+      const rolloutAppConfig = await readAppConfig(RUNTIME_DATA_DIR).catch(() => ({}));
+      const rolloutPolicy = readOdNextRolloutPolicy(process.env, rolloutAppConfig);
       const rolloutTaskType = odNextTaskTypeForProjectScenarioBinding(
         verifiedStrategyBinding ?? verifiedScenarioBinding,
       );
@@ -1996,9 +2000,8 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
       if (routeApplicability === 'eligible' && rolloutPlugin) {
         try {
           if (effectiveAgentId) {
-            const appCfg = await readAppConfig(RUNTIME_DATA_DIR).catch(() => ({}));
             const agentCliEnv = agentCliEnvForAgent(
-              (appCfg as { agentCliEnv?: AgentCliEnv }).agentCliEnv,
+              (rolloutAppConfig as { agentCliEnv?: AgentCliEnv }).agentCliEnv,
               effectiveAgentId,
             );
             // Both probes read the same resolved launch path. The `--version`

@@ -21,6 +21,8 @@ import { readFileSync } from 'node:fs';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { createHash, randomBytes } from 'node:crypto';
 import path from 'node:path';
+import type { OdNextRolloutMode } from '@open-design/contracts';
+
 import { expandHomePrefix } from './home-expansion.js';
 
 import {
@@ -123,6 +125,10 @@ export interface AppConfigPrefs {
   customInstructions?: string | null;
   projectLocations?: ProjectLocationPrefs[];
   defaultProjectLocationId?: string | null;
+  // Whether this installation opts into the OD Next design strategy. Absent
+  // and null both mean `off` — OD Next is opt-in. `OD_NEXT_STRATEGY_ROLLOUT`
+  // outranks this when set; see readOdNextRolloutPolicy.
+  odNextStrategyMode?: OdNextRolloutMode | null;
   // Most-recently-used local working directories the user granted the agent
   // read access to from the Home composer. Become a project's
   // `metadata.linkedDirs` (read-only `--add-dir` awareness, no Design Files
@@ -152,6 +158,7 @@ const ALLOWED_KEYS: ReadonlySet<keyof AppConfigPrefs> = new Set([
   'customInstructions',
   'projectLocations',
   'defaultProjectLocationId',
+  'odNextStrategyMode',
   'recentLinkedDirs',
 ] as const);
 
@@ -641,6 +648,18 @@ function applyConfigValue(
       target[key] = normalizeLocationId(value, 'default');
     } else if (value === null) {
       target[key] = null;
+    } else {
+      delete target[key];
+    }
+    return;
+  }
+  if (key === 'odNextStrategyMode') {
+    // Anything that is not one of the three modes is discarded rather than
+    // stored, so a typo in `od config set odNextStrategyMode acive` leaves the
+    // installation on its previous choice instead of persisting a value the
+    // rollout reader would silently coerce to `off`.
+    if (value === 'off' || value === 'observe' || value === 'active') {
+      target[key] = value;
     } else {
       delete target[key];
     }

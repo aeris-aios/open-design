@@ -1194,3 +1194,63 @@ describe('app-config origin guard', () => {
     expect(res.status).toBe(403);
   });
 });
+
+describe('app-config odNextStrategyMode', () => {
+  let dataDir: string;
+
+  beforeEach(async () => {
+    dataDir = await mkdtemp(path.join(tmpdir(), 'od-next-mode-'));
+  });
+
+  afterEach(async () => {
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  it('is absent until the installation chooses', async () => {
+    expect((await readAppConfig(dataDir)).odNextStrategyMode).toBeUndefined();
+  });
+
+  it('persists each of the three modes', async () => {
+    for (const mode of ['active', 'observe', 'off'] as const) {
+      await writeAppConfig(dataDir, { odNextStrategyMode: mode });
+      expect((await readAppConfig(dataDir)).odNextStrategyMode).toBe(mode);
+    }
+  });
+
+  it('leaves the previous choice alone when handed something that is not a mode', async () => {
+    // A typo must not read as "opted out" — dropping the write keeps the
+    // installation on whatever it last deliberately chose.
+    await writeAppConfig(dataDir, { odNextStrategyMode: 'active' });
+    for (const bad of ['acive', '', true, 1, [], {}]) {
+      await writeAppConfig(dataDir, { odNextStrategyMode: bad } as never);
+      expect((await readAppConfig(dataDir)).odNextStrategyMode).toBeUndefined();
+      await writeAppConfig(dataDir, { odNextStrategyMode: 'active' });
+    }
+  });
+
+  it('opts back out when the key is cleared', async () => {
+    await writeAppConfig(dataDir, { odNextStrategyMode: 'active' });
+    await writeAppConfig(dataDir, { odNextStrategyMode: null });
+    expect((await readAppConfig(dataDir)).odNextStrategyMode).toBeUndefined();
+  });
+
+  it('survives a later write that does not mention it', async () => {
+    // The web pushes an explicit key list that has no reason to carry this
+    // one. Saving an unrelated Settings change must not silently opt the
+    // installation back out from under the person who configured it.
+    await writeAppConfig(dataDir, { odNextStrategyMode: 'active' });
+    await writeAppConfig(dataDir, { agentId: 'claude', designSystemId: 'stripe' });
+    expect((await readAppConfig(dataDir)).odNextStrategyMode).toBe('active');
+  });
+
+  it('does not disturb neighbouring preferences', async () => {
+    await writeAppConfig(dataDir, { agentId: 'codex', onboardingCompleted: true });
+    await writeAppConfig(dataDir, { odNextStrategyMode: 'active' });
+    const cfg = await readAppConfig(dataDir);
+    expect(cfg).toMatchObject({
+      agentId: 'codex',
+      onboardingCompleted: true,
+      odNextStrategyMode: 'active',
+    });
+  });
+});

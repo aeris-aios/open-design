@@ -7384,6 +7384,7 @@ export async function startServer({
     analytics: analyticsService,
     getAppVersion: () => telemetry.getCachedAppVersion()?.version ?? '0.0.0',
     requireLocalDaemonRequest,
+    readOdNextPreference: () => readAppConfig(RUNTIME_DATA_DIR).catch(() => ({})),
   });
   const latchOdNextRolloutForRun = (run, mode, reasonCode) => {
     latchOdNextRolloutStopOperationally({
@@ -7393,6 +7394,10 @@ export async function startServer({
       appVersion: telemetry.getCachedAppVersion()?.version ?? '0.0.0',
       mode,
       reasonCode,
+      // Sync because this latch fires from run-terminal bookkeeping that
+      // cannot await; the read has to happen here regardless so the reported
+      // effective mode matches the mode the run was admitted under.
+      appConfig: readAppConfigSync(RUNTIME_DATA_DIR),
     });
   };
   workspaceAnalyticsService = analyticsService;
