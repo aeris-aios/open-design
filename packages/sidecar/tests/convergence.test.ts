@@ -156,7 +156,7 @@ describe("sidecar generation process trees", () => {
         childPid = Number(ready.pid);
         expect(childPid).toBeGreaterThan(0);
         expect((await findSidecarProcesses(childStamp)).map(({ pid }) => pid)).toContain(childPid);
-      }, { interval: 50, timeout: 5_000 });
+      }, { interval: 100, timeout: process.platform === "win32" ? 15_000 : 5_000 });
       const nestedPid = childPid;
       if (nestedPid == null) throw new Error("nested sidecar fixture did not report a pid");
       const genericTree = collectProcessTreePids(await captureProcessSnapshot(), [parent.process.pid]);
@@ -175,7 +175,7 @@ describe("sidecar generation process trees", () => {
       await stopSidecar(childStamp, { killGraceMs: 2_000, termGraceMs: 0 }).catch(() => undefined);
       await rm(root, { force: true, recursive: true });
     }
-  }, 15_000);
+  }, process.platform === "win32" ? 45_000 : 15_000);
 });
 
 describe("normalized sidecar client", () => {
@@ -665,7 +665,7 @@ describe("server-side atomic operations", () => {
     if (owner.pid == null) throw new Error("owner fixture has no pid");
     const ownerStamp = { ...stamp, app: "web", namespace: `owner-death-${process.pid}` };
     const endpoint = resolvePrivateIpcPath(ownerStamp);
-    const launched = await launchSidecar({
+    const spawned = await spawnSidecar({
       args: [fixture],
       command: process.execPath,
       env: { ...process.env, OD_TEST_STALE_ENDPOINT: endpoint },
@@ -674,11 +674,13 @@ describe("server-side atomic operations", () => {
     });
     let generationPids: number[] = [];
     try {
-      await vi.waitFor(async () => expect((await lstat(endpoint)).isSocket()).toBe(true));
-      generationPids = collectProcessTreePids(await captureProcessSnapshot(), [launched.pid]);
+      await vi.waitFor(async () => {
+        expect((await findSidecarProcesses(ownerStamp)).map(({ pid }) => pid)).toContain(spawned.process.pid);
+      }, { interval: 100, timeout: process.platform === "win32" ? 10_000 : 1_000 });
+      generationPids = collectProcessTreePids(await captureProcessSnapshot(), [spawned.process.pid]);
       expect(generationPids.length).toBeGreaterThan(1);
       owner.kill("SIGKILL");
-      await expect(waitForProcessExit(launched.pid, 9_000)).resolves.toBe(true);
+      await expect(waitForProcessExit(spawned.process.pid, 9_000)).resolves.toBe(true);
       await Promise.all(generationPids.map(async (pid) => {
         await expect(waitForProcessExit(pid, 2_000)).resolves.toBe(true);
       }));
@@ -687,9 +689,10 @@ describe("server-side atomic operations", () => {
       for (const pid of generationPids) {
         try { process.kill(pid, "SIGKILL"); } catch {}
       }
+      await spawned.stop({ killGraceMs: 2_000, termGraceMs: 0 }).catch(() => undefined);
       await stopSidecar(ownerStamp, { killGraceMs: 2_000, termGraceMs: 0 }).catch(() => undefined);
     }
-  }, 15_000);
+  }, process.platform === "win32" ? 30_000 : 15_000);
 
   it("does not let an earlier stop terminate a replacement with the same stamp", async () => {
     const fixture = fileURLToPath(new URL("./fixtures/stamped-child.ts", import.meta.url));
@@ -706,13 +709,13 @@ describe("server-side atomic operations", () => {
     try {
       await vi.waitFor(async () => {
         expect((await findSidecarProcesses(replacementStamp)).map(({ pid }) => pid)).toContain(oldPid);
-      });
+      }, { interval: 100, timeout: process.platform === "win32" ? 10_000 : 1_000 });
       const stopping = old.stop({ killGraceMs: 2_000, termGraceMs: 300 });
       await new Promise((resolveWait) => setTimeout(resolveWait, 100));
       replacement = await launchSidecar({ args: [fixture], command: process.execPath, resources, stamp: replacementStamp });
       await vi.waitFor(async () => {
         expect((await findSidecarProcesses(replacementStamp)).map(({ pid }) => pid)).toContain(replacement?.pid);
-      });
+      }, { interval: 100, timeout: process.platform === "win32" ? 10_000 : 1_000 });
       process.kill(oldPid, "SIGKILL");
       await waitForProcessExit(oldPid, 2_000);
 

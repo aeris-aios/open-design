@@ -163,14 +163,18 @@ function sidecarSpawnRequest(request: SidecarLaunchRequest): SpawnProcessRequest
 
 export async function spawnSidecar(request: SidecarLaunchRequest): Promise<SpawnedSidecar> {
   const stamp = normalizeSidecarStamp(request.stamp);
-  const child = await spawnLoggedProcess(sidecarSpawnRequest({ ...request, stamp }));
+  const child = await spawnLoggedProcess(sidecarSpawnRequest({
+    ...request,
+    detached: request.detached ?? (process.platform === "win32"),
+    stamp,
+  }));
   if (child.pid == null) throw new Error("spawned sidecar process has no pid");
   const rootPid = child.pid;
   const ref = sidecarGenerationRef(stamp, rootPid);
-  const process = child as ChildProcess & { pid: number };
+  const childProcess = child as ChildProcess & { pid: number };
   let stopTask: Promise<SidecarStopResult> | null = null;
   return {
-    process,
+    process: childProcess,
     stamp,
     stop(options = {}) {
       stopTask ??= retireKnownSidecarGeneration(ref, options).finally(() => {
