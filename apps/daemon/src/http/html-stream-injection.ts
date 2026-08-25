@@ -7,6 +7,7 @@ import {
   previewHtmlNeedsRedirectGuard,
   previewHtmlNeedsSandboxShim,
 } from '@open-design/contracts/runtime/preview-guards';
+import { scanDeckSourceSignalFlags } from '@open-design/preview-runtime/srcdoc';
 
 const MAX_TAG_BYTES = 256 * 1024;
 const RAW_TEXT_TAGS = new Set(['noscript', 'script', 'style', 'title', 'textarea']);
@@ -38,6 +39,18 @@ export interface HtmlHeadScanResult {
   needsRedirectGuard: boolean;
   /** Whether the complete streamed source requires the powered preview profile. */
   needsPoweredPreview: boolean;
+  /** Whether real parsed markup contains a deck-stage custom element. */
+  hasDeckStageElement: boolean;
+  /** Whether real parsed markup contains the framework's id="deck-stage" marker. */
+  hasFrameworkDeckId: boolean;
+  /** Whether inline authored scripts already implement the od:slide protocol. */
+  hasInlineSlideMessageListener: boolean;
+  /** Whether inline authored scripts implement keyboard slide navigation. */
+  hasInlineKeydownNavigation: boolean;
+  /** Whether inline authored scripts implement hash-based slide navigation. */
+  hasInlineHashNavigation: boolean;
+  /** Hash prefix used by the inline navigation implementation. */
+  inlineHashIndexPrefix: '#' | '#/';
   /** Number of source bytes inspected for whole-document guard signals. */
   scannedBytes: number;
   /** Whether the scanner reached EOF instead of proving every guard early. */
@@ -82,6 +95,11 @@ function rawTextCloseStart(input: string, tagName: string): number {
   return -1;
 }
 
+function tagHasExactId(token: string, expected: string): boolean {
+  const match = /[\t\n\f\r ]id[\t\n\f\r ]*=[\t\n\f\r ]*(?:"([^"]*)"|'([^']*)'|([^\t\n\f\r />]+))/iu.exec(token);
+  return (match?.[1] ?? match?.[2] ?? match?.[3]) === expected;
+}
+
 /**
  * Scan only HTML parser state needed to choose a safe head insertion point.
  * Source bytes are decoded as latin1 so string offsets remain byte offsets;
@@ -104,6 +122,16 @@ export async function scanHtmlHeadForStreamingInjection(
   let needsFocusGuard = false;
   let needsRedirectGuard = false;
   let needsPoweredPreview = false;
+  let hasDeckStageElement = false;
+  let hasFrameworkDeckId = false;
+  let registersSlideMessageListener = false;
+  let mentionsSlideMessage = false;
+  let registersKeydownListener = false;
+  let mentionsNavigationKey = false;
+  let listensForHashChange = false;
+  let readsLocationHash = false;
+  let usesSlashHashIndexPrefix = false;
+  let deckScriptSignalTail = '';
   let passiveSignalTail = '';
   let poweredSignalTail = '';
   let scannedBytes = 0;
@@ -118,15 +146,6 @@ export async function scanHtmlHeadForStreamingInjection(
     bufferOffset += length;
   };
 
-  const canStopWholeDocumentScan = (): boolean => (
-    headScanDone
-    && needsSandboxShim
-    && needsFocusGuard
-    && needsRedirectGuard
-    && needsPoweredPreview
-    && hasLoadTimeLocationNavigation
-  );
-
   const finish = (): HtmlHeadScanResult => ({
     insertionOffset: explicitHead
       ? insertionOffset
@@ -137,6 +156,12 @@ export async function scanHtmlHeadForStreamingInjection(
     needsFocusGuard,
     needsRedirectGuard,
     needsPoweredPreview,
+    hasDeckStageElement,
+    hasFrameworkDeckId,
+    hasInlineSlideMessageListener: registersSlideMessageListener && mentionsSlideMessage,
+    hasInlineKeydownNavigation: registersKeydownListener && mentionsNavigationKey,
+    hasInlineHashNavigation: listensForHashChange && readsLocationHash,
+    inlineHashIndexPrefix: usesSlashHashIndexPrefix ? '#/' : '#',
     scannedBytes,
     complete,
   });
@@ -184,19 +209,29 @@ export async function scanHtmlHeadForStreamingInjection(
           // a stream boundary cannot be accepted before its delimiter arrives.
           ? Math.max(0, buffer.length - closeNeedle.length - 1)
           : close;
-        if (rawTextTag === 'script' && contentEnd > 0 && !hasLoadTimeLocationNavigation) {
-          const sample = scriptSignalTail + buffer.slice(0, contentEnd);
-          hasLoadTimeLocationNavigation = previewHtmlHasLoadTimeLocationNavigation(sample);
+        if (rawTextTag === 'script' && contentEnd > 0) {
+          const source = buffer.slice(0, contentEnd);
+          const sample = scriptSignalTail + source;
+          if (!hasLoadTimeLocationNavigation) {
+            hasLoadTimeLocationNavigation = previewHtmlHasLoadTimeLocationNavigation(sample);
+          }
           scriptSignalTail = sample.slice(-256);
+          const deckSample = deckScriptSignalTail + source;
+          const deckSignals = scanDeckSourceSignalFlags(deckSample);
+          registersSlideMessageListener ||= deckSignals.registersSlideMessageListener;
+          mentionsSlideMessage ||= deckSignals.mentionsSlideMessage;
+          registersKeydownListener ||= deckSignals.registersKeydownListener;
+          mentionsNavigationKey ||= deckSignals.mentionsNavigationKey;
+          listensForHashChange ||= deckSignals.listensForHashChange;
+          readsLocationHash ||= deckSignals.readsLocationHash;
+          usesSlashHashIndexPrefix ||= deckSignals.usesSlashHashIndexPrefix;
+          deckScriptSignalTail = deckSample.slice(-256);
         }
         consume(contentEnd);
-        if (canStopWholeDocumentScan()) {
-          scanDone = true;
-          break;
-        }
         if (close < 0) break;
         rawTextTag = null;
         scriptSignalTail = '';
+        deckScriptSignalTail = '';
         continue;
       }
 
@@ -258,8 +293,12 @@ export async function scanHtmlHeadForStreamingInjection(
       if (tag.closing) {
         if (tag.name === 'template' && templateDepth > 0) templateDepth -= 1;
         if (tag.name === 'head' && templateDepth === 0) headScanDone = true;
-        if (canStopWholeDocumentScan()) scanDone = true;
         continue;
+      }
+
+      if (templateDepth === 0) {
+        if (tag.name === 'deck-stage') hasDeckStageElement = true;
+        if (tagHasExactId(token, 'deck-stage')) hasFrameworkDeckId = true;
       }
 
       if (!headScanDone && tag.name === 'html') {
@@ -294,7 +333,6 @@ export async function scanHtmlHeadForStreamingInjection(
       if (RAW_TEXT_TAGS.has(tag.name)) {
         rawTextTag = tag.name;
       }
-      if (canStopWholeDocumentScan()) scanDone = true;
     }
     if (scanDone) {
       complete = false;

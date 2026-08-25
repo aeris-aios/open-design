@@ -2959,18 +2959,48 @@ function injectDeckKeydownRegistryHook(doc: string): string {
 // from triggering probes, mirroring how odMaybeHandlesSlideMessages screens
 // message listeners. This scan only sees inline bytes; keyboard runtimes in
 // external scripts are caught at runtime by injectDeckKeydownRegistryHook.
+export interface DeckSourceSignalFlags {
+  registersSlideMessageListener: boolean;
+  mentionsSlideMessage: boolean;
+  registersKeydownListener: boolean;
+  mentionsNavigationKey: boolean;
+  listensForHashChange: boolean;
+  readsLocationHash: boolean;
+  usesSlashHashIndexPrefix: boolean;
+}
+
+/**
+ * Return independent source facts rather than a single Deck verdict. The
+ * daemon's streaming scanner can OR these flags across bounded chunks, which
+ * preserves signals split at a read boundary without retaining the document.
+ */
+export function scanDeckSourceSignalFlags(source: string): DeckSourceSignalFlags {
+  return {
+    registersSlideMessageListener: /addEventListener\s*\(\s*['"]message['"]/i.test(source),
+    mentionsSlideMessage: /\bod:slide\b/.test(source),
+    registersKeydownListener:
+      /addEventListener\s*\(\s*['"]keydown['"]/i.test(source) || /\bonkeydown\b/i.test(source),
+    mentionsNavigationKey:
+      /\bArrow(?:Right|Left)\b|\bPage(?:Up|Down)\b|\bkeyCode\b/.test(source),
+    listensForHashChange: /(?:hashchange|onhashchange)/i.test(source),
+    readsLocationHash: /location\.hash/i.test(source),
+    usesSlashHashIndexPrefix: /['"`]#\/['"`]/.test(source),
+  };
+}
+
 export function detectArtifactKeyboardNavigation(artifactHtml: string): boolean {
-  const registersKeydown =
-    /addEventListener\s*\(\s*['"]keydown['"]/i.test(artifactHtml) ||
-    /\bonkeydown\b/i.test(artifactHtml);
-  if (!registersKeydown) return false;
-  return /\bArrow(?:Right|Left)\b|\bPage(?:Up|Down)\b|\bkeyCode\b/.test(artifactHtml);
+  const signals = scanDeckSourceSignalFlags(artifactHtml);
+  return signals.registersKeydownListener && signals.mentionsNavigationKey;
 }
 
 export interface DeckBridgeOptions {
   initialSlideIndex?: number | undefined;
   clickNavigation?: boolean;
   artifactHasKeydownNavigation?: boolean;
+  hasInlineSlideMessageListener?: boolean;
+  hasInlineHashNavigation?: boolean;
+  inlineHashIndexPrefix?: '#' | '#/';
+  isFrameworkDeck?: boolean;
 }
 
 export interface DeckBridgeAssets {
@@ -2986,13 +3016,18 @@ export function buildDeckBridgeAssets(
   const safeInitialSlideIndex = Number.isFinite(initialSlideIndex)
     ? Math.max(0, Math.floor(initialSlideIndex))
     : 0;
-  const hasInlineSlideMessageListener =
-    /addEventListener\s*\(\s*['"]message['"]/i.test(doc) && /\bod:slide\b/.test(doc);
+  const sourceSignals = scanDeckSourceSignalFlags(doc);
+  const hasInlineSlideMessageListener = options.hasInlineSlideMessageListener ?? (
+    sourceSignals.registersSlideMessageListener && sourceSignals.mentionsSlideMessage
+  );
   const hasInlineKeydownListener = !!options.artifactHasKeydownNavigation;
-  const hasInlineHashNavigation =
-    /(?:hashchange|onhashchange)/i.test(doc) && /location\.hash/i.test(doc);
-  const inlineHashIndexPrefix = /['"`]#\/['"`]/.test(doc) ? '#/' : '#';
-  const isFrameworkDeck = /\bid\s*=\s*["']deck-stage["']/i.test(doc);
+  const hasInlineHashNavigation = options.hasInlineHashNavigation ?? (
+    sourceSignals.listensForHashChange && sourceSignals.readsLocationHash
+  );
+  const inlineHashIndexPrefix = options.inlineHashIndexPrefix
+    ?? (sourceSignals.usesSlashHashIndexPrefix ? '#/' : '#');
+  const isFrameworkDeck = options.isFrameworkDeck
+    ?? /\bid\s*=\s*["']deck-stage["']/i.test(doc);
   const clickNavigation = !!options.clickNavigation && !isFrameworkDeck;
   // Framework decks (`id="deck-stage"`) get the inverse fix. Their skeleton
   // documents `.deck-shell` as plain block flow precisely so the 1920x1080

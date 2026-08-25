@@ -1,5 +1,9 @@
 import type { PreviewRuntimeCapability } from '@open-design/contracts/runtime/preview-runtime';
 import {
+  buildDeckStageFallbackScript,
+  htmlUsesDeckStageElement,
+} from '@open-design/contracts/runtime/deck-stage-fallback';
+import {
   buildDeckBridgeAssets,
   buildDeckKeydownRegistryHook,
   detectArtifactKeyboardNavigation,
@@ -54,15 +58,19 @@ export function buildLazyScriptRuntimeModule(
  */
 export function buildDeckRuntimeModule(
   artifactHtml: string,
-  options: Omit<DeckBridgeOptions, 'artifactHasKeydownNavigation'> = {},
+  options: DeckBridgeOptions & { hasDeckStageElement?: boolean } = {},
 ): PreviewRuntimeModuleSource {
+  const hasDeckStageElement = options.hasDeckStageElement
+    ?? htmlUsesDeckStageElement(artifactHtml);
   const assets = buildDeckBridgeAssets(artifactHtml, {
     ...options,
-    artifactHasKeydownNavigation: detectArtifactKeyboardNavigation(artifactHtml),
+    artifactHasKeydownNavigation: options.artifactHasKeydownNavigation
+      ?? detectArtifactKeyboardNavigation(artifactHtml),
   });
   return {
     capabilities: ['deck'],
-    source: `${scriptBody(buildDeckKeydownRegistryHook())}\n`
+    source: `${hasDeckStageElement ? `${scriptBody(buildDeckStageFallbackScript())}\n` : ''}`
+      + `${scriptBody(buildDeckKeydownRegistryHook())}\n`
       + `var deckStyle=document.createElement('style');\n`
       + `deckStyle.setAttribute('data-od-deck-fix','');\n`
       + `deckStyle.textContent=${JSON.stringify(styleBody(assets.styleTag))};\n`

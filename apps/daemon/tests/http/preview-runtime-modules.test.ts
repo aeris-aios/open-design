@@ -17,6 +17,31 @@ const { JSDOM } = require('jsdom') as {
 };
 
 describe('preview runtime modules', () => {
+  it('builds the same Deck runtime from streamed source facts and installs the stage fallback early', () => {
+    const dom = new JSDOM(
+      '<!doctype html><html><head></head><body><deck-stage><section class="slide">One</section></deck-stage></body></html>',
+      { runScripts: 'outside-only', url: 'http://n-scope.localhost/index.html' },
+    );
+    let hooks: { enable: () => void; disable: () => void } | null = null;
+    const context = dom.getInternalVMContext() as vm.Context & Record<string, any>;
+    context.parent = dom.window;
+    context.register = (_capability: string, create: () => typeof hooks) => { hooks = create(); };
+    const runtime = buildDeckRuntimeModule('', {
+      hasDeckStageElement: true,
+      isFrameworkDeck: true,
+      artifactHasKeydownNavigation: true,
+      hasInlineSlideMessageListener: true,
+      hasInlineHashNavigation: true,
+      inlineHashIndexPrefix: '#/',
+    });
+
+    expect(runtime.source).toContain('__odDeckStageFallbackInstalled');
+    vm.runInContext(runtime.source, context);
+    expect(dom.window.customElements.get('deck-stage')).toBeDefined();
+    expect(hooks).not.toBeNull();
+    dom.window.close();
+  });
+
   it('keeps direct Deck page jumps atomic after URL-runtime negotiation', async () => {
     const slides = Array.from({ length: 5 }, (_, index) =>
       `<section class="slide${index === 0 ? ' active' : ''}" data-title="Slide ${index + 1}">${index + 1}</section>`,

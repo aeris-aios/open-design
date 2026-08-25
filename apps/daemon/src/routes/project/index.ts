@@ -94,6 +94,7 @@ import {
   buildPreviewRuntimeBootstrap,
 } from '../../http/preview-runtime-bootstrap.js';
 import {
+  buildDeckRuntimeModule,
   buildInstalledScriptRuntimeModule,
   buildLazyScriptRuntimeModule,
   buildPaletteRuntimeModule,
@@ -5499,7 +5500,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
     "object-src 'none'",
   ].join('; ');
   const previewScopeRe = /^[A-Za-z0-9_-]{8,128}$/u;
-  const scopedPreviewRuntimeCapabilities = [
+  const scopedPreviewBaseRuntimeCapabilities = [
     'content_measurement',
     'scroll',
     'snapshot',
@@ -6913,10 +6914,15 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
         ...previewBridgeTokens(req.query.odPreviewBridge).filter((token) =>
           token === 'sandbox' || token === 'focus' || token === 'redirect'),
       ];
-      const runtimeBootstrap = buildPreviewRuntimeBootstrap({
+      const wantsDeckRuntime = previewBridgeTokens(req.query.odPreviewRuntime).includes('deck');
+      const buildScopedRuntimeBootstrap = (
+        deckRuntime?: ReturnType<typeof buildDeckRuntimeModule>,
+      ) => buildPreviewRuntimeBootstrap({
         sessionId: authority.scope,
         documentVersion,
-        availableCapabilities: scopedPreviewRuntimeCapabilities,
+        availableCapabilities: deckRuntime
+          ? [...scopedPreviewBaseRuntimeCapabilities, 'deck']
+          : scopedPreviewBaseRuntimeCapabilities,
         modules: [
           buildScrollAndMeasurementRuntimeModule(),
           buildLazyScriptRuntimeModule(
@@ -6936,6 +6942,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
           ),
           buildTweaksRuntimeModule(),
           buildPaletteRuntimeModule(),
+          ...(deckRuntime ? [deckRuntime] : []),
         ],
       });
       const streamRuntimeBootstrap = /^text\/html(?:;|$)/iu.test(previewMeta.mime)
@@ -6962,6 +6969,12 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
             projectsRoot: PROJECTS_DIR,
             readProjectFile,
           });
+          const artifactHtml = Buffer.isBuffer(transformed)
+            ? transformed.toString('utf8')
+            : String(transformed);
+          const runtimeBootstrap = buildScopedRuntimeBootstrap(
+            wantsDeckRuntime ? buildDeckRuntimeModule(artifactHtml) : undefined,
+          );
           const bridged = applyUrlPreviewBridgesToHtml(
             transformed,
             file.mime,
@@ -6982,6 +6995,18 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
                 filePath: previewMeta.filePath,
                 documentVersion,
               });
+              const runtimeBootstrap = buildScopedRuntimeBootstrap(
+                wantsDeckRuntime
+                  ? buildDeckRuntimeModule('', {
+                      hasDeckStageElement: scan.hasDeckStageElement,
+                      isFrameworkDeck: scan.hasFrameworkDeckId,
+                      artifactHasKeydownNavigation: scan.hasInlineKeydownNavigation,
+                      hasInlineSlideMessageListener: scan.hasInlineSlideMessageListener,
+                      hasInlineHashNavigation: scan.hasInlineHashNavigation,
+                      inlineHashIndexPrefix: scan.inlineHashIndexPrefix,
+                    })
+                  : undefined,
+              );
               return {
                 insertionOffset: scan.insertionOffset,
                 content: Buffer.from(

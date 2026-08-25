@@ -116,6 +116,81 @@ describe('scanHtmlHeadForStreamingInjection', () => {
     expect(fixture.result.needsPoweredPreview).toBe(true);
   });
 
+  it('collects Deck markup and inline navigation facts without retaining the document', async () => {
+    const fixture = await scan([
+      '<!doctype html><html><head></head><body>',
+      '<main id="deck-stage"><deck-stage><section class="slide">One</section></deck-stage></main>',
+      '<script>window.addEventListener("message",function(event){if(event.data.type==="od:slide"){};});</script>',
+      '<script>window.addEventListener("keydown",function(event){if(event.key==="ArrowRight"){};});</script>',
+      '<script>window.addEventListener("hashchange",function(){const index=location.hash;});',
+      'const prefix="#/";</script>',
+      '</body></html>',
+    ].join(''));
+
+    expect(fixture.result).toMatchObject({
+      hasDeckStageElement: true,
+      hasFrameworkDeckId: true,
+      hasInlineSlideMessageListener: true,
+      hasInlineKeydownNavigation: true,
+      hasInlineHashNavigation: true,
+      inlineHashIndexPrefix: '#/',
+      complete: true,
+    });
+  });
+
+  it('keeps Deck source detection correct across 64 KiB read boundaries', async () => {
+    const prefix = '<html><head></head><body><script>';
+    const boundaryFragment = 'window.addEventListener("key';
+    const padding = 'x'.repeat((64 * 1024) - prefix.length - boundaryFragment.length);
+    const source = [
+      prefix,
+      padding,
+      boundaryFragment,
+      'down",function(event){if(event.key==="ArrowRight"){};});',
+      'window.addEventListener("message",function(event){if(event.data.type==="od:slide"){};});',
+      'window.addEventListener("hashchange",function(){return location.hash||"#/";});',
+      '</script></body></html>',
+    ].join('');
+    const fixture = await scan(source);
+
+    expect(fixture.result.hasInlineKeydownNavigation).toBe(true);
+    expect(fixture.result.hasInlineSlideMessageListener).toBe(true);
+    expect(fixture.result.hasInlineHashNavigation).toBe(true);
+    expect(fixture.result.inlineHashIndexPrefix).toBe('#/');
+    expect(fixture.result.scannedBytes).toBe(Buffer.byteLength(source));
+  });
+
+  it('does not treat inert template, comment, or script-string markup as Deck DOM', async () => {
+    const fixture = await scan([
+      '<html><head></head><body>',
+      '<!-- <deck-stage id="deck-stage"></deck-stage> -->',
+      '<template><deck-stage><div id="deck-stage"></div></deck-stage></template>',
+      '<script>const sample=`<deck-stage id="deck-stage"></deck-stage>`;</script>',
+      '<main>ordinary prototype</main>',
+      '</body></html>',
+    ].join(''));
+
+    expect(fixture.result.hasDeckStageElement).toBe(false);
+    expect(fixture.result.hasFrameworkDeckId).toBe(false);
+  });
+
+  it('scans large Deck files through EOF after all positive facts are known', async () => {
+    const source = [
+      '<html><head></head><body><deck-stage id="deck-stage">',
+      '<script>addEventListener("message",()=>"od:slide");',
+      'addEventListener("keydown",event=>event.key==="ArrowRight");',
+      'addEventListener("hashchange",()=>location.hash="#/");</script>',
+      'x'.repeat((2 * 1024 * 1024) + 17),
+      '</deck-stage></body></html>',
+    ].join('');
+    const fixture = await scan(source);
+
+    expect(fixture.result.complete).toBe(true);
+    expect(fixture.result.scannedBytes).toBe(Buffer.byteLength(source));
+    expect(fixture.result.hasInlineSlideMessageListener).toBe(true);
+    expect(fixture.result.hasInlineKeydownNavigation).toBe(true);
+  });
+
   it('does not close raw-text elements on end-tag-name prefixes', async () => {
     const fixture = await scan([
       '<html><head><script>',
