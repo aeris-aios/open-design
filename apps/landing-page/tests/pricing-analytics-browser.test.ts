@@ -113,6 +113,7 @@ after(async () => {
 
 async function openPricing(input: {
   billing?: BillingFixture;
+  billingStatus?: number;
   browserLocale?: string;
   sourcePath?: '/dashboard' | '/wallet' | '/not-a-pricing-source' | null;
   signedIn?: boolean;
@@ -157,7 +158,12 @@ async function openPricing(input: {
       return;
     }
     if (pathname === '/api/v1/billing/summary') {
-      await route.fulfill({ status: 200, headers: cors, body: JSON.stringify(billing) });
+      const billingStatus = input.billingStatus ?? 200;
+      await route.fulfill({
+        status: billingStatus,
+        headers: cors,
+        body: billingStatus >= 400 ? 'error' : JSON.stringify(billing),
+      });
       return;
     }
     if (pathname === '/api/v1/analytics/pricing-events') {
@@ -213,16 +219,18 @@ describe('authenticated Pricing compatibility browser wiring', { concurrency: fa
       targetHref: '/zh/pricing/',
     });
     t.after(() => page.context().close());
-    await page.waitForFunction(() =>
-      document.querySelector('[data-pricing-root]')?.getAttribute(
-        'data-personal-pricing-context-resolved',
-      ) === 'true',
-    );
-
     const go = page.locator('[data-pricing-cta][data-tier="go"]');
+    await go.waitFor();
+
     assert.equal((await go.textContent())?.trim(), '已停售');
     assert.equal(await go.getAttribute('aria-disabled'), 'true');
     assert.equal(await go.getAttribute('href'), null);
+    assert.equal(
+      await page.locator('[data-pricing-root]').getAttribute(
+        'data-personal-pricing-context-resolved',
+      ),
+      null,
+    );
   });
 
   it('renders monthly first without an interval swap for a signed-out visitor', async (t) => {
@@ -240,11 +248,7 @@ describe('authenticated Pricing compatibility browser wiring', { concurrency: fa
       targetHref: '/zh/pricing/',
     });
     t.after(() => page.context().close());
-    await page.waitForFunction(() =>
-      document.querySelector('[data-pricing-root]')?.getAttribute(
-        'data-personal-pricing-context-resolved',
-      ) === 'true',
-    );
+    await page.locator('[data-pricing-cta][data-tier="go"]').waitFor();
 
     assert.equal(
       await page.locator('[data-pricing-root]').getAttribute('data-interval'),
@@ -263,11 +267,7 @@ describe('authenticated Pricing compatibility browser wiring', { concurrency: fa
       targetHref: '/zh/pricing/',
     });
     t.after(() => page.context().close());
-    await page.waitForFunction(() =>
-      document.querySelector('[data-pricing-root]')?.getAttribute(
-        'data-personal-pricing-context-resolved',
-      ) === 'true',
-    );
+    await page.locator('[data-pricing-cta][data-tier="go"]').waitFor();
     await page.locator('[data-interval-btn="monthly"]').click();
 
     const prices = await page.locator(
@@ -291,11 +291,7 @@ describe('authenticated Pricing compatibility browser wiring', { concurrency: fa
       targetHref: '/zh/pricing/',
     });
     t.after(() => page.context().close());
-    await page.waitForFunction(() =>
-      document.querySelector('[data-pricing-root]')?.getAttribute(
-        'data-personal-pricing-context-resolved',
-      ) === 'true',
-    );
+    await page.locator('[data-pricing-cta][data-tier="go"]').waitFor();
     await page.locator('[data-interval-btn="yearly"]').click();
 
     const states = await page.locator('[data-pricing-cta]').evaluateAll((ctas) =>
@@ -307,9 +303,41 @@ describe('authenticated Pricing compatibility browser wiring', { concurrency: fa
     );
     assert.deepEqual(states, [
       { tier: 'go', text: '已停售', disabled: 'true' },
-      { tier: 'plus', text: '订阅', disabled: null },
-      { tier: 'pro', text: '订阅', disabled: null },
-      { tier: 'max', text: '订阅', disabled: null },
+      { tier: 'plus', text: '升级 Plus', disabled: null },
+      { tier: 'pro', text: '升级 Pro', disabled: null },
+      { tier: 'max', text: '升级 Max', disabled: null },
+    ]);
+  });
+
+  it('leaves static CTAs unchanged when billing summary fails', async (t) => {
+    const { page } = await openPricing({
+      browserLocale: 'zh-CN',
+      signedIn: true,
+      billingStatus: 500,
+      targetHref: '/zh/pricing/',
+    });
+    t.after(() => page.context().close());
+    await page.locator('[data-pricing-cta][data-tier="go"]').waitFor();
+    await page.waitForTimeout(300);
+
+    assert.equal(
+      await page.locator('[data-pricing-root]').getAttribute(
+        'data-personal-pricing-context-resolved',
+      ),
+      null,
+    );
+    const states = await page.locator('[data-pricing-cta]').evaluateAll((ctas) =>
+      ctas.slice(0, 4).map((cta) => ({
+        tier: cta.getAttribute('data-tier'),
+        text: cta.textContent?.trim(),
+        disabled: cta.getAttribute('aria-disabled'),
+      })),
+    );
+    assert.deepEqual(states, [
+      { tier: 'go', text: '已停售', disabled: 'true' },
+      { tier: 'plus', text: '升级 Plus', disabled: null },
+      { tier: 'pro', text: '升级 Pro', disabled: null },
+      { tier: 'max', text: '升级 Max', disabled: null },
     ]);
   });
 

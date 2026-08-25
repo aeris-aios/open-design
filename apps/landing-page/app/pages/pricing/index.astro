@@ -1219,16 +1219,8 @@ const jsonLd = [
 
       pricingRoot.addEventListener('pricing:interval-changed', applyPersonalActions);
       void loadPersonalPricingContext(apiOrigin).then((liveContext) => {
-        const context = demoTier
-          ? demoContext(demoTier)
-          : liveContext ?? {
-              current: null,
-              checkoutAllowed: true,
-              firstMonthIntroEligible: true,
-              cancelAtPeriodEnd: false,
-              pendingChange: null,
-              billingPortalAvailable: false,
-            };
+        const context = demoTier ? demoContext(demoTier) : liveContext;
+        if (!context) return;
         pricingContext = context;
         applyIntroEligibility();
         if (context.current) {
@@ -1243,7 +1235,7 @@ const jsonLd = [
         }).__personalPricingContext = context;
         pricingRoot.setAttribute('data-personal-pricing-context-resolved', 'true');
         pricingRoot.dispatchEvent(new CustomEvent('pricing:personal-context-resolved', {
-          detail: { authenticated: Boolean(liveContext), context },
+          detail: { authenticated: true, context },
         }));
       });
     }

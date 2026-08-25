@@ -869,6 +869,8 @@ describe("pricing contract", () => {
     assert.match(page, /pricing:personal-context-resolved/);
     assert.match(page, /resolvePricingBridgeSource/);
     assert.match(page, /authenticated:\s*true/);
+    assert.match(page, /if \(!context\) return/);
+    assert.doesNotMatch(page, /liveContext \?\?/);
     assert.doesNotMatch(page, /pricingCompatibilityAttribution/);
     assert.doesNotMatch(page, /tiers:\s*PRICING_SNAPSHOT\.tiers/);
     assert.match(page, /resolvePersonalPlanAction\(pricingContext/);
