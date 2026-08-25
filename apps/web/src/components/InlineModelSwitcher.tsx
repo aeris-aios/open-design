@@ -758,6 +758,10 @@ export function InlineModelSwitcher({
         };
       }
       if (
+        workspaceContextLoading
+        || workspaceContext?.workspaceType !== 'personal'
+      ) return null;
+      if (
         codingPlanModelDecision(amrWalletSnapshot?.codingPlanModels, modelId)
         !== true
       ) return null;
@@ -778,6 +782,8 @@ export function InlineModelSwitcher({
       currentAgent?.id,
       deepSeekCampaignVisibleForCurrentExecution,
       amrWalletSnapshot?.codingPlanModels,
+      workspaceContext?.workspaceType,
+      workspaceContextLoading,
       t,
     ],
   );

@@ -56,7 +56,8 @@ vi.mock('../../src/providers/daemon', async (importOriginal) => {
 const workspaceState: {
   context: WorkspaceCollabContext | null;
   billing: WorkspaceBillingResponse | null;
-} = { context: null, billing: null };
+  loading: boolean;
+} = { context: null, billing: null, loading: false };
 
 vi.mock('../../src/collab/useWorkspaceContext', async (importOriginal) => {
   const actual = await importOriginal<
@@ -66,7 +67,7 @@ vi.mock('../../src/collab/useWorkspaceContext', async (importOriginal) => {
     ...actual,
     useWorkspaceContext: () => ({
       context: workspaceState.context,
-      loading: false,
+      loading: workspaceState.loading,
       failure: null,
     }),
     useWorkspaceBillingResponse: () => workspaceState.billing,
@@ -154,8 +155,8 @@ function setPlan(tier: string | null): void {
   } as unknown as WorkspaceBillingResponse;
 }
 
-function renderSwitcher(config: Partial<AppConfig> = {}) {
-  return render(
+function switcher(config: Partial<AppConfig> = {}) {
+  return (
     <I18nProvider initial="zh-CN">
       <InlineModelSwitcher
         config={{ ...baseConfig, ...config }}
@@ -170,8 +171,12 @@ function renderSwitcher(config: Partial<AppConfig> = {}) {
         onApiModelChange={vi.fn()}
         onOpenSettings={vi.fn()}
       />
-    </I18nProvider>,
+    </I18nProvider>
   );
+}
+
+function renderSwitcher(config: Partial<AppConfig> = {}) {
+  return render(switcher(config));
 }
 
 /** Pins the clock outside the DeepSeek campaign window so the badge under test
@@ -189,6 +194,10 @@ async function badgedModelIds(): Promise<string[]> {
     await Promise.resolve();
     await Promise.resolve();
   });
+  return badgedModelIdsInOpenPopover();
+}
+
+function badgedModelIdsInOpenPopover(): string[] {
   const popover = screen.getByTestId('inline-model-switcher-popover');
   return within(popover)
     .getAllByRole('radio')
@@ -210,6 +219,7 @@ afterEach(() => {
   cleanup();
   workspaceState.context = null;
   workspaceState.billing = null;
+  workspaceState.loading = false;
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -265,11 +275,36 @@ describe('unlimited badge follows the subscription tier', () => {
       // to stand down for them. A badge here would promise what the preflight
       // then blocks.
       mockNow(AFTER_CAMPAIGN);
-      setPlan(tier);
-      renderSwitcher();
-      expect(await badgedModelIds()).toEqual([]);
+      setPlan('plus');
+      const view = renderSwitcher();
+      expect(await badgedModelIds()).toContain('deepseek-v4-flash');
+      workspaceState.context = {
+        ...workspaceState.context,
+        workspaceType: 'team',
+        planId: tier,
+      } as WorkspaceCollabContext;
+      view.rerender(switcher());
+      expect(
+        screen.queryByTestId('inline-model-switcher-chip-unlimited-badge'),
+      ).toBeNull();
+      expect(badgedModelIdsInOpenPopover()).toEqual([]);
     },
   );
+
+  it('hides Personal plan badges while the next workspace context is loading', async () => {
+    mockNow(AFTER_CAMPAIGN);
+    setPlan('plus');
+    const view = renderSwitcher();
+    expect(await badgedModelIds()).toContain('deepseek-v4-flash');
+
+    workspaceState.loading = true;
+    view.rerender(switcher());
+
+    expect(
+      screen.queryByTestId('inline-model-switcher-chip-unlimited-badge'),
+    ).toBeNull();
+    expect(badgedModelIdsInOpenPopover()).toEqual([]);
+  });
 
   it('badges nothing for a free plan once the campaign window has closed', async () => {
     mockNow(AFTER_CAMPAIGN);
