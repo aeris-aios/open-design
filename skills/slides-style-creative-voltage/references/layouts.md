@@ -14,7 +14,7 @@ Registered layout IDs: `cover`, `agenda`, `problem`, `barriers`, `solution`, `be
 
 | ID | Role | Use when | Guardrail |
 |---|---|---|---|
-| `cover` | Cover | Open with one memorable thesis and minimal supporting copy. | Keep the title dominant; no agenda, dashboard, or multi-card payload. |
+| `cover` | Cover | Open with one memorable thesis and minimal supporting copy. | Keep the right-side supporting copy slightly above the lower baseline while preserving the left headline hierarchy; no agenda, dashboard, or multi-card payload. |
 | `agenda` | Agenda | Set the sequence and expectation for the deck. | Use short labels and preserve scanning rhythm. |
 | `problem` | Problem | Use this layout only for content that matches its demonstrated information shape. | Preserve its hierarchy, alignment, and signature spacing before adding variants. |
 | `barriers` | Barriers | Contrast two choices, states, or approaches. | Use matched criteria and comparable evidence. |
