@@ -244,6 +244,13 @@ export type TrackingRunTerminalTrigger =
   | TrackingRunCancelOrigin
   | 'first_output_deadline'
   | 'inactivity_watchdog'
+  // The ACP bridge's own per-stage watchdog gave up waiting for the agent's
+  // next JSON-RPC line. Distinct from `inactivity_watchdog` (the outer
+  // chat-run clock) because the two have different budgets and different
+  // blind spots, and because the ACP path ends the child itself — the run
+  // then carries the CHILD's exit code (typically AGENT_EXIT_130), which
+  // reads like a user interrupt unless this trigger says otherwise.
+  | 'acp_stage_timeout'
   | 'daemon_restart';
 export type TrackingExportResult = 'success' | 'failed' | 'cancelled';
 // Stable codes for artifact_publish_result.error_code. Deliberately a CLOSED

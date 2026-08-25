@@ -10,6 +10,13 @@ import {
   buildPreviewObservabilityBridge,
 } from '@open-design/contracts/runtime/preview-observability';
 import {
+  buildPreviewFocusGuard,
+  buildPreviewRedirectGuard,
+  buildPreviewSandboxShim,
+  PREVIEW_URL_GUARD_MAX_HTML_BYTES,
+  previewHtmlHasLoadTimeLocationNavigation,
+} from '@open-design/contracts/runtime/preview-guards';
+import {
   automaticStrategyTaskProfileForProjectMetadata,
   defaultScenarioPluginIdForProjectMetadata,
   type ChatSessionMode,
@@ -1424,6 +1431,18 @@ function wantsUrlPreviewObservabilityBridge(value: unknown): boolean {
   return previewBridgeTokens(value).some((token) => token === 'observability' || token === 'errors' || token === 'diagnostics');
 }
 
+function wantsUrlPreviewSandboxGuard(value: unknown): boolean {
+  return previewBridgeTokens(value).some((token) => token === 'sandbox' || token === 'storage');
+}
+
+function wantsUrlPreviewFocusGuard(value: unknown): boolean {
+  return previewBridgeTokens(value).some((token) => token === 'focus');
+}
+
+function wantsUrlPreviewRedirectGuard(value: unknown): boolean {
+  return previewBridgeTokens(value).some((token) => token === 'redirect');
+}
+
 function injectBeforeBodyClose(html: string, marker: string, injection: string): string {
   if (html.includes(marker)) return html;
   const bodyCloseIndex = html.search(/<\/body\s*>/i);
@@ -1444,7 +1463,25 @@ function injectAfterHeadOpen(html: string, marker: string, injection: string): s
   return `${injection}${html}`;
 }
 
-function injectUrlPreviewBridge(html: string, bridge: 'scroll' | 'selection' | 'snapshot' | 'observability'): string {
+function injectUrlPreviewBridge(
+  html: string,
+  bridge: 'scroll' | 'selection' | 'snapshot' | 'observability' | 'sandbox' | 'focus' | 'redirect',
+): string {
+  if (bridge === 'sandbox') {
+    return injectAfterHeadOpen(html, 'data-od-sandbox-shim', buildPreviewSandboxShim());
+  }
+  if (bridge === 'focus') {
+    return injectAfterHeadOpen(html, 'data-od-preview-focus-guard', buildPreviewFocusGuard());
+  }
+  if (bridge === 'redirect') {
+    return injectAfterHeadOpen(
+      html,
+      'data-od-preview-redirect-guard',
+      buildPreviewRedirectGuard({
+        blockLoadTimeScriptRedirect: previewHtmlHasLoadTimeLocationNavigation(html),
+      }),
+    );
+  }
   if (bridge === 'observability') {
     return injectAfterHeadOpen(
       html,
@@ -1471,7 +1508,10 @@ function applyUrlPreviewBridgesToHtml(
       wantsUrlPreviewScrollBridge(requestedBridge) ||
       wantsUrlPreviewSelectionBridge(requestedBridge) ||
       wantsUrlPreviewSnapshotBridge(requestedBridge) ||
-      wantsUrlPreviewObservabilityBridge(requestedBridge)
+      wantsUrlPreviewObservabilityBridge(requestedBridge) ||
+      wantsUrlPreviewSandboxGuard(requestedBridge) ||
+      wantsUrlPreviewFocusGuard(requestedBridge) ||
+      wantsUrlPreviewRedirectGuard(requestedBridge)
     ) ||
     !/^text\/html(?:;|$)/i.test(mime)
   ) {
@@ -1483,8 +1523,20 @@ function applyUrlPreviewBridgesToHtml(
   // filename. URL-load iframes cannot rely on the host rewriting the document
   // title after load, and powered previews are intentionally cross-origin.
   html = daemonSanitizeTitleInDoc(html);
+  // Guards must run before authored scripts. injectAfterHeadOpen prepends at
+  // the start of <head>; apply in reverse runtime order so the final document
+  // executes sandbox -> redirect -> observability -> focus.
+  if (wantsUrlPreviewFocusGuard(requestedBridge)) {
+    html = injectUrlPreviewBridge(html, 'focus');
+  }
   if (wantsUrlPreviewObservabilityBridge(requestedBridge)) {
     html = injectUrlPreviewBridge(html, 'observability');
+  }
+  if (wantsUrlPreviewRedirectGuard(requestedBridge)) {
+    html = injectUrlPreviewBridge(html, 'redirect');
+  }
+  if (wantsUrlPreviewSandboxGuard(requestedBridge)) {
+    html = injectUrlPreviewBridge(html, 'sandbox');
   }
   if (wantsUrlPreviewScrollBridge(requestedBridge)) {
     html = injectUrlPreviewBridge(html, 'scroll');
@@ -5390,7 +5442,6 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
   const { validateArtifactManifestInput } = ctx.artifacts;
   const { projectPreviewScopes } = ctx;
   const projectPreviewIframeSandbox = 'allow-scripts allow-forms';
-  const HTML_PREVIEW_BRIDGE_MAX_BYTES = 2 * 1024 * 1024;
   const HTML_POWERED_PREVIEW_HINT_SCAN_MAX_BYTES = 128 * 1024 * 1024;
   const projectPreviewCsp = [
     `sandbox ${projectPreviewIframeSandbox}`,
@@ -6520,7 +6571,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
         project?.metadata,
       );
       const skipHtmlPreviewBridge =
-        /^text\/html(?:;|$)/i.test(meta.mime) && meta.size > HTML_PREVIEW_BRIDGE_MAX_BYTES;
+        /^text\/html(?:;|$)/i.test(meta.mime) && meta.size > PREVIEW_URL_GUARD_MAX_HTML_BYTES;
 
       await sendProjectFile(
         req,
@@ -6635,7 +6686,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
         project?.metadata,
       );
       const skipPoweredTransform =
-        /^text\/html(?:;|$)/i.test(meta.mime) && meta.size > HTML_PREVIEW_BRIDGE_MAX_BYTES;
+        /^text\/html(?:;|$)/i.test(meta.mime) && meta.size > PREVIEW_URL_GUARD_MAX_HTML_BYTES;
       await sendProjectFile(
         req,
         res,

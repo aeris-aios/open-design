@@ -59,6 +59,7 @@ import {
   modelSelectionErrorIsRecoverable,
 } from './models.js';
 import { buildAcpSessionNewParams, buildPromptBlocks, type AcpMcpServerInput } from './session-params.js';
+import { withholdStdioMcpServersForBuild } from './stdio-mcp.js';
 import { createVelaChildEvidenceConsumer } from '../../runtimes/vela-child-evidence.js';
 
 const NON_DISPLAYABLE_ACP_SESSION_UPDATES = new Set([
@@ -66,6 +67,24 @@ const NON_DISPLAYABLE_ACP_SESSION_UPDATES = new Set([
   'session_info_update',
   'available_commands_update',
 ]);
+
+/**
+ * Out-of-band provenance for a single `send` from this bridge.
+ *
+ * Deliberately NOT part of the event payload: this says where the emission came
+ * from, not what it contains, and it must not reach the persisted transcript,
+ * the SSE wire, or Langfuse metadata.
+ *
+ * `hostSynthesized` marks an event the daemon manufactured while closing its own
+ * books — the terminal `tool_use`/`tool_result` pair `flushOpenAcpTools` writes
+ * for a tool the agent never terminated. The agent produced no bytes for it.
+ * Consumers that measure *agent* liveness (the chat run's progress clock) must
+ * exclude these; consumers that build the transcript still want them, which is
+ * why the pair is emitted rather than dropped.
+ */
+export interface AcpEmissionMeta {
+  hostSynthesized?: boolean;
+}
 
 /**
  * Options for `attachAcpSession`. All fields except `child`, `prompt`, and
@@ -82,7 +101,13 @@ export interface AttachAcpSessionOptions {
   mcpServers?: AcpMcpServerInput[];
   // Passed through to buildAcpSessionNewParams — see AcpSessionOptions.
   envFormat?: 'array' | 'map';
-  send: (event: string, payload: unknown) => void;
+  // First version of this agent that rejects stdio MCP servers on `session/new`
+  // (`RuntimeAgentDef.acpStdioMcpRemovedInVersion`). When set, stdio entries are
+  // withheld from any build at or above it, judged against the version the agent
+  // reports in its own `initialize` result. Leave unset for agents that accept
+  // stdio MCP servers at every version.
+  stdioMcpRemovedInVersion?: string | null;
+  send: (event: string, payload: unknown, meta?: AcpEmissionMeta) => void;
   clientName?: string;
   clientVersion?: string;
   stageTimeoutMs?: number;
@@ -142,6 +167,7 @@ export function attachAcpSession({
   resourcePaths = [],
   mcpServers,
   envFormat = 'array',
+  stdioMcpRemovedInVersion,
   send,
   clientName = 'open-design',
   clientVersion = 'runtime-adapter',
@@ -251,12 +277,28 @@ export function attachAcpSession({
     return input;
   };
 
-  const emitTerminalToolPair = (toolCallId: string, st: AcpToolRunState, isError: boolean) => {
+  // Where a terminal tool pair came from. `agent_frame` means the agent sent a
+  // terminal `tool_call_update` and we are transcribing it. `host_flush` means
+  // the agent never did, and we are closing the tool ourselves so the pair is
+  // not lost — see `flushOpenAcpTools`.
+  type AcpTerminalToolOrigin = 'agent_frame' | 'host_flush';
+
+  const emitTerminalToolPair = (
+    toolCallId: string,
+    st: AcpToolRunState,
+    isError: boolean,
+    origin: AcpTerminalToolOrigin = 'agent_frame',
+  ) => {
     if (st.emitted) return;
     st.emitted = true;
     // Think/reason frames are activity noise for AMR no-output detection and
     // must not appear as concrete tool_use/tool_result events.
     if (st.thinkOnly) return;
+    // A host flush is the daemon writing the tool's ending for it, not the agent
+    // reporting one. Same payload either way — only the provenance differs, and
+    // it travels out-of-band so the transcript is unchanged.
+    const meta: AcpEmissionMeta | undefined =
+      origin === 'host_flush' ? { hostSynthesized: true } : undefined;
     // Raw ACP toolCallId stays as the local Map key for frame correlation; the
     // transcript/telemetry id is always an opaque hash so adapter-supplied
     // ids (paths, tokens, JWTs) never leak into Langfuse span ids or
@@ -270,7 +312,7 @@ export function attachAcpSession({
       // Wall-clock start of the first ACP frame for this toolCallId so analytics
       // can compute real duration even though tool_use is emitted at terminal.
       startedAt: st.firstSeenAt,
-    });
+    }, meta);
     send('agent', {
       type: 'tool_result',
       toolUseId: telemetryToolCallId,
@@ -278,7 +320,7 @@ export function attachAcpSession({
       // lexically masks Bash, so redact before the canonical transcript ships.
       content: acpSafeToolResultContent(st.name, st.resultContent),
       isError,
-    });
+    }, meta);
     // Concrete only on terminal tool_result for a real (non-think) tool.
     emittedConcreteToolEvent = true;
   };
@@ -296,7 +338,7 @@ export function attachAcpSession({
   const flushOpenAcpTools = (isError = false) => {
     for (const [toolCallId, st] of acpToolRunEventState) {
       if (st.emitted) continue;
-      emitTerminalToolPair(toolCallId, st, isError);
+      emitTerminalToolPair(toolCallId, st, isError, 'host_flush');
     }
   };
 
@@ -989,12 +1031,34 @@ export function attachAcpSession({
           'session/load',
         );
       } else {
+        // The build that just answered `initialize` is the one about to parse
+        // `session/new`, so the version it reports for itself is the authority
+        // on which MCP transports this payload may carry. Preferred over any
+        // earlier `--version` probe, which can be stale by the time a run
+        // starts (upgrade between probe and run, PATH shim, detection refresh).
+        const agentInfo = (result as { agentInfo?: { version?: unknown } }).agentInfo;
+        const reportedVersion =
+          typeof agentInfo?.version === 'string' ? agentInfo.version : null;
+        const sessionMcp = mcpServers
+          ? withholdStdioMcpServersForBuild(mcpServers, {
+              reportedVersion,
+              removedInVersion: stdioMcpRemovedInVersion,
+            })
+          : null;
+        if (sessionMcp && sessionMcp.withheldNames.length > 0) {
+          // Daemon-log only: the transcript is user-facing and localized, and a
+          // withheld MCP server is an operator-diagnostic detail, not something
+          // the user can act on mid-turn.
+          console.warn(
+            `[acp] agent build ${reportedVersion ?? 'unknown'} does not accept stdio MCP servers; withheld ${sessionMcp.withheldNames.join(', ')}`,
+          );
+        }
         writeRpc(
           nextId,
           'session/new',
           buildAcpSessionNewParams(
             effectiveCwd,
-            mcpServers ? { mcpServers, envFormat } : { envFormat },
+            sessionMcp ? { mcpServers: sessionMcp.servers, envFormat } : { envFormat },
           ),
           'session/new',
         );

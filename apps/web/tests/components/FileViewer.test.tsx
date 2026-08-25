@@ -824,7 +824,7 @@ describe('FileViewer preview scale', () => {
     expect(rawReads[0]?.init?.headers).toBeUndefined();
   });
 
-  it('warms a newly retained inactive HTML viewer before its first activation', async () => {
+  it('warms a newly retained inactive HTML viewer without forcing a GPU layer on activation', async () => {
     const file = baseFile({
       name: 'inactive-first-open.html',
       path: 'inactive-first-open.html',
@@ -888,8 +888,8 @@ describe('FileViewer preview scale', () => {
     expect(document.querySelector('iframe[data-testid="artifact-preview-frame"]')).toBe(retainedFrame);
     expect(container.querySelector<HTMLElement>('.viewer-toolbar')?.style.visibility).toBe('');
     expect(retainedFrame.style.visibility).toBe('');
-    expect(retainedFrame.style.transform).toBe('translateZ(0)');
-    expect(retainedFrame.style.willChange).toBe('transform');
+    expect(retainedFrame.style.transform).toBe('');
+    expect(retainedFrame.style.willChange).toBe('');
     expect(rawReads).toHaveLength(1);
   });
 
@@ -1760,6 +1760,41 @@ describe('FileViewer SVG artifacts', () => {
     expect(parkedFrames).not.toContain(firstFrame);
   });
 
+  it('recreates an evicted preview iframe at its artifact URL when revisited', () => {
+    function Harness({ activeKey }: { activeKey: string | null }) {
+      return (
+        <IframeKeepAliveProvider maxEntries={1}>
+          {activeKey ? (
+            <PooledIframe
+              cacheKey={previewIframeKeepAliveKey('project-1', `${activeKey}.html`)}
+              src={`/api/projects/project-1/raw/${activeKey}.html?v=1&r=0`}
+              title={`${activeKey}.html`}
+              data-testid="pooled-frame"
+              data-od-render-mode="url-load"
+              data-od-active="true"
+            />
+          ) : null}
+        </IframeKeepAliveProvider>
+      );
+    }
+
+    const { rerender } = render(<Harness activeKey="one" />);
+    const firstFrame = screen.getByTestId('pooled-frame') as HTMLIFrameElement;
+
+    rerender(<Harness activeKey={null} />);
+    rerender(<Harness activeKey="two" />);
+    expect(document.body.contains(firstFrame)).toBe(false);
+
+    rerender(<Harness activeKey={null} />);
+    rerender(<Harness activeKey="one" />);
+    const recreatedFrame = screen.getByTestId('pooled-frame') as HTMLIFrameElement;
+
+    expect(recreatedFrame).not.toBe(firstFrame);
+    expect(recreatedFrame.getAttribute('src')).toBe(
+      '/api/projects/project-1/raw/one.html?v=1&r=0',
+    );
+  });
+
   it('parks a newly pooled iframe before starting its srcDoc navigation', () => {
     const originalSetAttribute = HTMLIFrameElement.prototype.setAttribute;
     const navigationAttributes: string[] = [];
@@ -1866,10 +1901,10 @@ describe('FileViewer SVG artifacts', () => {
     expect(screen.queryByTestId('artifact-preview-first-load')).not.toBeInTheDocument();
   });
 
-  it('loads an inline preview through a blob URL when the browser supports it', () => {
+  it('keeps one Electron bootstrap URL while enhanced content generations update in place', async () => {
     const originalCreateObjectURL = URL.createObjectURL;
     const originalRevokeObjectURL = URL.revokeObjectURL;
-    const createObjectURL = vi.fn(() => 'blob:od://app/preview-document');
+    const createObjectURL = vi.fn((_blob: Blob) => 'blob:od://app/shared-preview-bootstrap');
     Object.defineProperty(URL, 'createObjectURL', {
       configurable: true,
       value: createObjectURL,
@@ -1881,26 +1916,133 @@ describe('FileViewer SVG artifacts', () => {
     const userAgent = vi.spyOn(window.navigator, 'userAgent', 'get')
       .mockReturnValue('OpenDesign/0.20 Electron/41.3.0');
     try {
-      render(
+      const renderViewer = (liveHtml: string, workspaceActive = true) => (
         <FileViewer
           projectId="blob-preview-project"
           projectKind="prototype"
           file={baseFile({
-            name: 'blob-preview.html',
-            path: 'blob-preview.html',
+            name: 'pages/blob-preview.html',
+            path: 'pages/blob-preview.html',
             mime: 'text/html',
             kind: 'html',
           })}
-          liveHtml={'<!doctype html><html><body><main>Blob preview</main><script>location.reload()</script></body></html>'}
-          workspaceActive
-        />,
+          liveHtml={liveHtml}
+          workspaceActive={workspaceActive}
+        />
       );
+      const firstSource = '<!doctype html><html><head><link rel="stylesheet" href="app.css"></head><body><main>Blob preview v1</main><img src="art.png"><script src="app.jsx"></script><script>location.reload()</script></body></html>';
+      const secondSource = '<!doctype html><html><body><main>Blob preview v2</main><script>location.reload()</script></body></html>';
+      const { rerender } = render(renderViewer(firstSource));
 
       const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
       expect(createObjectURL).toHaveBeenCalledTimes(1);
-      expect(frame.getAttribute('src')).toBe('blob:od://app/preview-document');
+      const bootstrapUrl = frame.getAttribute('src');
+      expect(bootstrapUrl).toBe('blob:od://app/shared-preview-bootstrap');
+      const bootstrapBlob = createObjectURL.mock.calls[0]?.[0] as Blob;
+      expect(await bootstrapBlob.text()).toContain('data-od-lazy-srcdoc-transport');
       expect(frame.hasAttribute('srcdoc')).toBe(false);
+      const postMessage = vi.spyOn(frame.contentWindow!, 'postMessage');
+      fireEvent.load(frame);
+      const activations = () => postMessage.mock.calls
+        .map(([message]) => message as { type?: unknown; html?: string; generation?: string })
+        .filter((message) => message.type === 'od:srcdoc-transport-activate');
+      await waitFor(() => expect(activations()).toHaveLength(1));
+      expect(activations()[0]?.html).toContain('Blob preview v1');
+      expect(activations()[0]?.html).toContain(
+        '<base href="http://localhost:3000/api/projects/blob-preview-project/raw/pages/" data-od-project-preview-base>',
+      );
+      expect(activations()[0]?.html).toContain('src="app.jsx"');
+      expect(activations()[0]?.html).toContain('data-od-edit-bridge');
+      expect(activations()[0]?.html).toContain('data-od-srcdoc-transport-activation');
+
+      rerender(renderViewer(secondSource));
+      await waitFor(() => expect(activations()).toHaveLength(2));
+      expect(screen.getByTestId('artifact-preview-frame')).toBe(frame);
+      expect(frame.getAttribute('src')).toBe(bootstrapUrl);
+      expect(createObjectURL).toHaveBeenCalledTimes(1);
+      expect(activations()[1]?.html).toContain('Blob preview v2');
+      expect(activations()[1]?.generation).not.toBe(activations()[0]?.generation);
+
+      rerender(renderViewer(secondSource, false));
+      rerender(renderViewer(secondSource, true));
+      expect(screen.getByTestId('artifact-preview-frame')).toBe(frame);
+      expect(frame.getAttribute('src')).toBe(bootstrapUrl);
+      expect(createObjectURL).toHaveBeenCalledTimes(1);
+      expect(activations()).toHaveLength(2);
     } finally {
+      userAgent.mockRestore();
+      if (originalCreateObjectURL) {
+        Object.defineProperty(URL, 'createObjectURL', {
+          configurable: true,
+          value: originalCreateObjectURL,
+        });
+      } else {
+        Reflect.deleteProperty(URL, 'createObjectURL');
+      }
+      if (originalRevokeObjectURL) {
+        Object.defineProperty(URL, 'revokeObjectURL', {
+          configurable: true,
+          value: originalRevokeObjectURL,
+        });
+      } else {
+        Reflect.deleteProperty(URL, 'revokeObjectURL');
+      }
+    }
+  });
+
+  it('re-challenges the shared Electron shell when the same file tab changes projects', () => {
+    const originalCreateObjectURL = URL.createObjectURL;
+    const originalRevokeObjectURL = URL.revokeObjectURL;
+    const createObjectURL = vi.fn((_blob: Blob) => 'blob:od://app/shared-project-bootstrap');
+    const postMessage = vi.fn();
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      value: createObjectURL,
+    });
+    Object.defineProperty(URL, 'revokeObjectURL', {
+      configurable: true,
+      value: vi.fn(),
+    });
+    const userAgent = vi.spyOn(window.navigator, 'userAgent', 'get')
+      .mockReturnValue('OpenDesign/0.20 Electron/41.3.0');
+    const contentWindow = { postMessage } as unknown as Window;
+    const contentWindowGetter = vi.spyOn(
+      HTMLIFrameElement.prototype,
+      'contentWindow',
+      'get',
+    ).mockReturnValue(contentWindow);
+    try {
+      const renderViewer = (projectId: string) => (
+        <FileViewer
+          projectId={projectId}
+          projectKind="prototype"
+          file={baseFile({
+            name: 'index.html',
+            path: 'index.html',
+            mime: 'text/html',
+            kind: 'html',
+          })}
+          liveHtml={'<!doctype html><html><body><main>Project preview</main><script>location.reload()</script></body></html>'}
+          workspaceActive
+        />
+      );
+      const { rerender } = render(renderViewer('project-a'));
+      const firstFrame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+      fireEvent.load(firstFrame);
+      expect(postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'od:srcdoc-transport-activate' }),
+        '*',
+      );
+
+      postMessage.mockClear();
+      rerender(renderViewer('project-b'));
+      expect(screen.getByTestId('artifact-preview-frame')).not.toBe(firstFrame);
+      expect(postMessage).toHaveBeenCalledWith(
+        { type: 'od:srcdoc-transport-shell-probe' },
+        '*',
+      );
+    } finally {
+      contentWindowGetter.mockRestore();
       userAgent.mockRestore();
       if (originalCreateObjectURL) {
         Object.defineProperty(URL, 'createObjectURL', {
@@ -4395,6 +4537,83 @@ describe('FileViewer SVG artifacts', () => {
     expect(srcDocFrame?.srcdoc).toContain('data-od-sandbox-shim');
   });
 
+  it('uses an absolute personal-project base for injected Electron previews', () => {
+    const file = baseFile({
+      name: 'pages/index.html',
+      path: 'pages/index.html',
+      mime: 'text/html',
+      kind: 'html',
+      artifactManifest: {
+        version: 1,
+        kind: 'html',
+        title: 'Page',
+        entry: 'pages/index.html',
+        renderer: 'html',
+        exports: ['html'],
+      },
+    });
+
+    const { container } = render(
+      <FileViewer
+        projectId="project-1"
+        projectKind="prototype"
+        file={file}
+        liveHtml='<html><head><link rel="stylesheet" href="app.css"></head><body><script src="app.js"></script><main>Preview</main></body></html>'
+      />,
+    );
+
+    const srcDocFrame = container.querySelector(
+      'iframe[data-od-render-mode="srcdoc"]',
+    ) as HTMLIFrameElement | null;
+    expect(srcDocFrame?.getAttribute('data-od-active')).toBe('true');
+    expect(srcDocFrame?.srcdoc).toContain(
+      '<base href="http://localhost:3000/api/projects/project-1/raw/pages/" data-od-project-preview-base>',
+    );
+  });
+
+  it('keeps the URL document warm across repeated Code and Preview switches', async () => {
+    const file = baseFile({
+      name: 'page.html',
+      path: 'page.html',
+      mime: 'text/html',
+      kind: 'html',
+      artifactManifest: {
+        version: 1,
+        kind: 'html',
+        title: 'Page',
+        entry: 'page.html',
+        renderer: 'html',
+        exports: ['html'],
+      },
+    });
+    const { container } = render(
+      <FileViewer
+        projectId="project-1"
+        projectKind="prototype"
+        file={file}
+        liveHtml='<html><body><main>Warm URL preview</main></body></html>'
+      />,
+    );
+
+    const initialFrame = container.querySelector(
+      'iframe[data-od-render-mode="url-load"]',
+    ) as HTMLIFrameElement;
+    const initialSrc = initialFrame.getAttribute('src');
+    expect(initialSrc).toContain('/raw/');
+
+    for (let index = 0; index < 6; index += 1) {
+      fireEvent.click(screen.getByRole('tab', { name: 'Code' }));
+      expect(initialFrame.getAttribute('data-od-active')).toBe('false');
+      expect(initialFrame.getAttribute('src')).toBe(initialSrc);
+
+      fireEvent.click(screen.getByRole('tab', { name: 'Preview' }));
+      expect(initialFrame.getAttribute('data-od-active')).toBe('true');
+      expect(initialFrame.getAttribute('src')).toBe(initialSrc);
+    }
+
+    expect(container.querySelector('iframe[data-od-render-mode="url-load"]')).toBe(initialFrame);
+  });
+
   it('keeps srcDoc HTML previews available with a compact Code action', async () => {
     const file = baseFile({
       name: 'page.html',
@@ -4847,6 +5066,31 @@ describe('FileViewer SVG artifacts', () => {
     expect(screen.getByTestId('artifact-preview-frame')).toBeTruthy();
   });
 
+  it('does not show deck notes for a report whose print bridge only mentions deck-stage', () => {
+    const file = baseFile({
+      name: 'annual-report.dc.html',
+      path: 'annual-report.dc.html',
+      mime: 'text/html',
+      kind: 'html',
+    });
+
+    render(
+      <FileViewer
+        projectId="project-1"
+        projectKind="prototype"
+        file={file}
+        liveHtml={
+          '<main class="doc"><h1>Annual report</h1></main>' +
+          '<!-- await a <deck-stage> only when the optional deck runtime exists -->' +
+          '<script>const example = "<deck-stage></deck-stage>";</script>'
+        }
+      />,
+    );
+
+    expect(screen.queryByTestId('speaker-notes-panel')).toBeNull();
+    expect(screen.queryByTestId('deck-thumbnail-rail')).toBeNull();
+  });
+
   it('keeps deck thumbnail resource URLs independent of shell Workspace changes', async () => {
     const file = baseFile({
       name: 'deck.html',
@@ -4949,6 +5193,57 @@ describe('FileViewer SVG artifacts', () => {
     const editor = panel.querySelector('.speaker-notes-editor textarea') as HTMLTextAreaElement | null;
     expect(editor).toBeTruthy();
     expect(editor?.value).toBe('Intro note');
+  });
+
+  it('replays the cached deck slide when a retained project viewer reactivates', () => {
+    const file = baseFile({
+      name: 'retained-deck.html',
+      path: 'retained-deck.html',
+      mime: 'text/html',
+      kind: 'html',
+      artifactManifest: {
+        version: 1,
+        kind: 'deck',
+        title: 'Retained deck',
+        entry: 'retained-deck.html',
+        renderer: 'deck-html',
+        exports: ['html'],
+      },
+    });
+    const renderViewer = (workspaceActive: boolean) => (
+      <FileViewer
+        projectId="project-1"
+        projectKind="slide_deck"
+        file={file}
+        isDeck
+        liveHtml={[
+          '<!doctype html><html><body>',
+          '<section class="slide">one</section>',
+          '<section class="slide">two</section>',
+          '<section class="slide">three</section>',
+          '</body></html>',
+        ].join('')}
+        workspaceActive={workspaceActive}
+      />
+    );
+
+    const { rerender } = render(renderViewer(true));
+    const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+    window.dispatchEvent(new MessageEvent('message', {
+      source: frame.contentWindow,
+      data: { type: 'od:slide-state', active: 2, count: 3 },
+    }));
+
+    rerender(renderViewer(false));
+    const postMessage = vi.spyOn(frame.contentWindow!, 'postMessage');
+    postMessage.mockClear();
+    rerender(renderViewer(true));
+
+    expect(screen.getByTestId('artifact-preview-frame')).toBe(frame);
+    expect(postMessage).toHaveBeenCalledWith(
+      { type: 'od:slide', action: 'go', index: 2 },
+      '*',
+    );
   });
 
   it('does not reload deck preview or thumbnails when speaker notes save on blur', async () => {
@@ -10509,7 +10804,12 @@ describe('FileViewer tweaks toolbar', () => {
       );
       expect(src.searchParams.get('v')).toBe('1710000000');
       expect(src.searchParams.get('r')).toBe('0');
-      expect(src.searchParams.getAll('odPreviewBridge')).toEqual(['scroll', 'selection', 'snapshot', 'observability']);
+      expect(src.searchParams.getAll('odPreviewBridge')).toEqual([
+        'scroll',
+        'selection',
+        'snapshot',
+        'observability',
+      ]);
       expect(src.searchParams.get('odPreviewEpoch')).toMatch(/^preview-document-\d+$/);
     });
 

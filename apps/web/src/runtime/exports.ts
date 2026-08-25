@@ -1038,15 +1038,23 @@ export async function exportProjectAsPptx(opts: {
 // a plain `.slide` class as proof of a deck: ordinary pages often use that token
 // for carousels/testimonials and still need full-page/scroll-stitch capture.
 function sourceLooksLikeStructuredDeck(source: string): boolean {
+  // Inspect markup, not examples or compatibility notes embedded in the
+  // document. Print bridges commonly mention `<deck-stage>` in comments or
+  // script strings while guarding optional deck behavior; treating those
+  // literals as real elements turns ordinary reports into a one-slide deck and
+  // incorrectly mounts navigation and speaker notes.
+  const markup = source
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, '');
   return (
     /<deck-stage[\s/>]|class\s*=\s*['"](?:[^'"]*\s)?(?:deck-slide|ppt-slide)(?:\s|['"])/i.test(
-      source,
+      markup,
     ) ||
     /<[^>]*\bclass\s*=\s*['"](?:[^'"]*\s)?slide(?:\s|['"])[^>]*\bdata-title\s*=|<[^>]*\bdata-title\s*=[^>]*\bclass\s*=\s*['"](?:[^'"]*\s)?slide(?:\s|['"])/i.test(
-      source,
+      markup,
     ) ||
     /<[^>]*\bclass\s*=\s*['"](?:[^'"]*\s)?deck(?:\s|['"])[^>]*>\s*<[^>]*\bclass\s*=\s*['"](?:[^'"]*\s)?slide(?:\s|['"])/i.test(
-      source,
+      markup,
     )
   );
 }
