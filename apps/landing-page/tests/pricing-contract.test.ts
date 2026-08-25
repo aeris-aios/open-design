@@ -325,11 +325,11 @@ describe("pricing contract", () => {
     );
     assert.match(
       individualPlans,
-      /\.compact-price-detail\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:\s*auto minmax\(0, 1fr\);[^}]*min-height:\s*46px;/s,
+      /\.compact-price-detail\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:\s*auto minmax\(0, 1fr\);[^}]*align-items:\s*center;[^}]*min-height:\s*46px;/s,
     );
     assert.match(
       individualPlans,
-      /\.compact-price-detail > small\s*\{[^}]*min-width:\s*0;[^}]*white-space:\s*normal;[^}]*overflow-wrap:\s*anywhere;/s,
+      /\.compact-price-detail > small\s*\{[^}]*min-width:\s*0;[^}]*text-align:\s*right;[^}]*white-space:\s*nowrap;/s,
     );
   });
 
