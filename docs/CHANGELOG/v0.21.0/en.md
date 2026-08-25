@@ -1,15 +1,13 @@
 ---
-title: OpenDesign 0.21.0 — Built to Recover
-description: OpenDesign 0.21.0 keeps everyday failures from becoming dead ends, with resilient agent discovery, stable Electron previews, safer session recovery, honest model entitlements, and cleaner everyday interactions.
+title: Open Design 0.21.0 — Reliable, Start to Finish
+description: From Agent connections to live HTML previews and app relaunches, Open Design 0.21.0 makes the entire creation experience more reliable—and easier to recover when something goes wrong.
 ---
 
-### 🌟 Codename: *Built to Recover*
+### 🌟 Codename: *Reliable, Start to Finish*
 
-🛡️ **42 PRs · 13 contributors · 4 days** — **0.21.0 keeps everyday failures
-from becoming dead ends.** A broken CLI shim, a new agent release, a stale
-sidecar or a white Electron frame could each stop the work cold. OpenDesign now
-detects the failure, preserves what is still good and gives you a way forward —
-from app startup to the agent run to the preview you hand off. 🚀
+🛡️ **42 PRs · 13 contributors · 4 days** — **From Agent connections to live
+HTML previews and app relaunches, Open Design 0.21.0 makes the entire creation
+experience more reliable—and easier to recover when something goes wrong.** 🚀
 
 ## 🔥 Highlights
 

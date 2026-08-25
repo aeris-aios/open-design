@@ -1,14 +1,12 @@
 ---
-title: OpenDesign 0.21.0 — 内建恢复力
-description: OpenDesign 0.21.0 让日常故障不再变成死路，带来更可靠的 Agent 发现与 Electron 预览、更安全的会话恢复、更准确的模型权益，以及更清晰的日常交互。
+title: Open Design 0.21.0 — Reliable, Start to Finish
+description: 从 Agent 连接、实时 HTML 预览到 App 重新启动，Open Design 0.21.0 让整个创作体验更加可靠；遇到问题时，也更容易恢复。
 ---
 
-### 🌟 Codename: *Built to Recover*
+### 🌟 Codename: *Reliable, Start to Finish*
 
-🛡️ **42 个 PR · 13 位贡献者 · 4 天** — **0.21.0 让日常故障不再变成死路。**
-一个损坏的 CLI shim、一次 Agent 升级、遗留的 sidecar，或 Electron 里的一块白屏，
-过去都可能让工作突然停住。现在 OpenDesign 会识别故障、保住仍然正确的状态，并从
-App 启动、Agent 运行一路到最终交付的预览，为你留下继续向前的路径。🚀
+🛡️ **42 个 PR · 13 位贡献者 · 4 天** — **从 Agent 连接、实时 HTML 预览到 App
+重新启动，Open Design 0.21.0 让整个创作体验更加可靠；遇到问题时，也更容易恢复。** 🚀
 
 ## 🔥 亮点
 
