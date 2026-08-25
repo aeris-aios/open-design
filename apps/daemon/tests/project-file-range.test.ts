@@ -731,10 +731,14 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
     expect(html.body).toContain('data-od-preview-runtime');
     expect(html.body).toContain("register('scroll'");
     expect(html.body).toContain('data-od-url-selection-bridge');
+    expect(html.body).toContain("register(\"selection\"");
     expect(html.body).toContain('data-od-url-snapshot-bridge');
+    expect(html.body).toContain("register(\"snapshot\"");
     expect(html.body).toContain('data-od-preview-observability');
+    expect(html.body).toContain("register(\"observability\"");
     expect(html.body).toContain('data-od-preview-runtime');
-    expect(html.body).toContain('"content_measurement","scroll","snapshot","observability","selection"');
+    expect(html.body).toContain('"content_measurement","scroll","snapshot","observability","selection","tweaks"');
+    expect(html.body).toContain("register('tweaks'");
     expect(html.body.indexOf('data-od-preview-runtime')).toBeLessThan(
       html.body.indexOf('<script src="./scripts/support.js">'),
     );

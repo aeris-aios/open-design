@@ -1,4 +1,38 @@
+import type { PreviewRuntimeCapability } from '@open-design/contracts/runtime/preview-runtime';
 import type { PreviewRuntimeModuleSource } from './preview-runtime-bootstrap.js';
+
+function scriptBody(scriptTag: string): string {
+  const match = scriptTag.match(/^<script\b[^>]*>([\s\S]*)<\/script>$/iu);
+  if (!match?.[1]) throw new TypeError('preview runtime module must be built from one script element');
+  return match[1];
+}
+
+/** Install a passive bridge before authored startup and expose its negotiated identity. */
+export function buildInstalledScriptRuntimeModule(
+  capability: PreviewRuntimeCapability,
+  scriptTag: string,
+  marker: string,
+): PreviewRuntimeModuleSource {
+  return {
+    capabilities: [capability],
+    source: `/* ${marker} */\n${scriptBody(scriptTag)}\n`
+      + `register(${JSON.stringify(capability)},function(){return {enable:function(){},disable:function(){}};});`,
+  };
+}
+
+/** Install an interaction bridge at first enable; subsequent toggles never reinstall listeners. */
+export function buildLazyScriptRuntimeModule(
+  capability: PreviewRuntimeCapability,
+  scriptTag: string,
+  marker: string,
+): PreviewRuntimeModuleSource {
+  return {
+    capabilities: [capability],
+    source: `/* ${marker} */\nregister(${JSON.stringify(capability)},function(){\n`
+      + `var installed=false;return {enable:function(){if(installed)return;installed=true;\n`
+      + `${scriptBody(scriptTag)}\n},disable:function(){}};});`,
+  };
+}
 
 /**
  * Scroll restoration and content measurement share DOM observers, so they are
@@ -27,6 +61,7 @@ function postScroll(){
     frameLeft:Math.round(frame.scrollLeft||0),frameTop:Math.round(frame.scrollTop||0)
   });
 }
+
 function scheduleScroll(){
   if(!scrollEnabled||scrollPending)return;
   scrollPending=true;
@@ -43,6 +78,7 @@ function measureContentSize(){
     clientWidth:clientWidth>0?Math.ceil(clientWidth):null
   };
 }
+
 function postMeasurement(){
   if(!measurementEnabled||!lastMeasurementRequest)return;
   var size=measureContentSize();
@@ -113,6 +149,71 @@ register('scroll',function(){return {
 register('content_measurement',function(){return {
   enable:function(){measurementEnabled=true;scheduleMeasurement();setTimeout(scheduleMeasurement,80);setTimeout(scheduleMeasurement,260);},
   disable:function(){measurementEnabled=false;lastMeasurementRequest=null;}
+};});
+`,
+  };
+}
+
+/**
+ * Tweaks must install its hide style before the authored body parses, otherwise
+ * a default-visible panel flashes before the host can negotiate capabilities.
+ */
+export function buildTweaksRuntimeModule(): PreviewRuntimeModuleSource {
+  return {
+    capabilities: ['tweaks'],
+    source: String.raw`
+var tweaksEnabled=false;
+var tweaksReady=false;
+var suppressTweaksEcho=false;
+var tweaksObserver=null;
+var tweaksStyle=document.createElement('style');
+tweaksStyle.setAttribute('data-od-tweaks-bridge-style','');
+tweaksStyle.textContent='[data-od-tweaks-hidden] .tw-panel{transform:translateX(calc(100% + 32px))!important;opacity:0!important;pointer-events:none!important}.tw-restore{display:none!important}';
+(document.head||document.documentElement).appendChild(tweaksStyle);
+document.documentElement.setAttribute('data-od-tweaks-hidden','');
+function tweaksPanel(){return document.querySelector('.tw-panel');}
+function applyTweaksPanelClass(visible){var panel=tweaksPanel();if(panel)panel.classList.toggle('tw-hidden',!visible);}
+function postTweaksAvailability(){
+  if(!tweaksEnabled||!tweaksReady)return;
+  send('od:tweaks-available',{available:!!tweaksPanel()});
+}
+function postTweaksState(){
+  if(!tweaksEnabled||!tweaksReady)return;
+  var panel=tweaksPanel();
+  if(panel)send('od:tweaks-panel-state',{visible:!panel.classList.contains('tw-hidden')});
+}
+function setTweaksPanelVisible(visible){
+  suppressTweaksEcho=true;
+  document.documentElement.toggleAttribute('data-od-tweaks-hidden',!visible);
+  applyTweaksPanelClass(visible);
+  Promise.resolve().then(function(){suppressTweaksEcho=false;});
+}
+function attachTweaksObserver(){
+  var panel=tweaksPanel();
+  if(!panel||tweaksObserver)return;
+  tweaksObserver=new MutationObserver(function(){if(!suppressTweaksEcho)postTweaksState();});
+  tweaksObserver.observe(panel,{attributes:true,attributeFilter:['class']});
+}
+function prepareTweaks(){
+  var panel=tweaksPanel();
+  var initialVisible=!!panel&&!panel.classList.contains('tw-hidden');
+  document.documentElement.toggleAttribute('data-od-tweaks-hidden',!initialVisible);
+  applyTweaksPanelClass(initialVisible);
+  tweaksReady=true;
+  attachTweaksObserver();
+  postTweaksAvailability();
+  postTweaksState();
+}
+if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',prepareTweaks,{once:true});else prepareTweaks();
+window.addEventListener('message',function(event){
+  if(event.source!==parent||!tweaksEnabled)return;
+  var data=event.data;
+  if(!data||data.type!=='od:tweaks-panel-visible')return;
+  setTweaksPanelVisible(!!data.visible);
+});
+register('tweaks',function(){return {
+  enable:function(){tweaksEnabled=true;postTweaksAvailability();postTweaksState();},
+  disable:function(){tweaksEnabled=false;}
 };});
 `,
   };

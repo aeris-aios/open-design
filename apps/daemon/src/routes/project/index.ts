@@ -93,7 +93,12 @@ import {
   PREVIEW_RUNTIME_BOOTSTRAP_MARKER,
   buildPreviewRuntimeBootstrap,
 } from '../../http/preview-runtime-bootstrap.js';
-import { buildScrollAndMeasurementRuntimeModule } from '../../http/preview-runtime-modules.js';
+import {
+  buildInstalledScriptRuntimeModule,
+  buildLazyScriptRuntimeModule,
+  buildScrollAndMeasurementRuntimeModule,
+  buildTweaksRuntimeModule,
+} from '../../http/preview-runtime-modules.js';
 import type { RouteDeps } from '../../server-context.js';
 import { listSkills } from '../../skills.js';
 import { isSafeId } from '../../projects.js';
@@ -5499,6 +5504,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
     'snapshot',
     'observability',
     'selection',
+    'tweaks',
   ] as const satisfies readonly PreviewRuntimeCapability[];
 
   function htmlPreviewDocumentVersion(meta: { size: number; mtime: number }): string {
@@ -6902,16 +6908,32 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
       );
       const documentVersion = htmlPreviewDocumentVersion(previewMeta);
       const scopedBridgeRequest = [
-        ...previewBridgeTokens(req.query.odPreviewBridge),
-        'selection',
-        'snapshot',
-        'observability',
+        ...previewBridgeTokens(req.query.odPreviewBridge).filter((token) =>
+          token === 'sandbox' || token === 'focus' || token === 'redirect'),
       ];
       const runtimeBootstrap = buildPreviewRuntimeBootstrap({
         sessionId: authority.scope,
         documentVersion,
         availableCapabilities: scopedPreviewRuntimeCapabilities,
-        modules: [buildScrollAndMeasurementRuntimeModule()],
+        modules: [
+          buildScrollAndMeasurementRuntimeModule(),
+          buildLazyScriptRuntimeModule(
+            'selection',
+            URL_PREVIEW_SELECTION_BRIDGE,
+            'data-od-url-selection-bridge',
+          ),
+          buildLazyScriptRuntimeModule(
+            'snapshot',
+            URL_PREVIEW_SNAPSHOT_BRIDGE,
+            'data-od-url-snapshot-bridge',
+          ),
+          buildInstalledScriptRuntimeModule(
+            'observability',
+            buildPreviewObservabilityBridge(),
+            PREVIEW_OBSERVABILITY_BRIDGE_MARKER,
+          ),
+          buildTweaksRuntimeModule(),
+        ],
       });
       const streamRuntimeBootstrap = /^text\/html(?:;|$)/iu.test(previewMeta.mime)
         && previewMeta.size > PREVIEW_URL_GUARD_MAX_HTML_BYTES;
