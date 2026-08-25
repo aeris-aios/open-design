@@ -18,6 +18,8 @@ export interface PreviewSessionSnapshot {
   current: PreviewRuntimeDocumentIdentity | null;
   standby: PreviewRuntimeDocumentIdentity | null;
   standbyReady: boolean;
+  standbyCapabilitiesApplied: boolean;
+  standbyVisiblePaint: boolean;
   suspended: boolean;
 }
 
@@ -28,6 +30,10 @@ export interface PreviewSessionCallbacks {
     previous: PreviewSessionDocument | null,
   ) => void;
   onStandbyDiscarded?: (document: PreviewSessionDocument) => void;
+  onCapabilitiesApplied?: (
+    document: PreviewSessionDocument,
+    capabilities: readonly PreviewRuntimeCapability[],
+  ) => void;
   onSnapshotChanged?: (snapshot: PreviewSessionSnapshot) => void;
 }
 
@@ -35,6 +41,8 @@ interface ManagedPreviewDocument {
   document: PreviewSessionDocument;
   controller: PreviewRuntimeController;
   ready: boolean;
+  capabilitiesApplied: boolean;
+  visiblePaint: boolean;
 }
 
 /**
@@ -68,18 +76,28 @@ export class PreviewSession {
     const managed: ManagedPreviewDocument = {
       document,
       ready: false,
+      capabilitiesApplied: false,
+      visiblePaint: false,
       controller: new PreviewRuntimeController({
         identity: document,
         target: document.target,
         enabledCapabilities: this.#enabledCapabilities,
         callbacks: {
+          onCapabilitiesApplied: (capabilities) => {
+            managed.capabilitiesApplied = true;
+            this.#callbacks.onCapabilitiesApplied?.(managed.document, capabilities);
+            if (!this.#promoteIfSettled(managed)) this.#emitSnapshot();
+          },
           onReady: () => {
             if (this.#standby !== managed) return;
             managed.ready = true;
             this.#callbacks.onStandbyReady?.(managed.document);
             this.#emitSnapshot();
           },
-          onVisiblePaint: () => this.#promote(managed),
+          onVisiblePaint: () => {
+            managed.visiblePaint = true;
+            if (!this.#promoteIfSettled(managed)) this.#emitSnapshot();
+          },
         },
       }),
     };
@@ -99,8 +117,11 @@ export class PreviewSession {
 
   setEnabledCapabilities(capabilities: readonly PreviewRuntimeCapability[]): void {
     this.#enabledCapabilities = [...capabilities];
-    this.#current?.controller.setEnabledCapabilities(capabilities);
-    this.#standby?.controller.setEnabledCapabilities(capabilities);
+    for (const managed of [this.#current, this.#standby]) {
+      if (managed?.controller.setEnabledCapabilities(capabilities)) {
+        managed.capabilitiesApplied = false;
+      }
+    }
   }
 
   setSuspended(suspended: boolean): void {
@@ -120,6 +141,8 @@ export class PreviewSession {
       current: identityOf(this.#current?.document),
       standby: identityOf(this.#standby?.document),
       standbyReady: this.#standby?.ready ?? false,
+      standbyCapabilitiesApplied: this.#standby?.capabilitiesApplied ?? false,
+      standbyVisiblePaint: this.#standby?.visiblePaint ?? false,
       suspended: this.#suspended,
     };
   }
@@ -131,6 +154,12 @@ export class PreviewSession {
     this.#standby = null;
     this.#callbacks.onPromoted?.(managed.document, previous);
     this.#emitSnapshot();
+  }
+
+  #promoteIfSettled(managed: ManagedPreviewDocument): boolean {
+    if (!managed.capabilitiesApplied || !managed.visiblePaint) return false;
+    this.#promote(managed);
+    return true;
   }
 
   #emitSnapshot(): void {

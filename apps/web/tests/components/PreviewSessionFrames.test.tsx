@@ -24,7 +24,7 @@ function navigation(version: string): PreviewSessionNavigation {
 function signal(
   frame: HTMLIFrameElement,
   document: PreviewSessionNavigation,
-  type: 'od:preview:ready' | 'od:preview:visible-paint',
+  type: 'od:preview:hello' | 'od:preview:capabilities-applied' | 'od:preview:ready' | 'od:preview:visible-paint',
 ) {
   act(() => {
     window.dispatchEvent(new MessageEvent('message', {
@@ -34,9 +34,17 @@ function signal(
         protocolVersion: PREVIEW_RUNTIME_PROTOCOL_VERSION,
         sessionId: document.sessionId,
         documentVersion: document.documentVersion,
+        ...(type === 'od:preview:hello' ? { availableCapabilities: ['scroll', 'edit'] } : {}),
+        ...(type === 'od:preview:capabilities-applied' ? { enabledCapabilities: [] } : {}),
       },
     }));
   });
+}
+
+function settle(frame: HTMLIFrameElement, document: PreviewSessionNavigation) {
+  signal(frame, document, 'od:preview:hello');
+  signal(frame, document, 'od:preview:capabilities-applied');
+  signal(frame, document, 'od:preview:visible-paint');
 }
 
 describe('PreviewSessionFrames', () => {
@@ -59,10 +67,13 @@ describe('PreviewSessionFrames', () => {
 
     const standby = screen.getByTestId('preview-runtime-frame-standby') as HTMLIFrameElement;
     expect(standby.dataset.odActive).toBe('false');
+    signal(standby, first, 'od:preview:hello');
     signal(standby, first, 'od:preview:ready');
     expect(screen.queryByTestId('preview-runtime-frame-current')).toBeNull();
 
     signal(standby, first, 'od:preview:visible-paint');
+    expect(screen.queryByTestId('preview-runtime-frame-current')).toBeNull();
+    signal(standby, first, 'od:preview:capabilities-applied');
     const current = screen.getByTestId('preview-runtime-frame-current');
     expect(current).toBe(standby);
     expect(current).toHaveAttribute('data-od-active', 'true');
@@ -86,7 +97,7 @@ describe('PreviewSessionFrames', () => {
     );
     const { rerender } = render(view(first));
     const firstFrame = screen.getByTestId('preview-runtime-frame-standby') as HTMLIFrameElement;
-    signal(firstFrame, first, 'od:preview:visible-paint');
+    settle(firstFrame, first);
 
     rerender(view(second));
     expect(screen.getByTestId('preview-runtime-frame-current')).toBe(firstFrame);
@@ -94,7 +105,7 @@ describe('PreviewSessionFrames', () => {
     expect(secondFrame).not.toBe(firstFrame);
     expect(firstFrame.dataset.odActive).toBe('true');
 
-    signal(secondFrame, second, 'od:preview:visible-paint');
+    settle(secondFrame, second);
     expect(screen.getByTestId('preview-runtime-frame-current')).toBe(secondFrame);
     expect(document.body.contains(firstFrame)).toBe(false);
   });
@@ -113,7 +124,7 @@ describe('PreviewSessionFrames', () => {
     );
     const { rerender } = render(view(true));
     const frame = screen.getByTestId('preview-runtime-frame-standby') as HTMLIFrameElement;
-    signal(frame, first, 'od:preview:visible-paint');
+    settle(frame, first);
     const url = frame.getAttribute('src');
 
     rerender(view(false));
@@ -142,14 +153,14 @@ describe('PreviewSessionFrames', () => {
     }
     const { rerender } = render(<Harness shown />);
     const firstFrame = screen.getByTestId('preview-runtime-frame-standby') as HTMLIFrameElement;
-    signal(firstFrame, first, 'od:preview:visible-paint');
+    settle(firstFrame, first);
 
     rerender(<Harness shown={false} />);
     rerender(<Harness shown />);
 
     const reattached = screen.getByTestId('preview-runtime-frame-standby') as HTMLIFrameElement;
     expect(reattached).toBe(firstFrame);
-    signal(reattached, first, 'od:preview:visible-paint');
+    settle(reattached, first);
     expect(screen.getByTestId('preview-runtime-frame-current')).toBe(firstFrame);
   });
 
@@ -168,7 +179,7 @@ describe('PreviewSessionFrames', () => {
     );
     const { rerender } = render(view('project-1', 'index.html', first));
     const oldFrame = screen.getByTestId('preview-runtime-frame-standby') as HTMLIFrameElement;
-    signal(oldFrame, first, 'od:preview:visible-paint');
+    settle(oldFrame, first);
 
     rerender(view('project-2', 'other.html', second));
 

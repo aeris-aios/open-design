@@ -36,6 +36,40 @@ describe('PreviewRuntimeController', () => {
     });
   });
 
+  it('sends and acknowledges an explicit empty capability command', () => {
+    const target = { postMessage: vi.fn() };
+    const onCapabilitiesApplied = vi.fn();
+    const controller = new PreviewRuntimeController({
+      identity,
+      target,
+      callbacks: { onCapabilitiesApplied },
+    });
+
+    controller.handleMessage({
+      source: target,
+      data: {
+        type: 'od:preview:hello',
+        protocolVersion: 1,
+        ...identity,
+        availableCapabilities: ['scroll'],
+      },
+    });
+    expect(target.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'od:preview:set-capabilities',
+      enabledCapabilities: [],
+    }), '*');
+    controller.handleMessage({
+      source: target,
+      data: {
+        type: 'od:preview:capabilities-applied',
+        protocolVersion: 1,
+        ...identity,
+        enabledCapabilities: [],
+      },
+    });
+    expect(onCapabilitiesApplied).toHaveBeenCalledWith([]);
+  });
+
   it('ignores foreign and stale documents while reporting exact lifecycle signals', () => {
     const target = { postMessage: vi.fn() };
     const callbacks = {
@@ -59,8 +93,18 @@ describe('PreviewRuntimeController', () => {
       source: target,
       data: message('od:preview:ready', { documentVersion: 'stale' }),
     })).toBeNull();
+    controller.handleMessage({
+      source: target,
+      data: message('od:preview:hello', { availableCapabilities: [] }),
+    });
     controller.handleMessage({ source: target, data: message('od:preview:ready') });
     controller.handleMessage({ source: target, data: message('od:preview:visible-paint') });
+    controller.handleMessage({
+      source: target,
+      data: message('od:preview:capabilities-applied', { enabledCapabilities: ['edit'] }),
+    });
+
+    expect(callbacks.onCapabilitiesApplied).not.toHaveBeenCalled();
     controller.handleMessage({
       source: target,
       data: message('od:preview:capabilities-applied', { enabledCapabilities: [] }),

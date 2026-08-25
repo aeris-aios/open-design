@@ -35,7 +35,7 @@ export class PreviewRuntimeController {
   readonly #callbacks: PreviewRuntimeControllerCallbacks;
   #available: PreviewRuntimeCapability[] | null = null;
   #desired: PreviewRuntimeCapability[];
-  #lastCommandKey = '';
+  #lastCommandKey: string | null = null;
 
   constructor(options: {
     identity: PreviewRuntimeDocumentIdentity;
@@ -49,9 +49,9 @@ export class PreviewRuntimeController {
     this.#callbacks = options.callbacks ?? {};
   }
 
-  setEnabledCapabilities(capabilities: readonly PreviewRuntimeCapability[]): void {
+  setEnabledCapabilities(capabilities: readonly PreviewRuntimeCapability[]): boolean {
     this.#desired = normalizePreviewRuntimeCapabilities(capabilities);
-    this.#sendCapabilityCommand();
+    return this.#sendCapabilityCommand();
   }
 
   probe(): void {
@@ -68,11 +68,13 @@ export class PreviewRuntimeController {
         return null;
       case 'od:preview:hello':
         this.#available = message.availableCapabilities;
-        this.#lastCommandKey = '';
+        this.#lastCommandKey = null;
         this.#sendCapabilityCommand();
         break;
       case 'od:preview:capabilities-applied':
-        this.#callbacks.onCapabilitiesApplied?.(message.enabledCapabilities);
+        if (message.enabledCapabilities.join('\0') === this.#lastCommandKey) {
+          this.#callbacks.onCapabilitiesApplied?.(message.enabledCapabilities);
+        }
         break;
       case 'od:preview:ready':
         this.#callbacks.onReady?.();
@@ -86,16 +88,17 @@ export class PreviewRuntimeController {
     return message;
   }
 
-  #sendCapabilityCommand(): void {
-    if (this.#available === null) return;
+  #sendCapabilityCommand(): boolean {
+    if (this.#available === null) return false;
     const desired = new Set(this.#desired);
     const enabledCapabilities = this.#available.filter((capability) => desired.has(capability));
     const commandKey = enabledCapabilities.join('\0');
-    if (commandKey === this.#lastCommandKey) return;
+    if (commandKey === this.#lastCommandKey) return false;
     this.#lastCommandKey = commandKey;
     this.#target.postMessage(createPreviewRuntimeSetCapabilitiesMessage({
       ...this.#identity,
       enabledCapabilities,
     }), '*');
+    return true;
   }
 }

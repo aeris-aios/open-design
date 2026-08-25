@@ -13,7 +13,7 @@ function document(version: string): PreviewSessionDocument {
 
 function event(
   document: PreviewSessionDocument,
-  type: 'od:preview:hello' | 'od:preview:ready' | 'od:preview:visible-paint',
+  type: 'od:preview:hello' | 'od:preview:capabilities-applied' | 'od:preview:ready' | 'od:preview:visible-paint',
   overrides: Record<string, unknown> = {},
 ) {
   return {
@@ -24,13 +24,26 @@ function event(
       sessionId: document.sessionId,
       documentVersion: document.documentVersion,
       ...(type === 'od:preview:hello' ? { availableCapabilities: ['scroll', 'edit'] } : {}),
+      ...(type === 'od:preview:capabilities-applied' ? { enabledCapabilities: [] } : {}),
       ...overrides,
     },
   };
 }
 
+function settle(
+  session: PreviewSession,
+  document: PreviewSessionDocument,
+  enabledCapabilities: string[] = [],
+) {
+  session.handleMessage(event(document, 'od:preview:hello'));
+  session.handleMessage(event(document, 'od:preview:capabilities-applied', {
+    enabledCapabilities,
+  }));
+  session.handleMessage(event(document, 'od:preview:visible-paint'));
+}
+
 describe('PreviewSession', () => {
-  it('promotes the first document only after its exact visible-paint signal', () => {
+  it('promotes only after exact capability application and visible paint', () => {
     const promoted = vi.fn();
     const session = new PreviewSession({ callbacks: { onPromoted: promoted } });
     const first = document('v1');
@@ -45,7 +58,14 @@ describe('PreviewSession', () => {
     session.handleMessage(event(first, 'od:preview:ready'));
     expect(session.snapshot()).toMatchObject({ current: null, standbyReady: true });
 
+    session.handleMessage(event(first, 'od:preview:hello'));
     session.handleMessage(event(first, 'od:preview:visible-paint'));
+    expect(session.snapshot()).toMatchObject({
+      current: null,
+      standbyCapabilitiesApplied: false,
+      standbyVisiblePaint: true,
+    });
+    session.handleMessage(event(first, 'od:preview:capabilities-applied'));
     expect(session.snapshot()).toMatchObject({
       current: { sessionId: 'session-1', documentVersion: 'v1' },
       standby: null,
@@ -60,7 +80,7 @@ describe('PreviewSession', () => {
     const second = document('v2');
 
     session.stageDocument(first);
-    session.handleMessage(event(first, 'od:preview:visible-paint'));
+    settle(session, first);
     session.stageDocument(second);
     session.handleMessage(event(second, 'od:preview:ready'));
 
@@ -70,6 +90,8 @@ describe('PreviewSession', () => {
       standbyReady: true,
     });
 
+    session.handleMessage(event(second, 'od:preview:hello'));
+    session.handleMessage(event(second, 'od:preview:capabilities-applied'));
     session.handleMessage(event(second, 'od:preview:visible-paint'));
     expect(session.snapshot()).toMatchObject({ current: { documentVersion: 'v2' }, standby: null });
     expect(promoted).toHaveBeenLastCalledWith(second, first);
@@ -82,7 +104,7 @@ describe('PreviewSession', () => {
     const second = document('v2');
 
     session.stageDocument(first);
-    session.handleMessage(event(first, 'od:preview:visible-paint'));
+    settle(session, first);
     session.stageDocument(second);
     session.discardStandby(second);
 
@@ -113,6 +135,9 @@ describe('PreviewSession', () => {
       enabledCapabilities: ['edit'],
     }), '*');
 
+    session.handleMessage(event(first, 'od:preview:capabilities-applied', {
+      enabledCapabilities: ['edit'],
+    }));
     session.handleMessage(event(first, 'od:preview:visible-paint'));
     session.setEnabledCapabilities(['scroll']);
     expect(first.target.postMessage).toHaveBeenLastCalledWith(expect.objectContaining({
@@ -120,12 +145,33 @@ describe('PreviewSession', () => {
     }), '*');
   });
 
+  it('does not promote a standby whose negotiated capabilities became stale', () => {
+    const session = new PreviewSession();
+    const first = document('v1');
+    session.stageDocument(first);
+    session.handleMessage(event(first, 'od:preview:hello'));
+    session.handleMessage(event(first, 'od:preview:capabilities-applied'));
+
+    session.setEnabledCapabilities(['edit']);
+    session.handleMessage(event(first, 'od:preview:visible-paint'));
+    expect(session.snapshot()).toMatchObject({
+      current: null,
+      standbyCapabilitiesApplied: false,
+      standbyVisiblePaint: true,
+    });
+
+    session.handleMessage(event(first, 'od:preview:capabilities-applied', {
+      enabledCapabilities: ['edit'],
+    }));
+    expect(session.snapshot().current?.documentVersion).toBe('v1');
+  });
+
   it('suspends and resumes without messaging or replacing the document', () => {
     const snapshots = vi.fn();
     const session = new PreviewSession({ callbacks: { onSnapshotChanged: snapshots } });
     const first = document('v1');
     session.stageDocument(first);
-    session.handleMessage(event(first, 'od:preview:visible-paint'));
+    settle(session, first);
     const callsBeforeSuspend = vi.mocked(first.target.postMessage).mock.calls.length;
 
     session.setSuspended(true);
