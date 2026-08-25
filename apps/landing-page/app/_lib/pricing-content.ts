@@ -809,7 +809,7 @@ const EN: PricingContent = {
   },
   go: {
     tagline: 'Light needs · Easy delivery',
-    ctaLabel: 'Subscribe',
+    ctaLabel: 'Sold out',
     allowance: '8 popular models · ample allowance',
     features: [
       'Full design and coding capabilities',
@@ -895,7 +895,7 @@ const ZH_CN: PricingContent = {
   },
   go: {
     tagline: '轻量需求，轻松交付',
-    ctaLabel: '订阅 Go',
+    ctaLabel: '已售罄',
     allowance: '8 个热门模型 · 充裕额度',
     features: ['完整设计与 Coding 能力', '无需配置供应商 API Key', '额度自动恢复'],
   },
@@ -977,7 +977,7 @@ const ZH_TW: PricingContent = {
   },
   go: {
     tagline: '輕量需求，輕鬆交付',
-    ctaLabel: '訂閱 Go',
+    ctaLabel: '已售罄',
     allowance: '8 個熱門模型 · 充裕額度',
     features: ['完整設計與 Coding 能力', '無需配置供應商 API Key', '額度自動恢復'],
   },
@@ -1059,7 +1059,7 @@ const ES: PricingContent = {
   },
   go: {
     tagline: 'Necesidades ligeras, entrega fácil · Sin configuración',
-    ctaLabel: 'Suscribirse a Go',
+    ctaLabel: 'Agotado',
     allowance: '8 modelos populares · capacidad amplia',
     features: ['Todas las funciones de diseño y coding', 'Sin configurar claves API', 'La capacidad se restablece automáticamente'],
   },
@@ -1141,7 +1141,7 @@ const PT_BR: PricingContent = {
   },
   go: {
     tagline: 'Demandas leves, entrega fácil · Sem configuração',
-    ctaLabel: 'Assinar o Go',
+    ctaLabel: 'Esgotado',
     allowance: '8 modelos populares · franquia ampla',
     features: ['Recursos completos de design e coding', 'Sem configurar chaves de API', 'A franquia é renovada automaticamente'],
   },
@@ -1223,7 +1223,7 @@ const RU: PricingContent = {
   },
   go: {
     tagline: 'Небольшие задачи без лишних усилий · Без настройки',
-    ctaLabel: 'Подписаться на Go',
+    ctaLabel: 'Распродано',
     allowance: '8 популярных моделей · большой лимит',
     features: ['Все функции дизайна и кодинга', 'Без настройки API-ключей', 'Лимит восстанавливается автоматически'],
   },
@@ -1305,7 +1305,7 @@ const FR: PricingContent = {
   },
   go: {
     tagline: 'Besoins légers, livraison facile · Zéro configuration',
-    ctaLabel: 'Souscrire à Go',
+    ctaLabel: 'Épuisé',
     allowance: '8 modèles populaires · quota généreux',
     features: ['Toutes les fonctions design et coding', 'Aucune clé API à configurer', 'Le quota se réinitialise automatiquement'],
   },
@@ -1387,7 +1387,7 @@ const KO: PricingContent = {
   },
   go: {
     tagline: '가벼운 요구, 간편한 완성 · 설정 없이 사용',
-    ctaLabel: 'Go 구독',
+    ctaLabel: '품절',
     allowance: '인기 모델 8개 · 넉넉한 한도',
     features: ['모든 디자인 및 Coding 기능', '공급자 API 키 설정 불필요', '한도 자동 복원'],
   },
@@ -1469,7 +1469,7 @@ const DE: PricingContent = {
   },
   go: {
     tagline: 'Leichte Aufgaben, mühelose Ergebnisse · Ohne Einrichtung',
-    ctaLabel: 'Go abonnieren',
+    ctaLabel: 'Ausverkauft',
     allowance: '8 beliebte Modelle · großzügiges Kontingent',
     features: ['Alle Design- und Coding-Funktionen', 'Keine API-Schlüssel nötig', 'Kontingent wird automatisch erneuert'],
   },
@@ -1551,7 +1551,7 @@ const JA: PricingContent = {
   },
   go: {
     tagline: '軽いニーズを手軽に完了 · 設定不要',
-    ctaLabel: 'Go を購読',
+    ctaLabel: '売り切れ',
     allowance: '人気モデル 8 種 · たっぷり使える',
     features: ['すべてのデザイン・Coding 機能', 'プロバイダー API キー設定不要', '利用枠は自動回復'],
   },

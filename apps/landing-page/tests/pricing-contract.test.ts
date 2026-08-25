@@ -228,7 +228,7 @@ describe("pricing contract", () => {
         content.plans.pro.ctaLabel,
         content.plans.max.ctaLabel,
       ],
-      ["Subscribe", "Subscribe", "Subscribe", "Subscribe"],
+        ["Sold out", "Subscribe", "Subscribe", "Subscribe"],
     );
     assert.match(
       individualPlans,
@@ -412,7 +412,7 @@ describe("pricing contract", () => {
   it("renders the live Personal comparison from localized pricing content", async () => {
     const individualPlans = await readFile(PRICING_INDIVIDUAL_PATH, "utf8");
 
-    assert.equal(getPricingContent("zh").go.ctaLabel, "订阅 Go");
+    assert.equal(getPricingContent("zh").go.ctaLabel, "已售罄");
     assert.equal(getPricingContent("ja").plans.pro.ctaLabel, "Pro にアップグレード");
     assert.equal(getPricingContent("de").personal.upToResolution, "Bis zu {resolution}");
     assert.equal(getPricingContent("fr").personal.viewMoreBenefits, "Voir plus d’avantages");
@@ -1036,6 +1036,11 @@ describe("pricing contract", () => {
       /\.pricing-card-cta\[aria-disabled='true'\][\s\S]*?cursor:\s*not-allowed;/,
     );
     assert.match(individualPlans, /data-pricing-cta\s+data-tier=\{tier\}/);
+    assert.match(individualPlans, /GO_PLAN_SOLD_OUT/);
+    assert.match(
+      individualPlans,
+      /aria-disabled=\{tier === 'go' && GO_PLAN_SOLD_OUT \? 'true' : undefined\}/,
+    );
     assert.match(individualPlans, /\.pricing-card-cta\s*\{[^}]*border:\s*0;/s);
   });
 

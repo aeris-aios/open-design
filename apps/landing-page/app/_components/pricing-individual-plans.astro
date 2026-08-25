@@ -1,6 +1,7 @@
 ---
 import {
   GO_PLAN,
+  GO_PLAN_SOLD_OUT,
   PRICING_SNAPSHOT,
   formatUsd,
   type PlanTierConfig,
@@ -389,6 +390,9 @@ const otherModels = 'Gemini-3.1-Pro, Grok-4.5, GPT-5.4, GPT-5.6-Terra, Qwen3.7-M
               data-tier={tier}
               data-plan-name={tier.charAt(0).toUpperCase() + tier.slice(1)}
               data-default-label={tierCopy[tier].ctaLabel}
+              aria-disabled={tier === 'go' && GO_PLAN_SOLD_OUT ? 'true' : undefined}
+              tabindex={tier === 'go' && GO_PLAN_SOLD_OUT ? -1 : undefined}
+              data-subscription-disabled={tier === 'go' && GO_PLAN_SOLD_OUT ? '' : undefined}
             >
               <span>{tierCopy[tier].ctaLabel}</span>
             </a>
