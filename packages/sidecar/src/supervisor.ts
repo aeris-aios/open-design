@@ -3,13 +3,13 @@ import { setTimeout as sleep } from "node:timers/promises";
 
 import {
   captureProcessSnapshot,
-  collectProcessTreePids,
   createProcessStampArgs,
   isProcessAlive,
   stopProcesses,
 } from "@open-design/platform";
 
 import { SIDECAR_GENERATION_PID_ENV, SIDECAR_SUPERVISOR_TARGET_ENV } from "./client.js";
+import { collectSidecarGenerationPids } from "./process-tree.js";
 import { readCurrentSidecarStamp, SIDECAR_STAMP_CONTRACT } from "./stamp.js";
 
 type SupervisorTarget = {
@@ -69,7 +69,7 @@ async function stopTargetAfterOwnerDeath(): Promise<void> {
   if (!isProcessAlive(rootPid)) return;
   let ownedPids = [rootPid];
   try {
-    ownedPids = collectProcessTreePids(await captureProcessSnapshot(), [rootPid]);
+    ownedPids = collectSidecarGenerationPids(await captureProcessSnapshot(), [rootPid], stamp);
   } catch {
     // The exact child pid remains a safe fallback when process discovery fails.
   }

@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { captureProcessSnapshot, collectProcessTreePids, waitForProcessExit } from "@open-design/platform";
+import { captureProcessSnapshot, collectProcessTreePids, isProcessAlive, waitForProcessExit } from "@open-design/platform";
 import {
   normalizeSidecarStamp,
   allocatePort,
@@ -25,6 +25,7 @@ import {
   type SidecarResources,
   type SidecarStamp,
 } from "../src/index.js";
+import { collectSidecarGenerationPids } from "../src/process-tree.js";
 import { resolvePrivateIpcPath } from "../src/stamp.js";
 
 const originalArgv = [...process.argv];
@@ -105,6 +106,76 @@ describe("five-field argv identity", () => {
     expect(() => normalizeSidecarStamp({ ...stamp, ipc: "/tmp/not-identity.sock" })).toThrow(/unsupported fields: ipc/);
     expect(() => normalizeSidecarStamp({ app: stamp.app, namespace: stamp.namespace })).toThrow(/channel/);
   });
+});
+
+describe("sidecar generation process trees", () => {
+  it("owns ordinary and same-stamp descendants but stops at a different stamped resource root", () => {
+    const nestedStamp = { ...stamp, app: "desktop" };
+    const stampArgs = (stampValue: SidecarStamp) => SIDECAR_STAMP_FIELDS
+      .map((field) => `${SIDECAR_STAMP_FLAGS[field]}=${stampValue[field]}`)
+      .join(" ");
+    const processes = [
+      { command: `node supervisor ${stampArgs(stamp)}`, pid: 10, ppid: 1 },
+      { command: `node target ${stampArgs(stamp)}`, pid: 11, ppid: 10 },
+      { command: "next-server", pid: 12, ppid: 11 },
+      { command: `node supervisor ${stampArgs(nestedStamp)}`, pid: 20, ppid: 11 },
+      { command: `node target ${stampArgs(nestedStamp)}`, pid: 21, ppid: 20 },
+    ];
+
+    expect(collectSidecarGenerationPids(processes, [10], stamp)).toEqual([12, 11, 10]);
+  });
+
+  it("keeps a nested stamped resource alive when its ancestor generation stops", async () => {
+    const fixture = fileURLToPath(new URL("./fixtures/nested-sidecar.ts", import.meta.url));
+    const root = await mkdtemp(join(tmpdir(), "open-design-sidecar-nested-"));
+    const readyPath = join(root, "ready.json");
+    const parentStamp = { ...stamp, app: "daemon", namespace: `nested-parent-${process.pid}` };
+    const childStamp = { ...parentStamp, app: "desktop" };
+    const parent = await spawnSidecar({
+      args: ["--import", "tsx", fixture],
+      command: process.execPath,
+      env: {
+        ...process.env,
+        OD_TEST_NESTED_SIDECAR_READY: readyPath,
+        OD_TEST_NESTED_SIDECAR_STAMP: JSON.stringify(childStamp),
+      },
+      resources: {
+        dataRoot: join(root, "parent-data"),
+        ownerPid: null,
+        port: 0,
+        runtimeRoot: join(root, "parent-runtime"),
+      },
+      stamp: parentStamp,
+    });
+    let childPid: number | null = null;
+
+    try {
+      await vi.waitFor(async () => {
+        const ready = await readFile(readyPath, "utf8").then((value) => JSON.parse(value)).catch(() => null);
+        expect(ready).not.toBeNull();
+        childPid = Number(ready.pid);
+        expect(childPid).toBeGreaterThan(0);
+        expect((await findSidecarProcesses(childStamp)).map(({ pid }) => pid)).toContain(childPid);
+      }, { interval: 50, timeout: 5_000 });
+      const nestedPid = childPid;
+      if (nestedPid == null) throw new Error("nested sidecar fixture did not report a pid");
+      const genericTree = collectProcessTreePids(await captureProcessSnapshot(), [parent.process.pid]);
+      expect(genericTree).toContain(nestedPid);
+
+      const result = await parent.stop({ killGraceMs: 2_000, termGraceMs: 0 });
+
+      expect(result.matchedPids).toContain(parent.process.pid);
+      expect(result.matchedPids).not.toContain(nestedPid);
+      expect(result.forcedPids).not.toContain(nestedPid);
+      await expect(waitForProcessExit(parent.process.pid, 2_000)).resolves.toBe(true);
+      expect(isProcessAlive(nestedPid)).toBe(true);
+      expect((await findSidecarProcesses(childStamp)).map(({ pid }) => pid)).toContain(nestedPid);
+    } finally {
+      await parent.stop({ killGraceMs: 2_000, termGraceMs: 0 }).catch(() => undefined);
+      await stopSidecar(childStamp, { killGraceMs: 2_000, termGraceMs: 0 }).catch(() => undefined);
+      await rm(root, { force: true, recursive: true });
+    }
+  }, 15_000);
 });
 
 describe("normalized sidecar client", () => {

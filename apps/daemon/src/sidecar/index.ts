@@ -54,6 +54,7 @@ async function main(): Promise<void> {
   const desktopHandoff = await prepareLegacyPayloadDesktopHandoff({
     dataRoot: client.resources.dataRoot,
     namespace: client.stamp.namespace,
+    outerPid: client.resources.ownerPid,
     requestDesktopStatus: async () => await client.status(APP_KEYS.DESKTOP, { timeoutMs: 800 }),
     runtimeRoot: client.resources.runtimeRoot,
     source: client.stamp.source,

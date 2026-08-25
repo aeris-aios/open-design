@@ -204,10 +204,10 @@ async function readAttempt(
 
 async function resolveInstalledOuterIdentity(options: {
   launcherPaths: LauncherPaths;
-  parentPid: number;
+  outerPid: number;
   platform: NodeJS.Platform;
 }): Promise<LauncherDesktopHandoffDescriptor["outer"] | null> {
-  if (!Number.isSafeInteger(options.parentPid) || options.parentPid <= 0) return null;
+  if (!Number.isSafeInteger(options.outerPid) || options.outerPid <= 0) return null;
   const install = await readJsonFile<LauncherInstallDescriptor>(options.launcherPaths.installPath);
   if (
     install == null ||
@@ -227,7 +227,7 @@ async function resolveInstalledOuterIdentity(options: {
     : install.launchPath;
   const entry = await lstat(executablePath).catch(() => null);
   if (entry == null || !entry.isFile() || entry.isSymbolicLink()) return null;
-  return { executablePath, pid: options.parentPid };
+  return { executablePath, pid: options.outerPid };
 }
 
 export async function prepareLegacyPayloadDesktopHandoff(options: {
@@ -235,7 +235,7 @@ export async function prepareLegacyPayloadDesktopHandoff(options: {
   env?: NodeJS.ProcessEnv;
   namespace: string;
   now?: () => Date;
-  parentPid?: number;
+  outerPid: number | null;
   platform?: NodeJS.Platform;
   randomId?: () => string;
   requestDesktopStatus?: () => Promise<DesktopStatusSnapshot>;
@@ -280,7 +280,7 @@ export async function prepareLegacyPayloadDesktopHandoff(options: {
     readAttempt(launcherPaths),
     resolveInstalledOuterIdentity({
       launcherPaths,
-      parentPid: options.parentPid ?? process.ppid,
+      outerPid: options.outerPid ?? 0,
       platform,
     }),
     resolvePayloadExecutable({

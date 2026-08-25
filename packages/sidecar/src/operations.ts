@@ -7,7 +7,6 @@ import type { SpawnProcessRequest, StopProcessesOptions, StopProcessesResult } f
 import {
   captureProcessSnapshot,
   captureStampedProcessSnapshot,
-  collectProcessTreePids,
   createProcessStampArgs,
   isProcessAlive,
   listProcessSnapshots,
@@ -25,6 +24,7 @@ import {
   type SidecarDescription,
   type SidecarResources,
 } from "./client.js";
+import { collectSidecarGenerationPids } from "./process-tree.js";
 import { normalizeSidecarStamp, readCurrentSidecarStamp, resolvePrivateIpcPath, SIDECAR_STAMP_CONTRACT, type SidecarStamp } from "./stamp.js";
 
 export type SidecarLaunchRequest = Omit<SpawnProcessRequest, "args" | "env"> & {
@@ -468,7 +468,7 @@ async function stopSidecarRoots(
   const snapshots = knownSnapshots ?? await captureProcessSnapshot();
   const existingPidSet = new Set(snapshots.map(({ pid }) => pid));
   const initialRoots = [...new Set(rootPids)].filter((pid) => existingPidSet.has(pid));
-  const initialPids = collectProcessTreePids(snapshots, initialRoots);
+  const initialPids = collectSidecarGenerationPids(snapshots, initialRoots, stamp);
   const initialPidSet = new Set(initialPids);
   let gracefulAccepted = false;
   if (initialRoots.length > 0) {
@@ -529,7 +529,7 @@ async function stopSidecarRoots(
       .map(({ pid }) => pid),
   );
   const latestGenerationPids = [...new Set([
-    ...collectProcessTreePids(latestSnapshots, [...ownedRootSet]),
+    ...collectSidecarGenerationPids(latestSnapshots, [...ownedRootSet], stamp),
   ])];
   if (latestGenerationPids.length === 0) {
     return {

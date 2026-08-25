@@ -63,14 +63,14 @@ async function fixture() {
 }
 
 describe("legacy payload desktop handoff", () => {
-  it("prepares from exact desktop status and arms through the sidecar launch boundary", async () => {
+  it("uses the explicit outer owner identity rather than inferring it from process ancestry", async () => {
     const value = await fixture();
     try {
       const prepared = await prepareLegacyPayloadDesktopHandoff({
         dataRoot: join(value.root, "data"),
         env: { OD_APP_VERSION: value.version, OD_INSTALLATION_DIR: value.root },
         namespace: value.namespace,
-        parentPid: 4321,
+        outerPid: 4321,
         platform: "darwin",
         randomId: () => "f5d4a712-8ba9-4c28-bcad-6dbed5db2d7c",
         requestDesktopStatus: async () => ({
@@ -83,6 +83,8 @@ describe("legacy payload desktop handoff", () => {
       });
       expect(prepared).toMatchObject({ kind: "prepared", descriptor: { state: "prepared" } });
       if (prepared.kind !== "prepared") throw new Error("expected prepared handoff");
+      expect(prepared.descriptor.outer.pid).toBe(4321);
+      expect(prepared.descriptor.outer.pid).not.toBe(process.ppid);
 
       await writeFile(value.launcherPaths.runtimePath, JSON.stringify({
         active: { generation: 1, version: value.version },
@@ -156,7 +158,7 @@ describe("legacy payload desktop handoff", () => {
         dataRoot: join(value.root, "data"),
         env: { OD_APP_VERSION: value.version, OD_INSTALLATION_DIR: value.root },
         namespace: value.namespace,
-        parentPid: 4321,
+        outerPid: 4321,
         platform: "darwin",
         requestDesktopStatus: async () => ({
           executablePath: value.outerExecutablePath,
@@ -200,7 +202,7 @@ describe("legacy payload desktop handoff", () => {
         dataRoot: join(value.root, "data"),
         env: { OD_APP_VERSION: value.version, OD_INSTALLATION_DIR: value.root },
         namespace: value.namespace,
-        parentPid: 4321,
+        outerPid: 4321,
         platform: "darwin",
         requestDesktopStatus: async () => ({
           executablePath: value.payloadExecutablePath,
@@ -231,7 +233,7 @@ describe("legacy payload desktop handoff", () => {
         dataRoot: join(value.root, "data"),
         env: { OD_APP_VERSION: value.version, OD_INSTALLATION_DIR: aliasRoot },
         namespace: value.namespace,
-        parentPid: 4321,
+        outerPid: 4321,
         platform: "darwin",
         requestDesktopStatus: async () => ({
           executablePath: value.outerExecutablePath,
@@ -251,9 +253,32 @@ describe("legacy payload desktop handoff", () => {
       dataRoot: "/tmp/open-design/data",
       env: {},
       namespace: "default",
+      outerPid: null,
       platform: "darwin",
       runtimeRoot: "/tmp/open-design/runtime",
       source: SIDECAR_SOURCES.TOOLS_DEV,
     })).resolves.toEqual({ kind: "none", reason: "not-packaged" });
+  });
+
+  it("quick-fails packaged handoff when the outer owner identity is absent", async () => {
+    const value = await fixture();
+    try {
+      await expect(prepareLegacyPayloadDesktopHandoff({
+        dataRoot: join(value.root, "data"),
+        env: { OD_APP_VERSION: value.version, OD_INSTALLATION_DIR: value.root },
+        namespace: value.namespace,
+        outerPid: null,
+        platform: "darwin",
+        requestDesktopStatus: async () => ({
+          executablePath: value.outerExecutablePath,
+          pid: process.ppid,
+          state: "running",
+        }),
+        runtimeRoot: value.runtimeRoot,
+        source: SIDECAR_SOURCES.PACKAGED,
+      })).resolves.toEqual({ kind: "none", reason: "invalid-install-anchor" });
+    } finally {
+      await rm(value.root, { force: true, recursive: true });
+    }
   });
 });
