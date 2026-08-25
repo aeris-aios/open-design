@@ -40,7 +40,6 @@ import { localeFromPath, localizedHref } from '../../i18n';
 import { DEEPSEEK_V4_PRO_CAMPAIGN } from '../../_lib/deepseek-v4-pro-campaign';
 
 const locale = localeFromPath(Astro.url.pathname);
-const isZh = locale === 'zh' || locale === 'zh-tw';
 const href = (path: string) => localizedHref(path, locale);
 const content = getPricingContent(locale);
 const planActionLabels = getPricingPlanActionLabels(locale);
@@ -213,7 +212,7 @@ const jsonLd = [
     data-campaign-end-at={DEEPSEEK_V4_PRO_CAMPAIGN.endAtExclusive}
   >
     <header class="pr-hero">
-      <h1 class="pr-hero-heading">{isZh ? '零配置，只为结果付费' : locale === 'en' ? 'Zero setup. Pay only for results.' : L.heroTitle}</h1>
+      <h1 class="pr-hero-heading">{L.heroTitle}</h1>
       <div class="pr-controls-row">
         <div class="pr-toggle" role="tablist" aria-label={teamContent.billingIntervalLabel}>
           <button type="button" class="pr-toggle-btn" role="tab" data-interval-btn="monthly" aria-selected="false">
@@ -235,7 +234,7 @@ const jsonLd = [
             aria-selected="true"
             tabindex="0"
           >
-            {isZh ? '个人' : locale === 'en' ? 'Individual' : teamContent.creatorTab}
+            {teamContent.creatorTab}
           </button>
           <span class="pr-audience-separator" aria-hidden="true">/</span>
           <button
@@ -248,7 +247,7 @@ const jsonLd = [
             aria-selected="false"
             tabindex="-1"
           >
-            {isZh ? '团队' : locale === 'en' ? 'Team' : teamContent.teamTab}
+            {teamContent.teamTab}
           </button>
         </div>
       </div>

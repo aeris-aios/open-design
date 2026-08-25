@@ -170,6 +170,7 @@ export interface PersonalPricingCopy {
   customDomains: string;
   unlimitedCustomDomains: string;
   bringYourOwnApiKey: string;
+  bringYourOwnApiKeyHelp: string;
   publishAndShare: string;
   goConcurrency: string;
   creatorDeveloperSupport: string;
@@ -312,6 +313,7 @@ const PERSONAL_EN: PersonalPricingCopy = {
   customDomains: '{count} domains',
   unlimitedCustomDomains: 'Unlimited domains',
   bringYourOwnApiKey: 'Supports third-party API keys',
+  bringYourOwnApiKeyHelp: 'Connect API keys from other model providers and use their models in Open Design. This plan does not provide public API access.',
   publishAndShare: 'Publish artifacts online and share them',
   goConcurrency: '2 concurrent tasks',
   creatorDeveloperSupport: 'Creator / developer support',
@@ -360,6 +362,7 @@ const PERSONAL_ZH_CN: PersonalPricingCopy = {
   customDomains: '支持 {count} 个域名',
   unlimitedCustomDomains: '域名无限量',
   bringYourOwnApiKey: '支持接入第三方 API Key',
+  bringYourOwnApiKeyHelp: '可绑定其他模型服务商的 API Key，在 Open Design 中调用对应模型；本套餐不提供对外 API 服务。',
   publishAndShare: '支持产物发布线上与分享',
   goConcurrency: '2 个并发任务',
   creatorDeveloperSupport: '创作者 / 开发者支持',
@@ -408,6 +411,7 @@ const PERSONAL_ZH_TW: PersonalPricingCopy = {
   customDomains: '支援 {count} 個網域',
   unlimitedCustomDomains: '網域無限量',
   bringYourOwnApiKey: '支援接入第三方 API Key',
+  bringYourOwnApiKeyHelp: '可綁定其他模型服務商的 API Key，在 Open Design 中調用對應模型；本方案不提供對外 API 服務。',
   publishAndShare: '支援產物上線發佈與分享',
   goConcurrency: '2 個並行任務',
   creatorDeveloperSupport: '創作者 / 開發者支援',
@@ -456,6 +460,7 @@ const PERSONAL_ES: PersonalPricingCopy = {
   customDomains: '{count} dominios personalizados',
   unlimitedCustomDomains: 'Dominios personalizados ilimitados',
   bringYourOwnApiKey: 'Usa tu propia clave API',
+  bringYourOwnApiKeyHelp: 'Vincula claves API de otros proveedores de modelos y úsalas en Open Design. Este plan no ofrece acceso API público.',
   publishAndShare: 'Publica entregables en línea y compártelos',
   goConcurrency: '2 tareas simultáneas',
   creatorDeveloperSupport: 'Soporte para creadores / desarrolladores',
@@ -504,6 +509,7 @@ const PERSONAL_PT_BR: PersonalPricingCopy = {
   customDomains: '{count} domínios personalizados',
   unlimitedCustomDomains: 'Domínios personalizados ilimitados',
   bringYourOwnApiKey: 'Use sua própria chave de API',
+  bringYourOwnApiKeyHelp: 'Vincule chaves de API de outros provedores de modelos e use-as no Open Design. Este plano não oferece acesso de API público.',
   publishAndShare: 'Publique entregas online e compartilhe',
   goConcurrency: '2 tarefas simultâneas',
   creatorDeveloperSupport: 'Suporte para criadores / desenvolvedores',
@@ -552,6 +558,7 @@ const PERSONAL_RU: PersonalPricingCopy = {
   customDomains: '{count} пользовательских доменов',
   unlimitedCustomDomains: 'Неограниченные пользовательские домены',
   bringYourOwnApiKey: 'Подключение собственного API-ключа',
+  bringYourOwnApiKeyHelp: 'Можно привязать API-ключи других поставщиков моделей и вызывать их в Open Design. Этот тариф не даёт внешнего API.',
   publishAndShare: 'Публикуйте результаты онлайн и делитесь ими',
   goConcurrency: '2 одновременные задачи',
   creatorDeveloperSupport: 'Поддержка авторов / разработчиков',
@@ -600,6 +607,7 @@ const PERSONAL_FR: PersonalPricingCopy = {
   customDomains: '{count} domaines personnalisés',
   unlimitedCustomDomains: 'Domaines personnalisés illimités',
   bringYourOwnApiKey: 'Utilisez votre propre clé API',
+  bringYourOwnApiKeyHelp: 'Associez des clés API d’autres fournisseurs de modèles et utilisez-les dans Open Design. Cette offre ne fournit pas d’accès API public.',
   publishAndShare: 'Publiez les livrables en ligne et partagez-les',
   goConcurrency: '2 tâches simultanées',
   creatorDeveloperSupport: 'Support créateur / développeur',
@@ -648,6 +656,7 @@ const PERSONAL_KO: PersonalPricingCopy = {
   customDomains: '사용자 지정 도메인 {count}개',
   unlimitedCustomDomains: '사용자 지정 도메인 무제한',
   bringYourOwnApiKey: '개인 API 키 사용',
+  bringYourOwnApiKeyHelp: '다른 모델 제공업체의 API 키를 연결해 Open Design에서 해당 모델을 사용할 수 있습니다. 이 요금제는 대외 API 서비스를 제공하지 않습니다.',
   publishAndShare: '산출물을 온라인에 게시하고 공유',
   goConcurrency: '동시 작업 2개',
   creatorDeveloperSupport: '크리에이터 / 개발자 지원',
@@ -696,6 +705,7 @@ const PERSONAL_DE: PersonalPricingCopy = {
   customDomains: '{count} benutzerdefinierte Domains',
   unlimitedCustomDomains: 'Unbegrenzte benutzerdefinierte Domains',
   bringYourOwnApiKey: 'Eigenen API-Schlüssel verwenden',
+  bringYourOwnApiKeyHelp: 'API-Schlüssel anderer Modellanbieter hinterlegen und die Modelle in Open Design nutzen. Dieser Tarif bietet keinen öffentlichen API-Zugang.',
   publishAndShare: 'Artefakte online veröffentlichen und teilen',
   goConcurrency: '2 gleichzeitige Aufgaben',
   creatorDeveloperSupport: 'Support für Kreative / Entwickler',
@@ -744,6 +754,7 @@ const PERSONAL_JA: PersonalPricingCopy = {
   customDomains: 'カスタムドメイン {count} 件',
   unlimitedCustomDomains: 'カスタムドメイン無制限',
   bringYourOwnApiKey: '自分の API キーを使用',
+  bringYourOwnApiKeyHelp: '他のモデル提供元の API キーを紐づけ、Open Design 内でそのモデルを利用できます。このプランは外部向け API サービスを提供しません。',
   publishAndShare: '成果物をオンラインで公開して共有',
   goConcurrency: '同時実行タスク 2 件',
   creatorDeveloperSupport: 'クリエイター / 開発者サポート',
@@ -787,7 +798,7 @@ const PERSONAL_JA: PersonalPricingCopy = {
 const EN: PricingContent = {
   personal: PERSONAL_EN,
   labels: {
-    heroTitle: 'Pay only for AI tasks that deliver results',
+    heroTitle: 'Zero setup. Pay only for results.',
     footnote: 'Prices shown in USD. Adjust or cancel your plan anytime.',
     consoleLabel: 'OpenDesign Cloud console',
     checkoutDestinationUnavailable: 'Checkout destination unavailable. Return to your Cloud Console and open Pricing again.',
@@ -873,7 +884,7 @@ const EN: PricingContent = {
 const ZH_CN: PricingContent = {
   personal: PERSONAL_ZH_CN,
   labels: {
-    heroTitle: '只为实际完成的 AI 任务付费',
+    heroTitle: '零配置，只为结果付费',
     footnote: '价格以美元计。可随时调整或取消套餐。',
     consoleLabel: 'OpenDesign Cloud 控制台',
     checkoutDestinationUnavailable: '结账环境不可用。请返回 Cloud 控制台后重新打开价格页。',
@@ -955,7 +966,7 @@ const ZH_CN: PricingContent = {
 const ZH_TW: PricingContent = {
   personal: PERSONAL_ZH_TW,
   labels: {
-    heroTitle: '只為實際完成的 AI 任務付費',
+    heroTitle: '零配置，只為結果付費',
     footnote: '價格以美元計。可隨時調整或取消方案。',
     consoleLabel: 'OpenDesign Cloud 主控台',
     checkoutDestinationUnavailable: '結帳環境無法使用。請返回 Cloud 主控台後重新開啟價格頁。',

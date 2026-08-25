@@ -231,16 +231,26 @@ describe("pricing contract", () => {
     assert.equal(content.personal.customDomains, "{count} domains");
     assert.equal(content.personal.unlimitedCustomDomains, "Unlimited domains");
     assert.equal(content.personal.bringYourOwnApiKey, "Supports third-party API keys");
+    assert.equal(
+      content.personal.bringYourOwnApiKeyHelp,
+      "Connect API keys from other model providers and use their models in Open Design. This plan does not provide public API access.",
+    );
     assert.equal(zhContent.personal.customDomains, "支持 {count} 个域名");
     assert.equal(zhContent.personal.unlimitedCustomDomains, "域名无限量");
     assert.equal(zhContent.personal.bringYourOwnApiKey, "支持接入第三方 API Key");
+    assert.equal(
+      zhContent.personal.bringYourOwnApiKeyHelp,
+      "可绑定其他模型服务商的 API Key，在 Open Design 中调用对应模型；本套餐不提供对外 API 服务。",
+    );
     assert.equal(zhTwContent.personal.customDomains, "支援 {count} 個網域");
     assert.equal(zhTwContent.personal.unlimitedCustomDomains, "網域無限量");
     assert.equal(zhTwContent.personal.bringYourOwnApiKey, "支援接入第三方 API Key");
-    assert.match(
-      individualPlans,
-      /可绑定其他模型服务商的 API Key，在 Open Design 中调用对应模型；本套餐不提供对外 API 服务。/,
+    assert.equal(
+      getPricingContent("ja").personal.bringYourOwnApiKeyHelp,
+      "他のモデル提供元の API キーを紐づけ、Open Design 内でそのモデルを利用できます。このプランは外部向け API サービスを提供しません。",
     );
+    assert.match(individualPlans, /P\.bringYourOwnApiKeyHelp/);
+    assert.doesNotMatch(individualPlans, /const apiKeyHelp = locale === 'zh'/);
     assert.match(individualPlans, /class="benefit-help-trigger"/);
     assert.match(individualPlans, /class="benefit-help-tooltip"/);
     assert.match(individualPlans, /role="tooltip"/);
@@ -1170,6 +1180,10 @@ describe("pricing contract", () => {
       /\.pr-audience-toggle\s*\{[^}]*grid-column:\s*3;[^}]*justify-self:\s*end;[^}]*margin-right:\s*24px;/s,
     );
     assert.match(page, /<span class="pr-audience-separator" aria-hidden="true">\/<\/span>/);
+    assert.match(page, /<h1 class="pr-hero-heading">\{L\.heroTitle\}<\/h1>/);
+    assert.match(page, /\{teamContent\.creatorTab\}/);
+    assert.match(page, /\{teamContent\.teamTab\}/);
+    assert.doesNotMatch(page, /const isZh = /);
     assert.match(page, /data-interval="yearly"/);
     assert.match(page, /data-interval-btn="yearly"[^>]*aria-selected="true"/);
     assert.match(page, /<span class="pr-toggle-save">\{L\.yearlySave\}<\/span>/);
