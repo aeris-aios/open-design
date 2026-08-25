@@ -77,6 +77,9 @@ importers:
       '@open-design/plugin-runtime':
         specifier: workspace:*
         version: link:../../packages/plugin-runtime
+      '@open-design/preview-runtime':
+        specifier: workspace:*
+        version: link:../../packages/preview-runtime
       '@open-design/registry-protocol':
         specifier: workspace:*
         version: link:../../packages/registry-protocol
@@ -345,6 +348,9 @@ importers:
       '@open-design/platform':
         specifier: workspace:*
         version: link:../../packages/platform
+      '@open-design/preview-runtime':
+        specifier: workspace:*
+        version: link:../../packages/preview-runtime
       '@open-design/sidecar':
         specifier: workspace:*
         version: link:../../packages/sidecar
@@ -724,6 +730,18 @@ importers:
       vitest:
         specifier: 4.1.6
         version: 4.1.6(@opentelemetry/api@1.9.1)(@types/node@20.19.39)(jsdom@29.1.1)(vite@7.3.3(@types/node@20.19.39)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.22.3)(yaml@2.9.0))
+
+  packages/preview-runtime:
+    devDependencies:
+      esbuild:
+        specifier: 0.28.0
+        version: 0.28.0
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: 4.1.6
+        version: 4.1.6(@opentelemetry/api@1.9.1)(@types/node@24.12.2)(jsdom@29.1.1)(vite@7.3.3(@types/node@24.12.2)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.22.3)(yaml@2.9.0))
 
   packages/registry-protocol:
     dependencies:

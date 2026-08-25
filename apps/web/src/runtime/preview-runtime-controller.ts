@@ -56,7 +56,7 @@ export class PreviewRuntimeController {
   handleMessage(event: PreviewRuntimeMessageEvent): PreviewRuntimeMessage | null {
     if (event.source !== this.#target) return null;
     const message = parsePreviewRuntimeMessage(event.data);
-    if (!previewRuntimeMessageMatchesDocument(message, this.#identity)) return null;
+    if (message === null || !previewRuntimeMessageMatchesDocument(message, this.#identity)) return null;
 
     switch (message.type) {
       case 'od:preview:hello':
