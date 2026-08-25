@@ -212,6 +212,18 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
         ' --></body></html>',
       ].join('')),
     );
+    await writeFile(
+      path.join(dir, 'large-body-redirect.html'),
+      Buffer.from([
+        '<!doctype html><html><head><title>Body redirect</title></head>',
+        '<body><main>Redirect Preview</main>',
+        '<!-- ',
+        'x'.repeat((2 * 1024 * 1024) + 256),
+        ' -->',
+        '<script>location.replace("./next.html")</script>',
+        '</body></html>',
+      ].join('')),
+    );
     await writeFile(path.join(dir, 'styles.css'), 'body { color: rgb(1, 2, 3); }');
     await writeFile(path.join(dir, 'support.js'), 'window.__supportLoaded = true;');
     for (let index = 1; index <= 43; index += 1) {
@@ -468,6 +480,18 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
     expect(await css.text()).toContain('rgb(1, 2, 3)');
     expect(jsx.status).toBe(200);
     expect(await jsx.text()).toContain('__screen43');
+  });
+
+  it('enables load-time redirect blocking for a large body script', async () => {
+    const preview = await fetch(
+      `${rawUrl('large-body-redirect.html')}?odPreviewBridge=redirect`,
+      { headers: { Connection: 'close' } },
+    );
+    expect(preview.status).toBe(200);
+    const html = await preview.text();
+    expect(html).toContain('data-od-preview-redirect-guard');
+    expect(html).toContain('var BLOCK_LOAD_TIME_SCRIPT_REDIRECT = true;');
+    expect(html).toContain('location.replace("./next.html")');
   });
 
   it('streams requested bridges into large powered HTML previews', async () => {

@@ -22,7 +22,7 @@ export interface HtmlHeadScanResult {
   insertionOffset: number;
   /** Whether the artifact already owns base-URL resolution. */
   hasAuthoredBase: boolean;
-  /** Whether a head script contains a load-time location navigation signal. */
+  /** Whether an author script contains a load-time location navigation signal. */
   hasLoadTimeLocationNavigation: boolean;
 }
 
@@ -84,7 +84,8 @@ export async function scanHtmlHeadForStreamingInjection(
   let hasLoadTimeLocationNavigation = false;
   let prelude = true;
   let templateDepth = 0;
-  let done = false;
+  let headScanDone = false;
+  let scanDone = false;
 
   const consume = (length: number): void => {
     buffer = buffer.slice(length);
@@ -102,7 +103,7 @@ export async function scanHtmlHeadForStreamingInjection(
   for await (const chunk of fs.createReadStream(filePath, { highWaterMark: 64 * 1024 })) {
     buffer += (Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)).toString('latin1');
 
-    while (buffer.length > 0 && !done) {
+    while (buffer.length > 0 && !scanDone) {
       if (bufferOffset === 0 && buffer.startsWith('\u00ef\u00bb\u00bf')) {
         consume(3);
         insertionOffset = 3;
@@ -135,6 +136,10 @@ export async function scanHtmlHeadForStreamingInjection(
           scriptSignalTail = sample.slice(-256);
         }
         consume(contentEnd);
+        if (headScanDone && hasLoadTimeLocationNavigation) {
+          scanDone = true;
+          break;
+        }
         if (close < 0) break;
         rawTextTag = null;
         scriptSignalTail = '';
@@ -143,19 +148,23 @@ export async function scanHtmlHeadForStreamingInjection(
 
       const open = buffer.indexOf('<');
       if (open < 0) {
-        if (prelude && /^\s*$/.test(buffer)) insertionOffset = bufferOffset + buffer.length;
+        if (!headScanDone) {
+          if (prelude && /^\s*$/.test(buffer)) insertionOffset = bufferOffset + buffer.length;
+          else if (/\S/.test(buffer)) headScanDone = true;
+        }
         consume(buffer.length);
         break;
       }
       if (open > 0) {
         const text = buffer.slice(0, open);
-        if (prelude && /^\s*$/.test(text)) insertionOffset = bufferOffset + open;
-        else if (/\S/.test(text)) {
-          prelude = false;
-          if (!explicitHead) done = true;
+        if (!headScanDone) {
+          if (prelude && /^\s*$/.test(text)) insertionOffset = bufferOffset + open;
+          else if (/\S/.test(text)) {
+            prelude = false;
+            if (!explicitHead) headScanDone = true;
+          }
         }
         consume(open);
-        if (done) break;
       }
 
       if (buffer.startsWith('<!--')) {
@@ -170,7 +179,8 @@ export async function scanHtmlHeadForStreamingInjection(
         if (buffer.length > MAX_TAG_BYTES) {
           // Malformed/unbounded tag: keep streaming and inject at the last
           // parser-safe boundary rather than retaining attacker-sized input.
-          done = true;
+          headScanDone = true;
+          scanDone = true;
         }
         break;
       }
@@ -180,57 +190,59 @@ export async function scanHtmlHeadForStreamingInjection(
       consume(tagEnd + 1);
       const tag = tagNameFromToken(token);
       if (!tag) {
-        if (/^<!doctype\b/i.test(token) || /^<\?/.test(token) || /^<!/.test(token)) {
+        if (!headScanDone && (/^<!doctype\b/i.test(token) || /^<\?/.test(token) || /^<!/.test(token))) {
           if (prelude) insertionOffset = bufferOffset;
           continue;
         }
-        prelude = false;
-        if (!explicitHead) done = true;
+        if (!headScanDone) {
+          prelude = false;
+          if (!explicitHead) headScanDone = true;
+        }
         continue;
       }
 
       if (tag.closing) {
         if (tag.name === 'template' && templateDepth > 0) templateDepth -= 1;
-        if (tag.name === 'head' && templateDepth === 0) done = true;
+        if (tag.name === 'head' && templateDepth === 0) headScanDone = true;
+        if (headScanDone && hasLoadTimeLocationNavigation) scanDone = true;
         continue;
       }
 
-      if (tag.name === 'html') {
+      if (!headScanDone && tag.name === 'html') {
         htmlOpenOffset = bufferOffset;
         insertionOffset = bufferOffset;
         prelude = false;
         continue;
       }
-      if (tag.name === 'head') {
+      if (!headScanDone && tag.name === 'head') {
         explicitHead = true;
         insertionOffset = bufferOffset;
         prelude = false;
         continue;
       }
-      if (tag.name === 'body' && templateDepth === 0) {
-        done = true;
-        continue;
+      if (!headScanDone && tag.name === 'body' && templateDepth === 0) {
+        headScanDone = true;
       }
       if (tag.name === 'template') templateDepth += 1;
-      if (tag.name === 'base' && templateDepth === 0) hasAuthoredBase = true;
+      if (!headScanDone && tag.name === 'base' && templateDepth === 0) hasAuthoredBase = true;
 
-      if (!explicitHead && templateDepth === 0 && !IMPLICIT_HEAD_TAGS.has(tag.name)) {
+      if (!headScanDone && !explicitHead && templateDepth === 0 && !IMPLICIT_HEAD_TAGS.has(tag.name)) {
         // The browser would close its implicit head before this token. Insert
         // before it, after a doctype/html prelude if present.
         if (htmlOpenOffset === null) insertionOffset = tokenStart;
-        done = true;
-        continue;
+        headScanDone = true;
       }
 
-      prelude = false;
+      if (!headScanDone) prelude = false;
       // HTML ignores self-closing syntax on non-void raw-text/RCDATA
       // elements. `<script/>` therefore still consumes text until a matching
       // end tag, and markup-shaped text inside it must remain inert.
       if (RAW_TEXT_TAGS.has(tag.name)) {
         rawTextTag = tag.name;
       }
+      if (headScanDone && hasLoadTimeLocationNavigation) scanDone = true;
     }
-    if (done) break;
+    if (scanDone) break;
   }
 
   return finish();

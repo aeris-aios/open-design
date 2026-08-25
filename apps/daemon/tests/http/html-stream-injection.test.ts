@@ -82,6 +82,16 @@ describe('scanHtmlHeadForStreamingInjection', () => {
     expect(result.hasLoadTimeLocationNavigation).toBe(true);
   });
 
+  it('keeps scanning body scripts after the head insertion point is known', async () => {
+    const fixture = await scan([
+      '<!doctype html><html><head><title>Preview</title></head>',
+      '<body><main>Visible content</main>',
+      '<script>location.replace("./next.html")</script>',
+      '</body></html>',
+    ].join(''));
+    expect(fixture.result.hasLoadTimeLocationNavigation).toBe(true);
+  });
+
   it('does not close raw-text elements on end-tag-name prefixes', async () => {
     const fixture = await scan([
       '<html><head><script>',
