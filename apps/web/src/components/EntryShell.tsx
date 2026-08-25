@@ -2067,6 +2067,7 @@ function OnboardingView({
   const analytics = useAnalytics();
   const [step, setStep] = useState(0);
   const [runtime, setRuntime] = useState<'amr' | 'local' | 'byok' | null>(null);
+  const [runtimeSetupEntry, setRuntimeSetupEntry] = useState<'cloud' | 'chooser'>('chooser');
   const [modelSource, setModelSource] = useState<'amr' | 'local' | 'byok'>('amr');
   const modelSourceOptionRefs = useRef<
     Record<'amr' | 'local' | 'byok', HTMLButtonElement | null>
@@ -2622,7 +2623,7 @@ function OnboardingView({
     emitOnboardingClick('back', 'back');
     clearAgentRevealTimers();
     setRuntime(null);
-    setStep(1);
+    setStep(runtimeSetupEntry === 'cloud' ? 0 : 1);
   }
 
   function completeStreamlinedOnboarding(
@@ -2690,6 +2691,7 @@ function OnboardingView({
         runtime_type: 'local_cli',
       });
       setRuntime('local');
+      setRuntimeSetupEntry('chooser');
       void scanCliAgents({ preferExisting: true });
       setStep(2);
       return;
@@ -2697,6 +2699,7 @@ function OnboardingView({
 
     emitOnboardingClick('byok', 'select_runtime', { runtime_type: 'byok' });
     setRuntime('byok');
+    setRuntimeSetupEntry('chooser');
     setStep(2);
   }
   /**
@@ -3278,8 +3281,8 @@ function OnboardingView({
 
   const primaryActionLabel = t('settings.onboardingContinue');
 
-  // Step 1 is identity only: every user signs into OpenDesign Cloud before
-  // choosing Hosted, Local, or BYOK on the next screen.
+  // Cloud remains the primary identity path. Local CLI and BYOK are independent
+  // direct setup paths; authenticated users keep the full source chooser.
   if (step === 0) {
     const cloudBusy = amrLoginPending;
     const amrStatusResolving = !amrStatusResolved;
@@ -3374,7 +3377,42 @@ function OnboardingView({
               >
                 {t('settings.amrCancelSignIn')}
               </button>
-            ) : null}
+            ) : (
+              <div className="onboarding-cloud__alts">
+                <Button
+                  variant="subtle"
+                  className="onboarding-cloud__alt-btn"
+                  onClick={() => {
+                    emitOnboardingClick('local_coding_agent', 'select_runtime', {
+                      runtime_type: 'local_cli',
+                    });
+                    setRuntime('local');
+                    setRuntimeSetupEntry('cloud');
+                    void scanCliAgents({ preferExisting: true });
+                    setStep(2);
+                  }}
+                >
+                  <Icon name="robot" size={16} />
+                  {t('settings.onboardingLocalTitle')}
+                </Button>
+                <span className="onboarding-cloud__alts-or">
+                  {t('settings.onboardingCloudOr')}
+                </span>
+                <Button
+                  variant="subtle"
+                  className="onboarding-cloud__alt-btn"
+                  onClick={() => {
+                    emitOnboardingClick('byok', 'select_runtime', { runtime_type: 'byok' });
+                    setRuntime('byok');
+                    setRuntimeSetupEntry('cloud');
+                    setStep(2);
+                  }}
+                >
+                  <Icon name="key" size={16} />
+                  {t('settings.onboardingByokTitle')}
+                </Button>
+              </div>
+            )}
           </div>
           <footer className="onboarding-cloud__footer">
             <LanguageMenu placement="up" align="start" />
