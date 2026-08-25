@@ -155,8 +155,6 @@ export const hu: Dict = {
   'chat.runError.gitBashMissingMessage': "Az ügynök Windowson való futtatásához Git Bash szükséges, de nem található. Telepítsd a Git for Windowst, majd próbáld újra.",
   'chat.runError.cpuUnsupportedMessage': "Az ügynök futtatókörnyezete olyan CPU-utasításkészletet (AVX2) igényel, amellyel ez az eszköz nem rendelkezik, ezért nem tud elindulni. Frissítsd az OpenDesignt a legújabb verzióra, amely kompatibilis futtatókörnyezetet tartalmaz.",
   'chat.runError.cliSessionRefusedMessage':
-    "A(z) {agent} {version} megtagadta a munkamenet indítását. Ez a verzió általában nem kompatibilis az Open Designnal — válts másik verzióra, majd próbáld újra.",
-  'chat.runError.cliSessionRefusedMessageNoVersion':
     "A(z) {agent} megtagadta a munkamenet indítását. A telepített verzió általában nem kompatibilis az Open Designnal — válts másik verzióra, majd próbáld újra.",
   'chat.runError.strategyTaskStateMismatchMessage': "Ezt a feladatot a stratégia minőségi kapuja már leállította, ezért az űrlap e köre nem folytatható. Próbáld újra a kérést, vagy indíts egy újat.",
   'common.cancel': 'Mégse',

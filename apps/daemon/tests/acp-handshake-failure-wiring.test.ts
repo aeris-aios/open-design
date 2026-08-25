@@ -28,8 +28,8 @@ import { startServer } from '../src/server.js';
 // in practice.
 //
 // The daemon's job here is to NAME the failure, not to word it: it emits the
-// `AGENT_CLI_SESSION_REFUSED` code plus the structured identity (agent display
-// name, detected CLI version) and leaves `run.error` as the agent's own line.
+// `AGENT_CLI_SESSION_REFUSED` code plus the structured runtime identity (the
+// agent's display name) and leaves `run.error` as the agent's own line.
 // The sentence the user reads is the web's, resolved from that code through
 // i18n — a daemon-authored English paragraph can never be localized.
 
@@ -66,7 +66,6 @@ type PersistedStatusEvent = {
   label?: unknown;
   detail?: unknown;
   code?: unknown;
-  agentCliVersion?: unknown;
   failureCategory?: unknown;
   failureDetail?: unknown;
 };
@@ -99,12 +98,6 @@ describe('ACP handshake rejection — server wiring', () => {
   const originalEnv = snapshotEnv();
   let started: StartedServer | null = null;
   let binDir: string | null = null;
-  // Extra bin directories a test created (a second, differently-versioned CLI
-  // the user repoints at). Removed alongside `binDir`.
-  let extraBinDirs: string[] = [];
-  // Gates the fake CLI may still be parked at. Released before shutdown so a
-  // failed assertion cannot leave a held probe wedging teardown.
-  let heldGates: string[] = [];
   // The empty home detection is scoped to for this test — see
   // `isolateAgentDetection`. Per test, because the toolchain-directory cache is
   // keyed on it.
@@ -115,8 +108,6 @@ describe('ACP handshake rejection — server wiring', () => {
   });
 
   afterEach(async () => {
-    for (const gate of heldGates) await openGate(gate).catch(() => undefined);
-    heldGates = [];
     await Promise.resolve(started?.shutdown?.());
     if (started?.server) {
       await new Promise<void>((resolve) => started?.server.close(() => resolve()));
@@ -124,8 +115,6 @@ describe('ACP handshake rejection — server wiring', () => {
     started = null;
     if (binDir) await removeTempDir(binDir);
     binDir = null;
-    for (const dir of extraBinDirs) await removeTempDir(dir);
-    extraBinDirs = [];
     if (agentHomeDir) await removeTempDir(agentHomeDir);
     agentHomeDir = '';
     restoreEnv(originalEnv);
@@ -177,7 +166,11 @@ describe('ACP handshake rejection — server wiring', () => {
         action: 'update_cli',
         agent: AGENT_DISPLAY_NAME,
       });
-      expectDetectedVersion(frame, '0.38.0');
+      // Named, not versioned: the runtime is identified so the copy can lead
+      // with it, and no CLI build is reported. Reading the build THIS run
+      // started with costs a pre-spawn `--version` probe on every launch, and
+      // the localized sentence ("the installed version") is true without it.
+      expect(frame.error?.details).not.toHaveProperty('agentCliVersion');
       // The message fields stay the agent's line on both surfaces.
       expect(effectiveErrorMessage(event.data)).toBe('json-rpc id 2: Internal error');
       expect(JSON.stringify(event.data)).not.toMatch(/refused to start a session/i);
@@ -187,11 +180,11 @@ describe('ACP handshake rejection — server wiring', () => {
   // The SSE frame is only half the surface. The daemon persists every run event
   // onto the assistant message BEFORE emitting it, and `ChatPane` rebuilds the
   // failure card from that stored event after a reload — it never replays the
-  // stream. So a version that reaches the live client but not the database
-  // means the card names the build while the tab stays open and silently
-  // degrades to the version-less sentence the moment the user comes back, which
-  // is exactly when they return to act on it.
-  it('persists the version with the failure, so a reload still names the build', async () => {
+  // stream. So a code that reaches the live client but not the database means
+  // the localized card is shown while the tab stays open and collapses to the
+  // generic failure copy the moment the user comes back, which is exactly when
+  // they return to act on it.
+  it('persists the failure code, so a reload still renders the same card', async () => {
     binDir = await mkdtemp(path.join(os.tmpdir(), 'od-acp-handshake-reload-bin-'));
     const logPath = path.join(binDir, 'invocations.jsonl');
     await writeAcpCliShim(binDir, AGENT_BIN, { logPath, cliVersion: '0.38.0' });
@@ -213,84 +206,11 @@ describe('ACP handshake rejection — server wiring', () => {
     // The agent's own line survives into storage too — same invariant as the
     // live surface, since this is the text the card shows under details.
     expect(errorEvent.detail).toBe('json-rpc id 2: Internal error');
-    // …and the one fact the localized copy interpolates.
-    expect(errorEvent.agentCliVersion).toBe('0.38.0');
     // The finalizer rewrites this same event in place to stamp the run's
-    // classification. Asserting those landed proves the pass ran — and that it
-    // carried the version through rather than replacing the event with a fresh
-    // one built from `run.errorCode` alone.
+    // classification. Asserting those landed proves the pass ran, and that it
+    // enriched the stored event rather than replacing it with a fresh one.
     expect(errorEvent.failureCategory).toBe('process_exit');
     expect(errorEvent.failureDetail).toBe('agent_protocol_error');
-  });
-
-  // `getDetectedRuntimeVersions` answers per agent id, with no regard for WHICH
-  // executable that reading came from. `/api/agents` probes whatever the launch
-  // inputs resolved to at that moment; a run resolves them again, and the user
-  // is free to repoint the CLI in between (Settings writes `KIMI_BIN`, or PATH
-  // changes). When they do, the child is the new binary and the cached reading
-  // is the old one — so the refusal card tells the user to change the version
-  // of a CLI they are not running, while their actual CLI keeps failing.
-  it('names the CLI this run launched, not the one detection happened to cache', async () => {
-    // The build the user had when Settings last listed agents.
-    binDir = await mkdtemp(path.join(os.tmpdir(), 'od-acp-handshake-stale-bin-'));
-    const staleLog = path.join(binDir, 'invocations.jsonl');
-    await writeAcpCliShim(binDir, AGENT_BIN, { logPath: staleLog, cliVersion: '0.38.0' });
-    isolateAgentDetection(binDir, agentHomeDir);
-
-    // The build they repointed Open Design at afterwards. Off PATH on purpose:
-    // it is reachable ONLY through the configured override, so anything that
-    // resolves it proves the configured launch inputs were honoured.
-    const configuredDir = await mkdtemp(path.join(os.tmpdir(), 'od-acp-handshake-configured-bin-'));
-    extraBinDirs = [configuredDir];
-    const configuredLog = path.join(configuredDir, 'invocations.jsonl');
-    const configuredBin = await writeAcpCliShim(configuredDir, AGENT_BIN, {
-      logPath: configuredLog,
-      cliVersion: '0.41.7',
-    });
-
-    clearTelemetryEnv();
-    // The OD Next admission gate in `POST /api/runs` happens to run a
-    // scope-aware version probe of its own before the run starts, which warms
-    // the process-wide cache under the run's launch identity as a side effect.
-    // It only runs for the automatic-strategy route, though: a run that names a
-    // plugin or snapshot, a project whose task type OD Next does not own, and a
-    // daemon with the rollout switched off all skip it and leave the spawn-time
-    // capture as the only thing establishing which build this run started. Take
-    // that incidental warm-up out so this test observes the capture itself
-    // rather than a neighbouring subsystem's cache write.
-    process.env.OD_NEXT_STRATEGY_ROLLOUT = 'off';
-    started = (await startServer({ port: 0, returnServer: true })) as StartedServer;
-    await putConfig(started.url, { agentId: AGENT_ID });
-    // Detection runs against the PATH build and caches 0.38.0 for `kimi`.
-    await detectAgents(started.url);
-
-    // Now the user repoints the CLI, exactly as the Settings CLI-path field
-    // does, and does NOT re-open the agent list before sending.
-    await putConfig(started.url, {
-      agentId: AGENT_ID,
-      agentCliEnv: { [AGENT_ID]: { KIMI_BIN: configuredBin } },
-    });
-
-    const conversationId = await createConversation(started.url);
-    const run = await sendRunAndWait(started.url, conversationId, 'draft a landing page');
-    expect(run.status).toBe('failed');
-    expect(run.errorCode).toBe('AGENT_CLI_SESSION_REFUSED');
-
-    // Ground truth first: the child this run spawned really was the configured
-    // binary, so the assertion below is about provenance, not about resolution.
-    expect(await readRunSessionRequests(configuredLog)).toEqual(['session/new']);
-    expect(await readRunSessionRequests(staleLog)).toEqual([]);
-
-    const events = await readRunEvents(run.eventsLogPath);
-    const errorEvents = events.filter((event) => event.event === 'error');
-    expect(errorEvents.length).toBeGreaterThan(0);
-    for (const event of errorEvents) {
-      expectDetectedVersion(event.data as ErrorFrame, '0.41.7');
-    }
-
-    // The stored copy the reloaded card reads must agree with the live one.
-    const errorEvent = await readPersistedRunErrorEvent(started.url, conversationId);
-    expect(errorEvent.agentCliVersion).toBe('0.41.7');
   });
 
   it('does not re-run a handshake rejection — the same CLI build refuses again', async () => {
@@ -335,7 +255,6 @@ describe('ACP handshake rejection — server wiring', () => {
         agent: AGENT_DISPLAY_NAME,
         retryable: true,
       });
-      expectDetectedVersion(frame, '0.37.2');
       // A CLI that calls its own handshake rejection transient does not get to
       // mark the run retryable: the identical request against the identical
       // build only reproduces it.
@@ -517,121 +436,7 @@ describe('ACP handshake rejection — server wiring', () => {
     expect(errorEvent.failureDetail).toBe('fatal_rpc_error');
   });
 
-  // The detected CLI version is part of the promise this failure makes: the
-  // card names the build that refused. Reading it from the process-wide
-  // detection cache at failure time made that promise depend on whether some
-  // other request happened to be re-probing at that instant — `probe()` clears
-  // the entry before it re-reads it. CI hit exactly that window (run
-  // 32683047377) and the assertion was loosened rather than the race closed.
-  //
-  // Deterministic, not timed: the fake CLI parks at a named gate and announces
-  // it, so the run's handshake and a concurrent `/api/agents` refresh are held
-  // open TOGETHER, and the failure is built at the precise moment a probe is in
-  // flight — the window that used to leave the cache blank. Both halves of the
-  // fix are exercised at once: the run reports the version it froze at spawn,
-  // and the in-flight probe no longer retracts the cached reading behind it.
-  //
-  // The overlap is what this case is for; the refresh's SIZE is not. It waits
-  // on two full `/api/agents` refreshes, so before `isolateAgentDetection`
-  // bounded them to the one fake CLI, this case's runtime was really a measure
-  // of how many agent CLIs the host had installed — 9s here, ~28s and past the
-  // 20s test timeout on a reviewer's machine. The gates below still construct
-  // the same overlap; only the host's CLIs are out of it.
-  it('names the version this run spawned with, even mid-refresh', async () => {
-    binDir = await mkdtemp(path.join(os.tmpdir(), 'od-acp-handshake-race-bin-'));
-    const logPath = path.join(binDir, 'invocations.jsonl');
-    const versionGate = path.join(binDir, 'version-gate');
-    const sessionGate = path.join(binDir, 'session-gate');
-    heldGates = [versionGate, sessionGate];
-    await writeAcpCliShim(binDir, AGENT_BIN, {
-      logPath,
-      cliVersion: '0.38.0',
-      versionGate,
-      sessionGate,
-    });
-    isolateAgentDetection(binDir, agentHomeDir);
-
-    clearTelemetryEnv();
-    started = (await startServer({ port: 0, returnServer: true })) as StartedServer;
-    await putConfig(started.url, { agentId: AGENT_ID });
-
-    // Warm detection with the version gate already open, then shut it so the
-    // NEXT probe parks inside `--version` instead of completing.
-    await openGate(versionGate);
-    await detectAgents(started.url);
-    await closeGate(versionGate);
-
-    const conversationId = await createConversation(started.url);
-    const run = await startRun(started.url, conversationId, 'draft a landing page');
-
-    // The run's child has answered `initialize` and is holding `session/new`.
-    await waitForGate(sessionGate);
-
-    // Now open the window: a refresh that has started re-probing and not yet
-    // published. Nothing here sleeps — the gate reports arrival.
-    const refresh = fetch(`${started.url}/api/agents`);
-    await waitForGate(versionGate);
-
-    // Release the handshake. The refusal is classified and emitted while the
-    // process-wide detection cache is mid-probe.
-    await openGate(sessionGate);
-    const finished = await waitForRun(started.url, run.runId, run.headers);
-
-    expect(finished.status).toBe('failed');
-    expect(finished.errorCode).toBe('AGENT_CLI_SESSION_REFUSED');
-
-    const events = await readRunEvents(finished.eventsLogPath);
-    const errorEvents = events.filter((event) => event.event === 'error');
-    expect(errorEvents.length).toBeGreaterThan(0);
-    for (const event of errorEvents) {
-      expectDetectedVersion(event.data as ErrorFrame, '0.38.0');
-    }
-
-    await openGate(versionGate);
-    await refresh.then((response) => response.text()).catch(() => '');
-  });
 });
-
-/**
- * The CLI version the guidance names is the one this run's child was spawned
- * with — asserted, not tolerated.
- *
- * This used to be a soft check, because the version was read from the
- * process-wide `getDetectedRuntimeVersions` cache at FAILURE time and
- * `probe()` blanked that cache for the length of every refresh; CI caught the
- * resulting flake (run 32683047377). Both halves of that are now fixed — the
- * run captures its runtime identity at spawn, and a probe no longer clears the
- * last known answer while it re-reads it — so the version is deterministic and
- * a soft assertion would only hide the regression coming back.
- */
-function expectDetectedVersion(frame: ErrorFrame, expected: string): void {
-  expect(frame.error?.details?.agentCliVersion).toBe(expected);
-}
-
-/** Polls until the fake CLI announces it has parked at a gate. */
-async function waitForGate(prefix: string): Promise<void> {
-  const startedAt = Date.now();
-  while (Date.now() - startedAt < 15_000) {
-    try {
-      await readFile(`${prefix}.ready`, 'utf8');
-      return;
-    } catch {
-      await delay(10);
-    }
-  }
-  throw new Error(`fake CLI never reached gate ${prefix}`);
-}
-
-/** Releases a parked gate so the fake CLI continues. */
-async function openGate(prefix: string): Promise<void> {
-  await writeFile(`${prefix}.go`, '', 'utf8');
-}
-
-/** Shuts a gate again so the NEXT process to reach it parks. */
-async function closeGate(prefix: string): Promise<void> {
-  await rm(`${prefix}.go`, { force: true });
-  await rm(`${prefix}.ready`, { force: true });
-}
 
 async function writeAcpCliShim(
   dir: string,
@@ -641,8 +446,6 @@ async function writeAcpCliShim(
     cliVersion: string;
     retryable?: boolean;
     errorMessage?: string;
-    versionGate?: string;
-    sessionGate?: string;
   },
 ): Promise<string> {
   const bin = path.join(dir, name);
@@ -655,12 +458,6 @@ async function writeAcpCliShim(
     lines.push(
       `export FAKE_ACP_SESSION_NEW_ERROR_MESSAGE=${JSON.stringify(opts.errorMessage)}`,
     );
-  }
-  if (opts.versionGate) {
-    lines.push(`export FAKE_ACP_VERSION_GATE=${JSON.stringify(opts.versionGate)}`);
-  }
-  if (opts.sessionGate) {
-    lines.push(`export FAKE_ACP_SESSION_GATE=${JSON.stringify(opts.sessionGate)}`);
   }
   if (opts.retryable) lines.push('export FAKE_ACP_SESSION_NEW_ERROR_RETRYABLE=1');
   lines.push(
@@ -832,7 +629,6 @@ function snapshotEnv(): Record<string, string | undefined> {
     OPEN_DESIGN_TELEMETRY_RELAY_URL: process.env.OPEN_DESIGN_TELEMETRY_RELAY_URL,
     POSTHOG_KEY: process.env.POSTHOG_KEY,
     POSTHOG_HOST: process.env.POSTHOG_HOST,
-    OD_NEXT_STRATEGY_ROLLOUT: process.env.OD_NEXT_STRATEGY_ROLLOUT,
   };
 }
 
@@ -895,21 +691,6 @@ async function sendRunAndWait(
   encoded: string,
   message: string,
 ): Promise<RunStatus> {
-  const started = await startRun(url, encoded, message);
-  return await waitForRun(url, started.runId, started.headers);
-}
-
-/**
- * Posts the run and returns as soon as the daemon accepts it, WITHOUT waiting
- * for it to finish. Tests that need to act while the run is still in flight —
- * holding its handshake open, racing a detection refresh against it — drive
- * `waitForRun` themselves once they have arranged the overlap.
- */
-async function startRun(
-  url: string,
-  encoded: string,
-  message: string,
-): Promise<{ runId: string; headers: Record<string, string> }> {
   const { projectId, conversationId, headers: workspaceHeaders } =
     decodeFixtureIdentity(encoded);
   const runResponse = await fetch(`${url}/api/runs`, {
@@ -934,7 +715,7 @@ async function startRun(
   const body = (await runResponse.json()) as { runId?: string };
   expect(runResponse.status, JSON.stringify(body)).toBe(202);
   expect(body.runId).toBeTypeOf('string');
-  return { runId: body.runId!, headers: workspaceHeaders };
+  return await waitForRun(url, body.runId!, workspaceHeaders);
 }
 
 async function waitForRun(

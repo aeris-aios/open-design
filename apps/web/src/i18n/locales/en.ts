@@ -155,8 +155,6 @@ export const en: Dict = {
   'chat.runError.gitBashMissingMessage': "Git Bash is required to run this agent on Windows but wasn't found. Install Git for Windows, then retry.",
   'chat.runError.cpuUnsupportedMessage': "This agent's runtime needs a CPU instruction set (AVX2) that this device doesn't have, so it can't start. Update OpenDesign to the latest version, which ships a compatible runtime.",
   'chat.runError.cliSessionRefusedMessage':
-    "{agent} {version} refused to start a session. That version is usually incompatible with Open Design — switch to a different version and retry.",
-  'chat.runError.cliSessionRefusedMessageNoVersion':
     "{agent} refused to start a session. The installed version is usually incompatible with Open Design — switch to a different version and retry.",
   'chat.runError.strategyTaskStateMismatchMessage': "This task was already halted by the strategy quality gate, so this round of the form can't continue. Retry the request or start a new one.",
   'common.cancel': 'Cancel',

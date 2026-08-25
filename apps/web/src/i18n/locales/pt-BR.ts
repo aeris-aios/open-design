@@ -155,8 +155,6 @@ export const ptBR: Dict = {
   'chat.runError.gitBashMissingMessage': "O Git Bash é necessário para executar este agente no Windows, mas não foi encontrado. Instale o Git para Windows e tente novamente.",
   'chat.runError.cpuUnsupportedMessage': "O runtime deste agente precisa de um conjunto de instruções de CPU (AVX2) que este dispositivo não possui, por isso não consegue iniciar. Atualize o OpenDesign para a versão mais recente, que inclui um runtime compatível.",
   'chat.runError.cliSessionRefusedMessage':
-    "{agent} {version} recusou-se a iniciar uma sessão. Normalmente essa versão é incompatível com o Open Design: mude para outra versão e tente novamente.",
-  'chat.runError.cliSessionRefusedMessageNoVersion':
     "{agent} recusou-se a iniciar uma sessão. Normalmente a versão instalada é incompatível com o Open Design: mude para outra versão e tente novamente.",
   'chat.runError.strategyTaskStateMismatchMessage': "Esta tarefa já foi interrompida pelo controle de qualidade da estratégia, então esta rodada do formulário não pode continuar. Tente a solicitação novamente ou inicie uma nova.",
   'common.cancel': 'Cancelar',

@@ -155,8 +155,6 @@ export const ja: Dict = {
   'chat.runError.gitBashMissingMessage': "Windows でこのエージェントを実行するには Git Bash が必要ですが、見つかりませんでした。Git for Windows をインストールして再試行してください。",
   'chat.runError.cpuUnsupportedMessage': "このエージェントのランタイムには、この端末の CPU が対応していない命令セット（AVX2）が必要なため、起動できません。互換ランタイムを同梱した最新版の OpenDesign に更新してください。",
   'chat.runError.cliSessionRefusedMessage':
-    "{agent} {version} がセッションの開始を拒否しました。多くの場合このバージョンが Open Design と互換性がありません。別のバージョンに変更してから再試行してください。",
-  'chat.runError.cliSessionRefusedMessageNoVersion':
     "{agent} がセッションの開始を拒否しました。多くの場合、現在のバージョンが Open Design と互換性がありません。別のバージョンに変更してから再試行してください。",
   'chat.runError.strategyTaskStateMismatchMessage': "このタスクはストラテジーの品質ゲートによってすでに停止されているため、このラウンドのフォームは続行できません。リクエストを再試行するか、新しく開始してください。",
   'common.cancel': 'キャンセル',

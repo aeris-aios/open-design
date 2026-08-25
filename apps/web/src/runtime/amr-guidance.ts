@@ -200,7 +200,6 @@ export type RunFailureMessageKey =
   | 'chat.runError.gitBashMissingMessage'
   | 'chat.runError.cpuUnsupportedMessage'
   | 'chat.runError.cliSessionRefusedMessage'
-  | 'chat.runError.cliSessionRefusedMessageNoVersion'
   | 'chat.runError.strategyTaskStateMismatchMessage'
   | null;
 
@@ -479,7 +478,7 @@ const AGENT_AGNOSTIC_DETAIL_FAILURE_UI: Record<string, RunFailureUi> = {
 };
 
 // Resolve the failure UI for a failed run:
-//   - ACP CLI refused the session → named type + the detected CLI version
+//   - ACP CLI refused the session → named type + change-the-CLI guidance
 //   - agent-agnostic root cause (cli missing, prompt too large, model
 //     unavailable, tool loop, bad output, bad runtime def) → named type + fix
 //   - agent-agnostic failure_detail (timeout, empty output, stale resumed
@@ -497,26 +496,24 @@ export function resolveRunFailureUi(
   detail: string | null | undefined,
   agentId: string | null | undefined,
   rawMessage?: string | null,
-  agentCliVersion?: string | null,
 ): RunFailureUi {
   // An ACP agent CLI that answered `initialize` and then refused to open a
   // session. Resolved before every other branch, and before the static
-  // agent-agnostic table, because the copy is not a fixed sentence: it names
-  // the CLI build the daemon detected, and has to degrade to a version-less
-  // wording when there was none. The daemon deliberately sends only the code
-  // plus that version as data — a sentence composed there could never be
-  // translated (see runtimes/acp-handshake-failure.ts).
+  // agent-agnostic table, because this code carries a prescription of its own
+  // (change the CLI build, then retry) that the generic mappings would erase.
+  // The daemon deliberately sends only the code plus the runtime identity as
+  // data — a sentence composed there could never be translated (see
+  // runtimes/acp-handshake-failure.ts).
+  //
+  // The copy names the installed build without quoting a version number. The
+  // daemon does have a detected version, but reading the one THIS run started
+  // with costs a pre-spawn probe on every launch, so naming it is deliberately
+  // left to a follow-up rather than paid for on the failure path here.
   if (code === 'AGENT_CLI_SESSION_REFUSED') {
-    const version = agentCliVersion?.trim();
     return {
       primaryAction: 'retry',
       titleKey: 'chat.runError.title.cliSessionRefused',
-      // Naming a version we did not read is worse than not naming one — the
-      // same rule the rolling model-window copy follows.
-      messageKey: version
-        ? 'chat.runError.cliSessionRefusedMessage'
-        : 'chat.runError.cliSessionRefusedMessageNoVersion',
-      ...(version ? { messageVars: { version } } : {}),
+      messageKey: 'chat.runError.cliSessionRefusedMessage',
       secondaryRetry: false,
       showSwitchCard: false,
     };

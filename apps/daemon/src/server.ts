@@ -2510,33 +2510,18 @@ function rewriteKnownAgentStreamError(agentId, message, failureText = '') {
 }
 
 /**
- * The runtime identity a failure ships as structured data: display name plus
- * the CLI version THIS RUN was started with.
+ * The runtime identity a failure ships as structured data: the runtime's
+ * display name, which is the one fact the localized copy interpolates.
  *
- * Both version sources are frozen on the run before its child is spawned —
- * Codex's model preflight writes `preflightAgentCliVersion`, and every other
- * agent gets `spawnedAgentCliVersion` from the scope-aware version probe, keyed
- * to the same configured launch inputs that resolved this run's `agentLaunch`.
- * Nothing is read from the process-wide cache here on purpose, for two reasons:
- * that cache answers per agent id with no regard for which executable the
- * reading came from, so it can name a build the user repointed away from; and
- * detection probes are asynchronous, so a `/api/agents` refresh that happens to
- * be running while this run fails would otherwise decide whether the user is
- * told which build refused them. An undetected version degrades the client's
- * copy to its version-less sentence rather than blocking it.
+ * Read straight off the already-resolved `RuntimeAgentDef` — a pure lookup on
+ * a value this run resolved before it spawned, so naming the failure adds no
+ * work and no waiting to the failure path.
  *
  * @param def - The resolved `RuntimeAgentDef` for this run.
- * @param run - The run record, read for the CLI version captured before spawn.
- * @returns An `AcpAgentIdentity`, with `null` for anything not detected.
+ * @returns An `AcpAgentIdentity`, with `null` when the runtime is unknown.
  */
-function agentFailureIdentity(def, run) {
-  return {
-    agentName: def?.name ?? null,
-    agentCliVersion:
-      run?.preflightAgentCliVersion
-      ?? run?.spawnedAgentCliVersion
-      ?? null,
-  };
+function agentFailureIdentity(def) {
+  return { agentName: def?.name ?? null };
 }
 
 function createAmrModelUnavailablePayload(model, init = {}) {
@@ -13250,28 +13235,6 @@ export async function startServer({
           : {}),
       }, agentLaunch);
       spawnedAgentEnv = env;
-      // Freeze the runtime identity this child is being started with, resolved
-      // from the SAME configured launch inputs that produced `agentLaunch`.
-      //
-      // The process-wide cache answers per agent id and says nothing about
-      // WHICH executable the reading came from: `/api/agents` records whatever
-      // the launch inputs resolved to when Settings last listed agents, and a
-      // user who repoints the CLI afterwards (Settings writes `KIMI_BIN`, PATH
-      // changes) runs a different binary than the one that was probed. Reading
-      // the bare cache here therefore let a refusal name a build this run never
-      // started, sending the user to change the version of a CLI they are not
-      // using. Re-resolving through the scope-aware probe returns the cached
-      // reading when the launch identity is unchanged and re-probes when it is
-      // not, so the version always belongs to the child about to be spawned.
-      //
-      // Awaited BEFORE the spawn marks so the bounded `--version` read is
-      // accounted to launch preflight, where it happens, rather than inflating
-      // the measured spawn. Read once, into a local, so a concurrent detection
-      // refresh cannot decide what a failure later in the run reports.
-      const spawnedRuntimeVersions = await ensureDetectedRuntimeVersions(
-        def?.id,
-        configuredAgentEnv,
-      ).catch(() => null);
       const invocation = createCommandInvocation({
         command: agentLaunch.launchPath,
         args,
@@ -13279,7 +13242,6 @@ export async function startServer({
       });
       lifecycle.mark('launch_preflight_end');
       lifecycle.mark('process_spawn_start');
-      run.spawnedAgentCliVersion = spawnedRuntimeVersions?.agentCliVersion ?? null;
       child = spawn(invocation.command, invocation.args, {
         env,
         stdio: [stdinMode, 'pipe', 'pipe'],
@@ -13966,7 +13928,7 @@ export async function startServer({
           createSseErrorPayload('AGENT_EXECUTION_FAILED', agentStreamError, {
             details: ev.raw ? { raw: ev.raw } : undefined,
           }),
-          agentFailureIdentity(def, run),
+          agentFailureIdentity(def),
         ));
         return;
       }
@@ -14133,7 +14095,7 @@ export async function startServer({
                 ...(diagnostic ? { details: { detail: diagnostic.detail } } : {}),
               },
             ),
-            agentFailureIdentity(def, run),
+            agentFailureIdentity(def),
           ));
           return;
         }
@@ -14421,7 +14383,7 @@ export async function startServer({
             // handshake rejection here or nowhere.
             send(event, withAcpHandshakeFailureGuidance(
               data,
-              agentFailureIdentity(def, run),
+              agentFailureIdentity(def),
             ));
             return;
           }
@@ -15069,7 +15031,7 @@ export async function startServer({
                   rewritten,
                   { retryable: true },
                 ),
-                agentFailureIdentity(def, run),
+                agentFailureIdentity(def),
               ));
             }
           }

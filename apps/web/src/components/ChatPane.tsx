@@ -1378,10 +1378,6 @@ export function ChatPane({
         // gateway reported (the instant a model window reopens) can read it back
         // out. Same string the card renders under 「查看详情」.
         failedRunErrorEvent?.detail,
-        // The CLI build this run observed. Carried as data by the daemon so a
-        // version-specific failure can be worded here, in the reader's locale,
-        // instead of arriving as an English paragraph.
-        failedRunErrorEvent?.agentCliVersion,
       )
     : null;
   const hasInlineAmrAuthorizeFailure = Boolean(

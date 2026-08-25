@@ -329,13 +329,12 @@ describe('resolveRunFailureUi', () => {
   // duplicated because the paragraph also restated the raw agent line the
   // details block already shows.
   describe('AGENT_CLI_SESSION_REFUSED', () => {
-    it('renders localized copy naming the agent and the version that refused', () => {
+    it('renders localized copy naming the agent that refused', () => {
       const ui = resolveRunFailureUi(
         'AGENT_CLI_SESSION_REFUSED',
         'agent_protocol_error',
         'kimi',
         'json-rpc id 2: Internal error',
-        '0.38.0',
       );
       expect(ui).toMatchObject({
         primaryAction: 'retry',
@@ -344,29 +343,34 @@ describe('resolveRunFailureUi', () => {
         secondaryRetry: false,
         showSwitchCard: false,
       });
-      expect(ui.messageVars?.version).toBe('0.38.0');
+      // One sentence, no interpolated build number. Naming the version this run
+      // started with needs a pre-spawn `--version` read the failure path does
+      // not buy; the copy says "the installed version" and stays true. Pinned
+      // so a re-land of that work cannot quietly leave a `{version}` slot in
+      // the rendered string with nothing to fill it.
+      expect(ui.messageVars?.version).toBeUndefined();
     });
 
-    it('drops the version from the copy when the daemon never detected one', () => {
-      for (const version of [undefined, null, '', '   ']) {
-        const ui = resolveRunFailureUi(
-          'AGENT_CLI_SESSION_REFUSED',
-          'agent_protocol_error',
-          'kimi',
-          'json-rpc id 2: Internal error',
-          version,
-        );
-        // Promising a version we could not read is worse than not naming one —
-        // same rule the rolling-window copy follows.
-        expect(ui.messageKey).toBe('chat.runError.cliSessionRefusedMessageNoVersion');
-        expect(ui.messageVars?.version).toBeUndefined();
-      }
+    it('takes no CLI build to render — it is the same card either way', () => {
+      const withRaw = resolveRunFailureUi(
+        'AGENT_CLI_SESSION_REFUSED',
+        'agent_protocol_error',
+        'kimi',
+        'json-rpc id 2: Internal error',
+      );
+      const withoutRaw = resolveRunFailureUi(
+        'AGENT_CLI_SESSION_REFUSED',
+        'agent_protocol_error',
+        'kimi',
+        null,
+      );
+      expect(withoutRaw).toEqual(withRaw);
     });
 
     it('resolves the same way for every agent, hosted AMR included', () => {
       for (const agent of ['kimi', 'devin', 'amr', 'antigravity', null]) {
         expect(
-          resolveRunFailureUi('AGENT_CLI_SESSION_REFUSED', 'agent_protocol_error', agent, null, '1.2.3'),
+          resolveRunFailureUi('AGENT_CLI_SESSION_REFUSED', 'agent_protocol_error', agent, null),
         ).toMatchObject({
           titleKey: 'chat.runError.title.cliSessionRefused',
           messageKey: 'chat.runError.cliSessionRefusedMessage',
@@ -385,7 +389,7 @@ describe('resolveRunFailureUi', () => {
         ['UPSTREAM_UNAVAILABLE', 'chat.runError.title.upstreamUnavailable'],
       ];
       for (const [code, titleKey] of neighbours) {
-        const ui = resolveRunFailureUi(code, null, 'kimi', null, '0.38.0');
+        const ui = resolveRunFailureUi(code, null, 'kimi', null);
         expect(ui.titleKey).toBe(titleKey);
         expect(ui.messageKey).not.toBe('chat.runError.cliSessionRefusedMessage');
       }

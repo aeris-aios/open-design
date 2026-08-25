@@ -155,8 +155,6 @@ export const ru: Dict = {
   'chat.runError.gitBashMissingMessage': "Для запуска этого агента в Windows требуется Git Bash, но он не найден. Установите Git для Windows и повторите попытку.",
   'chat.runError.cpuUnsupportedMessage': "Среде выполнения этого агента требуется набор инструкций процессора (AVX2), которого нет на этом устройстве, поэтому она не может запуститься. Обновите OpenDesign до последней версии — она включает совместимую среду выполнения.",
   'chat.runError.cliSessionRefusedMessage':
-    "{agent} {version} отказался начать сессию. Обычно эта версия несовместима с Open Design — перейдите на другую версию и повторите попытку.",
-  'chat.runError.cliSessionRefusedMessageNoVersion':
     "{agent} отказался начать сессию. Обычно установленная версия несовместима с Open Design — перейдите на другую версию и повторите попытку.",
   'chat.runError.strategyTaskStateMismatchMessage': "Эта задача уже остановлена контролем качества стратегии, поэтому этот этап формы нельзя продолжить. Повторите запрос или начните новый.",
   'common.cancel': 'Отмена',

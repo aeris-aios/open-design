@@ -155,8 +155,6 @@ export const fa: Dict = {
   'chat.runError.gitBashMissingMessage': "برای اجرای این عامل در ویندوز به Git Bash نیاز است اما یافت نشد. Git for Windows را نصب کنید و دوباره تلاش کنید.",
   'chat.runError.cpuUnsupportedMessage': "محیط اجرای این عامل به مجموعه دستورالعمل پردازنده (AVX2) نیاز دارد که این دستگاه فاقد آن است، بنابراین نمی‌تواند اجرا شود. OpenDesign را به آخرین نسخه که محیط اجرای سازگار دارد به‌روزرسانی کنید.",
   'chat.runError.cliSessionRefusedMessage':
-    "{agent} {version} از شروع جلسه خودداری کرد. معمولاً این نسخه با Open Design سازگار نیست؛ به نسخهٔ دیگری تغییر دهید و دوباره تلاش کنید.",
-  'chat.runError.cliSessionRefusedMessageNoVersion':
     "{agent} از شروع جلسه خودداری کرد. معمولاً نسخهٔ نصب‌شده با Open Design سازگار نیست؛ به نسخهٔ دیگری تغییر دهید و دوباره تلاش کنید.",
   'chat.runError.strategyTaskStateMismatchMessage': "این وظیفه قبلاً توسط دروازه کیفیت راهبرد متوقف شده است، بنابراین این دور از فرم نمی‌تواند ادامه یابد. درخواست را دوباره امتحان کنید یا درخواست تازه‌ای آغاز کنید.",
   'common.cancel': 'لغو',

@@ -161,8 +161,6 @@ export const zhCN: Dict = {
   "chat.runError.gitBashMissingMessage": "在 Windows 上运行该智能体需要 Git Bash，但未找到。请安装 Git for Windows 后重试。",
   "chat.runError.cpuUnsupportedMessage": "该智能体的运行时需要此设备处理器不支持的指令集（AVX2），因此无法启动。请将 OpenDesign 更新到最新版本，新版本附带兼容的运行时。",
   "chat.runError.cliSessionRefusedMessage":
-    "{agent} {version} 拒绝开始会话。通常是这个版本与 Open Design 不兼容，换一个版本后重试。",
-  "chat.runError.cliSessionRefusedMessageNoVersion":
     "{agent} 拒绝开始会话。通常是当前版本与 Open Design 不兼容，换一个版本后重试。",
   "chat.runError.strategyTaskStateMismatchMessage": "该任务已被策略质量门拦下，本轮表单无法继续提交。请重试请求或重新发起一次任务。",
   "common.cancel": "取消",

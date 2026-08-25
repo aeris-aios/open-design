@@ -155,8 +155,6 @@ export const ar: Dict = {
   'chat.runError.gitBashMissingMessage': "يلزم Git Bash لتشغيل هذا الوكيل على Windows لكنه غير موجود. ثبّت Git for Windows ثم أعد المحاولة.",
   'chat.runError.cpuUnsupportedMessage': "تتطلب بيئة تشغيل هذا الوكيل مجموعة تعليمات للمعالج (AVX2) غير متوفرة في هذا الجهاز، لذا يتعذر تشغيلها. حدِّث OpenDesign إلى أحدث إصدار الذي يتضمن بيئة تشغيل متوافقة.",
   'chat.runError.cliSessionRefusedMessage':
-    "رفض {agent} {version} بدء جلسة. عادةً ما يكون هذا الإصدار غير متوافق مع Open Design، فانتقل إلى إصدار آخر ثم أعد المحاولة.",
-  'chat.runError.cliSessionRefusedMessageNoVersion':
     "رفض {agent} بدء جلسة. عادةً ما يكون الإصدار المثبَّت غير متوافق مع Open Design، فانتقل إلى إصدار آخر ثم أعد المحاولة.",
   'chat.runError.strategyTaskStateMismatchMessage': "أوقفت بوابة جودة الاستراتيجية هذه المهمة بالفعل، لذا لا يمكن متابعة هذه الجولة من النموذج. أعد محاولة الطلب أو ابدأ طلبًا جديدًا.",
   'common.cancel': 'إلغاء',

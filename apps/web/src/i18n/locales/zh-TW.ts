@@ -161,8 +161,6 @@ export const zhTW: Dict = {
   "chat.runError.gitBashMissingMessage": "在 Windows 上執行此智能體需要 Git Bash，但找不到。請安裝 Git for Windows 後重試。",
   "chat.runError.cpuUnsupportedMessage": "此智能體的執行時需要此裝置處理器不支援的指令集（AVX2），因此無法啟動。請將 OpenDesign 更新到最新版本，新版本附帶相容的執行時。",
   "chat.runError.cliSessionRefusedMessage":
-    "{agent} {version} 拒絕開始工作階段。通常是這個版本與 Open Design 不相容，換一個版本後重試。",
-  "chat.runError.cliSessionRefusedMessageNoVersion":
     "{agent} 拒絕開始工作階段。通常是目前版本與 Open Design 不相容，換一個版本後重試。",
   "chat.runError.strategyTaskStateMismatchMessage": "該任務已被策略品質門攔下，本輪表單無法繼續提交。請重試請求或重新發起一次任務。",
   "common.cancel": "取消",

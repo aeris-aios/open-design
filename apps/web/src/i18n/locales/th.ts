@@ -155,8 +155,6 @@ export const th: Dict = {
   'chat.runError.gitBashMissingMessage': "ต้องใช้ Git Bash เพื่อรันเอเจนต์นี้บน Windows แต่ไม่พบ โปรดติดตั้ง Git for Windows แล้วลองใหม่",
   'chat.runError.cpuUnsupportedMessage': "รันไทม์ของเอเจนต์นี้ต้องการชุดคำสั่ง CPU (AVX2) ที่อุปกรณ์นี้ไม่มี จึงไม่สามารถเริ่มทำงานได้ โปรดอัปเดต OpenDesign เป็นเวอร์ชันล่าสุดซึ่งมาพร้อมรันไทม์ที่เข้ากันได้",
   'chat.runError.cliSessionRefusedMessage':
-    "{agent} {version} ปฏิเสธการเริ่มเซสชัน โดยทั่วไปเวอร์ชันนี้ไม่รองรับ Open Design โปรดเปลี่ยนเป็นเวอร์ชันอื่นแล้วลองอีกครั้ง",
-  'chat.runError.cliSessionRefusedMessageNoVersion':
     "{agent} ปฏิเสธการเริ่มเซสชัน โดยทั่วไปเวอร์ชันที่ติดตั้งอยู่ไม่รองรับ Open Design โปรดเปลี่ยนเป็นเวอร์ชันอื่นแล้วลองอีกครั้ง",
   'chat.runError.strategyTaskStateMismatchMessage': "งานนี้ถูกหยุดโดยด่านตรวจคุณภาพของกลยุทธ์แล้ว จึงไม่สามารถดำเนินการฟอร์มรอบนี้ต่อได้ โปรดลองส่งคำขออีกครั้งหรือเริ่มคำขอใหม่",
   'common.cancel': 'ยกเลิก',

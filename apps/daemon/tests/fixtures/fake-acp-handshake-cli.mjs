@@ -28,22 +28,9 @@
  *                                          `open-design-detect`, so a test can
  *                                          count real run sessions without
  *                                          counting model-detection probes.
- *   FAKE_ACP_VERSION_GATE                – path prefix. `--version` writes
- *                                          `<prefix>.ready` and then blocks
- *                                          until `<prefix>.go` exists.
- *   FAKE_ACP_SESSION_GATE                – path prefix. A `session/new` /
- *                                          `session/load` from the `open-design`
- *                                          client (i.e. a real run, never a
- *                                          model-detection probe) writes
- *                                          `<prefix>.ready` and then blocks
- *                                          until `<prefix>.go` exists.
- *
- * The two gates exist so a test can hold a `--version` probe and a run's
- * handshake open AT THE SAME TIME and observe what the daemon reports in that
- * overlap, without sleeping on wall-clock timing.
  */
 
-import { appendFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { argv, stdin, stdout, env, exit } from 'node:process';
 
@@ -52,27 +39,6 @@ const SESSION_NEW_ERROR_MESSAGE =
   env.FAKE_ACP_SESSION_NEW_ERROR_MESSAGE || 'Internal error';
 const SESSION_NEW_ERROR_RETRYABLE = env.FAKE_ACP_SESSION_NEW_ERROR_RETRYABLE === '1';
 const INVOCATION_LOG = env.FAKE_ACP_INVOCATION_LOG || '';
-const VERSION_GATE = env.FAKE_ACP_VERSION_GATE || '';
-const SESSION_GATE = env.FAKE_ACP_SESSION_GATE || '';
-
-/**
- * Announces arrival at `<prefix>.ready`, then blocks until the test opens
- * `<prefix>.go`. Polling a file rather than sleeping keeps the overlap the test
- * is constructing exact: the caller knows this process is parked here, and
- * nothing moves until the caller says so.
- */
-async function passGate(prefix) {
-  if (!prefix) return;
-  try {
-    mkdirSync(dirname(prefix), { recursive: true });
-    writeFileSync(`${prefix}.ready`, String(Date.now()));
-  } catch {
-    /* best-effort test instrumentation */
-  }
-  while (!existsSync(`${prefix}.go`)) {
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-}
 
 function logInvocation(entry) {
   if (!INVOCATION_LOG) return;
@@ -91,7 +57,6 @@ function write(message) {
 const mode = argv[2] || '';
 
 if (mode === '--version' || mode === 'version') {
-  await passGate(VERSION_GATE);
   stdout.write(`${CLI_VERSION}\n`);
   exit(0);
 }
@@ -110,13 +75,13 @@ stdin.on('data', (chunk) => {
   while (index >= 0) {
     const line = buffer.slice(0, index).trim();
     buffer = buffer.slice(index + 1);
-    if (line) void handleLine(line);
+    if (line) handleLine(line);
     index = buffer.indexOf('\n');
   }
 });
 stdin.on('end', () => exit(0));
 
-async function handleLine(line) {
+function handleLine(line) {
   let message;
   try {
     message = JSON.parse(line);
@@ -142,10 +107,6 @@ async function handleLine(line) {
 
   if (message.method === 'session/new' || message.method === 'session/load') {
     logInvocation({ method: message.method, client: clientName, at: Date.now() });
-    // Gated only for a real run. `detectAcpModels` probes the same CLI as
-    // `open-design-detect`, and holding THAT open would stall the very
-    // `/api/agents` refresh the test is trying to overlap with.
-    if (clientName === 'open-design') await passGate(SESSION_GATE);
     // The broken build: it accepted the connection and then refuses to open a
     // session. `rpcErrorMessage` renders this as `json-rpc id <id>: <message>`.
     write({

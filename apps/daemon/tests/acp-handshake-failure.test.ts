@@ -83,7 +83,7 @@ describe('withAcpHandshakeFailureGuidance', () => {
   it('names the failure with a code and structured identity instead of a sentence', () => {
     const payload = withAcpHandshakeFailureGuidance(
       { message: RAW },
-      { agentName: 'Kimi CLI', agentCliVersion: '0.38.0' },
+      { agentName: 'Kimi CLI' },
     ) as {
       message: string;
       error: { code: string; message: string; retryable: boolean; details: Record<string, unknown> };
@@ -97,8 +97,11 @@ describe('withAcpHandshakeFailureGuidance', () => {
       kind: 'agent_cli',
       action: 'update_cli',
       agent: 'Kimi CLI',
-      agentCliVersion: '0.38.0',
     });
+    // No CLI build is reported. Naming the version this run started with needs
+    // a pre-spawn `--version` read, which this failure deliberately does not
+    // buy — the copy says "the installed version" and stays true without it.
+    expect(payload.error.details).not.toHaveProperty('agentCliVersion');
     // A CLI build that refuses `session/new` refuses it again; the payload says so.
     expect(payload.error.retryable).toBe(false);
   });
@@ -106,7 +109,7 @@ describe('withAcpHandshakeFailureGuidance', () => {
   it('leaves the agent line verbatim on both message surfaces', () => {
     const payload = withAcpHandshakeFailureGuidance(
       { message: RAW, error: { code: 'AGENT_EXECUTION_FAILED', message: RAW } },
-      { agentName: 'Kimi CLI', agentCliVersion: '0.38.0' },
+      { agentName: 'Kimi CLI' },
     ) as { message: string; error: { message: string } };
 
     // `run.error` is read from `error.message ?? message` and is BOTH the
@@ -118,7 +121,7 @@ describe('withAcpHandshakeFailureGuidance', () => {
     expect(JSON.stringify(payload)).not.toMatch(/refused to start a session/i);
   });
 
-  it('degrades cleanly when the agent name or version was never detected', () => {
+  it('degrades cleanly when the agent name was never resolved', () => {
     const payload = withAcpHandshakeFailureGuidance({ message: RAW }) as {
       error: { details: Record<string, unknown> };
     };
@@ -167,7 +170,7 @@ describe('withAcpHandshakeFailureGuidance', () => {
     ]) {
       const payload = withAcpHandshakeFailureGuidance(
         { message: raw },
-        { agentName: 'Kimi CLI', agentCliVersion: '0.38.0' },
+        { agentName: 'Kimi CLI' },
       );
       expect(payload).toEqual({ message: raw });
     }
@@ -281,7 +284,7 @@ describe('handshake failures that name their own remedy', () => {
   it.each(REMEDIED)('leaves the agent error intact: %s', (raw) => {
     const payload = withAcpHandshakeFailureGuidance(
       { message: raw, error: { code: 'AGENT_EXECUTION_FAILED', message: raw } },
-      { agentName: 'Kimi CLI', agentCliVersion: '0.38.0' },
+      { agentName: 'Kimi CLI' },
     ) as { message: string; error: { message: string } };
     expect(payload.message).toBe(raw);
     expect(payload.error.message).toBe(raw);
@@ -359,7 +362,7 @@ describe('handshake failures that name their own remedy', () => {
 
     const payload = withAcpHandshakeFailureGuidance(
       { message: 'json-rpc id 2: Internal error' },
-      { agentName: 'Kimi CLI', agentCliVersion: '0.38.0' },
+      { agentName: 'Kimi CLI' },
     ) as { message: string; error: { code: string } };
     expect(payload.error.code).toBe(ACP_CLI_SESSION_REFUSED_CODE);
     expect(payload.message).toBe('json-rpc id 2: Internal error');
@@ -535,7 +538,7 @@ describe('handshake failures the run classifier already has a remedy for', () =>
       expect(withAcpHandshakeFailureGuidance({ message: raw })).toEqual({ message: raw });
       const payload = withAcpHandshakeFailureGuidance(
         { message: raw, error: { code: 'AGENT_EXECUTION_FAILED', message: raw } },
-        { agentName: 'Kimi CLI', agentCliVersion: '0.38.0' },
+        { agentName: 'Kimi CLI' },
       ) as { error: { code: string; details?: Record<string, unknown> } };
       expect(payload.error.code).not.toBe(ACP_CLI_SESSION_REFUSED_CODE);
       expect(payload.error.details?.action).not.toBe('update_cli');

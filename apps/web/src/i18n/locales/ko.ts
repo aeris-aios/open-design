@@ -155,8 +155,6 @@ export const ko: Dict = {
   'chat.runError.gitBashMissingMessage': "Windows에서 이 에이전트를 실행하려면 Git Bash가 필요하지만 찾을 수 없습니다. Git for Windows를 설치한 후 다시 시도하세요.",
   'chat.runError.cpuUnsupportedMessage': "이 에이전트의 런타임은 이 기기의 CPU가 지원하지 않는 명령어 집합(AVX2)을 필요로 하여 시작할 수 없습니다. 호환 런타임이 포함된 최신 버전의 OpenDesign으로 업데이트하세요.",
   'chat.runError.cliSessionRefusedMessage':
-    "{agent} {version}이(가) 세션 시작을 거부했습니다. 보통 이 버전이 Open Design과 호환되지 않습니다. 다른 버전으로 바꾼 뒤 다시 시도하세요.",
-  'chat.runError.cliSessionRefusedMessageNoVersion':
     "{agent}이(가) 세션 시작을 거부했습니다. 보통 현재 버전이 Open Design과 호환되지 않습니다. 다른 버전으로 바꾼 뒤 다시 시도하세요.",
   'chat.runError.strategyTaskStateMismatchMessage': "이 작업은 이미 전략 품질 게이트에 의해 중단되어 이번 양식 단계를 계속할 수 없습니다. 요청을 다시 시도하거나 새로 시작하세요.",
   'common.cancel': '취소',

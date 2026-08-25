@@ -155,8 +155,6 @@ export const id: Dict = {
   'chat.runError.gitBashMissingMessage': "Git Bash diperlukan untuk menjalankan agen ini di Windows, tetapi tidak ditemukan. Pasang Git for Windows, lalu coba lagi.",
   'chat.runError.cpuUnsupportedMessage': "Runtime agen ini memerlukan set instruksi CPU (AVX2) yang tidak dimiliki perangkat ini, sehingga tidak dapat dijalankan. Perbarui OpenDesign ke versi terbaru yang menyertakan runtime yang kompatibel.",
   'chat.runError.cliSessionRefusedMessage':
-    "{agent} {version} menolak memulai sesi. Versi ini biasanya tidak kompatibel dengan Open Design — ganti ke versi lain, lalu coba lagi.",
-  'chat.runError.cliSessionRefusedMessageNoVersion':
     "{agent} menolak memulai sesi. Versi yang terpasang biasanya tidak kompatibel dengan Open Design — ganti ke versi lain, lalu coba lagi.",
   'chat.runError.strategyTaskStateMismatchMessage': "Tugas ini sudah dihentikan oleh gerbang kualitas strategi, sehingga putaran formulir ini tidak dapat dilanjutkan. Coba lagi permintaannya atau mulai yang baru.",
   'common.cancel': 'Batal',

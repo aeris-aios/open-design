@@ -4,41 +4,22 @@ import type { RunFailureCategory, RunFailureDetail } from '@open-design/contract
 export interface RunFailureClassificationFields {
   failureCategory?: RunFailureCategory | null;
   failureDetail?: RunFailureDetail | null;
-  /** CLI build this run observed, for copy that names it (AGENT_CLI_SESSION_REFUSED). */
-  agentCliVersion?: string | null;
 }
 
-function readAgentCliVersion(details: unknown): string | undefined {
-  if (!details || typeof details !== 'object' || Array.isArray(details)) return undefined;
-  const value = (details as { agentCliVersion?: unknown }).agentCliVersion;
-  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
-}
-
-/** Read the daemon-supplied failure facts the streaming layer stamped onto a
- *  surfaced run error — the classification from `markErrorRunFailure`, plus any
- *  structured `details` the SSE error frame carried (see daemonSseError in
- *  providers/daemon.ts). Returns undefined when the error carries none of them,
- *  so callers pass nothing through.
- *
- *  `agentCliVersion` rides along because the failure card's copy for a
- *  version-specific refusal has to name the build that refused, and the daemon
- *  sends that as data rather than as a pre-written sentence — a daemon-authored
- *  string never passes through i18n. */
+/** Read the daemon failure classification the streaming layer stamped onto a
+ *  surfaced run error (see markErrorRunFailure in providers/daemon.ts). Returns
+ *  undefined when neither field is present so callers pass nothing through. */
 export function runFailureFieldsFromError(
   err: unknown,
 ): RunFailureClassificationFields | undefined {
   const e = err as {
     failureCategory?: RunFailureCategory | null;
     failureDetail?: RunFailureDetail | null;
-    details?: unknown;
   } | null;
-  if (!e) return undefined;
-  const agentCliVersion = readAgentCliVersion(e.details);
-  if (!e.failureCategory && !e.failureDetail && !agentCliVersion) return undefined;
+  if (!e || (!e.failureCategory && !e.failureDetail)) return undefined;
   return {
     ...(e.failureCategory ? { failureCategory: e.failureCategory } : {}),
     ...(e.failureDetail ? { failureDetail: e.failureDetail } : {}),
-    ...(agentCliVersion ? { agentCliVersion } : {}),
   };
 }
 
@@ -65,7 +46,6 @@ export function appendErrorStatusEvent(
       ...(code ? { code } : {}),
       ...(failure?.failureCategory ? { failureCategory: failure.failureCategory } : {}),
       ...(failure?.failureDetail ? { failureDetail: failure.failureDetail } : {}),
-      ...(failure?.agentCliVersion ? { agentCliVersion: failure.agentCliVersion } : {}),
     };
     if (JSON.stringify(merged) === JSON.stringify(last)) return message;
     const nextEvents = events.slice();
@@ -83,7 +63,6 @@ export function appendErrorStatusEvent(
         ...(code ? { code } : {}),
         ...(failure?.failureCategory ? { failureCategory: failure.failureCategory } : {}),
         ...(failure?.failureDetail ? { failureDetail: failure.failureDetail } : {}),
-        ...(failure?.agentCliVersion ? { agentCliVersion: failure.agentCliVersion } : {}),
       },
     ],
   };

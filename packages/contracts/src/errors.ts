@@ -33,7 +33,7 @@ export const API_ERROR_CODES = [
   // The agent's own JSON-RPC line stays in the error `message` (it is both the
   // classifier's input and the text the error card shows under details), and
   // `details` carries the runtime identity the localized copy interpolates:
-  // `{ kind: 'agent_cli', action: 'update_cli', agent?, agentCliVersion? }`.
+  // `{ kind: 'agent_cli', action: 'update_cli', agent? }`.
   // A handshake failure that DOES name its cause (signed out, throttled, no
   // credit, upstream 5xx) keeps that cause's own code instead.
   'AGENT_CLI_SESSION_REFUSED',

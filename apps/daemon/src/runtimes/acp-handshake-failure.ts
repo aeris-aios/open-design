@@ -32,9 +32,11 @@
  * the telemetry shape to `unknown` and make this class of failure untriageable
  * in aggregate.
  *
- * Deliberately carries no list of known-bad CLI versions: which versions are
- * blocked is a product decision, so the payload reports only the version the
- * daemon actually detected and leaves the wording to the client.
+ * Deliberately carries no list of known-bad CLI versions, and does not name a
+ * version at all: which builds are blocked is a product decision, and reading
+ * the version of the build that refused is a separate piece of work with its
+ * own launch-time cost. The payload reports the verdict and the runtime, and
+ * leaves every word of the wording to the client.
  */
 
 import { isAcpCliSessionRefusalText } from '../run-failure-classification.js';
@@ -62,8 +64,6 @@ export const ACP_CLI_SESSION_REFUSED_CODE = 'AGENT_CLI_SESSION_REFUSED';
 export interface AcpAgentIdentity {
   /** Display name of the runtime (`RuntimeAgentDef.name`), when known. */
   agentName?: string | null;
-  /** CLI version the daemon detected for this run, when known. */
-  agentCliVersion?: string | null;
 }
 
 function readable(value: string | null | undefined): string | null {
@@ -76,11 +76,11 @@ function readable(value: string | null | undefined): string | null {
  *
  * Mirrors the shape `createAmrModelUnavailablePayload` uses for
  * `AMR_MODEL_UNAVAILABLE` (`kind` / `action` / the one fact the copy names), so
- * a client reads every structured failure the same way. Undetected identity is
- * OMITTED rather than sent as null: the copy degrades to a version-less
- * sentence, and a client must never render the word "null" at a user.
+ * a client reads every structured failure the same way. An unknown runtime name
+ * is OMITTED rather than sent as null: the copy degrades to its agent-less
+ * fallback, and a client must never render the word "null" at a user.
  *
- * @param identity - Runtime name and detected CLI version, either possibly absent.
+ * @param identity - Runtime name, possibly absent.
  * @param existing - The agent's own JSON-RPC `error.data`, preserved underneath.
  */
 function acpCliSessionRefusalDetails(
@@ -88,7 +88,6 @@ function acpCliSessionRefusalDetails(
   existing: unknown,
 ): Record<string, unknown> {
   const agent = readable(identity.agentName);
-  const agentCliVersion = readable(identity.agentCliVersion);
   return {
     ...(existing && typeof existing === 'object' && !Array.isArray(existing)
       ? (existing as Record<string, unknown>)
@@ -96,7 +95,6 @@ function acpCliSessionRefusalDetails(
     kind: 'agent_cli',
     action: 'update_cli',
     ...(agent ? { agent } : {}),
-    ...(agentCliVersion ? { agentCliVersion } : {}),
   };
 }
 
@@ -133,7 +131,7 @@ interface AcpErrorFrame {
  * that refuses `session/new` refuses the identical request identically.
  *
  * @param payload - The raw ACP error payload, forwarded unchanged when it is not a handshake rejection.
- * @param identity - Runtime name and detected CLI version for the client's copy.
+ * @param identity - Runtime name for the client's copy.
  * @returns The payload to send, carrying `AGENT_CLI_SESSION_REFUSED` when applicable.
  */
 export function withAcpHandshakeFailureGuidance(

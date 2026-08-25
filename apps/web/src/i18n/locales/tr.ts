@@ -155,8 +155,6 @@ export const tr: Dict = {
   'chat.runError.gitBashMissingMessage': "Bu aracıyı Windows'ta çalıştırmak için Git Bash gerekir ancak bulunamadı. Git for Windows'u kurup yeniden deneyin.",
   'chat.runError.cpuUnsupportedMessage': "Bu aracının çalışma zamanı, bu cihazın CPU'sunda bulunmayan bir komut seti (AVX2) gerektirdiğinden başlatılamıyor. Uyumlu çalışma zamanı içeren en son OpenDesign sürümüne güncelleyin.",
   'chat.runError.cliSessionRefusedMessage':
-    "{agent} {version} bir oturum başlatmayı reddetti. Bu sürüm genellikle Open Design ile uyumlu değildir; farklı bir sürüme geçip yeniden deneyin.",
-  'chat.runError.cliSessionRefusedMessageNoVersion':
     "{agent} bir oturum başlatmayı reddetti. Yüklü sürüm genellikle Open Design ile uyumlu değildir; farklı bir sürüme geçip yeniden deneyin.",
   'chat.runError.strategyTaskStateMismatchMessage': "Bu görev, strateji kalite kapısı tarafından zaten durdurulduğundan formun bu turu devam edemiyor. İsteği yeniden deneyin veya yeni bir istek başlatın.",
   'common.cancel': 'İptal et',

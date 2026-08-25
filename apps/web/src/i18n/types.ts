@@ -2936,7 +2936,6 @@ export interface Dict {
   'chat.runError.gitBashMissingMessage': string;
   'chat.runError.cpuUnsupportedMessage': string;
   'chat.runError.cliSessionRefusedMessage': string;
-  'chat.runError.cliSessionRefusedMessageNoVersion': string;
   'chat.runError.strategyTaskStateMismatchMessage': string;
   'chat.runError.agentFallback': string;
   'chat.runError.sourceLabel': string;
