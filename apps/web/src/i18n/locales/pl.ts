@@ -2183,6 +2183,7 @@ export const pl: Dict = {
   'chat.deleteConversationConfirm': 'Usunąć „{title}”? Spowoduje to usunięcie wszystkich wiadomości.',
   'chat.untitledConversation': 'Rozmowa bez tytułu',
   'chat.forkedConversationTitle': 'Fork {title}',
+  'chat.forkConversationSucceeded': 'Utworzono fork. Jesteś teraz w „{title}”.',
   'chat.forkConversationFailed': 'Nie udało się sforkować tej rozmowy.',
   'chat.startTitle': 'Zacznij rozmowę',
   'chat.startHint': 'Opisz, co chcesz wygenerować, albo zacznij od jednego z tych przykładów:',

@@ -3012,6 +3012,7 @@ export interface Dict {
   'chat.deleteConversationConfirm': string;
   'chat.untitledConversation': string;
   'chat.forkedConversationTitle': string;
+  'chat.forkConversationSucceeded': string;
   'chat.forkConversationFailed': string;
   'chat.startTitle': string;
   'chat.startHint': string;
