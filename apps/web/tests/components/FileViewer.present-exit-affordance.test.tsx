@@ -225,7 +225,7 @@ describe('presentation overlay exit affordance (OPEND-2156)', () => {
 
     render(
       <Wrap>
-        <FileViewer projectId={projectId} projectKind="deck" file={deckFile()} isDeck />
+        <FileViewer projectId={projectId} projectKind="slide_deck" file={deckFile()} isDeck />
       </Wrap>,
     );
 
