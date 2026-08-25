@@ -164,6 +164,33 @@ describe('deck stage probe (OPEND-2147)', () => {
     });
   });
 
+  it('reports an unfitted deck whose width happens to match the frame', () => {
+    // The viewport exemption exists for wrappers that track the viewport, and a
+    // wrapper tracks it in BOTH dimensions. A 1920x1080 canvas in a 1920x530
+    // frame still has to scale (height constrains it to about 0.46), so
+    // `transform: none` there is the failure, not an exemption.
+    const originalW = window.innerWidth;
+    const originalH = window.innerHeight;
+    Object.defineProperty(window, 'innerWidth', { value: 1920, configurable: true });
+    Object.defineProperty(window, 'innerHeight', { value: 530, configurable: true });
+    try {
+      mountDeckStage('none');
+      run(post);
+
+      expect(deckMessages(post)[0]).toMatchObject({
+        stage_kind: 'deck-stage',
+        stage_transform: 'none',
+        canvas_width: 1920,
+        canvas_height: 1080,
+        viewport_width: 1920,
+        viewport_height: 530,
+      });
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { value: originalW, configurable: true });
+      Object.defineProperty(window, 'innerHeight', { value: originalH, configurable: true });
+    }
+  });
+
   it('stays quiet for a deck that fitted correctly', () => {
     mountDeckStage('matrix(0.4907, 0, 0, 0.4907, 0, 0)');
     run(post);

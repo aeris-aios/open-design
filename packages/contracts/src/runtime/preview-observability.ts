@@ -501,7 +501,14 @@ export function buildPreviewObservabilityBridge(): string {
     // Only a fixed canvas has a fit contract to violate. A wrapper sized to the
     // viewport (a 100vw/100vh .stage, which some templates ship) legitimately
     // carries no transform, and reporting those would bury the real signal.
-    if (canvasW < 640 || Math.abs(canvasW - frameW) <= 1) return;
+    // A wrapper that tracks the viewport tracks it in BOTH dimensions. Comparing
+    // width alone skipped a real failure: a 1920x1080 canvas in a 1920x530 frame
+    // still has to scale (height constrains it), so an absent transform there is
+    // the defect, not an exemption.
+    var viewportSized = canvasH > 0
+      && Math.abs(canvasW - frameW) <= 1
+      && Math.abs(canvasH - frameH) <= 1;
+    if (canvasW < 640 || viewportSized) return;
     var scale = resolvedScale(stageStyle);
     // Deliberately does NOT latch on a healthy sample. OPEND-2147 is a race, so
     // "fitted correctly at the first eligible check" is not a verdict for the
