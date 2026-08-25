@@ -1706,11 +1706,19 @@ export function SettingsDialog({
   }, [amrCardStatus, onAmrLoginStatusChange]);
 
   const refreshAmrWalletSnapshot = useCallback(async (options: { refresh?: boolean } = {}) => {
+    // The wallet endpoint is account-scoped. Until the selected workspace is
+    // known, fetching it can race a Team context read and briefly put personal
+    // money (or a personal auth error) on the Team card.
+    if (workspaceContextLoading || workspaceContext?.workspaceType === 'team') {
+      setAmrWalletSnapshot(null);
+      setAmrWalletReady(false);
+      return;
+    }
     setAmrWalletReady(false);
     const next = await fetchAmrWalletSnapshot(options);
     setAmrWalletSnapshot(next);
     setAmrWalletReady(true);
-  }, []);
+  }, [workspaceContext?.workspaceType, workspaceContextLoading]);
 
   useEffect(() => {
     const hasAmrAgent = agents.some((agent) => agent.id === 'amr' && agent.available);
@@ -1741,7 +1749,12 @@ export function SettingsDialog({
 
   useEffect(() => {
     const hasAmrAgent = agents.some((agent) => agent.id === 'amr' && agent.available);
-    if (!hasAmrAgent || !amrCardSignedIn) {
+    if (
+      !hasAmrAgent ||
+      !amrCardSignedIn ||
+      workspaceContextLoading ||
+      workspaceContext?.workspaceType === 'team'
+    ) {
       setAmrWalletSnapshot(null);
       setAmrWalletReady(false);
       return;
@@ -1762,6 +1775,8 @@ export function SettingsDialog({
     amrCardStatus?.profile,
     amrCardStatus?.user?.id,
     amrCardStatus?.user?.email,
+    workspaceContext?.workspaceType,
+    workspaceContextLoading,
   ]);
 
   // Reconcile AMR sign-in state whenever the user returns to the window. The
@@ -4679,12 +4694,22 @@ export function SettingsDialog({
                             amrWalletVisible && workspaceBalanceUsd
                               ? formatVelaBalanceUsd(workspaceBalanceUsd)
                               : null;
+                          const amrCardIsTeam =
+                            workspaceContext?.workspaceType === 'team';
                           const amrCardBalanceLabel =
-                            isAmrAgent && active && amrCardSignedIn
-                              ? workspaceContext?.workspaceType === 'team'
+                            isAmrAgent &&
+                            active &&
+                            amrCardSignedIn &&
+                            !workspaceContextLoading
+                              ? amrCardIsTeam
                                 ? amrWorkspaceBalance
                                 : amrWorkspaceBalance ?? amrStatusBalance ?? amrWalletBalance
                               : null;
+                          const amrCardBalanceReady =
+                            !workspaceContextLoading &&
+                            (amrCardIsTeam
+                              ? Boolean(workspaceBillingResponse) || Boolean(amrWorkspaceBalance)
+                              : amrWalletReady || Boolean(amrCardBalanceLabel));
                           // vela's `account.plan` is ACCOUNT-scoped, so a member
                           // whose plan is held by the team workspace reads
                           // `free` there — the workspace context wins.
@@ -4885,8 +4910,8 @@ export function SettingsDialog({
                                                 {amrWalletValueLabel({
                                                   balance: amrCardBalanceLabel,
                                                   loadingLabel: t('common.loading'),
-                                                  ready: amrWalletReady || Boolean(amrCardBalanceLabel),
-                                                  snapshot: amrWalletSnapshot,
+                                                  ready: amrCardBalanceReady,
+                                                  snapshot: amrCardIsTeam ? null : amrWalletSnapshot,
                                                   unavailableLabel: t('settings.amrWalletUnavailable'),
                                                 })}
                                               </span>

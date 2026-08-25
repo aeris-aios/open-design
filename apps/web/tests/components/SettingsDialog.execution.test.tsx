@@ -4037,6 +4037,65 @@ describe('SettingsDialog execution settings Local CLI interactions', () => {
     expect(amrCard.textContent).not.toContain('$138.63');
   });
 
+  it('does not flash a personal AMR balance while the Team workspace context is loading', async () => {
+    const pendingDirectory = deferred<Response>();
+    let walletCalls = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url === '/api/workspace/directory') return pendingDirectory.promise;
+      if (url === '/api/memory') {
+        return new Response(
+          JSON.stringify({ enabled: true, memories: [], extraction: null }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      if (url === '/api/integrations/vela/status') {
+        return new Response(
+          JSON.stringify({
+            loggedIn: true,
+            profile: 'feature-test',
+            user: { id: 'user-1', email: 'signed-in@example.com' },
+            account: { plan: 'plus', balanceUsd: '18.7931' },
+            configPath: '/Users/test/.amr/config.json',
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      if (url === '/api/integrations/vela/wallet') {
+        walletCalls += 1;
+        return new Response(
+          JSON.stringify({
+            status: 'available',
+            profile: 'feature-test',
+            user: { id: 'user-1', email: 'signed-in@example.com' },
+            balanceUsd: '138.63',
+            updatedAt: '2026-07-21T08:00:00.000Z',
+            fetchedAt: '2026-07-21T08:00:01.000Z',
+            stale: false,
+            source: 'vela_api',
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    renderSettingsDialog(
+      { mode: 'daemon', agentId: 'amr' },
+      { agents: [amrAgent] },
+    );
+
+    fireEvent.click(screen.getByRole('tab', { name: /Local CLI.*1 installed/i }));
+
+    const amrCard = screen.getByTestId('settings-agent-card-amr');
+    expect(await within(amrCard).findByText('signed-in@example.com')).toBeTruthy();
+    expect(amrCard.querySelector('.agent-card-amr-balance-value')?.textContent).toBe('Loading…');
+    expect(amrCard.textContent).not.toContain('$18.79');
+    expect(amrCard.textContent).not.toContain('$138.63');
+    expect(walletCalls).toBe(0);
+  });
+
   it('renders env-backed AMR login inside Settings without fabricating account details', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = input.toString();
