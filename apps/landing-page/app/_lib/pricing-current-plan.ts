@@ -1,4 +1,4 @@
-export type PersonalPlanTier = 'go' | 'plus' | 'pro' | 'max';
+export type PersonalPlanTier = 'free' | 'plus' | 'pro' | 'max';
 export type PersonalBillingInterval = 'monthly' | 'yearly';
 
 export interface PersonalPlanState {
@@ -44,13 +44,13 @@ type PricingFetch = (
 ) => Promise<Response>;
 
 const PERSONAL_PLAN_TIERS = new Set<PersonalPlanTier>([
-  'go',
+  'free',
   'plus',
   'pro',
   'max',
 ]);
 const PERSONAL_PLAN_ORDER: readonly PersonalPlanTier[] = [
-  'go',
+  'free',
   'plus',
   'pro',
   'max',
@@ -98,6 +98,15 @@ export function resolvePersonalPlanAction(
     context.pendingChange.interval === target.interval
   ) {
     return { kind: 'scheduled', enabled: false };
+  }
+  if (context.current.tier === 'free' && target.tier === 'free') {
+    return { kind: 'current', enabled: false };
+  }
+  if (
+    context.current.tier === 'free' &&
+    personalPlanRelation(target.tier, context.current.tier) === 'higher'
+  ) {
+    return { kind: 'upgrade', enabled: true };
   }
   if (
     context.current.tier === target.tier &&

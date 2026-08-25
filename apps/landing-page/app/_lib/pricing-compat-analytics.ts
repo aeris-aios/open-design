@@ -64,7 +64,8 @@ function personalPlanFacts(
   interval: BillingInterval,
   firstMonthEligible: boolean,
 ) {
-  const introOfferApplied = firstMonthEligible && interval === 'monthly';
+  const introOfferApplied =
+    tier.tier !== 'free' && firstMonthEligible && interval === 'monthly';
   const priceUsd = interval === 'monthly'
     ? introOfferApplied
       ? tier.monthly.introPriceUsd
@@ -192,7 +193,7 @@ export function createPricingCompatibilityAnalytics({
   const clickPlan = (input: PlanClickInput) => {
     if (!context || input.audience !== 'creator' || !input.enabled) return;
     const tier = tiers.find((candidate) => candidate.tier === input.planId);
-    if (!tier) return;
+    if (!tier || tier.tier === 'free') return;
 
     const facts = personalPlanFacts(
       tier,

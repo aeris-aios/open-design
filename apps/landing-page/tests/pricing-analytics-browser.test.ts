@@ -206,7 +206,142 @@ function flattened(requests: BridgeRequest[]): BridgeEvent[] {
 }
 
 describe('authenticated Pricing compatibility browser wiring', { concurrency: false }, () => {
-  it('sends corrected Go Plus Pro Max context on the first trusted dashboard exposure', async (t) => {
+  it('shows Free as the disabled current plan for a signed-out visitor', async (t) => {
+    const { page } = await openPricing({
+      browserLocale: 'zh-CN',
+      signedIn: false,
+      targetHref: '/zh/pricing/',
+    });
+    t.after(() => page.context().close());
+    await page.waitForFunction(() =>
+      document.querySelector('[data-pricing-root]')?.getAttribute(
+        'data-personal-pricing-context-resolved',
+      ) === 'true',
+    );
+
+    const free = page.locator('[data-pricing-cta][data-tier="free"]');
+    assert.equal((await free.textContent())?.trim(), '当前套餐');
+    assert.equal(await free.getAttribute('aria-disabled'), 'true');
+    assert.equal(await free.getAttribute('href'), null);
+  });
+
+  it('renders monthly first without an interval swap for a signed-out visitor', async (t) => {
+    const html = await (await fetch(`${baseUrl}/zh/pricing/`)).text();
+    const pricingRootTag = html.match(/<article[^>]*data-pricing-root[^>]*>/)?.[0];
+    assert.match(pricingRootTag ?? '', /data-interval="monthly"/);
+    assert.match(
+      html,
+      /data-interval-btn="monthly"[^>]*aria-selected="true"/,
+    );
+
+    const { page } = await openPricing({
+      browserLocale: 'zh-CN',
+      signedIn: false,
+      targetHref: '/zh/pricing/',
+    });
+    t.after(() => page.context().close());
+    await page.waitForFunction(() =>
+      document.querySelector('[data-pricing-root]')?.getAttribute(
+        'data-personal-pricing-context-resolved',
+      ) === 'true',
+    );
+
+    assert.equal(
+      await page.locator('[data-pricing-root]').getAttribute('data-interval'),
+      'monthly',
+    );
+    assert.equal(
+      await page.locator('[data-interval-btn="monthly"]').getAttribute('aria-selected'),
+      'true',
+    );
+  });
+
+  it('shows first-month prices on monthly cards for a signed-out visitor', async (t) => {
+    const { page } = await openPricing({
+      browserLocale: 'zh-CN',
+      signedIn: false,
+      targetHref: '/zh/pricing/',
+    });
+    t.after(() => page.context().close());
+    await page.waitForFunction(() =>
+      document.querySelector('[data-pricing-root]')?.getAttribute(
+        'data-personal-pricing-context-resolved',
+      ) === 'true',
+    );
+    await page.locator('[data-interval-btn="monthly"]').click();
+
+    const prices = await page.locator(
+      '.pricing-card:not([data-tier="free"]) [data-monthly-price]',
+    ).allTextContents();
+    const originalPrices = await page.locator(
+      '.pricing-card:not([data-tier="free"]) .price[data-when="monthly"] del',
+    ).allTextContents();
+
+    assert.deepEqual(prices.map((price) => price.trim()), ['16', '70', '120']);
+    assert.deepEqual(
+      originalPrices.map((price) => price.trim()),
+      ['$20', '$100', '$200'],
+    );
+  });
+
+  it('keeps paid yearly upgrades enabled for a Free visitor', async (t) => {
+    const { page } = await openPricing({
+      browserLocale: 'zh-CN',
+      signedIn: false,
+      targetHref: '/zh/pricing/',
+    });
+    t.after(() => page.context().close());
+    await page.waitForFunction(() =>
+      document.querySelector('[data-pricing-root]')?.getAttribute(
+        'data-personal-pricing-context-resolved',
+      ) === 'true',
+    );
+    await page.locator('[data-interval-btn="yearly"]').click();
+
+    const states = await page.locator('[data-pricing-cta]').evaluateAll((ctas) =>
+      ctas.slice(0, 4).map((cta) => ({
+        tier: cta.getAttribute('data-tier'),
+        text: cta.textContent?.trim(),
+        disabled: cta.getAttribute('aria-disabled'),
+      })),
+    );
+    assert.deepEqual(states, [
+      { tier: 'free', text: '当前套餐', disabled: 'true' },
+      { tier: 'plus', text: '升级 Plus', disabled: null },
+      { tier: 'pro', text: '升级 Pro', disabled: null },
+      { tier: 'max', text: '升级 Max', disabled: null },
+    ]);
+  });
+
+  it('shows lower tiers as disabled Subscribe buttons for a current Pro user', async (t) => {
+    const { page } = await openPricing({
+      browserLocale: 'zh-CN',
+      targetHref: '/zh/pricing/',
+      billing: { membershipTier: 'pro', billingInterval: 'yearly' },
+    });
+    t.after(() => page.context().close());
+    await page.waitForFunction(() =>
+      document.querySelector('[data-pricing-root]')?.getAttribute(
+        'data-personal-pricing-context-resolved',
+      ) === 'true',
+    );
+
+    const states = await page.locator('[data-pricing-cta]').evaluateAll((ctas) =>
+      ctas.slice(0, 4).map((cta) => ({
+        tier: cta.getAttribute('data-tier'),
+        text: cta.textContent?.trim(),
+        disabled: cta.getAttribute('aria-disabled'),
+      })),
+    );
+    assert.deepEqual(states, [
+      { tier: 'free', text: '订阅', disabled: 'true' },
+      { tier: 'plus', text: '订阅', disabled: 'true' },
+      { tier: 'pro', text: '当前套餐', disabled: 'true' },
+      { tier: 'max', text: '升级 Max', disabled: null },
+    ]);
+  });
+
+  it('sends corrected Free Plus Pro Max context on the first trusted dashboard exposure', async (t) => {
     const { page, requests, navigations } = await openPricing({
       billing: {
         membershipTier: 'pro',
@@ -231,7 +366,7 @@ describe('authenticated Pricing compatibility browser wiring', { concurrency: fa
     assert.ok(requests[0]?.sessionId);
     assert.deepEqual(
       requests[0]?.events.map((event) => event.payload.planId),
-      ['go', 'plus', 'pro', 'max'],
+      ['free', 'plus', 'pro', 'max'],
     );
     assert.deepEqual(
       requests[0]?.events.map((event) => [
@@ -241,7 +376,7 @@ describe('authenticated Pricing compatibility browser wiring', { concurrency: fa
         event.payload.isCurrentPlan,
       ]),
       [
-        ['go', 'monthly', false, false],
+        ['free', 'monthly', false, false],
         ['plus', 'monthly', false, false],
         ['pro', 'monthly', false, true],
         ['max', 'monthly', false, false],
@@ -274,7 +409,7 @@ describe('authenticated Pricing compatibility browser wiring', { concurrency: fa
     assert.equal(requests[0]?.sourceSurface, 'wallet');
     assert.deepEqual(
       requests[0]?.events.map((event) => event.payload.planId),
-      ['go', 'plus', 'pro', 'max'],
+      ['free', 'plus', 'pro', 'max'],
     );
   });
 
@@ -296,13 +431,13 @@ describe('authenticated Pricing compatibility browser wiring', { concurrency: fa
     t.after(() => page.context().close());
     await waitForRequests(requests, 1);
 
-    await page.locator('[data-interval-btn="monthly"]').click();
+    await page.locator('[data-interval-btn="yearly"]').click();
     await waitForRequests(requests, 2);
     assert.deepEqual(
       requests[1]?.events.map((event) =>
         event.kind === 'pricing_click' ? event.payload.element : event.payload.planId,
       ),
-      ['change_interval', 'go', 'plus', 'pro', 'max'],
+      ['change_interval', 'free', 'plus', 'pro', 'max'],
     );
 
     await page.locator('[data-audience-btn="team"]').click();
@@ -310,7 +445,7 @@ describe('authenticated Pricing compatibility browser wiring', { concurrency: fa
     await waitForRequests(requests, 3);
     assert.deepEqual(
       requests[2]?.events.map((event) => event.payload.planId),
-      ['go', 'plus', 'pro', 'max'],
+      ['free', 'plus', 'pro', 'max'],
     );
   });
 

@@ -16,11 +16,11 @@ function billingFetcher(summary: Record<string, unknown>) {
     );
 }
 
-test('loads the active personal plan and pricing capabilities without discarding its interval', async () => {
+test('keeps a Free membership and its interval', async () => {
   const context = await loadPersonalPricingContext(
     'https://amr-api.open-design.ai/',
     billingFetcher({
-      membershipTier: 'go',
+      membershipTier: 'free',
       billingInterval: 'monthly',
       subscriptionStatus: 'active',
       subscriptionEntitlementStatus: 'active',
@@ -33,7 +33,7 @@ test('loads the active personal plan and pricing capabilities without discarding
   );
 
   assert.deepEqual(context, {
-    current: { tier: 'go', interval: 'monthly' },
+    current: { tier: 'free', interval: 'monthly' },
     checkoutAllowed: true,
     firstMonthIntroEligible: false,
     cancelAtPeriodEnd: false,
@@ -62,28 +62,28 @@ test('does not treat a retained tier from a canceled entitlement as a current su
   assert.equal(context?.checkoutAllowed, true);
 });
 
-test('keeps a same-tier monthly-to-yearly change actionable', () => {
+test('marks Free as current regardless of the selected billing interval', () => {
   assert.deepEqual(
     resolvePersonalPlanAction(
       {
-        current: { tier: 'go', interval: 'monthly' },
+        current: { tier: 'free', interval: 'monthly' },
         checkoutAllowed: true,
         firstMonthIntroEligible: false,
         cancelAtPeriodEnd: false,
         pendingChange: null,
         billingPortalAvailable: true,
       },
-      { tier: 'go', interval: 'yearly' },
+      { tier: 'free', interval: 'yearly' },
     ),
-    { kind: 'interval_upgrade', enabled: true },
+    { kind: 'current', enabled: false },
   );
 });
 
-test('blocks a simultaneous tier and billing-interval upgrade', () => {
+test('allows Free users to choose a paid yearly plan', () => {
   assert.deepEqual(
     resolvePersonalPlanAction(
       {
-        current: { tier: 'go', interval: 'monthly' },
+        current: { tier: 'free', interval: 'monthly' },
         checkoutAllowed: true,
         firstMonthIntroEligible: false,
         cancelAtPeriodEnd: false,
@@ -92,7 +92,7 @@ test('blocks a simultaneous tier and billing-interval upgrade', () => {
       },
       { tier: 'plus', interval: 'yearly' },
     ),
-    { kind: 'dual_change', enabled: false },
+    { kind: 'upgrade', enabled: true },
   );
 });
 

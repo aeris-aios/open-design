@@ -17,6 +17,7 @@
 import type { LandingLocaleCode } from '../i18n';
 
 export interface PricingPlanActionLabels {
+  subscribe: string;
   current: string;
   currentCanceling: string;
   downgrade: string;
@@ -29,6 +30,7 @@ export interface PricingPlanActionLabels {
 }
 
 const EN_PLAN_ACTION_LABELS: PricingPlanActionLabels = {
+  subscribe: 'Subscribe',
   current: 'Current plan',
   currentCanceling: 'Current plan · Cancels at period end',
   downgrade: 'Downgrade to {plan}',
@@ -43,32 +45,34 @@ const EN_PLAN_ACTION_LABELS: PricingPlanActionLabels = {
 const PLAN_ACTION_LABELS: Partial<Record<LandingLocaleCode, Partial<PricingPlanActionLabels>>> = {
   en: EN_PLAN_ACTION_LABELS,
   zh: {
-    current: '当前套餐', currentCanceling: '当前套餐 · 将在周期结束时取消', downgrade: '降级至 {plan}', upgrade: '升级至 {plan}', intervalUpgrade: '将 {plan} 改为{interval}', switchBackToInterval: '请先切回{interval}再升级', intervalDowngradeUnavailable: '取消订阅后可变更套餐', checkoutUnavailable: '此账户暂不能购买个人套餐', scheduled: '{plan} · 已安排',
+    subscribe: '订阅', current: '当前套餐', currentCanceling: '当前套餐 · 将在周期结束时取消', downgrade: '降级至 {plan}', upgrade: '升级 {plan}', intervalUpgrade: '将 {plan} 改为{interval}', switchBackToInterval: '请先切回{interval}再升级', intervalDowngradeUnavailable: '取消订阅后可变更套餐', checkoutUnavailable: '此账户暂不能购买个人套餐', scheduled: '{plan} · 已安排',
   },
   'zh-tw': {
-    current: '目前方案', currentCanceling: '目前方案 · 將於週期結束時取消', downgrade: '降級至 {plan}', upgrade: '升級至 {plan}', intervalUpgrade: '將 {plan} 改為{interval}', switchBackToInterval: '請先切回{interval}再升級', intervalDowngradeUnavailable: '取消訂閱後可變更方案', checkoutUnavailable: '此帳戶暫不能購買個人方案', scheduled: '{plan} · 已排程',
+    subscribe: '訂閱', current: '目前方案', currentCanceling: '目前方案 · 將於週期結束時取消', downgrade: '降級至 {plan}', upgrade: '升級 {plan}', intervalUpgrade: '將 {plan} 改為{interval}', switchBackToInterval: '請先切回{interval}再升級', intervalDowngradeUnavailable: '取消訂閱後可變更方案', checkoutUnavailable: '此帳戶暫不能購買個人方案', scheduled: '{plan} · 已排程',
   },
   ja: {
-    current: '現在のプラン', currentCanceling: '現在のプラン · 期間終了時に解約', downgrade: '{plan} にダウングレード', upgrade: '{plan} にアップグレード', intervalUpgrade: '{plan} を{interval}に変更', switchBackToInterval: 'アップグレードする前に{interval}へ戻してください', intervalDowngradeUnavailable: 'プランを変更するにはサブスクリプションを解約してください', checkoutUnavailable: 'このアカウントでは個人プランを購入できません', scheduled: '{plan} · 予約済み',
+    subscribe: '購読', current: '現在のプラン', currentCanceling: '現在のプラン · 期間終了時に解約', downgrade: '{plan} にダウングレード', upgrade: '{plan} にアップグレード', intervalUpgrade: '{plan} を{interval}に変更', switchBackToInterval: 'アップグレードする前に{interval}へ戻してください', intervalDowngradeUnavailable: 'プランを変更するにはサブスクリプションを解約してください', checkoutUnavailable: 'このアカウントでは個人プランを購入できません', scheduled: '{plan} · 予約済み',
   },
   ko: {
-    current: '현재 요금제', currentCanceling: '현재 요금제 · 기간 종료 시 해지', downgrade: '{plan}(으)로 다운그레이드', upgrade: '{plan}(으)로 업그레이드', intervalUpgrade: '{plan}을(를) {interval}(으)로 변경', switchBackToInterval: '업그레이드 전에 {interval}(으)로 돌아가세요', intervalDowngradeUnavailable: '요금제를 변경하려면 구독을 취소하세요', checkoutUnavailable: '이 계정에서는 개인 요금제를 구매할 수 없습니다', scheduled: '{plan} · 예약됨',
+    subscribe: '구독', current: '현재 요금제', currentCanceling: '현재 요금제 · 기간 종료 시 해지', downgrade: '{plan}(으)로 다운그레이드', upgrade: '{plan}(으)로 업그레이드', intervalUpgrade: '{plan}을(를) {interval}(으)로 변경', switchBackToInterval: '업그레이드 전에 {interval}(으)로 돌아가세요', intervalDowngradeUnavailable: '요금제를 변경하려면 구독을 취소하세요', checkoutUnavailable: '이 계정에서는 개인 요금제를 구매할 수 없습니다', scheduled: '{plan} · 예약됨',
   },
   de: {
-    current: 'Aktueller Tarif', currentCanceling: 'Aktueller Tarif · Endet zum Periodenende', downgrade: 'Auf {plan} downgraden', upgrade: 'Auf {plan} upgraden', intervalUpgrade: '{plan} auf {interval} umstellen', switchBackToInterval: 'Vor dem Upgrade zu {interval} zurückwechseln', intervalDowngradeUnavailable: 'Kündige dein Abonnement, um den Tarif zu wechseln', checkoutUnavailable: 'Persönliche Tarife sind für dieses Konto nicht verfügbar', scheduled: '{plan} · Geplant',
+    subscribe: 'Abonnieren', current: 'Aktueller Tarif', currentCanceling: 'Aktueller Tarif · Endet zum Periodenende', downgrade: 'Auf {plan} downgraden', upgrade: 'Auf {plan} upgraden', intervalUpgrade: '{plan} auf {interval} umstellen', switchBackToInterval: 'Vor dem Upgrade zu {interval} zurückwechseln', intervalDowngradeUnavailable: 'Kündige dein Abonnement, um den Tarif zu wechseln', checkoutUnavailable: 'Persönliche Tarife sind für dieses Konto nicht verfügbar', scheduled: '{plan} · Geplant',
   },
   fr: {
-    current: 'Offre actuelle', currentCanceling: 'Offre actuelle · Résiliation en fin de période', downgrade: 'Rétrograder vers {plan}', upgrade: 'Passer à {plan}', intervalUpgrade: 'Passer {plan} en {interval}', switchBackToInterval: 'Revenez à {interval} avant la mise à niveau', intervalDowngradeUnavailable: 'Résiliez votre abonnement pour changer d’offre', checkoutUnavailable: 'Les offres personnelles sont indisponibles pour ce compte', scheduled: '{plan} · Planifié',
+    subscribe: 'S’abonner', current: 'Offre actuelle', currentCanceling: 'Offre actuelle · Résiliation en fin de période', downgrade: 'Rétrograder vers {plan}', upgrade: 'Passer à {plan}', intervalUpgrade: 'Passer {plan} en {interval}', switchBackToInterval: 'Revenez à {interval} avant la mise à niveau', intervalDowngradeUnavailable: 'Résiliez votre abonnement pour changer d’offre', checkoutUnavailable: 'Les offres personnelles sont indisponibles pour ce compte', scheduled: '{plan} · Planifié',
   },
   ru: {
-    current: 'Текущий тариф', currentCanceling: 'Текущий тариф · Отмена в конце периода', downgrade: 'Понизить до {plan}', upgrade: 'Повысить до {plan}', intervalUpgrade: 'Перевести {plan} на {interval}', switchBackToInterval: 'Перед повышением вернитесь на {interval}', intervalDowngradeUnavailable: 'Отмените подписку, чтобы изменить тариф', checkoutUnavailable: 'Личные тарифы недоступны для этого аккаунта', scheduled: '{plan} · Запланировано',
+    subscribe: 'Подписаться', current: 'Текущий тариф', currentCanceling: 'Текущий тариф · Отмена в конце периода', downgrade: 'Понизить до {plan}', upgrade: 'Повысить до {plan}', intervalUpgrade: 'Перевести {plan} на {interval}', switchBackToInterval: 'Перед повышением вернитесь на {interval}', intervalDowngradeUnavailable: 'Отмените подписку, чтобы изменить тариф', checkoutUnavailable: 'Личные тарифы недоступны для этого аккаунта', scheduled: '{plan} · Запланировано',
   },
   es: {
-    current: 'Plan actual', currentCanceling: 'Plan actual · Se cancela al final del periodo', downgrade: 'Bajar a {plan}', upgrade: 'Subir a {plan}', intervalUpgrade: 'Cambiar {plan} a {interval}', switchBackToInterval: 'Vuelve a {interval} antes de subir de plan', intervalDowngradeUnavailable: 'Cancela tu suscripción para cambiar de plan', checkoutUnavailable: 'Los planes personales no están disponibles para esta cuenta', scheduled: '{plan} · Programado',
+    subscribe: 'Suscribirse', current: 'Plan actual', currentCanceling: 'Plan actual · Se cancela al final del periodo', downgrade: 'Bajar a {plan}', upgrade: 'Subir a {plan}', intervalUpgrade: 'Cambiar {plan} a {interval}', switchBackToInterval: 'Vuelve a {interval} antes de subir de plan', intervalDowngradeUnavailable: 'Cancela tu suscripción para cambiar de plan', checkoutUnavailable: 'Los planes personales no están disponibles para esta cuenta', scheduled: '{plan} · Programado',
   },
   'pt-br': {
-    current: 'Plano atual', currentCanceling: 'Plano atual · Cancela ao fim do período', downgrade: 'Fazer downgrade para {plan}', upgrade: 'Fazer upgrade para {plan}', intervalUpgrade: 'Mudar {plan} para {interval}', switchBackToInterval: 'Volte para {interval} antes de fazer upgrade', intervalDowngradeUnavailable: 'Cancele a assinatura para mudar de plano', checkoutUnavailable: 'Planos pessoais não estão disponíveis para esta conta', scheduled: '{plan} · Agendado',
+    subscribe: 'Assinar', current: 'Plano atual', currentCanceling: 'Plano atual · Cancela ao fim do período', downgrade: 'Fazer downgrade para {plan}', upgrade: 'Fazer upgrade para {plan}', intervalUpgrade: 'Mudar {plan} para {interval}', switchBackToInterval: 'Volte para {interval} antes de fazer upgrade', intervalDowngradeUnavailable: 'Cancele a assinatura para mudar de plano', checkoutUnavailable: 'Planos pessoais não estão disponíveis para esta conta', scheduled: '{plan} · Agendado',
   },
+  it: { subscribe: 'Abbonati' },
+  tr: { subscribe: 'Abone ol' },
 };
 
 export function getCurrentPlanLabel(locale: LandingLocaleCode): string {
@@ -100,13 +104,6 @@ export interface FreePlanCopy {
   tagline: string;
   ctaLabel: string;
   concurrency: string;
-  features: string[];
-}
-
-export interface GoPlanCopy {
-  tagline: string;
-  ctaLabel: string;
-  allowance: string;
   features: string[];
 }
 
@@ -162,7 +159,6 @@ export interface PersonalPricingCopy {
   mostPopular: string;
   lowestUnitPrice: string;
   saveAmount: string;
-  goConcurrency: string;
   unlimitedPopularModels: string;
   customDomains: string;
   unlimitedCustomDomains: string;
@@ -193,7 +189,7 @@ export interface PersonalPricingCopy {
   comparisonTitle: string;
   category: string;
   model: string;
-  tierUse: Record<'go' | PlanTierId, string>;
+  tierUse: Record<'free' | PlanTierId, string>;
   aboutPopularAllowance: string;
   aboutModelEntitlements: string;
   otherModelsTitle: string;
@@ -203,7 +199,6 @@ export interface PersonalPricingCopy {
 export interface PricingContent {
   labels: PricingLabels;
   free: FreePlanCopy;
-  go: GoPlanCopy;
   plans: Record<PlanTierId, PlanCopy>;
   personal: PersonalPricingCopy;
 }
@@ -303,7 +298,6 @@ const PERSONAL_EN: PersonalPricingCopy = {
   mostPopular: 'Most popular',
   lowestUnitPrice: 'Lowest unit price',
   saveAmount: 'Save {amount}',
-  goConcurrency: '2 concurrent tasks',
   unlimitedPopularModels: '{count} popular models unlimited',
   customDomains: '{count} domains',
   unlimitedCustomDomains: 'Unlimited domains',
@@ -335,7 +329,7 @@ const PERSONAL_EN: PersonalPricingCopy = {
   category: 'Category',
   model: 'Model',
   tierUse: {
-    go: 'Light use',
+    free: 'Free use',
     plus: 'Independent',
     pro: 'Most popular',
     max: 'High volume',
@@ -350,7 +344,6 @@ const PERSONAL_ZH_CN: PersonalPricingCopy = {
   mostPopular: '最受欢迎',
   lowestUnitPrice: '最低单位价格',
   saveAmount: '省 {amount}',
-  goConcurrency: '2 个并发任务',
   unlimitedPopularModels: '{count} 个热门模型无限使用',
   customDomains: '支持 {count} 个域名',
   unlimitedCustomDomains: '域名无限量',
@@ -382,7 +375,7 @@ const PERSONAL_ZH_CN: PersonalPricingCopy = {
   category: '分类',
   model: '模型',
   tierUse: {
-    go: '轻量使用',
+    free: '免费使用',
     plus: '独立创作',
     pro: '最受欢迎',
     max: '高频生产',
@@ -397,7 +390,6 @@ const PERSONAL_ZH_TW: PersonalPricingCopy = {
   mostPopular: '最受歡迎',
   lowestUnitPrice: '最低單位價格',
   saveAmount: '省 {amount}',
-  goConcurrency: '2 個並行任務',
   unlimitedPopularModels: '{count} 個熱門模型無限使用',
   customDomains: '支援 {count} 個網域',
   unlimitedCustomDomains: '網域無限量',
@@ -429,7 +421,7 @@ const PERSONAL_ZH_TW: PersonalPricingCopy = {
   category: '分類',
   model: '模型',
   tierUse: {
-    go: '輕量使用',
+    free: '免費使用',
     plus: '獨立創作',
     pro: '最受歡迎',
     max: '高頻製作',
@@ -444,7 +436,6 @@ const PERSONAL_ES: PersonalPricingCopy = {
   mostPopular: 'Más popular',
   lowestUnitPrice: 'Menor precio por unidad',
   saveAmount: 'Ahorra {amount}',
-  goConcurrency: '2 tareas simultáneas',
   unlimitedPopularModels: '{count} modelos populares sin límite',
   customDomains: '{count} dominios personalizados',
   unlimitedCustomDomains: 'Dominios personalizados ilimitados',
@@ -476,7 +467,7 @@ const PERSONAL_ES: PersonalPricingCopy = {
   category: 'Categoría',
   model: 'Modelo',
   tierUse: {
-    go: 'Uso ligero',
+    free: 'Uso gratuito',
     plus: 'Independiente',
     pro: 'Más popular',
     max: 'Alto volumen',
@@ -491,7 +482,6 @@ const PERSONAL_PT_BR: PersonalPricingCopy = {
   mostPopular: 'Mais popular',
   lowestUnitPrice: 'Menor preço por unidade',
   saveAmount: 'Economize {amount}',
-  goConcurrency: '2 tarefas simultâneas',
   unlimitedPopularModels: '{count} modelos populares ilimitados',
   customDomains: '{count} domínios personalizados',
   unlimitedCustomDomains: 'Domínios personalizados ilimitados',
@@ -523,7 +513,7 @@ const PERSONAL_PT_BR: PersonalPricingCopy = {
   category: 'Categoria',
   model: 'Modelo',
   tierUse: {
-    go: 'Uso leve',
+    free: 'Uso gratuito',
     plus: 'Independente',
     pro: 'Mais popular',
     max: 'Alto volume',
@@ -538,7 +528,6 @@ const PERSONAL_RU: PersonalPricingCopy = {
   mostPopular: 'Самый популярный',
   lowestUnitPrice: 'Минимальная цена за единицу',
   saveAmount: 'Экономия {amount}',
-  goConcurrency: '2 одновременные задачи',
   unlimitedPopularModels: '{count} популярных моделей без ограничений',
   customDomains: '{count} пользовательских доменов',
   unlimitedCustomDomains: 'Неограниченные пользовательские домены',
@@ -570,7 +559,7 @@ const PERSONAL_RU: PersonalPricingCopy = {
   category: 'Категория',
   model: 'Модель',
   tierUse: {
-    go: 'Лёгкое использование',
+    free: 'Бесплатное использование',
     plus: 'Самостоятельно',
     pro: 'Самый популярный',
     max: 'Высокая нагрузка',
@@ -585,7 +574,6 @@ const PERSONAL_FR: PersonalPricingCopy = {
   mostPopular: 'Le plus populaire',
   lowestUnitPrice: 'Prix unitaire le plus bas',
   saveAmount: 'Économisez {amount}',
-  goConcurrency: '2 tâches simultanées',
   unlimitedPopularModels: '{count} modèles populaires en illimité',
   customDomains: '{count} domaines personnalisés',
   unlimitedCustomDomains: 'Domaines personnalisés illimités',
@@ -617,7 +605,7 @@ const PERSONAL_FR: PersonalPricingCopy = {
   category: 'Catégorie',
   model: 'Modèle',
   tierUse: {
-    go: 'Usage léger',
+    free: 'Utilisation gratuite',
     plus: 'Indépendant',
     pro: 'Le plus populaire',
     max: 'Volume élevé',
@@ -632,7 +620,6 @@ const PERSONAL_KO: PersonalPricingCopy = {
   mostPopular: '가장 인기 있음',
   lowestUnitPrice: '최저 단가',
   saveAmount: '{amount} 절약',
-  goConcurrency: '동시 작업 2개',
   unlimitedPopularModels: '인기 모델 {count}개 무제한',
   customDomains: '사용자 지정 도메인 {count}개',
   unlimitedCustomDomains: '사용자 지정 도메인 무제한',
@@ -664,7 +651,7 @@ const PERSONAL_KO: PersonalPricingCopy = {
   category: '분류',
   model: '모델',
   tierUse: {
-    go: '가벼운 사용',
+    free: '무료 사용',
     plus: '독립 작업',
     pro: '가장 인기 있음',
     max: '대량 작업',
@@ -679,7 +666,6 @@ const PERSONAL_DE: PersonalPricingCopy = {
   mostPopular: 'Am beliebtesten',
   lowestUnitPrice: 'Niedrigster Stückpreis',
   saveAmount: '{amount} sparen',
-  goConcurrency: '2 gleichzeitige Aufgaben',
   unlimitedPopularModels: '{count} beliebte Modelle unbegrenzt',
   customDomains: '{count} benutzerdefinierte Domains',
   unlimitedCustomDomains: 'Unbegrenzte benutzerdefinierte Domains',
@@ -711,7 +697,7 @@ const PERSONAL_DE: PersonalPricingCopy = {
   category: 'Kategorie',
   model: 'Modell',
   tierUse: {
-    go: 'Leichte Nutzung',
+    free: 'Kostenlose Nutzung',
     plus: 'Unabhängig',
     pro: 'Am beliebtesten',
     max: 'Hohes Volumen',
@@ -726,7 +712,6 @@ const PERSONAL_JA: PersonalPricingCopy = {
   mostPopular: '一番人気',
   lowestUnitPrice: '最安の単価',
   saveAmount: '{amount} 節約',
-  goConcurrency: '同時実行タスク 2 件',
   unlimitedPopularModels: '人気モデル {count} 種が無制限',
   customDomains: 'カスタムドメイン {count} 件',
   unlimitedCustomDomains: 'カスタムドメイン無制限',
@@ -758,7 +743,7 @@ const PERSONAL_JA: PersonalPricingCopy = {
   category: 'カテゴリー',
   model: 'モデル',
   tierUse: {
-    go: 'ライト利用',
+    free: '無料利用',
     plus: '個人制作',
     pro: '一番人気',
     max: '大量制作',
@@ -773,7 +758,7 @@ const EN: PricingContent = {
   personal: PERSONAL_EN,
   labels: {
     heroTitle: 'Pay only for AI tasks that deliver results',
-    footnote: 'Prices shown in USD. Checkout, billing, and auto top-up are handled in the {console}. Adjust or cancel your plan anytime.',
+    footnote: 'Prices shown in USD. Adjust or cancel your plan anytime.',
     consoleLabel: 'OpenDesign Cloud console',
     checkoutDestinationUnavailable: 'Checkout destination unavailable. Return to your Cloud Console and open Pricing again.',
     monthly: 'Monthly',
@@ -806,16 +791,6 @@ const EN: PricingContent = {
     ctaLabel: 'Start free',
     concurrency: '1 concurrent task',
     features: ['BYOK provider keys · Local coding agents', 'Community support'],
-  },
-  go: {
-    tagline: 'Light needs · Easy delivery',
-    ctaLabel: 'Subscribe',
-    allowance: '8 popular models · ample allowance',
-    features: [
-      'Full design and coding capabilities',
-      'No provider API key required',
-      'Allowance resets automatically',
-    ],
   },
   plans: {
     plus: {
@@ -859,7 +834,7 @@ const ZH_CN: PricingContent = {
   personal: PERSONAL_ZH_CN,
   labels: {
     heroTitle: '只为实际完成的 AI 任务付费',
-    footnote: '价格以美元计。结账、账单与自动充值均在 {console} 完成。可随时调整或取消套餐。',
+    footnote: '价格以美元计。可随时调整或取消套餐。',
     consoleLabel: 'OpenDesign Cloud 控制台',
     checkoutDestinationUnavailable: '结账环境不可用。请返回 Cloud 控制台后重新打开价格页。',
     monthly: '月付',
@@ -892,12 +867,6 @@ const ZH_CN: PricingContent = {
     ctaLabel: '免费开始',
     concurrency: '1 个任务并发',
     features: ['BYOK 自带密钥，支持本地 Coding Agent', '社区支持'],
-  },
-  go: {
-    tagline: '轻量需求，轻松交付',
-    ctaLabel: '订阅 Go',
-    allowance: '8 个热门模型 · 充裕额度',
-    features: ['完整设计与 Coding 能力', '无需配置供应商 API Key', '额度自动恢复'],
   },
   plans: {
     plus: {
@@ -941,7 +910,7 @@ const ZH_TW: PricingContent = {
   personal: PERSONAL_ZH_TW,
   labels: {
     heroTitle: '只為實際完成的 AI 任務付費',
-    footnote: '價格以美元計。結帳、帳單與自動加值皆於 {console} 完成。可隨時調整或取消方案。',
+    footnote: '價格以美元計。可隨時調整或取消方案。',
     consoleLabel: 'OpenDesign Cloud 主控台',
     checkoutDestinationUnavailable: '結帳環境無法使用。請返回 Cloud 主控台後重新開啟價格頁。',
     monthly: '月付',
@@ -974,12 +943,6 @@ const ZH_TW: PricingContent = {
     ctaLabel: '免費開始',
     concurrency: '1 個任務並行',
     features: ['BYOK 自帶密鑰，支援本機 Coding Agent', '社群支援'],
-  },
-  go: {
-    tagline: '輕量需求，輕鬆交付',
-    ctaLabel: '訂閱 Go',
-    allowance: '8 個熱門模型 · 充裕額度',
-    features: ['完整設計與 Coding 能力', '無需配置供應商 API Key', '額度自動恢復'],
   },
   plans: {
     plus: {
@@ -1023,7 +986,7 @@ const ES: PricingContent = {
   personal: PERSONAL_ES,
   labels: {
     heroTitle: 'Paga solo por tareas de IA completadas',
-    footnote: 'Precios en USD. El pago, la facturación y la recarga automática se gestionan en la {console}. Cambia o cancela tu plan cuando quieras.',
+    footnote: 'Precios en USD. Cambia o cancela tu plan cuando quieras.',
     consoleLabel: 'consola de OpenDesign Cloud',
     checkoutDestinationUnavailable: 'El destino de pago no está disponible. Vuelve a la consola Cloud y abre Precios de nuevo.',
     monthly: 'Mensual',
@@ -1056,12 +1019,6 @@ const ES: PricingContent = {
     ctaLabel: 'Empezar gratis',
     concurrency: '1 tarea simultánea',
     features: ['Claves BYOK · Coding agents locales', 'Soporte de la comunidad'],
-  },
-  go: {
-    tagline: 'Necesidades ligeras, entrega fácil · Sin configuración',
-    ctaLabel: 'Suscribirse a Go',
-    allowance: '8 modelos populares · capacidad amplia',
-    features: ['Todas las funciones de diseño y coding', 'Sin configurar claves API', 'La capacidad se restablece automáticamente'],
   },
   plans: {
     plus: {
@@ -1105,7 +1062,7 @@ const PT_BR: PricingContent = {
   personal: PERSONAL_PT_BR,
   labels: {
     heroTitle: 'Pague apenas por tarefas de IA concluídas',
-    footnote: 'Preços em USD. Pagamento, faturamento e recarga automática são feitos no {console}. Ajuste ou cancele seu plano quando quiser.',
+    footnote: 'Preços em USD. Ajuste ou cancele seu plano quando quiser.',
     consoleLabel: 'console do OpenDesign Cloud',
     checkoutDestinationUnavailable: 'O destino de pagamento não está disponível. Volte ao console Cloud e abra Preços novamente.',
     monthly: 'Mensal',
@@ -1138,12 +1095,6 @@ const PT_BR: PricingContent = {
     ctaLabel: 'Começar grátis',
     concurrency: '1 tarefa simultânea',
     features: ['Chaves BYOK · Coding agents locais', 'Suporte da comunidade'],
-  },
-  go: {
-    tagline: 'Demandas leves, entrega fácil · Sem configuração',
-    ctaLabel: 'Assinar o Go',
-    allowance: '8 modelos populares · franquia ampla',
-    features: ['Recursos completos de design e coding', 'Sem configurar chaves de API', 'A franquia é renovada automaticamente'],
   },
   plans: {
     plus: {
@@ -1187,7 +1138,7 @@ const RU: PricingContent = {
   personal: PERSONAL_RU,
   labels: {
     heroTitle: 'Платите только за выполненные задачи ИИ',
-    footnote: 'Цены указаны в USD. Оплата, выставление счетов и автопополнение выполняются в {console}. Изменение или отмена тарифа в любое время.',
+    footnote: 'Цены указаны в USD. Изменение или отмена тарифа в любое время.',
     consoleLabel: 'консоли OpenDesign Cloud',
     checkoutDestinationUnavailable: 'Среда оплаты недоступна. Вернитесь в консоль Cloud и снова откройте страницу тарифов.',
     monthly: 'Месяц',
@@ -1220,12 +1171,6 @@ const RU: PricingContent = {
     ctaLabel: 'Начать бесплатно',
     concurrency: '1 одновременная задача',
     features: ['Ключи BYOK · локальные coding-агенты', 'Поддержка сообщества'],
-  },
-  go: {
-    tagline: 'Небольшие задачи без лишних усилий · Без настройки',
-    ctaLabel: 'Подписаться на Go',
-    allowance: '8 популярных моделей · большой лимит',
-    features: ['Все функции дизайна и кодинга', 'Без настройки API-ключей', 'Лимит восстанавливается автоматически'],
   },
   plans: {
     plus: {
@@ -1269,7 +1214,7 @@ const FR: PricingContent = {
   personal: PERSONAL_FR,
   labels: {
     heroTitle: 'Payez uniquement pour les tâches IA terminées',
-    footnote: 'Prix indiqués en USD. Le paiement, la facturation et la recharge automatique se gèrent dans la {console}. Ajustez ou résiliez votre forfait à tout moment.',
+    footnote: 'Prix indiqués en USD. Ajustez ou résiliez votre forfait à tout moment.',
     consoleLabel: 'console OpenDesign Cloud',
     checkoutDestinationUnavailable: 'La destination de paiement est indisponible. Revenez à la console Cloud et rouvrez la page Tarifs.',
     monthly: 'Mensuel',
@@ -1302,12 +1247,6 @@ const FR: PricingContent = {
     ctaLabel: 'Commencer gratuitement',
     concurrency: '1 tâche simultanée',
     features: ['Clés BYOK · agents de code locaux', 'Support communautaire'],
-  },
-  go: {
-    tagline: 'Besoins légers, livraison facile · Zéro configuration',
-    ctaLabel: 'Souscrire à Go',
-    allowance: '8 modèles populaires · quota généreux',
-    features: ['Toutes les fonctions design et coding', 'Aucune clé API à configurer', 'Le quota se réinitialise automatiquement'],
   },
   plans: {
     plus: {
@@ -1351,7 +1290,7 @@ const KO: PricingContent = {
   personal: PERSONAL_KO,
   labels: {
     heroTitle: '완료된 AI 작업에만 비용을 지불하세요',
-    footnote: '가격은 USD 기준입니다. 결제, 청구, 자동 충전은 {console}에서 처리됩니다. 플랜 변경 또는 취소는 언제든 가능합니다.',
+    footnote: '가격은 USD 기준입니다. 플랜 변경 또는 취소는 언제든 가능합니다.',
     consoleLabel: 'OpenDesign Cloud 콘솔',
     checkoutDestinationUnavailable: '결제 환경을 사용할 수 없습니다. Cloud 콘솔로 돌아가 요금 페이지를 다시 여세요.',
     monthly: '월간',
@@ -1384,12 +1323,6 @@ const KO: PricingContent = {
     ctaLabel: '무료로 시작',
     concurrency: '동시 작업 1개',
     features: ['BYOK 제공자 키 · 로컬 Coding Agent 지원', '커뮤니티 지원'],
-  },
-  go: {
-    tagline: '가벼운 요구, 간편한 완성 · 설정 없이 사용',
-    ctaLabel: 'Go 구독',
-    allowance: '인기 모델 8개 · 넉넉한 한도',
-    features: ['모든 디자인 및 Coding 기능', '공급자 API 키 설정 불필요', '한도 자동 복원'],
   },
   plans: {
     plus: {
@@ -1433,7 +1366,7 @@ const DE: PricingContent = {
   personal: PERSONAL_DE,
   labels: {
     heroTitle: 'Zahle nur für abgeschlossene KI-Aufgaben',
-    footnote: 'Preise in USD. Checkout, Abrechnung und automatisches Aufladen erfolgen in der {console}. Plan jederzeit anpassen oder kündigen.',
+    footnote: 'Preise in USD. Plan jederzeit anpassen oder kündigen.',
     consoleLabel: 'OpenDesign Cloud Konsole',
     checkoutDestinationUnavailable: 'Das Zahlungsziel ist nicht verfügbar. Kehre zur Cloud-Konsole zurück und öffne die Preisseite erneut.',
     monthly: 'Monatlich',
@@ -1466,12 +1399,6 @@ const DE: PricingContent = {
     ctaLabel: 'Kostenlos starten',
     concurrency: '1 gleichzeitige Aufgabe',
     features: ['BYOK-Anbieterschlüssel · lokale Coding Agents', 'Community-Support'],
-  },
-  go: {
-    tagline: 'Leichte Aufgaben, mühelose Ergebnisse · Ohne Einrichtung',
-    ctaLabel: 'Go abonnieren',
-    allowance: '8 beliebte Modelle · großzügiges Kontingent',
-    features: ['Alle Design- und Coding-Funktionen', 'Keine API-Schlüssel nötig', 'Kontingent wird automatisch erneuert'],
   },
   plans: {
     plus: {
@@ -1515,7 +1442,7 @@ const JA: PricingContent = {
   personal: PERSONAL_JA,
   labels: {
     heroTitle: '完了した AI タスクにだけ支払う',
-    footnote: '価格は米ドル表示です。決済・請求・自動チャージは {console} で行います。プランの変更・解約はいつでも可能です。',
+    footnote: '価格は米ドル表示です。プランの変更・解約はいつでも可能です。',
     consoleLabel: 'OpenDesign Cloud コンソール',
     checkoutDestinationUnavailable: '決済先を利用できません。Cloud コンソールに戻り、料金ページを開き直してください。',
     monthly: '月額',
@@ -1548,12 +1475,6 @@ const JA: PricingContent = {
     ctaLabel: '無料で開始',
     concurrency: '同時実行タスク 1 件',
     features: ['BYOK プロバイダーキー・ローカル Coding Agent 対応', 'コミュニティサポート'],
-  },
-  go: {
-    tagline: '軽いニーズを手軽に完了 · 設定不要',
-    ctaLabel: 'Go を購読',
-    allowance: '人気モデル 8 種 · たっぷり使える',
-    features: ['すべてのデザイン・Coding 機能', 'プロバイダー API キー設定不要', '利用枠は自動回復'],
   },
   plans: {
     plus: {

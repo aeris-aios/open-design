@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { getPricingContent } from '../app/_lib/pricing-content';
 import { getGoBannerCopy } from '../app/go-banner-i18n';
 import type { LandingLocaleCode } from '../app/i18n';
 
@@ -107,11 +106,10 @@ test('Go banner uses the confirmed short copy and links to localized Pricing', (
     );
     assert.doesNotMatch(`${copy.headline} ${copy.ariaLabel}`, /unlimited|无限|無限|무제한|unbegrenzt|illimité|безлимит|ilimitado|illimitato|sınırsız/i);
   }
+  // The homepage campaign keeps its own fixed-window copy. Pricing no longer
+  // exposes a Go plan, so this banner must not depend on Pricing plan content.
   for (const locale of localizedPricingLocales) {
-    assert.ok(
-      getGoBannerCopy(locale).headline.endsWith(getPricingContent(locale).go.allowance),
-      locale,
-    );
+    assert.ok(getGoBannerCopy(locale).headline.length > 0, locale);
   }
   assert.match(banner, /\{copy\.headline\}/);
   assert.doesNotMatch(banner, /copy\.detail/);
