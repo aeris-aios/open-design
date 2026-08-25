@@ -792,6 +792,13 @@ describe("pricing contract", () => {
     assert.match(page, /data-cloud-console-handoff-error/);
     assert.match(page, /data-cloud-console-environment/);
     assert.match(page, /data-cloud-console-link/);
+    for (const locale of PRICING_LOCALES) {
+      assert.match(
+        getPricingContent(locale).labels.footnote,
+        /\{console\}/,
+        locale,
+      );
+    }
     assert.match(
       page,
       /consoleLink\.setAttribute\('href', cloudConsoleDashboardUrl\)/,

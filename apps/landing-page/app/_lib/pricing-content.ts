@@ -799,7 +799,7 @@ const EN: PricingContent = {
   personal: PERSONAL_EN,
   labels: {
     heroTitle: 'Zero setup. Pay only for results.',
-    footnote: 'Prices shown in USD. Adjust or cancel your plan anytime.',
+    footnote: 'Prices shown in USD. Checkout, billing, and auto top-up are handled in the {console}. Adjust or cancel your plan anytime.',
     consoleLabel: 'OpenDesign Cloud console',
     checkoutDestinationUnavailable: 'Checkout destination unavailable. Return to your Cloud Console and open Pricing again.',
     monthly: 'Monthly',
@@ -885,7 +885,7 @@ const ZH_CN: PricingContent = {
   personal: PERSONAL_ZH_CN,
   labels: {
     heroTitle: '零配置，只为结果付费',
-    footnote: '价格以美元计。可随时调整或取消套餐。',
+    footnote: '价格以美元计。结账、账单与自动充值均在 {console} 完成。可随时调整或取消套餐。',
     consoleLabel: 'OpenDesign Cloud 控制台',
     checkoutDestinationUnavailable: '结账环境不可用。请返回 Cloud 控制台后重新打开价格页。',
     monthly: '月付',
@@ -967,7 +967,7 @@ const ZH_TW: PricingContent = {
   personal: PERSONAL_ZH_TW,
   labels: {
     heroTitle: '零配置，只為結果付費',
-    footnote: '價格以美元計。可隨時調整或取消方案。',
+    footnote: '價格以美元計。結帳、帳單與自動加值皆於 {console} 完成。可隨時調整或取消方案。',
     consoleLabel: 'OpenDesign Cloud 主控台',
     checkoutDestinationUnavailable: '結帳環境無法使用。請返回 Cloud 主控台後重新開啟價格頁。',
     monthly: '月付',
@@ -1049,7 +1049,7 @@ const ES: PricingContent = {
   personal: PERSONAL_ES,
   labels: {
     heroTitle: 'Paga solo por tareas de IA completadas',
-    footnote: 'Precios en USD. Cambia o cancela tu plan cuando quieras.',
+    footnote: 'Precios en USD. El pago, la facturación y la recarga automática se gestionan en la {console}. Cambia o cancela tu plan cuando quieras.',
     consoleLabel: 'consola de OpenDesign Cloud',
     checkoutDestinationUnavailable: 'El destino de pago no está disponible. Vuelve a la consola Cloud y abre Precios de nuevo.',
     monthly: 'Mensual',
@@ -1131,7 +1131,7 @@ const PT_BR: PricingContent = {
   personal: PERSONAL_PT_BR,
   labels: {
     heroTitle: 'Pague apenas por tarefas de IA concluídas',
-    footnote: 'Preços em USD. Ajuste ou cancele seu plano quando quiser.',
+    footnote: 'Preços em USD. Pagamento, faturamento e recarga automática são feitos no {console}. Ajuste ou cancele seu plano quando quiser.',
     consoleLabel: 'console do OpenDesign Cloud',
     checkoutDestinationUnavailable: 'O destino de pagamento não está disponível. Volte ao console Cloud e abra Preços novamente.',
     monthly: 'Mensal',
@@ -1213,7 +1213,7 @@ const RU: PricingContent = {
   personal: PERSONAL_RU,
   labels: {
     heroTitle: 'Платите только за выполненные задачи ИИ',
-    footnote: 'Цены указаны в USD. Изменение или отмена тарифа в любое время.',
+    footnote: 'Цены указаны в USD. Оплата, выставление счетов и автопополнение выполняются в {console}. Изменение или отмена тарифа в любое время.',
     consoleLabel: 'консоли OpenDesign Cloud',
     checkoutDestinationUnavailable: 'Среда оплаты недоступна. Вернитесь в консоль Cloud и снова откройте страницу тарифов.',
     monthly: 'Месяц',
@@ -1295,7 +1295,7 @@ const FR: PricingContent = {
   personal: PERSONAL_FR,
   labels: {
     heroTitle: 'Payez uniquement pour les tâches IA terminées',
-    footnote: 'Prix indiqués en USD. Ajustez ou résiliez votre forfait à tout moment.',
+    footnote: 'Prix indiqués en USD. Le paiement, la facturation et la recharge automatique se gèrent dans la {console}. Ajustez ou résiliez votre forfait à tout moment.',
     consoleLabel: 'console OpenDesign Cloud',
     checkoutDestinationUnavailable: 'La destination de paiement est indisponible. Revenez à la console Cloud et rouvrez la page Tarifs.',
     monthly: 'Mensuel',
@@ -1377,7 +1377,7 @@ const KO: PricingContent = {
   personal: PERSONAL_KO,
   labels: {
     heroTitle: '완료된 AI 작업에만 비용을 지불하세요',
-    footnote: '가격은 USD 기준입니다. 플랜 변경 또는 취소는 언제든 가능합니다.',
+    footnote: '가격은 USD 기준입니다. 결제, 청구, 자동 충전은 {console}에서 처리됩니다. 플랜 변경 또는 취소는 언제든 가능합니다.',
     consoleLabel: 'OpenDesign Cloud 콘솔',
     checkoutDestinationUnavailable: '결제 환경을 사용할 수 없습니다. Cloud 콘솔로 돌아가 요금 페이지를 다시 여세요.',
     monthly: '월간',
@@ -1459,7 +1459,7 @@ const DE: PricingContent = {
   personal: PERSONAL_DE,
   labels: {
     heroTitle: 'Zahle nur für abgeschlossene KI-Aufgaben',
-    footnote: 'Preise in USD. Plan jederzeit anpassen oder kündigen.',
+    footnote: 'Preise in USD. Checkout, Abrechnung und automatisches Aufladen erfolgen in der {console}. Plan jederzeit anpassen oder kündigen.',
     consoleLabel: 'OpenDesign Cloud Konsole',
     checkoutDestinationUnavailable: 'Das Zahlungsziel ist nicht verfügbar. Kehre zur Cloud-Konsole zurück und öffne die Preisseite erneut.',
     monthly: 'Monatlich',
@@ -1541,7 +1541,7 @@ const JA: PricingContent = {
   personal: PERSONAL_JA,
   labels: {
     heroTitle: '完了した AI タスクにだけ支払う',
-    footnote: '価格は米ドル表示です。プランの変更・解約はいつでも可能です。',
+    footnote: '価格は米ドル表示です。決済・請求・自動チャージは {console} で行います。プランの変更・解約はいつでも可能です。',
     consoleLabel: 'OpenDesign Cloud コンソール',
     checkoutDestinationUnavailable: '決済先を利用できません。Cloud コンソールに戻り、料金ページを開き直してください。',
     monthly: '月額',
