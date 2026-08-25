@@ -24,7 +24,7 @@ export interface ProjectPreviewNavigationCacheOptions {
 }
 
 const DEFAULT_MAX_ENTRIES = 64;
-const DEFAULT_REFRESH_AHEAD_MS = 5 * 60 * 1000;
+export const PROJECT_PREVIEW_NAVIGATION_REFRESH_AHEAD_MS = 5 * 60 * 1000;
 
 function requestKey(request: ProjectPreviewNavigationRequest): string {
   return [
@@ -53,7 +53,10 @@ export class ProjectPreviewNavigationCache {
 
   constructor(options: ProjectPreviewNavigationCacheOptions = {}) {
     this.#maxEntries = Math.max(1, Math.floor(options.maxEntries ?? DEFAULT_MAX_ENTRIES));
-    this.#refreshAheadMs = Math.max(0, options.refreshAheadMs ?? DEFAULT_REFRESH_AHEAD_MS);
+    this.#refreshAheadMs = Math.max(
+      0,
+      options.refreshAheadMs ?? PROJECT_PREVIEW_NAVIGATION_REFRESH_AHEAD_MS,
+    );
     this.#now = options.now ?? Date.now;
     this.#mint = options.mint ?? fetchProjectScopedPreviewNavigation;
     this.#renew = options.renew ?? renewProjectPreviewBaseScope;
