@@ -2358,6 +2358,13 @@ export interface ProjectPreviewBaseScope {
   expiresAt: number;
 }
 
+export interface ProjectScopedPreviewNavigation {
+  normalUrl: string;
+  poweredUrl: string;
+  documentVersion: string;
+  renewalScope: ProjectPreviewBaseScope;
+}
+
 // Newer daemons return the authoritative scope expiry. During a rolling
 // desktop/web update the web bundle can briefly run against an older daemon,
 // so retain a conservative refresh horizon instead of rejecting an otherwise
@@ -2401,6 +2408,69 @@ export async function fetchProjectPreviewBaseHref(
       // capability against the host document while it still has a real origin.
       href: previewCapabilityHref(parsed.pathname.slice(0, directoryEnd)),
       expiresAt,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Resolve the converged real-URL preview capability when the daemon advertises
+ * it. Returning null is an intentional rolling-upgrade fallback: callers keep
+ * using the legacy transport until both sides support scoped origins.
+ */
+export async function fetchProjectScopedPreviewNavigation(
+  projectId: string,
+  name: string,
+): Promise<ProjectScopedPreviewNavigation | null> {
+  const params = new URLSearchParams({ file: name });
+  try {
+    const response = await fetch(
+      `/api/projects/${encodeURIComponent(projectId)}/preview-url?${params.toString()}`,
+      { cache: 'no-store' },
+    );
+    if (!response.ok) return null;
+    const body = (await response.json()) as ProjectPreviewUrlResponse;
+    if (!body.scopedOrigin || typeof body.url !== 'string') return null;
+
+    const normal = new URL(body.scopedOrigin.normalUrl);
+    const powered = new URL(body.scopedOrigin.poweredUrl);
+    const normalMatch = /^n-([A-Za-z0-9_-]{8,128})\.localhost$/u.exec(normal.hostname);
+    const poweredMatch = /^p-([A-Za-z0-9_-]{8,128})\.localhost$/u.exec(powered.hostname);
+    const expectedPath = `/${name.split('/').map(encodeURIComponent).join('/')}`;
+    if (
+      normal.protocol !== 'http:'
+      || powered.protocol !== 'http:'
+      || !normalMatch
+      || !poweredMatch
+      || normalMatch[1] !== poweredMatch[1]
+      || normal.port !== powered.port
+      || normal.pathname !== expectedPath
+      || powered.pathname !== expectedPath
+      || normal.search
+      || powered.search
+      || typeof body.scopedOrigin.documentVersion !== 'string'
+      || body.scopedOrigin.documentVersion.length === 0
+      || body.scopedOrigin.documentVersion.length > 200
+    ) return null;
+
+    const legacy = new URL(body.url, 'http://open-design.local');
+    const expectedPrefix = `/api/projects/${encodeURIComponent(projectId)}/preview/`;
+    if (!legacy.pathname.startsWith(expectedPrefix)) return null;
+    const directoryEnd = legacy.pathname.lastIndexOf('/') + 1;
+    if (directoryEnd <= expectedPrefix.length) return null;
+    const expiresAt = typeof body.expiresAt === 'number' && Number.isFinite(body.expiresAt)
+      ? body.expiresAt
+      : Date.now() + LEGACY_PREVIEW_SCOPE_REFRESH_MS;
+
+    return {
+      normalUrl: normal.href,
+      poweredUrl: powered.href,
+      documentVersion: body.scopedOrigin.documentVersion,
+      renewalScope: {
+        href: previewCapabilityHref(legacy.pathname.slice(0, directoryEnd)),
+        expiresAt,
+      },
     };
   } catch {
     return null;

@@ -106,6 +106,16 @@ describe('scanHtmlHeadForStreamingInjection', () => {
     expect(fixture.result.needsRedirectGuard).toBe(true);
   });
 
+  it('detects powered-preview signals in the same whole-document pass', async () => {
+    const fixture = await scan([
+      '<!doctype html><html><head><title>Late worker</title></head><body>',
+      'x'.repeat((96 * 1024) + 1),
+      '<script>new Worker("./worker.js")</script>',
+      '</body></html>',
+    ].join(''));
+    expect(fixture.result.needsPoweredPreview).toBe(true);
+  });
+
   it('does not close raw-text elements on end-tag-name prefixes', async () => {
     const fixture = await scan([
       '<html><head><script>',

@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import {
   previewHtmlHasLoadTimeLocationNavigation,
   previewHtmlNeedsFocusGuard,
+  previewHtmlNeedsPoweredPreview,
   previewHtmlNeedsRedirectGuard,
   previewHtmlNeedsSandboxShim,
 } from '@open-design/contracts/runtime/preview-guards';
@@ -35,6 +36,8 @@ export interface HtmlHeadScanResult {
   needsFocusGuard: boolean;
   /** Whether the complete streamed source requires redirect-loop protection. */
   needsRedirectGuard: boolean;
+  /** Whether the complete streamed source requires the powered preview profile. */
+  needsPoweredPreview: boolean;
   /** Number of source bytes inspected for whole-document guard signals. */
   scannedBytes: number;
   /** Whether the scanner reached EOF instead of proving every guard early. */
@@ -100,7 +103,9 @@ export async function scanHtmlHeadForStreamingInjection(
   let needsSandboxShim = false;
   let needsFocusGuard = false;
   let needsRedirectGuard = false;
+  let needsPoweredPreview = false;
   let passiveSignalTail = '';
+  let poweredSignalTail = '';
   let scannedBytes = 0;
   let complete = true;
   let prelude = true;
@@ -118,6 +123,7 @@ export async function scanHtmlHeadForStreamingInjection(
     && needsSandboxShim
     && needsFocusGuard
     && needsRedirectGuard
+    && needsPoweredPreview
     && hasLoadTimeLocationNavigation
   );
 
@@ -130,6 +136,7 @@ export async function scanHtmlHeadForStreamingInjection(
     needsSandboxShim,
     needsFocusGuard,
     needsRedirectGuard,
+    needsPoweredPreview,
     scannedBytes,
     complete,
   });
@@ -143,6 +150,11 @@ export async function scanHtmlHeadForStreamingInjection(
     if (!needsFocusGuard) needsFocusGuard = previewHtmlNeedsFocusGuard(passiveSample);
     if (!needsRedirectGuard) needsRedirectGuard = previewHtmlNeedsRedirectGuard(passiveSample);
     passiveSignalTail = passiveSample.slice(-MAX_TAG_BYTES);
+    if (!needsPoweredPreview) {
+      const poweredSample = poweredSignalTail + chunkText;
+      needsPoweredPreview = previewHtmlNeedsPoweredPreview(poweredSample);
+      poweredSignalTail = poweredSample.slice(-512);
+    }
     buffer += chunkText;
 
     while (buffer.length > 0 && !scanDone) {

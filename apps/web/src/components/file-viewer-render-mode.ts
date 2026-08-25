@@ -1,5 +1,6 @@
 import {
   previewHtmlNeedsFocusGuard,
+  previewHtmlNeedsPoweredPreview,
   previewHtmlNeedsRedirectGuard,
   previewHtmlNeedsSandboxShim,
 } from '@open-design/contracts/runtime/preview-guards';
@@ -239,24 +240,7 @@ export function htmlNeedsFocusGuard(source: string): boolean {
  * surface); false negatives keep the current opaque-sandbox behavior.
  */
 export function htmlNeedsPoweredPreview(source: string | null | undefined): boolean {
-  if (!source) return false;
-  // Hard requirement — SharedArrayBuffer only exists in a crossOriginIsolated
-  // document, which ONLY the powered path provides.
-  if (/\bSharedArrayBuffer\b/.test(source)) return true;
-  // Web Workers / SharedWorker: external-file workers throw SecurityError at an
-  // opaque origin; even blob workers commonly pair with storage/WASM here.
-  if (/\bnew\s+(?:Worker|SharedWorker)\s*\(/.test(source)) return true;
-  if (/\bimportScripts\s*\(/.test(source)) return true;
-  // WASM streaming instantiation reads a same-origin .wasm the opaque origin
-  // cannot fetch; and threaded WASM needs SAB.
-  if (/\bWebAssembly\s*\.\s*(?:instantiateStreaming|compileStreaming)\b/.test(source)) return true;
-  if (/\.wasm\b/.test(source)) return true;
-  // WebGL2 / OffscreenCanvas / WebGPU — the modern rendering stack these
-  // artifacts drive, usually from a worker.
-  if (/getContext\s*\(\s*["'`]webgl2["'`]/.test(source)) return true;
-  if (/\bOffscreenCanvas\b/.test(source)) return true;
-  if (/\bnavigator\s*\.\s*gpu\b/.test(source)) return true;
-  return false;
+  return previewHtmlNeedsPoweredPreview(source);
 }
 
 export function htmlNeedsSandboxShim(source: string): boolean {

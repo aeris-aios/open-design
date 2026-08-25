@@ -1,4 +1,4 @@
-import type http from 'node:http';
+import http from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { mkdir, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -288,6 +288,8 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
     await writeFile(path.join(complexPreviewDir, 'data.json'), '{"ready":true}');
     await writeFile(path.join(complexPreviewDir, 'assets', 'card.svg'), '<svg xmlns="http://www.w3.org/2000/svg"/>');
     await writeFile(path.join(complexPreviewDir, 'assets', 'card@2x.svg'), '<svg xmlns="http://www.w3.org/2000/svg" width="2"/>');
+    await mkdir(path.join(dir, 'assets'), { recursive: true });
+    await writeFile(path.join(dir, 'assets', 'root.css'), ':root { --scope-root: true; }');
     await writeFile(
       path.join(dir, 'bridged.html'),
       Buffer.from('<html><body><script data-od-url-scroll-bridge></script><main>Preview</main></body></html>'),
@@ -328,6 +330,31 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
     const url = new URL(baseUrl);
     url.hostname = url.hostname === '127.0.0.1' ? 'localhost' : '127.0.0.1';
     return url.origin;
+  };
+  const scopedRequest = (
+    requestPath: string,
+    hostHeader: string,
+  ): Promise<{ status: number; body: string; headers: http.IncomingHttpHeaders }> => {
+    const target = new URL(baseUrl);
+    return new Promise((resolve, reject) => {
+      const request = http.request({
+        hostname: target.hostname,
+        port: target.port,
+        path: requestPath,
+        method: 'GET',
+        headers: { Host: hostHeader },
+      }, (response) => {
+        const chunks: Buffer[] = [];
+        response.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+        response.on('end', () => resolve({
+          status: response.statusCode ?? 0,
+          body: Buffer.concat(chunks).toString('utf8'),
+          headers: response.headers,
+        }));
+      });
+      request.on('error', reject);
+      request.end();
+    });
   };
 
   it('advertises Accept-Ranges: bytes for a video file with no Range header', async () => {
@@ -670,6 +697,90 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
       expect(assetResponse.status, relativePath).toBe(200);
       expect(await assetResponse.text(), relativePath).toBe(expectedBody);
     }
+  });
+
+  it('binds a scoped preview origin to one project root and blocks daemon APIs', async () => {
+    const minted = await fetch(
+      `${baseUrl}/api/projects/${projectId}/preview-url?file=prototypes%2Fbooking%2Findex.html`,
+    );
+    expect(minted.status).toBe(200);
+    const preview = await minted.json() as {
+      url: string;
+      scopedOrigin?: {
+        normalUrl: string;
+        poweredUrl: string;
+        documentVersion: string;
+      };
+    };
+    const scope = preview.url.match(/\/preview\/([^/]+)\//u)?.[1];
+    expect(scope).toBeTruthy();
+
+    const port = new URL(baseUrl).port;
+    expect(preview.scopedOrigin).toEqual({
+      normalUrl: `http://n-${scope}.localhost:${port}/prototypes/booking/index.html`,
+      poweredUrl: `http://p-${scope}.localhost:${port}/prototypes/booking/index.html`,
+      documentVersion: expect.stringMatching(/^\d+:\d+(?:\.\d+)?$/u),
+    });
+    const normalHost = `n-${scope}.localhost:${port}`;
+    const html = await scopedRequest(
+      '/prototypes/booking/index.html?odPreviewBridge=scroll',
+      normalHost,
+    );
+    expect(html.status).toBe(200);
+    expect(html.body).toContain('<script src="./scripts/support.js">');
+    expect(html.body).toContain('data-od-url-scroll-bridge');
+    expect(html.body).toContain('data-od-url-selection-bridge');
+    expect(html.body).toContain('data-od-url-snapshot-bridge');
+    expect(html.body).toContain('data-od-preview-observability');
+    expect(html.body).toContain('data-od-preview-runtime');
+    expect(html.body).toContain('"content_measurement","scroll","snapshot","observability","selection"');
+    expect(html.body.indexOf('data-od-preview-runtime')).toBeLessThan(
+      html.body.indexOf('<script src="./scripts/support.js">'),
+    );
+
+    const nestedScript = await scopedRequest(
+      '/prototypes/booking/scripts/support.js',
+      normalHost,
+    );
+    expect(nestedScript.status).toBe(200);
+    expect(nestedScript.body).toContain('window.__supportLoaded = true');
+
+    const rootAsset = await scopedRequest('/assets/root.css', normalHost);
+    expect(rootAsset.status).toBe(200);
+    expect(rootAsset.body).toBe(':root { --scope-root: true; }');
+
+    const large = await scopedRequest(
+      '/large-external.html?odPreviewBridge=scroll&odPreviewBridge=selection',
+      normalHost,
+    );
+    expect(large.status).toBe(200);
+    expect(large.body).toContain('data-od-preview-runtime');
+    expect(large.body).toContain('data-od-url-scroll-bridge');
+    expect(large.body).toContain('data-od-url-selection-bridge');
+    expect(large.body.match(/type="text\/babel"/gu)).toHaveLength(43);
+    expect(large.body.indexOf('data-od-preview-runtime')).toBeLessThan(
+      large.body.indexOf('<script src="./support.js">'),
+    );
+
+    const api = await scopedRequest('/api/projects', normalHost);
+    expect(api.status).toBe(403);
+    expect(JSON.parse(api.body)).toEqual({
+      error: 'Project preview origin cannot access daemon API routes',
+    });
+
+    const powered = await scopedRequest(
+      '/prototypes/booking/index.html',
+      `p-${scope}.localhost:${port}`,
+    );
+    expect(powered.status).toBe(200);
+    expect(powered.headers['document-isolation-policy']).toBe('isolate-and-credentialless');
+
+    const unknownScope = await scopedRequest(
+      '/prototypes/booking/index.html',
+      `n-00000000-0000-0000-0000-000000000000.localhost:${port}`,
+    );
+    expect(unknownScope.status).toBe(404);
+    expect(JSON.parse(unknownScope.body).error.code).toBe('PREVIEW_SCOPE_NOT_FOUND');
   });
 
   it('serves built dist HTML for Vite dev entries so previews do not load /src from daemon root', async () => {

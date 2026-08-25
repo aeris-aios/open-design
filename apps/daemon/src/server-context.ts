@@ -111,6 +111,12 @@ export interface ProjectPreviewScopeDeps {
     projectId: string,
     scope: string,
   ) => { workspaceId: string; workspaceMemberId: string } | null | undefined;
+  resolveScope: (
+    scope: string,
+  ) => {
+    projectId: string;
+    workspace: { workspaceId: string; workspaceMemberId: string } | null;
+  } | undefined;
 }
 
 export interface TelemetryDeps {
@@ -159,6 +165,7 @@ export interface TelemetryDeps {
 
 export interface ServerContext {
   db: any;
+  getResolvedPort: () => number;
   design: any;
   http: HttpDeps;
   paths: PathDeps;

@@ -191,6 +191,16 @@ export interface ProjectPreviewUrlResponse {
   opaqueOrigin: true;
   /** Unix epoch milliseconds when the bearer scope stops authorizing assets. */
   expiresAt: number;
+  /**
+   * Transitional capability advertised by daemons that support a project-root
+   * preview origin. Older clients ignore it; newer clients must keep falling
+   * back to `url` while rolling upgrades can pair either client/daemon order.
+   */
+  scopedOrigin?: {
+    normalUrl: string;
+    poweredUrl: string;
+    documentVersion: string;
+  };
 }
 
 export interface ProjectPreviewScopeRenewResponse {

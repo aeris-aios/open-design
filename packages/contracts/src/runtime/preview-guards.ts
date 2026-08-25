@@ -43,6 +43,19 @@ export function previewHtmlNeedsRedirectGuard(source: string | null | undefined)
   return previewHtmlHasLoadTimeLocationNavigation(source);
 }
 
+export function previewHtmlNeedsPoweredPreview(source: string | null | undefined): boolean {
+  if (!source) return false;
+  if (/\bSharedArrayBuffer\b/.test(source)) return true;
+  if (/\bnew\s+(?:Worker|SharedWorker)\s*\(/.test(source)) return true;
+  if (/\bimportScripts\s*\(/.test(source)) return true;
+  if (/\bWebAssembly\s*\.\s*(?:instantiateStreaming|compileStreaming)\b/.test(source)) return true;
+  if (/\.wasm\b/.test(source)) return true;
+  if (/getContext\s*\(\s*["'`]webgl2["'`]/.test(source)) return true;
+  if (/\bOffscreenCanvas\b/.test(source)) return true;
+  if (/\bnavigator\s*\.\s*gpu\b/.test(source)) return true;
+  return false;
+}
+
 export function buildPreviewSandboxShim(): string {
   return `<script data-od-sandbox-shim>(function(){
   function makeStore(){

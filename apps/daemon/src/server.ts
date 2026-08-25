@@ -1086,6 +1086,7 @@ import {
   isZeroConfigClipperLibraryRequest,
   parseHostHeader,
 } from './origin-validation.js';
+import { parseProjectPreviewOriginAuthority } from './http/project-preview-origin.js';
 import { registerLibraryRoutes } from './routes/library.js';
 import {
   libraryExtensionAllowedOrigins,
@@ -2416,6 +2417,19 @@ function createProjectPreviewScopeRegistry() {
       if (entry.projectId !== String(projectId)) return undefined;
       return entry.workspace ?? null;
     },
+    resolveScope(scope) {
+      const key = String(scope || '');
+      const entry = scopes.get(key);
+      if (!entry) return undefined;
+      if (entry.expiresAt <= Date.now()) {
+        scopes.delete(key);
+        return undefined;
+      }
+      return {
+        projectId: entry.projectId,
+        workspace: entry.workspace ?? null,
+      };
+    },
   };
 }
 
@@ -3065,6 +3079,15 @@ export async function startServer({
       return next();
     }
 
+    if (
+      resolvedPort
+      && parseProjectPreviewOriginAuthority(req.headers.host, resolvedPort)
+    ) {
+      return res.status(403).json({
+        error: 'Project preview origin cannot access daemon API routes',
+      });
+    }
+
     const poweredHost = poweredPreviewHost();
     if (poweredHost && resolvedPort) {
       const requestHost = parseHostHeader(req.headers.host);
@@ -3347,7 +3370,16 @@ export async function startServer({
   });
 
   if (fs.existsSync(staticDir)) {
-    app.use(express.static(staticDir));
+    const serveStatic = express.static(staticDir);
+    app.use((req, res, next) => {
+      if (
+        resolvedPort
+        && parseProjectPreviewOriginAuthority(req.headers.host, resolvedPort)
+      ) {
+        return next();
+      }
+      return serveStatic(req, res, next);
+    });
   }
 
   // ---- Projects (DB-backed) -------------------------------------------------
@@ -8607,6 +8639,7 @@ export async function startServer({
     documents: { buildDocumentPreview },
     artifacts: artifactDeps,
     projectPreviewScopes,
+    getResolvedPort: () => resolvedPort,
     verifyWorkspaceRequestAuthority,
   });
 
@@ -16172,6 +16205,7 @@ export async function startServer({
 
   assertServerContextSatisfiesRoutes({
     db,
+    getResolvedPort: () => resolvedPort,
     design,
     http: httpDeps,
     paths: pathDeps,

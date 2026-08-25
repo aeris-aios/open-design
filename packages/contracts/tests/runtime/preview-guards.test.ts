@@ -6,6 +6,7 @@ import {
   PREVIEW_URL_GUARD_MAX_HTML_BYTES,
   previewHtmlHasLoadTimeLocationNavigation,
   previewHtmlNeedsFocusGuard,
+  previewHtmlNeedsPoweredPreview,
   previewHtmlNeedsRedirectGuard,
   previewHtmlNeedsSandboxShim,
 } from '../../src/runtime/preview-guards';
@@ -36,6 +37,13 @@ describe('preview document guards', () => {
     expect(previewHtmlNeedsFocusGuard('<main>Static</main>')).toBe(false);
     expect(previewHtmlNeedsRedirectGuard('<meta http-equiv="refresh" content="0">')).toBe(true);
     expect(previewHtmlNeedsRedirectGuard('<script>if (location.href === expected) ready()</script>')).toBe(false);
+  });
+
+  it('shares powered-preview detection across daemon and web runtimes', () => {
+    expect(previewHtmlNeedsPoweredPreview('<script>new Worker("./worker.js")</script>')).toBe(true);
+    expect(previewHtmlNeedsPoweredPreview('<script>WebAssembly.instantiateStreaming(fetch("a.wasm"))</script>')).toBe(true);
+    expect(previewHtmlNeedsPoweredPreview('<script>canvas.getContext("webgl2")</script>')).toBe(true);
+    expect(previewHtmlNeedsPoweredPreview('<main>Static document</main>')).toBe(false);
   });
 
   it('keeps the URL injection limit aligned with the streaming boundary', () => {

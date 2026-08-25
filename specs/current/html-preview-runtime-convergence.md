@@ -29,16 +29,18 @@ instead of adding another transport-specific fallback.
 3. Only a file-version change, explicit reload, eviction, or terminal recovery may navigate.
 4. Every daemon-served HTML document receives one small bootstrap through bounded-memory
    streaming injection. File size does not disable bridges.
-5. The daemon is the sole source of truth for passive guard detection and sandbox profile.
+5. Navigation policy is classified at most once per exact file version and cached by the
+   daemon. Opening, activating, or switching back to an unchanged file does not rescan it.
+6. The daemon is the sole source of truth for passive guard detection and sandbox profile.
    The web client must not infer whole-file properties from a source prefix.
-6. Relative CSS, JavaScript, JSX, fonts, media, `srcset`, dynamic imports, and nested paths
+7. Relative CSS, JavaScript, JSX, fonts, media, `srcset`, dynamic imports, and nested paths
    resolve from the real file URL/scoped preview base; they are not host-inlined.
-7. Interactive capabilities are negotiated over `postMessage`; enabling or disabling Deck,
+8. Interactive capabilities are negotiated over `postMessage`; enabling or disabling Deck,
    comment, inspect, edit, draw, snapshot, or observability does not replace the iframe.
-8. The last visibly painted version remains visible until its replacement confirms visible
+9. The last visibly painted version remains visible until its replacement confirms visible
    paint. Loading and recovery must never expose an empty transport frame.
-9. Recovery is navigation-token scoped, bounded, observable, and cannot loop indefinitely.
-10. Inactive files are retained by an explicit LRU policy, not by transport-specific parking.
+10. Recovery is navigation-token scoped, bounded, observable, and cannot loop indefinitely.
+11. Inactive files are retained by an explicit LRU policy, not by transport-specific parking.
 
 ## Target state machines
 
@@ -94,24 +96,76 @@ Each preview session is keyed by `(workspace, project, file)` and has one of:
 Temporary standby frames used for version replacement do not count as durable sessions and
 must be retired immediately after the swap or failed attempt.
 
-## Server response model
+## Preview policy and server response model
 
-The daemon raw route performs one bounded-memory streaming scan and emits:
+Do not conflate navigation-policy classification with response-time streaming injection.
+They have different timing and caching requirements.
 
-1. the artifact's original prefix;
-2. a scoped `<base>` when the artifact has not authored one;
-3. the universal bootstrap;
-4. the remainder of the original file byte stream.
+### Per-version navigation policy
 
-The scan determines passive policy such as:
+Some behavior must be known before an iframe navigation begins: powered previews need their
+origin, response headers, and sandbox profile before author code executes, while storage,
+focus, and redirect protection must be installed before startup scripts can trigger the
+behavior being guarded. The daemon therefore classifies each exact file version at most once
+and caches a small policy record:
 
-- normal versus powered sandbox profile;
-- storage/sandbox shim requirement;
-- load-time focus protection;
-- redirect-loop protection.
+```ts
+interface PreviewPolicy {
+  documentVersion: string;
+  sandboxProfile: 'normal' | 'powered';
+  guards: {
+    storage: boolean;
+    focus: boolean;
+    redirect: boolean;
+  };
+}
+```
 
-The browser still loads all authored subresources normally. The daemon must not buffer the
-whole document or inline project assets merely to install a bridge.
+Newly written files should be classified in the background when their version lands. Old
+files may pay one first-open classification. Requests for the same version share one
+in-flight classification, and only a file-version change invalidates the cached policy.
+Deck, Tweaks, comment, inspect, edit, draw, snapshot, and observability are runtime
+capabilities, not navigation policy, and must not appear in this classifier.
+
+### Response-time streaming processing
+
+After policy is available, the daemon begins the real document response. It scans only far
+enough to find a parser-safe insertion point, emits the universal bootstrap before authored
+startup code, and continues piping the source. If resource normalization remains necessary,
+it is fused with that stream rather than implemented as another read-to-EOF pass.
+
+The preferred final resource model is a project-scoped preview origin whose `/` maps to the
+authorized project root. That lets `./support.js`, `../img/a.png`, `/assets/app.css`, external
+CSS `url(...)`, modules, fonts, and media resolve through normal browser URL semantics without
+host inlining or executable-source rewriting. The exact origin shape must work in browser
+development and packaged Electron and preserve normal versus powered isolation.
+
+The browser loads all authored subresources normally. The daemon must not buffer the whole
+document or inline project assets merely to install a bridge. The current 96 KiB routing
+prefix is not a correctness boundary in this model and should be removed once the universal
+runtime owns every capability.
+
+## Universal runtime protocol
+
+The host and iframe use a versioned, document-fenced handshake. Every message carries a
+`sessionId` and `documentVersion`, so a retained, hidden, standby, evicted, or previous-version
+frame cannot affect the active preview.
+
+```text
+iframe -> host: od:preview:hello
+  { protocolVersion, sessionId, documentVersion, availableCapabilities }
+
+host -> iframe: od:preview:set-capabilities
+  { protocolVersion, sessionId, documentVersion, enabledCapabilities }
+
+iframe -> host: od:preview:capabilities-applied
+iframe -> host: od:preview:ready
+iframe -> host: od:preview:visible-paint
+```
+
+The bootstrap discovers and installs Deck, comment, inspect, edit, draw, snapshot,
+observability, palette, and Tweaks modules inside the one real-URL document. Capability
+changes are idempotent and never navigate the iframe.
 
 ## Migration phases
 
@@ -130,8 +184,13 @@ Exit gate: packaged Electron tests cover small and >2 MiB HTML, late guard signa
 `support.js`, many relative JSX files, relative CSS/media, file-tab/view/project switching,
 and no unbounded recovery.
 
-### Phase 2 — universal URL bootstrap
+### Phase 2 — policy index, scoped origin, and universal URL bootstrap
 
+- Introduce a per-file-version PreviewPolicy cache with in-flight deduplication and exact
+  invalidation on file changes.
+- Prove a project-scoped normal/powered preview origin in browser development and packaged
+  Electron, including Team authorization, expiry, root-relative assets, and cross-project
+  denial.
 - Define a versioned bootstrap handshake and capability-set contract in
   `packages/contracts`.
 - Move Deck, comment/selection, inspect, edit, palette/tweaks, draw, snapshot, and
@@ -163,6 +222,8 @@ toolbar churn.
 - Remove transport activation generations and `about:blank` parking.
 - Remove web-side whole-file guard heuristics and asset-inlining/rewrite pipelines that only
   exist for Blob/srcDoc.
+- Remove the 96 KiB routing prefix as a correctness input. If a prefix read remains, it may
+  only power non-critical metadata or UX hints.
 - Remove per-generation reload latches and transport-specific white-screen recovery branches.
 - Update `docs/architecture.md` only after the old path is deleted and the new invariants are
   enforced by tests.
