@@ -368,6 +368,30 @@ test('[P0] onboarding cancel during a slow AMR status check does not start login
   );
 });
 
+test('[P0] onboarding reload restores and cancels an active Cloud login', async ({ page }) => {
+  const config = await wireOnboardingMocks(page, {
+    amrAvailable: true,
+    initialLoggedIn: false,
+    initialLoginInFlight: true,
+    keepAmrLoginIncomplete: true,
+  });
+
+  await seedOnboardingConfig(page, config);
+  await gotoOnboarding(page);
+  await expect(page.getByRole('button', { name: /Cancel sign-in/i })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Local (coding )?agent/i })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /Bring Your Own Key/i })).toHaveCount(0);
+
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await waitForLoadingToClear(page);
+  await expect(page.getByRole('button', { name: /Cancel sign-in/i })).toBeVisible();
+  await page.getByRole('button', { name: /Cancel sign-in/i }).click();
+
+  await expect.poll(() => page.evaluate(() => window.__amrOnboardingCancelCalls ?? 0)).toBe(1);
+  await expect(page.getByRole('button', { name: /Local (coding )?agent/i })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Bring Your Own Key/i })).toBeVisible();
+});
+
 // The AMR card + per-runtime model picker on the connect step were removed.
 // A signed-in user now accepts Hosted on the model-source chooser.
 test('[P0] @critical onboarding signed-in AMR path finishes setup with the AMR runtime', async ({ page }) => {
@@ -931,6 +955,7 @@ async function wireOnboardingMocks(
   options: {
     amrAvailable: boolean;
     initialLoggedIn: boolean;
+    initialLoginInFlight?: boolean;
     failAllStatusPolls?: boolean;
     keepAmrLoginIncomplete?: boolean;
     sessionState?: 'signed_out' | 'authenticated' | 'reauth_required';
@@ -964,11 +989,13 @@ async function wireOnboardingMocks(
   };
 
   let loggedIn = options.initialLoggedIn;
-  let loginInFlight = false;
+  let loginInFlight = options.initialLoginInFlight ?? false;
   let statusCalls = 0;
   let loginCalls = 0;
   let cancelCalls = 0;
-  let authAttemptId: string | null = null;
+  let authAttemptId: string | null = loginInFlight
+    ? '11111111-1111-4111-8111-111111111111'
+    : null;
 
   await page.route('**/api/health', async (route) => {
     await route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true}' });
@@ -1070,6 +1097,7 @@ async function wireOnboardingMocks(
         : {
             loggedIn: false,
             loginInFlight,
+            authAttemptId,
             sessionState: 'signed_out',
             credentialRevision: 'signed-out',
             profile: 'local',

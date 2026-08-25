@@ -2191,6 +2191,7 @@ function OnboardingView({
   );
   const visibleAgents = candidateCliAgents.filter((agent) => visibleAgentIds.includes(agent.id));
   const amrSignedIn = isAmrSessionAuthenticated(amrStatus);
+  const amrLoginBusy = amrLoginPending || amrStatus?.loginInFlight === true;
   const selectedAgent = visibleAgents.find((agent) => agent.id === config.agentId) ?? null;
   const selectedAgentChoice = selectedAgent ? (config.agentModels?.[selectedAgent.id] ?? {}) : {};
   const normalizedSelectedAgentChoice = effectiveAgentModelChoice(selectedAgent, selectedAgentChoice) ?? selectedAgentChoice;
@@ -2308,6 +2309,12 @@ function OnboardingView({
       .then((next) => {
         if (!cancelled && next) {
           setAmrStatus(next);
+          if (next.loginInFlight) {
+            setAmrLoginPending(true);
+            if (next.authAttemptId) {
+              amrAuthAttemptIdRef.current = next.authAttemptId;
+            }
+          }
           onAmrLoginStatusChange?.(next);
         }
       })
@@ -2766,7 +2773,7 @@ function OnboardingView({
   // chosen on the following screen so signing in never overwrites a restored
   // Local/BYOK configuration.
   async function handleCloudSignIn() {
-    if (amrLoginPending || amrLoginCancelPending) return;
+    if (amrLoginBusy || amrLoginCancelPending) return;
     const cardAttribution = recordAmrEntry(
       analytics.track,
       'onboarding_amr_card',
@@ -2788,7 +2795,7 @@ function OnboardingView({
   async function handleAmrSignInToContinue(
     attribution?: AmrEntryAttribution | null,
   ) {
-    if (amrLoginPending || amrLoginCancelPending) return;
+    if (amrLoginBusy || amrLoginCancelPending) return;
     amrLoginPollCancelledRef.current = false;
     amrLoginCancelRequestedRef.current = false;
     setAmrLoginError(null);
@@ -2910,7 +2917,7 @@ function OnboardingView({
   }
 
   async function handleCancelAmrLogin() {
-    if (!amrLoginPending || amrLoginCancelPending) return;
+    if (!amrLoginBusy || amrLoginCancelPending) return;
     const loginStartPending = amrLoginStartPendingRef.current;
     const authAttemptId = amrAuthAttemptIdRef.current;
     setAmrLoginError(null);
@@ -3006,7 +3013,14 @@ function OnboardingView({
             resolveAmrAuthTracking(analytics.track, 'timeout', 'login_timeout', {
               authAttemptId,
             });
-            void cancelVelaLogin(authAttemptId);
+            const cancelResult = await cancelVelaLogin(authAttemptId);
+            if (cancelResult.canceled === true) {
+              setAmrStatus((current) => (
+                current
+                  ? { ...current, loggedIn: false, loginInFlight: false, user: null }
+                  : current
+              ));
+            }
           }
           console.error('[amr-login] poll timed out waiting for a signed-in status', { nextStatus });
         } else {
@@ -3284,7 +3298,7 @@ function OnboardingView({
   // Cloud remains the primary identity path. Local CLI and BYOK are independent
   // direct setup paths; authenticated users keep the full source chooser.
   if (step === 0) {
-    const cloudBusy = amrLoginPending;
+    const cloudBusy = amrLoginBusy;
     const amrStatusResolving = !amrStatusResolved;
     return (
       <section
