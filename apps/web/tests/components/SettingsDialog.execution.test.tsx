@@ -3431,16 +3431,16 @@ describe('SettingsDialog execution settings Local CLI interactions', () => {
 
     fireEvent.click(screen.getByRole('tab', { name: /Local CLI.*1 installed/i }));
 
-    // Let both identity sources resolve before checking the action. The card
-    // describes the selected CLI login, so its account balance remains visible
-    // even though this team member cannot manage workspace billing.
+    // Let both identity sources resolve before checking the action. A Team
+    // card must not fall back to the member's personal account balance when
+    // the environment-scoped workspace wallet is unavailable.
     await waitFor(() => {
       expect(fetchMock.mock.calls.some(([i]) =>
         i.toString() === '/api/workspace/context')).toBe(true);
       expect(fetchMock.mock.calls.some(([i]) =>
         i.toString() === '/api/integrations/vela/status')).toBe(true);
     });
-    expect(screen.getByText('$10.00')).toBeTruthy();
+    expect(screen.queryByText('$10.00')).toBeNull();
     await act(async () => {
       await Promise.resolve();
       await Promise.resolve();
@@ -3927,7 +3927,7 @@ describe('SettingsDialog execution settings Local CLI interactions', () => {
     });
   });
 
-  it('keeps the feature-test CLI account balance independent from the selected workspace wallet', async () => {
+  it('keeps the Settings team balance aligned with the selected workspace wallet', async () => {
     const context = teamMemberWorkspaceContext({
       workspaceId: 'ws-team',
       workspaceMemberId: 'member-team',
@@ -4020,10 +4020,9 @@ describe('SettingsDialog execution settings Local CLI interactions', () => {
 
     fireEvent.click(screen.getByRole('tab', { name: /Local CLI.*1 installed/i }));
 
-    // This card describes the selected CLI login (email + profile + account
-    // plan), so its balance must come from that same feature-test account.
-    // The current workspace balance remains visible in the global workspace
-    // chrome and must not replace the account value here.
+    // The card keeps the selected CLI identity, but its Team badge and money
+    // must describe the same current environment + workspace as the global
+    // workspace chrome. Neither account-scoped source may replace that value.
     const amrCard = screen.getByTestId('settings-agent-card-amr');
     await waitFor(() => {
       expect(fetchMock.mock.calls.some(([input]) =>
@@ -4033,7 +4032,9 @@ describe('SettingsDialog execution settings Local CLI interactions', () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(amrCard.querySelector('.agent-card-amr-balance-value')?.textContent).toBe('$18.79');
+    expect(amrCard.querySelector('.agent-card-amr-balance-value')?.textContent).toBe('$9.99');
+    expect(amrCard.textContent).not.toContain('$18.79');
+    expect(amrCard.textContent).not.toContain('$138.63');
   });
 
   it('renders env-backed AMR login inside Settings without fabricating account details', async () => {

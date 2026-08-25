@@ -170,6 +170,7 @@ import { SettingsWorkspaceSection } from './SettingsWorkspaceSection';
 import {
   useWorkspaceBillingResponse,
   useWorkspaceContext,
+  workspaceBillingBalanceUsd,
   workspaceBillingSummaryForContext,
 } from '../collab/useWorkspaceContext';
 import { canUpgradeFromPlanTier, resolvePlanTier } from '../collab/team-plan';
@@ -1644,9 +1645,10 @@ export function SettingsDialog({
     context: workspaceContext,
     loading: workspaceContextLoading,
   } = useWorkspaceContext();
-  // Workspace billing remains available for workspace plan/upgrade decisions.
-  // The local-CLI card itself describes the selected CLI login and profile, so
-  // its email, account plan and balance must stay on one account-scoped source.
+  // Workspace billing drives both the plan and the money shown beside it. The
+  // CLI identity remains account-scoped, but a Team badge must never be paired
+  // with that account's personal wallet: the entry chrome and Settings must
+  // describe the same selected environment + workspace.
   const workspaceBillingResponse = useWorkspaceBillingResponse();
   // Same partition for the plan half: `response.summary` is an ACCOUNT read, so
   // the AMR card's plan badge and both upgrade routes must consume it projected
@@ -4669,9 +4671,19 @@ export function SettingsDialog({
                           // credits count as a dollar amount is what put
                           // "Balance $388307.00" on a workspace whose real
                           // balance was under $39.
+                          const workspaceBalanceUsd = workspaceBillingBalanceUsd(
+                            workspaceBillingResponse,
+                            workspaceContext,
+                          );
+                          const amrWorkspaceBalance =
+                            amrWalletVisible && workspaceBalanceUsd
+                              ? formatVelaBalanceUsd(workspaceBalanceUsd)
+                              : null;
                           const amrCardBalanceLabel =
                             isAmrAgent && active && amrCardSignedIn
-                              ? amrStatusBalance ?? amrWalletBalance
+                              ? workspaceContext?.workspaceType === 'team'
+                                ? amrWorkspaceBalance
+                                : amrWorkspaceBalance ?? amrStatusBalance ?? amrWalletBalance
                               : null;
                           // vela's `account.plan` is ACCOUNT-scoped, so a member
                           // whose plan is held by the team workspace reads
