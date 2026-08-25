@@ -51,6 +51,68 @@ describe('projectRouteSurfaceState', () => {
     })).toBe('materialization-failed');
   });
 
+  // Red spec for OPEND-2095 ("共建文件首次下载时，下载状态指示未显示").
+  //
+  // A member's first-ever open of a team-shared project has NO local row yet,
+  // so `hasActiveProject` is false and ProjectView — which owns every existing
+  // download indicator (the design-files tab badge, the "syncing" empty state,
+  // the composer placeholder) — is deliberately not mounted yet. The route
+  // therefore spends the LONGEST part of the first open inside this function,
+  // and today it answers `resolving-deep-link`, which App renders as the
+  // generic "Loading workspace…" spinner. That spinner is indistinguishable
+  // from a wedged app while `PUT /collab/bootstrap` performs shared-owner
+  // discovery and starts the background content pull, which is exactly the
+  // "no download feedback, looks stuck" report.
+  //
+  // The lane must be nameable so the route can render a download-semantic
+  // surface for it instead of the anonymous spinner.
+  it('names the team first-open materialization lane instead of an anonymous deep-link resolve', () => {
+    expect(projectRouteSurfaceState({
+      projectsLoading: false,
+      hasActiveProject: false,
+      daemonLive: true,
+      firstOpenTeamMaterializing: true,
+    })).toBe('materializing-team-project');
+  });
+
+  // The exact-Team bootstrap deliberately starts while the ambient project
+  // list is still loading (see the deep-link effect in App). Both windows are
+  // plain loaders today, so the lane must survive that overlap — otherwise the
+  // download semantics vanish for precisely the cold-start case that is
+  // slowest.
+  it('keeps the materialization lane visible while the ambient project list loads', () => {
+    expect(projectRouteSurfaceState({
+      projectsLoading: true,
+      hasActiveProject: false,
+      daemonLive: true,
+      firstOpenTeamMaterializing: true,
+    })).toBe('materializing-team-project');
+  });
+
+  // The lane is a loader, never a way to outlive a bounded failure: a resolved
+  // project, a dead daemon, and a terminal deep-link failure all still win.
+  it('never lets the materialization lane mask a resolved project or a terminal failure', () => {
+    expect(projectRouteSurfaceState({
+      projectsLoading: false,
+      hasActiveProject: true,
+      daemonLive: true,
+      firstOpenTeamMaterializing: true,
+    })).toBe('ready');
+    expect(projectRouteSurfaceState({
+      projectsLoading: false,
+      hasActiveProject: false,
+      daemonLive: false,
+      firstOpenTeamMaterializing: true,
+    })).toBe('daemon-unavailable');
+    expect(projectRouteSurfaceState({
+      projectsLoading: false,
+      hasActiveProject: false,
+      daemonLive: true,
+      resolutionFailure: 'materialization-failed',
+      firstOpenTeamMaterializing: true,
+    })).toBe('materialization-failed');
+  });
+
   it('renders a loaded project regardless of stale failure metadata', () => {
     expect(projectRouteSurfaceState({
       projectsLoading: false,
