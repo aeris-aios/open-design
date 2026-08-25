@@ -759,24 +759,15 @@ body:has(.model-index-page) .site-chrome.is-condensed .nav {
 }
 .ranking-strip a:hover { color: var(--model-accent-ink); }
 
-/* ---- Download / community CTA (after the main leaderboard) ---- */
-.model-cta-section { padding: 54px 0 58px; }
-.model-cta { max-width: 760px; }
-.model-cta h2 {
-  margin: 0;
-  font-size: clamp(28px, 2.5vw, 38px);
-  font-weight: 700;
-  line-height: 1.06;
-  letter-spacing: -.042em;
+/* ---- Hero download / community actions ---- */
+.model-hero-actions {
+  margin-top: 26px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 14px;
 }
-.model-cta-body {
-  max-width: 620px;
-  margin: 14px 0 0;
-  color: var(--model-muted);
-  font-size: 15px;
-  line-height: 1.66;
-}
-.model-cta-actions { margin-top: 26px; display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.model-hero-note { color: var(--model-muted); font-size: 12px; }
 .model-cta-btn {
   display: inline-flex;
   align-items: center;
@@ -800,7 +791,6 @@ body:has(.model-index-page) .site-chrome.is-condensed .nav {
 .model-cta-btn-primary:hover { transform: translateY(-2px); box-shadow: 0 14px 32px rgba(24,24,20,.28); }
 .model-cta-btn-arrow { transition: transform .18s cubic-bezier(.23,1,.32,1); }
 .model-cta-btn-primary:hover .model-cta-btn-arrow { transform: translateX(3px); }
-.model-cta-note { margin: 14px 0 0; color: var(--model-muted); font-size: 12px; }
 
 .model-index-page > .ranking-strip,
 .model-index-page .ranking-strip:last-child { margin-top: 46px; }
