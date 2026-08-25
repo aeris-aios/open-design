@@ -1,8 +1,14 @@
-// Pricing keeps a static marketing snapshot of the campaign models it advertises.
-// The workbench no longer duplicates those sets: it reads Vela's authenticated
+// Pricing keeps a static marketing snapshot of the models it advertises. The
+// workbench no longer duplicates those sets: it reads Vela's authenticated
 // Coding Plan model endpoint at runtime. This test therefore validates the
 // Pricing snapshot internally without turning it back into a runtime source of
 // truth.
+//
+// The campaign-unlimited assertion that used to live here was retired with the
+// page data it read: #7349 removed `campaignUnlimitedModelNames` along with the
+// per-model access markers, and `apps/landing-page/tests/pricing-contract.ts`
+// now asserts those markers stay absent. What remains here is the part that
+// still spans two packages, which is why it belongs in e2e at all.
 
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
@@ -59,29 +65,7 @@ async function pricingPopularModelNames(): Promise<string[]> {
   return captureAll(block, /name: '([^']+)'/g);
 }
 
-/** The page's campaign-only unlimited models, resolved to AMR model ids. */
-async function pricingCampaignUnlimitedIds(): Promise<string[]> {
-  const source = stripLineComments(await readFile(PRICING_PAGE, 'utf8'));
-  const block = captureOne(
-    source,
-    /const campaignUnlimitedModelNames = \[([\s\S]*?)\] as const;/,
-    'campaignUnlimitedModelNames on the Pricing page',
-  );
-  return captureAll(block, /'([^']+)'/g).map((name) => {
-    const id = MODEL_ID_BY_DISPLAY_NAME[name];
-    expect(id, `no AMR model id mapped for the Pricing name "${name}"`).toBeTruthy();
-    return id ?? name;
-  });
-}
-
 describe('Pricing unlimited-model snapshot', () => {
-  it('advertises only the two active DeepSeek campaign models', async () => {
-    expect(await pricingCampaignUnlimitedIds()).toEqual([
-      'deepseek-v4-pro',
-      'deepseek-v4-flash',
-    ]);
-  });
-
   it('puts DeepSeek V4 Flash Vision Exp first in the popular-model list', async () => {
     expect((await pricingPopularModelNames())[0]).toBe('DeepSeek V4 Flash Vision Exp');
   });
