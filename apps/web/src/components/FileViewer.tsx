@@ -26,7 +26,6 @@ import {
   type WorkspaceCollabContext,
 } from '@open-design/contracts';
 import { PREVIEW_OBSERVABILITY_HOST_STATE_MESSAGE_TYPE } from '@open-design/contracts/runtime/preview-observability';
-import { PREVIEW_URL_GUARD_MAX_HTML_BYTES } from '@open-design/contracts/runtime/preview-guards';
 import {
   appendResourceQuery,
   workspaceIdentityCacheKey,
@@ -486,12 +485,13 @@ function isPreviewRuntimeState(value: unknown): value is PreviewRuntimeState {
 
 function previewTextNeedsFullSourceForSafeInline(source: string | null): boolean {
   if (!source) return false;
-  return (
-    htmlNeedsSandboxShim(source) ||
-    htmlNeedsFocusGuard(source) ||
-    htmlNeedsRedirectGuard(source) ||
-    hasTweaksTemplate(source)
-  );
+  // Passive guards can be streamed into the real URL response by the daemon,
+  // regardless of document size. Keep buffering only for srcDoc-only
+  // interactive features and root-relative project assets: URL resolution
+  // ignores <base> for `/asset` references, while the existing full-source
+  // path confirms and rewrites those refs against the project file list.
+  return hasTweaksTemplate(source)
+    || htmlHasRootRelativeProjectAssetRefs(source, null);
 }
 
 function isBlockedPreviewAssetResponse(body: unknown): boolean {
@@ -9945,29 +9945,26 @@ function HtmlViewer({
   // When we URL-load the iframe directly, skip every in-host inlining /
   // srcDoc-rebuilding step. The browser does the asset resolution itself,
   // while the daemon injects passive document guards before authored scripts.
-  // Fall back to srcDoc whenever the URL response cannot carry those guards
-  // (streaming/in-memory HTML or an intentionally unbuffered large document).
+  // Fall back to srcDoc only for in-memory HTML that has not landed on disk.
+  // Settled large documents receive these guards through the daemon's
+  // byte-preserving streaming injection path.
   // Memoized on `source` so HtmlViewer's frequent re-renders (board/inspect/
   // edit mode toggles, slide nav) don't re-scan the HTML each time.
   const needsSandboxShim = useMemo(() => {
-    if (passiveLargeHtmlPreview) return false;
     const s = routingHtmlSource;
     return s != null && htmlNeedsSandboxShim(s);
-  }, [passiveLargeHtmlPreview, routingHtmlSource]);
+  }, [routingHtmlSource]);
   const needsFocusGuard = useMemo(() => {
-    if (passiveLargeHtmlPreview) return false;
     const s = routingHtmlSource;
     return s != null && htmlNeedsFocusGuard(s);
-  }, [passiveLargeHtmlPreview, routingHtmlSource]);
+  }, [routingHtmlSource]);
   // A self-redirecting artifact needs the redirect-loop guard on whichever
   // transport owns the document (nexu-io/open-design#710).
   const needsRedirectGuard = useMemo(() => {
-    if (passiveLargeHtmlPreview) return false;
     const s = routingHtmlSource;
     return s != null && htmlNeedsRedirectGuard(s);
-  }, [passiveLargeHtmlPreview, routingHtmlSource]);
-  const urlDocumentGuardsAvailable =
-    liveHtml === undefined && file.size <= PREVIEW_URL_GUARD_MAX_HTML_BYTES;
+  }, [routingHtmlSource]);
+  const urlDocumentGuardsAvailable = liveHtml === undefined;
   // Set by the injected guard's `od:redirect-loop-blocked` postMessage. The
   // browser makes `window.location` unforgeable, so a runaway reload can only be
   // stopped host-side — parking the srcDoc iframe on static content below. File-
@@ -10120,9 +10117,10 @@ function HtmlViewer({
     drawMode: drawOverlayOpen,
     forceInline: forceInline && !needsPowered,
     needsSandboxShim: needsSandboxShim && !needsPowered,
-    // Daemon guards wrap the settled on-disk response. Streaming/in-memory
-    // HTML has no matching URL representation, so keep it on srcDoc until it
-    // lands on disk instead of showing stale bytes from the raw route.
+    // Daemon guards wrap the settled on-disk response, including large files
+    // through streaming injection. In-memory HTML has no matching URL
+    // representation, so keep it on srcDoc until it lands on disk instead of
+    // showing stale bytes from the raw route.
     urlSandboxGuard: urlDocumentGuardsAvailable,
     needsFocusGuard: needsFocusGuard && !needsPowered,
     urlFocusGuard: urlDocumentGuardsAvailable,
@@ -11431,6 +11429,18 @@ function HtmlViewer({
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
   }, [workspaceActive]);
+  useEffect(() => {
+    if (!workspaceActive || mode !== 'preview' || !useUrlLoadPreview) return;
+    const frame = urlPreviewIframeRef.current;
+    const frameSrc = frame?.getAttribute('src') ?? '';
+    if (!frame || !frameSrc || frameSrc === 'about:blank') return;
+    // A retained iframe can finish loading while its file tab is inactive.
+    // The bridge's ready message then has no active listener, and returning to
+    // the already-loaded frame does not fire onLoad again. Probe on every tab
+    // activation so Comment/Draw keep using the stable URL transport instead
+    // of unnecessarily falling back to srcDoc/Blob.
+    frame.contentWindow?.postMessage({ type: 'od:url-selection-bridge-probe' }, '*');
+  }, [activePreviewSrcUrl, mode, useUrlLoadPreview, workspaceActive]);
   // Non-Electron runtimes retain the historical lazy-shell/direct-srcDoc
   // split. Electron always keeps the stable bootstrap shell and activates the
   // enhanced document in place through the handshake above.

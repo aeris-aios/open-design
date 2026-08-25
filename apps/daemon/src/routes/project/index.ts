@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
+import { Readable } from 'node:stream';
 import { load } from 'cheerio';
 import type { Express, Request, Response } from 'express';
 import type { LintArtifactRequest, LintArtifactResponse } from '@open-design/contracts';
@@ -79,6 +80,10 @@ import {
   type ResolveSnapshotOk,
 } from '../../plugins/index.js';
 import { connectorService } from '../../connectors/service.js';
+import {
+  scanHtmlHeadForStreamingInjection,
+  streamFileWithInjection,
+} from '../../http/html-stream-injection.js';
 import type { RouteDeps } from '../../server-context.js';
 import { listSkills } from '../../skills.js';
 import { isSafeId } from '../../projects.js';
@@ -1548,6 +1553,26 @@ function applyUrlPreviewBridgesToHtml(
     html = injectUrlPreviewBridge(html, 'snapshot');
   }
   return html;
+}
+
+function buildStreamingUrlPreviewBridgeInjection(
+  requestedBridge: unknown,
+  hasLoadTimeLocationNavigation: boolean,
+): string {
+  let injection = '';
+  // Passive guards must execute before artifact-authored scripts. The active
+  // bridges are safe in <head>: they register listeners immediately and defer
+  // DOM-dependent work until messages/events arrive.
+  if (wantsUrlPreviewSandboxGuard(requestedBridge)) injection += buildPreviewSandboxShim();
+  if (wantsUrlPreviewRedirectGuard(requestedBridge)) {
+    injection += buildPreviewRedirectGuard({ blockLoadTimeScriptRedirect: hasLoadTimeLocationNavigation });
+  }
+  if (wantsUrlPreviewObservabilityBridge(requestedBridge)) injection += buildPreviewObservabilityBridge();
+  if (wantsUrlPreviewFocusGuard(requestedBridge)) injection += buildPreviewFocusGuard();
+  if (wantsUrlPreviewScrollBridge(requestedBridge)) injection += URL_PREVIEW_SCROLL_BRIDGE;
+  if (wantsUrlPreviewSelectionBridge(requestedBridge)) injection += URL_PREVIEW_SELECTION_BRIDGE;
+  if (wantsUrlPreviewSnapshotBridge(requestedBridge)) injection += URL_PREVIEW_SNAPSHOT_BRIDGE;
+  return injection;
 }
 
 // ---------------------------------------------------------------------------
@@ -5812,6 +5837,12 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
     beforeSend?: (mime: string) => void,
     transformFile?: (file: { mime: string; buffer: Buffer }) => Buffer | string | Promise<Buffer | string>,
     revalidate = false,
+    streamInjection?: (meta: {
+      filePath: string;
+      mime: string;
+      size: number;
+      mtime: number;
+    }) => Promise<{ insertionOffset: number; content: Buffer } | null>,
   ) {
     const meta = await resolveProjectFilePath(
       PROJECTS_DIR,
@@ -5821,8 +5852,10 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
     );
     beforeSend?.(meta.mime);
 
+    const injected = streamInjection ? await streamInjection(meta) : null;
+
     const isStreamed = meta.mime.startsWith('video/') || meta.mime.startsWith('audio/');
-    const shouldStreamBody = isStreamed || !transformFile;
+    const shouldStreamBody = isStreamed || !transformFile || injected !== null;
     // A transform (the Vite dev-entry -> dist/index.html substitution, or preview
     // bridge injection) can replace the response bytes — but only for HTML. For
     // HTML the source file's mtime/size is NOT a valid validator, so its ETag is
@@ -5830,9 +5863,25 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
     // (assets, fonts, images, streamed media — where the transform is a no-op)
     // keeps the fast mtime ETag with an early 304.
     const willSubstitute =
-      !isStreamed && !!transformFile && /^text\/html(?:;|$)/i.test(meta.mime);
+      !isStreamed && (!!transformFile || injected !== null) && /^text\/html(?:;|$)/i.test(meta.mime);
 
     let currentEtag: string | null = null;
+    if (revalidate && injected) {
+      currentEtag = `W/"${createHash('sha1')
+        .update(String(meta.size))
+        .update(':')
+        .update(String(Math.floor(meta.mtime)))
+        .update(':')
+        .update(injected.content)
+        .digest('hex')
+        .slice(0, 16)}"`;
+      res.setHeader('ETag', currentEtag);
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Last-Modified', new Date(Math.floor(meta.mtime)).toUTCString());
+      if (rawRequestIsFresh(req, currentEtag, meta.mtime)) {
+        return res.status(304).end();
+      }
+    }
     if (revalidate && !willSubstitute) {
       currentEtag = setRawRevalidationHeaders(res, meta);
       if (rawRequestIsFresh(req, currentEtag, meta.mtime)) {
@@ -5844,7 +5893,9 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
       res.setHeader('Accept-Ranges', 'bytes');
       res.setHeader('Content-Type', meta.mime);
 
-      if (meta.size === 0) {
+      const responseSize = meta.size + (injected?.content.byteLength ?? 0);
+
+      if (responseSize === 0) {
         res.setHeader('Content-Length', '0');
         return res.status(200).end();
       }
@@ -5853,11 +5904,11 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
       // a resumed download after a rewrite would splice stale + fresh bytes.
       const range =
         currentEtag === null || ifRangeAllowsPartial(req, currentEtag, meta.mtime)
-          ? parseByteRange(req.headers.range, meta.size)
+          ? parseByteRange(req.headers.range, responseSize)
           : null;
 
       if (range === 'unsatisfiable') {
-        res.setHeader('Content-Range', `bytes */${meta.size}`);
+        res.setHeader('Content-Range', `bytes */${responseSize}`);
         return res.status(416).end();
       }
 
@@ -5867,17 +5918,26 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
       if (range) {
         ({ start, end } = range);
         statusCode = 206;
-        res.setHeader('Content-Range', `bytes ${start}-${end}/${meta.size}`);
+        res.setHeader('Content-Range', `bytes ${start}-${end}/${responseSize}`);
         res.setHeader('Content-Length', String(end - start + 1));
       } else {
         start = 0;
-        end = meta.size - 1;
+        end = responseSize - 1;
         statusCode = 200;
-        res.setHeader('Content-Length', String(meta.size));
+        res.setHeader('Content-Length', String(responseSize));
       }
 
       res.status(statusCode);
-      const stream = fs.createReadStream(meta.filePath, { start, end });
+      if (req.method === 'HEAD') return res.end();
+      const stream = injected
+        ? Readable.from(streamFileWithInjection(
+            meta.filePath,
+            meta.size,
+            injected.insertionOffset,
+            injected.content,
+            { start, end },
+          ))
+        : fs.createReadStream(meta.filePath, { start, end });
       stream.on('error', (streamErr: any) => {
         if (!res.headersSent) {
           sendApiError(res, 500, 'STREAM_ERROR', String(streamErr));
@@ -5921,6 +5981,24 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
     return filePath.split('/').map((segment) => encodeURIComponent(segment)).join('/');
   }
 
+  function buildProjectPreviewBaseInjection(
+    projectId: string,
+    ownerFilePath: string,
+    scope: string,
+    expiresAt: number,
+  ): string {
+    const ownerDir = path.posix.dirname(ownerFilePath);
+    const dirSuffix = ownerDir === '.'
+      ? ''
+      : `${encodeProjectPathForUrl(ownerDir)}/`;
+    const baseTag = `<base href="/api/projects/${encodeURIComponent(projectId)}`
+      + `/preview/${encodeURIComponent(scope)}/${dirSuffix}" data-od-project-preview-base>`;
+    const baseHref = `/api/projects/${encodeURIComponent(projectId)}`
+      + `/preview/${encodeURIComponent(scope)}/${dirSuffix}`;
+    const bridge = buildPreviewBaseHrefBridge({ href: baseHref, expiresAt });
+    return `${baseTag}${bridge}`;
+  }
+
   function injectProjectPreviewBase(
     html: string,
     projectId: string,
@@ -5932,18 +6010,15 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
     // one need the containment base that keeps runtime-created relative URLs
     // (for example `img.src = payload.logo`) on the minted preview scope.
     if (/<base\b/i.test(html)) return html;
-    const ownerDir = path.posix.dirname(ownerFilePath);
-    const dirSuffix = ownerDir === '.'
-      ? ''
-      : `${encodeProjectPathForUrl(ownerDir)}/`;
-    const baseTag = `<base href="/api/projects/${encodeURIComponent(projectId)}`
-      + `/preview/${encodeURIComponent(scope)}/${dirSuffix}" data-od-project-preview-base>`;
-    const baseHref = `/api/projects/${encodeURIComponent(projectId)}`
-      + `/preview/${encodeURIComponent(scope)}/${dirSuffix}`;
-    const bridge = buildPreviewBaseHrefBridge({ href: baseHref, expiresAt });
+    const injection = buildProjectPreviewBaseInjection(
+      projectId,
+      ownerFilePath,
+      scope,
+      expiresAt,
+    );
     const head = /<head\b[^>]*>/i;
-    if (head.test(html)) return html.replace(head, (tag) => `${tag}${baseTag}${bridge}`);
-    return `${baseTag}${bridge}${html}`;
+    if (head.test(html)) return html.replace(head, (tag) => `${tag}${injection}`);
+    return `${injection}${html}`;
   }
 
   function rewriteWorkspaceScopedHtmlAssetUrls(
@@ -6570,7 +6645,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
         relPath,
         project?.metadata,
       );
-      const skipHtmlPreviewBridge =
+      const streamHtmlPreviewBridge =
         /^text\/html(?:;|$)/i.test(meta.mime) && meta.size > PREVIEW_URL_GUARD_MAX_HTML_BYTES;
 
       await sendProjectFile(
@@ -6580,7 +6655,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
         relPath,
         project?.metadata,
         undefined,
-        skipHtmlPreviewBridge ? undefined : async (file) => {
+        streamHtmlPreviewBridge ? undefined : async (file) => {
           const transformed = await maybeResolveVitePreviewHtml({
             file,
             projectId,
@@ -6638,6 +6713,45 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
           );
         },
         true, // revalidate: emit ETag/Last-Modified so covers/preview/export reuse cached assets
+        streamHtmlPreviewBridge && req.query.odPreviewBridge !== undefined
+          ? async (streamMeta) => {
+              const scan = await scanHtmlHeadForStreamingInjection(streamMeta.filePath);
+              const workspaceId = typeof req.query.workspaceId === 'string'
+                ? req.query.workspaceId
+                : null;
+              const workspaceMemberId = typeof req.query.workspaceMemberId === 'string'
+                ? req.query.workspaceMemberId
+                : null;
+              const headerContext = workspaceProjectContextFromRequest(req);
+              const previewWorkspace = workspaceId && workspaceMemberId
+                ? { workspaceId, workspaceMemberId }
+                : headerContext && headerContext !== 'missing'
+                  ? {
+                      workspaceId: headerContext.workspaceId,
+                      workspaceMemberId: headerContext.workspaceMemberId,
+                    }
+                  : null;
+              const scope = projectPreviewScopes.mint(projectId, previewWorkspace);
+              const expiresAt = projectPreviewScopes.expiresAt(projectId, scope);
+              let content = '';
+              if (!scan.hasAuthoredBase && expiresAt !== undefined) {
+                content += buildProjectPreviewBaseInjection(
+                  projectId,
+                  relPath,
+                  scope,
+                  expiresAt,
+                );
+              }
+              content += buildStreamingUrlPreviewBridgeInjection(
+                req.query.odPreviewBridge,
+                scan.hasLoadTimeLocationNavigation,
+              );
+              return {
+                insertionOffset: scan.insertionOffset,
+                content: Buffer.from(content),
+              };
+            }
+          : undefined,
       );
     } catch (err: any) {
       const status = err && err.code === 'ENOENT' ? 404 : 400;
@@ -6685,7 +6799,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
         relPath,
         project?.metadata,
       );
-      const skipPoweredTransform =
+      const streamPoweredBridge =
         /^text\/html(?:;|$)/i.test(meta.mime) && meta.size > PREVIEW_URL_GUARD_MAX_HTML_BYTES;
       await sendProjectFile(
         req,
@@ -6694,7 +6808,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
         relPath,
         project?.metadata,
         () => setPoweredPreviewHeaders(res),
-        skipPoweredTransform ? undefined : async (file) => {
+        streamPoweredBridge ? undefined : async (file) => {
           const transformed = await maybeResolveVitePreviewHtml({
             file,
             projectId,
@@ -6705,6 +6819,19 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
           });
           return applyUrlPreviewBridgesToHtml(transformed, file.mime, req.query.odPreviewBridge);
         },
+        false,
+        streamPoweredBridge && req.query.odPreviewBridge !== undefined
+          ? async (streamMeta) => {
+              const scan = await scanHtmlHeadForStreamingInjection(streamMeta.filePath);
+              return {
+                insertionOffset: scan.insertionOffset,
+                content: Buffer.from(buildStreamingUrlPreviewBridgeInjection(
+                  req.query.odPreviewBridge,
+                  scan.hasLoadTimeLocationNavigation,
+                )),
+              };
+            }
+          : undefined,
       );
     } catch (err: any) {
       const status = err && err.code === 'ENOENT' ? 404 : 400;

@@ -11,9 +11,8 @@ export const PREVIEW_REDIRECT_GUARD_WINDOW_MS = 4000;
 export const PREVIEW_REDIRECT_GUARD_SELF_REFRESH_MIN_DELAY_MS = 2000;
 export const PREVIEW_REDIRECT_LOOP_MESSAGE = 'od:redirect-loop-blocked';
 /**
- * URL preview responses above this size stay byte-for-byte streamable so the
- * daemon can honor Range requests and avoid buffering a very large document.
- * Callers must not claim URL guards are installed above this boundary.
+ * Above this size the daemon injects URL-preview bridges with a composite
+ * source-prefix/injection/source-suffix stream instead of buffering the HTML.
  */
 export const PREVIEW_URL_GUARD_MAX_HTML_BYTES = 2 * 1024 * 1024;
 

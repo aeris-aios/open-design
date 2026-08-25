@@ -197,6 +197,26 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
       path.join(dir, 'large-powered.html'),
       Buffer.from(`<!doctype html><html><body>${'x'.repeat((2 * 1024 * 1024) + 256)}<script>new Worker("worker.js")</script></body></html>`),
     );
+    await writeFile(
+      path.join(dir, 'large-external.html'),
+      Buffer.from([
+        '<!doctype html><html><head>',
+        '<link rel="stylesheet" href="./styles.css">',
+        '<script src="./support.js"></script>',
+        ...Array.from({ length: 43 }, (_, index) => (
+          `<script type="text/babel" src="./screen-${index + 1}.jsx"></script>`
+        )),
+        '</head><body><main id="root">External Preview</main>',
+        '<!-- ',
+        'x'.repeat((2 * 1024 * 1024) + 256),
+        ' --></body></html>',
+      ].join('')),
+    );
+    await writeFile(path.join(dir, 'styles.css'), 'body { color: rgb(1, 2, 3); }');
+    await writeFile(path.join(dir, 'support.js'), 'window.__supportLoaded = true;');
+    for (let index = 1; index <= 43; index += 1) {
+      await writeFile(path.join(dir, `screen-${index}.jsx`), `window.__screen${index} = true;`);
+    }
     await writeFile(path.join(dir, 'body.html'), Buffer.from('<html><body><main>Preview</main></body></html>'));
     await writeFile(
       path.join(dir, 'guarded.html'),
@@ -383,19 +403,83 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
     expect(body.poweredPreview.scannedBytes).toBeGreaterThan(2 * 1024 * 1024);
   });
 
-  it('skips URL preview bridge injection for large HTML so first paint can stream', async () => {
-    const res = await fetch(`${rawUrl('large.html')}?odPreviewBridge=scroll&odPreviewBridge=selection&odPreviewBridge=snapshot&odPreviewBridge=observability`, {
-      headers: { Range: 'bytes=0-127' },
-    });
-    expect(res.status).toBe(206);
-    expect(res.headers.get('accept-ranges')).toBe('bytes');
-    expect(res.headers.get('content-range')).toMatch(/^bytes 0-127\//);
-    const html = await res.text();
+  it('streams URL preview bridges into large HTML while preserving range semantics', async () => {
+    const url = `${rawUrl('large.html')}?odPreviewBridge=scroll&odPreviewBridge=selection&odPreviewBridge=snapshot&odPreviewBridge=observability`;
+    const full = await fetch(url);
+    expect(full.status).toBe(200);
+    expect(full.headers.get('accept-ranges')).toBe('bytes');
+    const body = Buffer.from(await full.arrayBuffer());
+    const html = body.toString('utf8');
+    expect(Number(full.headers.get('content-length'))).toBe(body.byteLength);
     expect(html).toContain('Large Preview');
-    expect(html).not.toContain('data-od-url-scroll-bridge');
-    expect(html).not.toContain('data-od-url-selection-bridge');
-    expect(html).not.toContain('data-od-url-snapshot-bridge');
-    expect(html).not.toContain('data-od-preview-observability');
+    expect(html).toContain('data-od-url-scroll-bridge');
+    expect(html).toContain('data-od-url-selection-bridge');
+    expect(html).toContain('data-od-url-snapshot-bridge');
+    expect(html).toContain('data-od-preview-observability');
+    expect(html).toContain('data-od-project-preview-base');
+
+    const rangeStart = html.indexOf('data-od-url-selection-bridge') - 32;
+    const rangeEnd = rangeStart + 255;
+    const partial = await fetch(url, {
+      headers: { Range: `bytes=${rangeStart}-${rangeEnd}` },
+    });
+    expect(partial.status).toBe(206);
+    expect(partial.headers.get('content-range')).toBe(
+      `bytes ${rangeStart}-${rangeEnd}/${body.byteLength}`,
+    );
+    expect(Buffer.from(await partial.arrayBuffer())).toEqual(body.subarray(rangeStart, rangeEnd + 1));
+
+    const head = await fetch(url, { method: 'HEAD' });
+    expect(head.status).toBe(200);
+    expect(head.headers.get('accept-ranges')).toBe('bytes');
+    expect(Number(head.headers.get('content-length'))).toBeGreaterThan(2 * 1024 * 1024);
+    expect((await head.arrayBuffer()).byteLength).toBe(0);
+  });
+
+  it('keeps large support.js, CSS, and Babel-script previews on a scoped real URL', async () => {
+    const source = await fetch(rawUrl('large-external.html'));
+    const sourceBody = Buffer.from(await source.arrayBuffer());
+    expect(sourceBody.toString()).not.toContain('data-od-project-preview-base');
+
+    const preview = await fetch(
+      `${rawUrl('large-external.html')}?odPreviewBridge=sandbox&odPreviewBridge=focus&odPreviewBridge=selection`,
+    );
+    expect(preview.status).toBe(200);
+    const html = await preview.text();
+    expect(html).toContain('data-od-project-preview-base');
+    expect(html).toContain('data-od-sandbox-shim');
+    expect(html).toContain('data-od-preview-focus-guard');
+    expect(html).toContain('data-od-url-selection-bridge');
+    expect(html.indexOf('data-od-project-preview-base')).toBeLessThan(html.indexOf('src="./support.js"'));
+    expect(html).toContain('src="./screen-43.jsx"');
+    expect(html).toContain('href="./styles.css"');
+
+    const baseHref = html.match(/<base href="([^"]+)" data-od-project-preview-base>/)?.[1];
+    expect(baseHref).toBeTruthy();
+    const previewBase = new URL(baseHref!, baseUrl);
+    const [script, css, jsx] = await Promise.all([
+      fetch(new URL('support.js', previewBase)),
+      fetch(new URL('styles.css', previewBase)),
+      fetch(new URL('screen-43.jsx', previewBase)),
+    ]);
+    expect(script.status).toBe(200);
+    expect(await script.text()).toContain('__supportLoaded');
+    expect(css.status).toBe(200);
+    expect(await css.text()).toContain('rgb(1, 2, 3)');
+    expect(jsx.status).toBe(200);
+    expect(await jsx.text()).toContain('__screen43');
+  });
+
+  it('streams requested bridges into large powered HTML previews', async () => {
+    const preview = await fetch(
+      `${poweredUrl('large-powered.html')}?odPreviewBridge=observability&odPreviewBridge=snapshot`,
+    );
+    expect(preview.status).toBe(200);
+    expect(preview.headers.get('document-isolation-policy')).toBe('isolate-and-credentialless');
+    const html = await preview.text();
+    expect(html).toContain('data-od-preview-observability');
+    expect(html).toContain('data-od-url-snapshot-bridge');
+    expect(html).toContain('new Worker("worker.js")');
   });
 
   it('injects the URL preview scroll bridge only when requested', async () => {

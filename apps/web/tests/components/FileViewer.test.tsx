@@ -1650,7 +1650,7 @@ describe('FileViewer SVG artifacts', () => {
     await waitFor(() => expect(sourceReads).toHaveLength(3));
   });
 
-  it('promotes large HTML files to the srcDoc path when the routing preview shows sandbox-unsafe scripts', async () => {
+  it('keeps large HTML files on the streamed URL path when the routing preview shows sandbox-unsafe scripts', async () => {
     const file = baseFile({
       name: 'index.html',
       path: 'index.html',
@@ -1667,7 +1667,6 @@ describe('FileViewer SVG artifacts', () => {
       },
     });
     const previewText = '<!doctype html><html><head><script src="./app.js"></script></head>';
-    let fullHtml = `${previewText}<body><main>Imported filesystem app</main></body></html>`;
     const fetchMock = vi.fn(async (input: string | URL | Request) => {
       const url = typeof input === 'string' ? input : input instanceof Request ? input.url : String(input);
       if (url.startsWith('/api/projects/project-1/text-preview/index.html')) {
@@ -1680,10 +1679,7 @@ describe('FileViewer SVG artifacts', () => {
         });
       }
       if (url.startsWith('/api/projects/project-1/raw/index.html')) {
-        return new Response(fullHtml, {
-          status: 200,
-          headers: { 'Content-Type': 'text/html' },
-        });
+        throw new Error('the host must not buffer the full large HTML document');
       }
       if (url === '/api/projects/project-1/files') {
         return new Response(JSON.stringify({ files: [file] }), {
@@ -1699,16 +1695,13 @@ describe('FileViewer SVG artifacts', () => {
 
     await waitFor(() => {
       const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
-      expect(frame.getAttribute('data-od-render-mode')).toBe('srcdoc');
-      expect(frame.getAttribute('srcDoc')).toContain('Imported filesystem app');
+      expect(frame.getAttribute('data-od-render-mode')).toBe('url-load');
+      expect(frame.getAttribute('src')).toContain('/api/projects/project-1/raw/index.html?');
+      expect(frame.getAttribute('src')).toContain('odPreviewBridge=sandbox');
+      expect(frame.getAttribute('src')).toContain('odPreviewBridge=focus');
     });
     expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/api/projects/project-1/text-preview/index.html'), { cache: 'no-store' });
-    expect(fetchMock).toHaveBeenCalledWith(
-      expect.stringContaining('/api/projects/project-1/raw/index.html?cacheBust='),
-      { cache: 'no-store' },
-    );
 
-    fullHtml = `${previewText}<body><main>Updated filesystem app</main></body></html>`;
     rerender(
       <FileViewer
         projectId="project-1"
@@ -1719,9 +1712,75 @@ describe('FileViewer SVG artifacts', () => {
 
     await waitFor(() => {
       const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
-      expect(frame.getAttribute('data-od-render-mode')).toBe('srcdoc');
-      expect(frame.getAttribute('srcDoc')).toContain('Updated filesystem app');
+      expect(frame.getAttribute('data-od-render-mode')).toBe('url-load');
+      expect(frame.getAttribute('src')).toContain(`v=${file.mtime + 1}`);
     });
+  });
+
+  it('keeps large HTML with root-relative project assets on the full srcDoc rewrite path', async () => {
+    const file = baseFile({
+      name: 'index.html',
+      path: 'index.html',
+      mime: 'text/html',
+      kind: 'html',
+      size: 3 * 1024 * 1024,
+      artifactManifest: {
+        version: 1,
+        kind: 'html',
+        title: 'Root relative large HTML',
+        entry: 'index.html',
+        renderer: 'html',
+        exports: ['html'],
+      },
+    });
+    const stylesheet = baseFile({
+      name: 'styles.css',
+      path: 'styles.css',
+      mime: 'text/css',
+      kind: 'code',
+    });
+    const previewText = '<!doctype html><html><head><link rel="stylesheet" href="/styles.css"></head>';
+    const fullHtml = `${previewText}<body><main>Root-relative content</main></body></html>`;
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = typeof input === 'string' ? input : input instanceof Request ? input.url : String(input);
+      if (url.startsWith('/api/projects/project-1/text-preview/index.html')) {
+        return new Response(JSON.stringify({
+          text: previewText,
+          poweredPreview: { required: false, reasons: [] },
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      if (url.startsWith('/api/projects/project-1/raw/index.html')) {
+        return new Response(fullHtml, { status: 200, headers: { 'Content-Type': 'text/html' } });
+      }
+      if (url.startsWith('/api/projects/project-1/raw/styles.css')) {
+        return new Response('main { color: rgb(1, 2, 3); }', {
+          status: 200,
+          headers: { 'Content-Type': 'text/css' },
+        });
+      }
+      if (url === '/api/projects/project-1/files') {
+        return new Response(JSON.stringify({ files: [file, stylesheet] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response('', { status: 404 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<FileViewer projectId="project-1" projectKind="prototype" file={file} />);
+
+    await waitFor(() => {
+      const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+      expect(frame.getAttribute('data-od-render-mode')).toBe('srcdoc');
+      expect(fetchMock.mock.calls.some(([input]) => (
+        String(input).includes('/api/projects/project-1/raw/styles.css')
+      ))).toBe(true);
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/api/projects/project-1/raw/index.html?cacheBust='),
+      { cache: 'no-store' },
+    );
   });
 
   it('evicts least-recent inactive preview iframes once the pool exceeds its limit', () => {
@@ -2566,6 +2625,44 @@ describe('FileViewer SVG artifacts', () => {
     rerender(<FileViewer {...props} workspaceActive={false} filesRefreshKey={9} />);
     rerender(<FileViewer {...props} workspaceActive filesRefreshKey={9} />);
     expect(replaceMock).not.toHaveBeenCalled();
+  });
+
+  it('re-probes a retained URL preview bridge when its file tab reactivates', async () => {
+    const file = baseFile({
+      name: 'retained-bridge.html',
+      path: 'retained-bridge.html',
+      mime: 'text/html',
+      kind: 'html',
+      artifactManifest: {
+        version: 1,
+        kind: 'html',
+        title: 'Retained bridge',
+        entry: 'retained-bridge.html',
+        renderer: 'html',
+        exports: ['html'],
+      },
+    });
+    const props = {
+      projectId: 'project-1',
+      projectKind: 'prototype' as const,
+      file,
+      liveHtml: '<html><body><main data-od-id="hero">Retained bridge</main></body></html>',
+    };
+    const { rerender } = render(<FileViewer {...props} workspaceActive />);
+    const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+    const postSpy = vi.spyOn(frame.contentWindow!, 'postMessage');
+    postSpy.mockClear();
+
+    rerender(<FileViewer {...props} workspaceActive={false} />);
+    rerender(<FileViewer {...props} workspaceActive />);
+
+    await waitFor(() => {
+      expect(postSpy).toHaveBeenCalledWith(
+        { type: 'od:url-selection-bridge-probe' },
+        '*',
+      );
+    });
+    expect(frame.getAttribute('src')).not.toBe('about:blank');
   });
 
   it('keeps file action nodes mounted while a retained viewer becomes inactive', async () => {
