@@ -420,6 +420,14 @@
   cursor: pointer;
   font: inherit;
   min-height: 34px;
+  /* A `button` wraps its children in an anonymous content box, and Chrome does
+     not grow that box for overflowing flex content -- the row resolves to its
+     `min-height` and the two-line body (command line + description) paints
+     outside it, onto the row below. Measured in Chrome 151: the row stays 36px
+     while its content needs 54px, and the description escapes the row box by
+     9px. `height: auto` is what makes the button size to its own content;
+     `min-height: auto`, `align-items: stretch` and `display: grid` do not. */
+  height: auto;
   transition: background-color 120ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 .slash-item:hover { background: var(--bg-subtle); }

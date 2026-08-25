@@ -192,4 +192,5 @@ describe('slash command palette layout (OPEND-2236)', () => {
 
     expect(getComputedStyle(head as HTMLElement).flexShrink).toBe('0');
   });
+
 });
