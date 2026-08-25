@@ -497,8 +497,10 @@ import { renderDesignSystemPreview } from './design-systems/preview.js';
 import { renderDesignSystemShowcase } from './design-systems/showcase.js';
 import { createChatRunService } from './runtimes/runs.js';
 import {
+  createAmrTerminalReportDeliveryService,
   createAmrTerminalReportFinalizer,
   createAmrTerminalReportOutboxStore,
+  type AmrTerminalReportDeliveryService,
 } from './storage/amr-terminal-report-outbox.js';
 import { createInternalRunCreationService } from './services/internal-run-service.js';
 import {
@@ -2828,6 +2830,15 @@ export interface StartServerOptions {
   odNextComplexProductionResolver?: OdNextComplexProductionResolver | null;
 }
 
+export function startAmrTerminalReportDeliveryAfterBind(
+  delivery: Pick<AmrTerminalReportDeliveryService, 'start'>,
+  boundPort: number | null,
+): boolean {
+  if (!Number.isInteger(boundPort) || Number(boundPort) <= 0) return false;
+  delivery.start();
+  return true;
+}
+
 export interface StartServerResult {
   url: string;
   server: import('node:http').Server;
@@ -3160,6 +3171,9 @@ export async function startServer({
   });
   const db = openDatabase(PROJECT_ROOT, { dataDir: RUNTIME_DATA_DIR });
   const amrTerminalReportOutbox = createAmrTerminalReportOutboxStore(db);
+  const amrTerminalReportDelivery = createAmrTerminalReportDeliveryService({
+    store: amrTerminalReportOutbox,
+  });
   const commentAnchorRepair = repairTeamProjectCommentAnchorConversations(db);
   if (commentAnchorRepair.created > 0) {
     console.warn(
@@ -7682,7 +7696,11 @@ export async function startServer({
 
   app.get('/api/health', async (_req, res) => {
     const versionInfo = await readCurrentAppVersionInfo();
-    res.json({ ok: true, version: versionInfo.version });
+    res.json({
+      ok: true,
+      version: versionInfo.version,
+      amrTerminalReporter: { status: 'active' },
+    });
   });
 
   app.get('/api/ready', async (_req, res) => {
@@ -7779,6 +7797,13 @@ export async function startServer({
     requireLocalDaemonRequest,
     composio: composioConnectorProvider,
   });
+
+  // Detailed terminal-report activity is local diagnostics, not public health.
+  app.get(
+    '/api/diagnostics/amr-terminal-reports',
+    requireLocalDaemonRequest,
+    (_req, res) => res.json(amrTerminalReportOutbox.diagnostics()),
+  );
 
   // Gate the diagnostics export behind requireLocalDaemonRequest so it stays
   // unreachable when daemon binds to a non-loopback address (Tailscale,
@@ -16474,6 +16499,7 @@ export async function startServer({
     };
     const cleanupDaemonBackgroundWork = () => {
       clearTerminalTelemetryFallbackTimers();
+      amrTerminalReportDelivery.stop();
       telemetry.disposeFatalHandlers();
       composioConnectorProvider.stopCatalogRefreshLoop();
       orbitService.stop();
@@ -16490,6 +16516,7 @@ export async function startServer({
       if (daemonShutdownStarted) return;
       daemonShutdownStarted = true;
       daemonShuttingDown = true;
+      amrTerminalReportDelivery.stop();
       clearTerminalTelemetryFallbackTimers();
       await design.runs.shutdownActive({ graceMs: resolveChatRunShutdownGraceMs() });
       await terminalService.shutdownActive();
@@ -16540,6 +16567,7 @@ export async function startServer({
           return;
         }
         resolvedPort = boundPort;
+        startAmrTerminalReportDeliveryAfterBind(amrTerminalReportDelivery, boundPort);
         // When binding to all interfaces report localhost for local callers;
         // when binding to a specific address (e.g. a Tailscale IP) report that
         // address so remote callers and the sidecar use the correct URL.

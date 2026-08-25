@@ -1,6 +1,6 @@
 import type http from 'node:http';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { startServer } from '../src/server.js';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { startAmrTerminalReportDeliveryAfterBind, startServer } from '../src/server.js';
 
 describe('/api/version', () => {
   let server: http.Server;
@@ -16,6 +16,15 @@ describe('/api/version', () => {
   });
 
   afterAll(() => new Promise<void>((resolve) => server.close(() => resolve())));
+
+  it('starts terminal delivery only after a valid listener bind', () => {
+    const start = vi.fn();
+    expect(startAmrTerminalReportDeliveryAfterBind({ start }, null)).toBe(false);
+    expect(start).not.toHaveBeenCalled();
+
+    expect(startAmrTerminalReportDeliveryAfterBind({ start }, 7456)).toBe(true);
+    expect(start).toHaveBeenCalledOnce();
+  });
 
   it('returns current app version info', async () => {
     const res = await fetch(`${baseUrl}/api/version`);
@@ -81,6 +90,27 @@ describe('/api/version', () => {
 
     expect(healthRes.ok).toBe(true);
     expect(versionRes.ok).toBe(true);
-    expect(health).toEqual({ ok: true, version: version.version?.version });
+    expect(health).toEqual({
+      ok: true,
+      version: version.version?.version,
+      amrTerminalReporter: { status: 'active' },
+    });
+  });
+
+  it('keeps detailed terminal-report counts on local-authorized diagnostics', async () => {
+    const allowed = await fetch(`${baseUrl}/api/diagnostics/amr-terminal-reports`);
+    expect(allowed.status).toBe(200);
+    await expect(allowed.json()).resolves.toEqual({
+      pending: 0,
+      delivered: 0,
+      unsupported: 0,
+      terminalFailed: 0,
+      oldestPendingAgeMs: null,
+    });
+
+    const denied = await fetch(`${baseUrl}/api/diagnostics/amr-terminal-reports`, {
+      headers: { origin: 'https://example.com' },
+    });
+    expect(denied.status).toBe(403);
   });
 });

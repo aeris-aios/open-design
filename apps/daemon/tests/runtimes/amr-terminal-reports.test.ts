@@ -11,6 +11,11 @@ import {
 import { createChatRunService } from "../../src/runtimes/runs.js";
 import { reconcileDurableRunTerminals } from "../../src/runtimes/run-terminal-reconciliation.js";
 
+// runs.ts is intentionally @ts-nocheck and its inferred public factory type is
+// narrower than its runtime options/records. Keep this test adapter local.
+const createRuns = (options: Record<string, unknown>): any =>
+  createChatRunService(options as never);
+
 let tempDir: string | null = null;
 
 afterEach(() => {
@@ -24,7 +29,7 @@ function createFixture() {
   tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "od-amr-terminal-reports-"));
   const db = openDatabase(tempDir);
   const outbox = createAmrTerminalReportOutboxStore(db);
-  const runs = createChatRunService({
+  const runs = createRuns({
     createSseResponse: () => ({
       send: vi.fn(),
       end: vi.fn(),
@@ -174,7 +179,7 @@ describe("AMR terminal report outbox", () => {
 
   it('finishes local terminal cleanup when the bounded outbox callback throws', async () => {
     const finalizer = vi.fn(() => { throw new Error('SQLite unavailable'); });
-    const runs = createChatRunService({
+    const runs = createRuns({
       createSseResponse: () => ({ send: vi.fn(), end: vi.fn(), cleanup: vi.fn() }),
       createSseErrorPayload: (code: string, message: string) => ({ error: { code, message } }),
       onTerminal: finalizer,
@@ -200,7 +205,7 @@ describe("AMR terminal report outbox", () => {
     active.status = 'running';
     runs.persistState(active);
 
-    const restarted = createChatRunService({
+    const restarted = createRuns({
       createSseResponse: () => ({ send: vi.fn(), end: vi.fn(), cleanup: vi.fn() }),
       createSseErrorPayload: (code: string, message: string) => ({ error: { code, message } }),
       onTerminal: createAmrTerminalReportFinalizer(outbox),
@@ -230,7 +235,7 @@ describe("AMR terminal report outbox", () => {
     const db = openDatabase(tempDir);
     const outbox = createAmrTerminalReportOutboxStore(db);
     const runsLogDir = path.join(tempDir, "runs");
-    const bareRuns = createChatRunService({
+    const bareRuns = createRuns({
       createSseResponse: () => ({ send: vi.fn(), end: vi.fn(), cleanup: vi.fn() }),
       createSseErrorPayload: (code: string, message: string) => ({ error: { code, message } }),
       runsLogDir,
@@ -259,13 +264,13 @@ describe("AMR terminal report outbox", () => {
     const db = openDatabase(tempDir);
     const outbox = createAmrTerminalReportOutboxStore(db);
     const runsLogDir = path.join(tempDir, "runs");
-    const recoveringRuns = createChatRunService({
+    const recoveringRuns = createRuns({
       createSseResponse: () => ({ send: vi.fn(), end: vi.fn(), cleanup: vi.fn() }),
       createSseErrorPayload: (code: string, message: string) => ({ error: { code, message } }),
       onTerminal: createAmrTerminalReportFinalizer(outbox),
       runsLogDir,
     });
-    const bareRuns = createChatRunService({
+    const bareRuns = createRuns({
       createSseResponse: () => ({ send: vi.fn(), end: vi.fn(), cleanup: vi.fn() }),
       createSseErrorPayload: (code: string, message: string) => ({ error: { code, message } }),
       runsLogDir,
