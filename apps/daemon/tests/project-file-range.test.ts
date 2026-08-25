@@ -728,7 +728,8 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
     );
     expect(html.status).toBe(200);
     expect(html.body).toContain('<script src="./scripts/support.js">');
-    expect(html.body).toContain('data-od-url-scroll-bridge');
+    expect(html.body).toContain('data-od-preview-runtime');
+    expect(html.body).toContain("register('scroll'");
     expect(html.body).toContain('data-od-url-selection-bridge');
     expect(html.body).toContain('data-od-url-snapshot-bridge');
     expect(html.body).toContain('data-od-preview-observability');
@@ -755,7 +756,8 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
     );
     expect(large.status).toBe(200);
     expect(large.body).toContain('data-od-preview-runtime');
-    expect(large.body).toContain('data-od-url-scroll-bridge');
+    expect(large.body).toContain('data-od-preview-runtime');
+    expect(large.body).toContain("register('scroll'");
     expect(large.body).toContain('data-od-url-selection-bridge');
     expect(large.body.match(/type="text\/babel"/gu)).toHaveLength(43);
     expect(large.body.indexOf('data-od-preview-runtime')).toBeLessThan(

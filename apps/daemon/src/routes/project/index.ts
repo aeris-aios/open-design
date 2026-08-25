@@ -93,6 +93,7 @@ import {
   PREVIEW_RUNTIME_BOOTSTRAP_MARKER,
   buildPreviewRuntimeBootstrap,
 } from '../../http/preview-runtime-bootstrap.js';
+import { buildScrollAndMeasurementRuntimeModule } from '../../http/preview-runtime-modules.js';
 import type { RouteDeps } from '../../server-context.js';
 import { listSkills } from '../../skills.js';
 import { isSafeId } from '../../projects.js';
@@ -6902,7 +6903,6 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
       const documentVersion = htmlPreviewDocumentVersion(previewMeta);
       const scopedBridgeRequest = [
         ...previewBridgeTokens(req.query.odPreviewBridge),
-        'scroll',
         'selection',
         'snapshot',
         'observability',
@@ -6911,6 +6911,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
         sessionId: authority.scope,
         documentVersion,
         availableCapabilities: scopedPreviewRuntimeCapabilities,
+        modules: [buildScrollAndMeasurementRuntimeModule()],
       });
       const streamRuntimeBootstrap = /^text\/html(?:;|$)/iu.test(previewMeta.mime)
         && previewMeta.size > PREVIEW_URL_GUARD_MAX_HTML_BYTES;

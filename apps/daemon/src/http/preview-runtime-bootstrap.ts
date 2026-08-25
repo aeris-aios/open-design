@@ -7,8 +7,19 @@ import {
 
 export const PREVIEW_RUNTIME_BOOTSTRAP_MARKER = 'data-od-preview-runtime';
 
+export interface PreviewRuntimeModuleSource {
+  capabilities: readonly PreviewRuntimeCapability[];
+  /**
+   * Trusted, product-owned JavaScript executed inside the bootstrap closure.
+   * It may call `register(capability, { enable, disable })`; authored content
+   * must never be passed through this field.
+   */
+  source: string;
+}
+
 export interface PreviewRuntimeBootstrapOptions extends PreviewRuntimeDocumentIdentity {
   availableCapabilities?: readonly PreviewRuntimeCapability[];
+  modules?: readonly PreviewRuntimeModuleSource[];
 }
 
 function safeInlineJson(value: unknown): string {
@@ -22,6 +33,30 @@ function assertIdentity(value: string, field: string): void {
   if (!value || value.length > 200 || value.trim() !== value) {
     throw new TypeError(`${field} must be a non-empty bounded string`);
   }
+}
+
+function normalizeModuleSources(
+  modules: readonly PreviewRuntimeModuleSource[],
+): PreviewRuntimeModuleSource[] {
+  const capabilities = new Set<PreviewRuntimeCapability>();
+  const normalized: PreviewRuntimeModuleSource[] = [];
+  for (const module of modules) {
+    const normalizedCapabilities = normalizePreviewRuntimeCapabilities(module.capabilities);
+    if (normalizedCapabilities.length !== module.capabilities.length || normalizedCapabilities.length === 0) {
+      throw new TypeError('preview runtime module capabilities must be known and non-empty');
+    }
+    for (const capability of normalizedCapabilities) {
+      if (capabilities.has(capability)) {
+        throw new TypeError(`preview runtime module capability must be unique: ${capability}`);
+      }
+      capabilities.add(capability);
+    }
+    if (!module.source.trim() || /<\/script/iu.test(module.source)) {
+      throw new TypeError(`preview runtime module source is invalid: ${normalizedCapabilities.join(',')}`);
+    }
+    normalized.push({ capabilities: normalizedCapabilities, source: module.source });
+  }
+  return normalized;
 }
 
 /**
@@ -42,18 +77,45 @@ export function buildPreviewRuntimeBootstrap(
   const availableCapabilities = normalizePreviewRuntimeCapabilities(
     options.availableCapabilities ?? [],
   );
+  const modules = normalizeModuleSources(options.modules ?? []);
+  const moduleSources = modules.map(({ source }) =>
+    `(function(){\n${source}\n})();`,
+  ).join('\n');
 
   return `<script ${PREVIEW_RUNTIME_BOOTSTRAP_MARKER}>(function(){
 var identity=${safeInlineJson(identity)};
 var available=${safeInlineJson(availableCapabilities)};
 var availableSet=new Set(available);
+var modules=Object.create(null);
+var activeSet=new Set();
 function send(type,extra){parent.postMessage(Object.assign({type:type},identity,extra||{}),'*');}
 function normalize(input){if(!Array.isArray(input))return [];return available.filter(function(capability){return input.indexOf(capability)!==-1&&availableSet.has(capability);});}
+function register(capability,create){
+  if(!availableSet.has(capability)||modules[capability])return;
+  var hooks=create({identity:identity,send:send})||{};
+  modules[capability]={enable:typeof hooks.enable==='function'?hooks.enable:function(){},disable:typeof hooks.disable==='function'?hooks.disable:function(){}};
+}
+function applyCapabilities(input){
+  var requested=normalize(input);
+  var requestedSet=new Set(requested);
+  available.forEach(function(capability){
+    var shouldEnable=requestedSet.has(capability);
+    var isEnabled=activeSet.has(capability);
+    if(shouldEnable===isEnabled)return;
+    var hooks=modules[capability];
+    try {
+      if(hooks){if(shouldEnable)hooks.enable();else hooks.disable();}
+      if(shouldEnable)activeSet.add(capability);else activeSet.delete(capability);
+    } catch (_) {}
+  });
+  return available.filter(function(capability){return activeSet.has(capability);});
+}
+${moduleSources}
 window.addEventListener('message',function(event){
   if(event.source!==parent)return;
   var data=event.data;
   if(!data||data.type!=='od:preview:set-capabilities'||data.protocolVersion!==identity.protocolVersion||data.sessionId!==identity.sessionId||data.documentVersion!==identity.documentVersion)return;
-  send('od:preview:capabilities-applied',{enabledCapabilities:normalize(data.enabledCapabilities)});
+  send('od:preview:capabilities-applied',{enabledCapabilities:applyCapabilities(data.enabledCapabilities)});
 });
 send('od:preview:hello',{availableCapabilities:available});
 function ready(){
