@@ -571,6 +571,19 @@ export async function bootstrapFirstOpenTeamProjectRoute(
   options: {
     accountGeneration: number;
     exactContext: WorkspaceCollabContext;
+    /**
+     * Called once `PUT /collab/bootstrap` has answered 2xx — the first moment
+     * this project is positively known to exist and be shared to this Team.
+     *
+     * An active Team context alone does NOT authorize a project id: this lane
+     * is reached precisely because the local scope lookup returned `not-found`,
+     * so a missing, revoked, or unauthorized project URL looks identical to a
+     * real first open until this call returns. Callers that want to claim
+     * "downloading this team's project" on the ambient deep-link path must wait
+     * for this, or they present an unverified download as fact on a surface
+     * that is about to become an error.
+     */
+    onSharedProjectConfirmed?: (awaitingFirstMaterialization: boolean) => void;
   },
 ): Promise<FirstOpenTeamProjectBootstrapResult> {
   const { exactContext } = options;
@@ -597,6 +610,9 @@ export async function bootstrapFirstOpenTeamProjectRoute(
       return { kind: 'unavailable' };
     }
     bootstrapResponse = (await response.json()) as CollabProjectBootstrapResponse;
+    options.onSharedProjectConfirmed?.(
+      bootstrapResponse.awaitingFirstMaterialization === true,
+    );
   } catch {
     return { kind: 'unavailable' };
   }

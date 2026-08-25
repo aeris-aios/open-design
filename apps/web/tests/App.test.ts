@@ -7,6 +7,7 @@ import {
   mergeAgentModelChoice,
   persistComposioConfigChange,
   projectViewAuthorizationLifetimeKey,
+  firstOpenDownloadClaimIsWarranted,
   projectRouteSurfaceState,
   releaseFirstOpenTeamMaterializationClaim,
   resolveDeepLinkedTeamSharedProject,
@@ -134,6 +135,40 @@ describe('projectRouteSurfaceState', () => {
 // retracts the LIVE run's claim while its bootstrap is still downloading — so
 // the anonymous "Loading workspace…" spinner comes back during exactly the
 // slow path this indicator exists to explain.
+// Red spec for the second review finding on PR #7350 (Looper/codex,
+// App.tsx:4629). `firstOpenTeamContext` is `exactOpenContext ?? deepLinkContext`.
+// On the ambient path that is just the shell's Workspace context: it proves the
+// user is in an active Team, but it does not name or authorize `projectId` —
+// this lane is reached precisely BECAUSE the local scope lookup returned
+// not-found. Claiming the download there shows "Syncing files from the team…"
+// over any missing / revoked / unauthorized project URL until the request
+// returns, i.e. it presents an unverified download as fact and changes a
+// failure surface this PR explicitly intends to leave untouched.
+describe('firstOpenDownloadClaimIsWarranted', () => {
+  it('never claims on an active Team context alone', () => {
+    // The unknown-project-id regression the reviewer asked for: a Team
+    // workspace is selected, but nothing has named this project.
+    expect(firstOpenDownloadClaimIsWarranted({
+      projectScopedWitness: false,
+      sharedProjectConfirmed: false,
+    })).toBe(false);
+  });
+
+  it('claims immediately for a project-scoped opening witness', () => {
+    expect(firstOpenDownloadClaimIsWarranted({
+      projectScopedWitness: true,
+      sharedProjectConfirmed: false,
+    })).toBe(true);
+  });
+
+  it('claims once the hub confirms the project is shared to this team', () => {
+    expect(firstOpenDownloadClaimIsWarranted({
+      projectScopedWitness: false,
+      sharedProjectConfirmed: true,
+    })).toBe(true);
+  });
+});
+
 describe('releaseFirstOpenTeamMaterializationClaim', () => {
   it('lets a run retract its own claim', () => {
     const claim = { projectId: 'p-1', run: 1 };

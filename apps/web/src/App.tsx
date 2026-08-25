@@ -783,6 +783,30 @@ export interface FirstOpenTeamMaterializationClaim {
 }
 
 /**
+ * Whether the route may yet claim "this team's project is downloading".
+ *
+ * An active Team workspace does NOT authorize a project id. The first-open
+ * lane is entered precisely because the local scope lookup returned
+ * `not-found`, so a missing, revoked, or unauthorized project URL is
+ * indistinguishable from a real first open until something names the project.
+ * Two signals can do that, and nothing else may:
+ *
+ *  - a project-scoped opening witness (the user opened THIS project from a
+ *    surface that already resolved it), or
+ *  - `PUT /collab/bootstrap` answering 2xx, which is the hub confirming the
+ *    project exists and is shared to this Team.
+ *
+ * Claiming on the ambient deep-link context alone presents an unverified
+ * download as fact on a surface that is about to become "project missing".
+ */
+export function firstOpenDownloadClaimIsWarranted(signals: {
+  projectScopedWitness: boolean;
+  sharedProjectConfirmed: boolean;
+}): boolean {
+  return signals.projectScopedWitness || signals.sharedProjectConfirmed;
+}
+
+/**
  * Release the indicator on behalf of one finished run.
  *
  * A run may only retract its OWN claim. Keyed on the project id instead, a
@@ -4623,13 +4647,37 @@ function AppInner() {
         && firstOpenTeamContext.memberStatus === 'active'
         && firstOpenTeamContext.lifecycleState === 'active'
       ) {
-        // The verified Team context named this project, so from here the route
-        // is genuinely downloading it — say so instead of spinning anonymously.
-        // Cleared by the effect teardown below on every exit path.
-        setFirstOpenTeamMaterializing({ projectId, run: bootstrapRun });
+        // Say the route is downloading — but only once something has actually
+        // named THIS project. `exactOpenContext` is a project-scoped witness,
+        // so it warrants the claim immediately; the ambient deep-link context
+        // only proves an active Team, so it must wait for the hub to confirm
+        // the project through `PUT /collab/bootstrap`. Cleared by the effect
+        // teardown below on every exit path.
+        const claimFirstOpenDownload = () => {
+          setFirstOpenTeamMaterializing({ projectId, run: bootstrapRun });
+        };
+        if (
+          firstOpenDownloadClaimIsWarranted({
+            projectScopedWitness: exactOpenContext != null,
+            sharedProjectConfirmed: false,
+          })
+        ) {
+          claimFirstOpenDownload();
+        }
         const progressive = await bootstrapFirstOpenTeamProjectRoute(projectId, {
           accountGeneration,
           exactContext: firstOpenTeamContext,
+          onSharedProjectConfirmed: () => {
+            if (cancelled || accountChanged()) return;
+            if (
+              firstOpenDownloadClaimIsWarranted({
+                projectScopedWitness: exactOpenContext != null,
+                sharedProjectConfirmed: true,
+              })
+            ) {
+              claimFirstOpenDownload();
+            }
+          },
         });
         if (
           cancelled
