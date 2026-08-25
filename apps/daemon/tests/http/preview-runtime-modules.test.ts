@@ -8,6 +8,7 @@ import {
   buildDeckRuntimeModule,
   buildPaletteRuntimeModule,
   buildScrollAndMeasurementRuntimeModule,
+  buildSharedLazyScriptRuntimeModule,
   buildTweaksRuntimeModule,
 } from '../../src/http/preview-runtime-modules.js';
 
@@ -243,6 +244,48 @@ describe('preview runtime modules', () => {
     command(['snapshot', 'observability']);
     expect(context.lazyInstalls).toBe(1);
     expect(context.passiveInstalls).toBe(1);
+  });
+
+  it('installs one shared interaction bridge when multiple negotiated capabilities enable it', () => {
+    const bootstrap = buildPreviewRuntimeBootstrap({
+      sessionId: 'session-1',
+      documentVersion: 'version-1',
+      availableCapabilities: ['selection', 'comment', 'inspect', 'draw'],
+      modules: [buildSharedLazyScriptRuntimeModule(
+        ['selection', 'comment', 'inspect', 'draw'],
+        '<script data-shared>window.sharedInstalls=(window.sharedInstalls||0)+1;</script>',
+        'data-shared',
+      )],
+    });
+    const source = bootstrap.replace(/^<script[^>]*>/u, '').replace(/<\/script>$/u, '');
+    const listeners = new Map<string, Array<(event: any) => void>>();
+    const parent = { postMessage: () => {} };
+    const context: Record<string, any> = {
+      document: { readyState: 'complete' },
+      parent,
+      queueMicrotask: (callback: () => void) => callback(),
+      requestAnimationFrame: (callback: () => void) => callback(),
+      Set,
+    };
+    context.window = context;
+    context.addEventListener = (type: string, listener: (event: any) => void) => {
+      listeners.set(type, [...(listeners.get(type) ?? []), listener]);
+    };
+    vm.runInNewContext(source, context);
+
+    for (const listener of listeners.get('message') ?? []) {
+      listener({
+        source: parent,
+        data: {
+          type: 'od:preview:set-capabilities',
+          protocolVersion: 1,
+          sessionId: 'session-1',
+          documentVersion: 'version-1',
+          enabledCapabilities: ['comment', 'inspect', 'draw'],
+        },
+      });
+    }
+    expect(context.sharedInstalls).toBe(1);
   });
 
   it('keeps scroll and measurement dormant until independently enabled', () => {

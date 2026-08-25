@@ -51,6 +51,30 @@ export function buildLazyScriptRuntimeModule(
 }
 
 /**
+ * Install one interaction script when any capability in a shared bridge is
+ * first enabled. Each capability remains independently negotiable, while the
+ * underlying listeners are installed exactly once for the document.
+ */
+export function buildSharedLazyScriptRuntimeModule(
+  capabilities: readonly PreviewRuntimeCapability[],
+  scriptTag: string,
+  marker: string,
+): PreviewRuntimeModuleSource {
+  if (capabilities.length === 0) {
+    throw new TypeError('shared preview runtime module needs at least one capability');
+  }
+  const installFunction = `function installSharedBridge(){if(sharedBridgeInstalled)return;sharedBridgeInstalled=true;\n`
+    + `${scriptBody(scriptTag)}\n}`;
+  return {
+    capabilities,
+    source: `/* ${marker} */\nvar sharedBridgeInstalled=false;\n${installFunction}\n`
+      + capabilities.map((capability) => (
+        `register(${JSON.stringify(capability)},function(){return {enable:installSharedBridge,disable:function(){}};});`
+      )).join('\n'),
+  };
+}
+
+/**
  * Reuse the exact production Deck bridge in a real-URL document. The listener
  * registry hook and layout fix install before authored startup; the bridge
  * itself waits for both host negotiation and DOM readiness, so existing deck

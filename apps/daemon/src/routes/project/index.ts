@@ -99,6 +99,7 @@ import {
   buildLazyScriptRuntimeModule,
   buildPaletteRuntimeModule,
   buildScrollAndMeasurementRuntimeModule,
+  buildSharedLazyScriptRuntimeModule,
   buildTweaksRuntimeModule,
 } from '../../http/preview-runtime-modules.js';
 import type { RouteDeps } from '../../server-context.js';
@@ -5506,6 +5507,9 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
     'snapshot',
     'observability',
     'selection',
+    'comment',
+    'inspect',
+    'draw',
     'tweaks',
     'palette',
   ] as const satisfies readonly PreviewRuntimeCapability[];
@@ -6925,8 +6929,8 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
           : scopedPreviewBaseRuntimeCapabilities,
         modules: [
           buildScrollAndMeasurementRuntimeModule(),
-          buildLazyScriptRuntimeModule(
-            'selection',
+          buildSharedLazyScriptRuntimeModule(
+            ['selection', 'comment', 'inspect', 'draw'],
             URL_PREVIEW_SELECTION_BRIDGE,
             'data-od-url-selection-bridge',
           ),
