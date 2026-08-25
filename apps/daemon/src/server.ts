@@ -924,6 +924,7 @@ import {
 } from './collab/proactive-content-pull.js';
 import {
   backgroundPullMaxEntriesFromEnv,
+  backgroundPullMaxCumulativeEntriesFromEnv,
   createBackgroundPullSizeGuard,
 } from './collab/background-pull-size-guard.js';
 import {
@@ -5015,6 +5016,7 @@ export async function startServer({
   // behavior. See collab/background-pull-size-guard.ts.
   const backgroundPullSizeGuard = createBackgroundPullSizeGuard({
     maxEntries: backgroundPullMaxEntriesFromEnv(),
+    maxCumulativeEntries: backgroundPullMaxCumulativeEntriesFromEnv(),
     inspect: (scope, version) =>
       inspectAuthorizedTeamProjectPull({
         projectId: scope.projectId,
