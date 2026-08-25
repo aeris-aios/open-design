@@ -34,6 +34,10 @@ export interface PreviewSessionFramesProps extends Omit<
   active: boolean;
   onCurrentFrameChange?: (frame: HTMLIFrameElement | null) => void;
   onStandbyReady?: (frame: HTMLIFrameElement) => void;
+  onCapabilitiesApplied?: (
+    frame: HTMLIFrameElement,
+    capabilities: readonly PreviewRuntimeCapability[],
+  ) => void;
   onPromoted?: (
     current: PreviewSessionNavigation,
     previous: PreviewSessionNavigation | null,
@@ -98,15 +102,26 @@ function PreviewSessionFramesForFile({
   active,
   onCurrentFrameChange,
   onStandbyReady,
+  onCapabilitiesApplied,
   onPromoted,
   title = fileName,
   ...iframeProps
 }: PreviewSessionFramesProps) {
   const pool = useIframeKeepAlivePool();
-  const callbacksRef = useRef({ onCurrentFrameChange, onStandbyReady, onPromoted });
+  const callbacksRef = useRef({
+    onCurrentFrameChange,
+    onStandbyReady,
+    onCapabilitiesApplied,
+    onPromoted,
+  });
   const frameByTargetRef = useRef(new Map<PreviewRuntimeMessageTarget, HTMLIFrameElement>());
   const standbyTargetRef = useRef<PreviewRuntimeMessageTarget | null>(null);
-  callbacksRef.current = { onCurrentFrameChange, onStandbyReady, onPromoted };
+  callbacksRef.current = {
+    onCurrentFrameChange,
+    onStandbyReady,
+    onCapabilitiesApplied,
+    onPromoted,
+  };
   const [current, setCurrent] = useState<RenderedPreviewDocument | null>(null);
   const stalePoolKeysRef = useRef<string[]>([]);
 
@@ -115,6 +130,10 @@ function PreviewSessionFramesForFile({
       onStandbyReady(document) {
         const frame = frameByTargetRef.current.get(document.target);
         if (frame) callbacksRef.current.onStandbyReady?.(frame);
+      },
+      onCapabilitiesApplied(document, capabilities) {
+        const frame = frameByTargetRef.current.get(document.target);
+        if (frame) callbacksRef.current.onCapabilitiesApplied?.(frame, capabilities);
       },
       onPromoted(document, previous) {
         const frame = frameByTargetRef.current.get(document.target);
@@ -193,6 +212,7 @@ function PreviewSessionFramesForFile({
     <>
       {current ? (
         <PooledIframe
+          key={documentKeepAliveKey(projectId, fileName, current)}
           {...commonProps}
           ref={retainCurrentFrame}
           cacheKey={documentKeepAliveKey(projectId, fileName, current)}
@@ -205,6 +225,7 @@ function PreviewSessionFramesForFile({
       ) : null}
       {standby ? (
         <PooledIframe
+          key={documentKeepAliveKey(projectId, fileName, standby)}
           {...commonProps}
           ref={stageFrame}
           cacheKey={documentKeepAliveKey(projectId, fileName, standby)}

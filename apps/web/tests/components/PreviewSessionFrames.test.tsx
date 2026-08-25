@@ -2,7 +2,10 @@
 
 import { act, cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { PREVIEW_RUNTIME_PROTOCOL_VERSION } from '@open-design/contracts/runtime/preview-runtime';
+import {
+  PREVIEW_RUNTIME_PROTOCOL_VERSION,
+  type PreviewRuntimeCapability,
+} from '@open-design/contracts/runtime/preview-runtime';
 import {
   IframeKeepAliveProvider,
 } from '../../src/components/IframeKeepAlivePool';
@@ -25,6 +28,7 @@ function signal(
   frame: HTMLIFrameElement,
   document: PreviewSessionNavigation,
   type: 'od:preview:hello' | 'od:preview:capabilities-applied' | 'od:preview:ready' | 'od:preview:visible-paint',
+  enabledCapabilities: readonly PreviewRuntimeCapability[] = [],
 ) {
   act(() => {
     window.dispatchEvent(new MessageEvent('message', {
@@ -35,7 +39,7 @@ function signal(
         sessionId: document.sessionId,
         documentVersion: document.documentVersion,
         ...(type === 'od:preview:hello' ? { availableCapabilities: ['scroll', 'edit'] } : {}),
-        ...(type === 'od:preview:capabilities-applied' ? { enabledCapabilities: [] } : {}),
+        ...(type === 'od:preview:capabilities-applied' ? { enabledCapabilities } : {}),
       },
     }));
   });
@@ -187,5 +191,44 @@ describe('PreviewSessionFrames', () => {
     const standby = screen.getByTestId('preview-runtime-frame-standby');
     expect(standby).not.toBe(oldFrame);
     expect(standby).toHaveAttribute('src', second.url);
+  });
+
+  it('reports exact capability application for standby and retained current frames', async () => {
+    const first = navigation('v1');
+    const onCapabilitiesApplied = vi.fn();
+    const view = (enabledCapabilities: readonly PreviewRuntimeCapability[]) => (
+      <IframeKeepAliveProvider>
+        <PreviewSessionFrames
+          projectId="project-1"
+          fileName="index.html"
+          navigation={first}
+          enabledCapabilities={enabledCapabilities}
+          active
+          onCapabilitiesApplied={onCapabilitiesApplied}
+        />
+      </IframeKeepAliveProvider>
+    );
+    const { rerender } = render(view(['edit']));
+    const frame = screen.getByTestId('preview-runtime-frame-standby') as HTMLIFrameElement;
+    const target = frame.contentWindow!;
+    const postMessage = vi.spyOn(target, 'postMessage');
+
+    signal(frame, first, 'od:preview:hello');
+    signal(frame, first, 'od:preview:capabilities-applied', ['edit']);
+    expect(onCapabilitiesApplied).toHaveBeenLastCalledWith(frame, ['edit']);
+    signal(frame, first, 'od:preview:visible-paint');
+
+    postMessage.mockClear();
+    await act(async () => {
+      rerender(view(['scroll']));
+      await Promise.resolve();
+    });
+    expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'od:preview:set-capabilities',
+      enabledCapabilities: ['scroll'],
+    }), '*');
+    signal(frame, first, 'od:preview:capabilities-applied', ['scroll']);
+    expect(onCapabilitiesApplied).toHaveBeenLastCalledWith(frame, ['scroll']);
+    expect(screen.getByTestId('preview-runtime-frame-current')).toBe(frame);
   });
 });
