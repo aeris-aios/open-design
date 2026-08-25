@@ -103,10 +103,6 @@ const REPO_URL = 'https://github.com/nexu-io/open-design';
 const GITHUB_HELP_URL = `${REPO_URL}/issues/new`;
 const GITHUB_FEATURE_URL = `${REPO_URL}/pulls`;
 const DISCORD_URL = 'https://discord.gg/mHAjSMV6gz';
-// Chinese-locale community entry. Discord is unreachable for most of that
-// audience, so the same social slot points at the Feishu (飞书) group invite.
-const FEISHU_URL =
-  'https://applink.feishu.cn/client/chat/chatter/add_by_link?link_token=866kece3-58ba-40fe-9fd4-6dc6a049f69b';
 const X_URL = 'https://x.com/OpenDesignHQ';
 const CONTACT_EMAIL_URL = 'mailto:support@open-design.ai';
 const externalLinkProps = { target: '_blank', rel: 'noreferrer noopener' } as const;
@@ -616,7 +612,11 @@ export function EntryTopRightCluster({
     workspaceType: context?.workspaceType,
   });
 
-  const [accountOpen, setAccountOpen] = useState(false);
+  const [accountMenuMode, setAccountMenuMode] = useState<'closed' | 'hover' | 'pinned'>(
+    'closed',
+  );
+  const accountOpen = accountMenuMode !== 'closed';
+  const closeAccountMenu = () => setAccountMenuMode('closed');
   useEffect(() => {
     if (!accountOpen) return;
     trackWorkspaceSurfaceView(analytics.track, {
@@ -669,11 +669,13 @@ export function EntryTopRightCluster({
   };
   const openAccountMenu = () => {
     cancelAccountClose();
-    setAccountOpen(true);
+    setAccountMenuMode((mode) => (mode === 'closed' ? 'hover' : mode));
   };
   const scheduleAccountClose = () => {
     cancelAccountClose();
-    accountCloseTimer.current = window.setTimeout(() => setAccountOpen(false), 220);
+    accountCloseTimer.current = window.setTimeout(() => {
+      setAccountMenuMode((mode) => (mode === 'hover' ? 'closed' : mode));
+    }, 220);
   };
   useEffect(() => cancelAccountClose, []);
   // While open, track the pointer at the document level: anywhere outside the
@@ -693,14 +695,14 @@ export function EntryTopRightCluster({
     return () => document.removeEventListener('pointerover', onDocPointerOver, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accountOpen]);
-  // Hover-out alone leaves the menu open for anyone who never hovers: a touch
-  // user, or a click that lands somewhere else without the pointer crossing
-  // this container. Press-outside closes it now rather than 220ms later, and
+  // Hover-out does not cover anyone who never hovers: a touch user, or a click
+  // that lands somewhere else without the pointer crossing this container.
+  // Press-outside closes it immediately, and
   // Escape gives the keyboard the same exit. Still a listener, not a backdrop,
   // so the pointerover tracking above keeps receiving its events.
   useDismissOnOutsideInteraction(accountOpen, accountContainerRef, () => {
     cancelAccountClose();
-    setAccountOpen(false);
+    closeAccountMenu();
   });
 
   // One public comparison destination shared with the rail's invite dialog.
@@ -820,9 +822,11 @@ export function EntryTopRightCluster({
                     entry_from: 'sidebar',
                     ...workspaceDimensions,
                   });
-                  setAccountOpen((v) => !v);
+                  cancelAccountClose();
+                  setAccountMenuMode((mode) => (mode === 'pinned' ? 'closed' : 'pinned'));
                 }}
                 onMouseEnter={openAccountMenu}
+                aria-haspopup="menu"
                 aria-expanded={accountOpen}
                 aria-label={accountName}
                 data-testid="entry-nav-account"
@@ -864,7 +868,7 @@ export function EntryTopRightCluster({
                               className="entry-nav-rail__menu-credits-upgrade"
                               onClick={() => {
                                 trackAccountAction('upgrade');
-                                setAccountOpen(false);
+                                closeAccountMenu();
                                 openBillingUpgrade();
                               }}
                             >
@@ -881,7 +885,7 @@ export function EntryTopRightCluster({
                           data-testid="entry-nav-credits-row"
                           onClick={() => {
                             trackAccountAction('credits');
-                            setAccountOpen(false);
+                            closeAccountMenu();
                             if (billingConsoleUrl) {
                               window.open(billingConsoleUrl, '_blank', 'noopener,noreferrer');
                             }
@@ -903,7 +907,7 @@ export function EntryTopRightCluster({
                       role="menuitem"
                       onClick={() => {
                         trackAccountAction('settings');
-                        setAccountOpen(false);
+                        closeAccountMenu();
                         onOpenSettings?.();
                       }}
                     >
@@ -918,7 +922,7 @@ export function EntryTopRightCluster({
                       data-testid="account-menu-message-center"
                       onClick={() => {
                         trackAccountAction('message_center');
-                        setAccountOpen(false);
+                        closeAccountMenu();
                         setMessageCenterOpen(true);
                       }}
                     >
@@ -939,7 +943,7 @@ export function EntryTopRightCluster({
                       {...externalLinkProps}
                       onClick={() => {
                         trackAccountAction('github_help');
-                        setAccountOpen(false);
+                        closeAccountMenu();
                       }}
                     >
                       <Icon name="comment" size={15} /> {t('entry.accountGithubHelp')}
@@ -951,7 +955,7 @@ export function EntryTopRightCluster({
                       {...externalLinkProps}
                       onClick={() => {
                         trackAccountAction('feature_request');
-                        setAccountOpen(false);
+                        closeAccountMenu();
                       }}
                     >
                       <Icon name="sparkles" size={15} /> {t('entry.accountFeatureRequest')}
@@ -967,7 +971,7 @@ export function EntryTopRightCluster({
                       role="menuitem"
                       onClick={() => {
                         trackAccountAction('logout');
-                        setAccountOpen(false);
+                        closeAccountMenu();
                         // recvqgMWpJZqhL: never sign out on this click alone —
                         // arm the confirmation dialog and let it run the logout.
                         setConfirmSignOut(true);
@@ -1129,9 +1133,9 @@ export function WorkspaceTopRightAccountCluster({
 /**
  * Community/contact links pinned to the bottom of the nav rail.
  *
- * The row's first slot is locale-switched: Chinese UIs get the Feishu group
- * invite (Discord is effectively unreachable there), every other locale keeps
- * Discord. X and mail are locale-independent. Analytics keeps reporting these
+ * The row's first slot is the Discord invite for every locale (the Chinese
+ * Feishu group entry was retired so there is one community to point at). X
+ * and mail are locale-independent. Analytics keeps reporting these
  * under `area: 'account_menu'` so the existing funnel stays comparable across
  * the move out of that menu.
  */
@@ -1142,11 +1146,9 @@ function RailSocialRow({
   page: TrackingWorkspacePage;
   dimensions: ReturnType<typeof workspaceAnalyticsDimensions>;
 }) {
-  const { t, locale } = useI18n();
+  const { t } = useI18n();
   const analytics = useAnalytics();
-  const isChinese = locale === 'zh-CN' || locale === 'zh-TW';
-  const communityUrl = isChinese ? FEISHU_URL : DISCORD_URL;
-  const communityLabel = isChinese ? t('entry.feishuAria') : t('entry.discordAria');
+  const communityLabel = t('entry.discordAria');
 
   function track(element: AccountMenuClickProps['element']) {
     trackAccountMenuClick(analytics.track, {
@@ -1161,14 +1163,14 @@ function RailSocialRow({
     <div className="entry-nav-rail__social" data-testid="entry-nav-rail-social">
       <a
         className="entry-nav-rail__social-btn"
-        href={communityUrl}
+        href={DISCORD_URL}
         {...externalLinkProps}
         aria-label={communityLabel}
         title={communityLabel}
-        data-testid={isChinese ? 'entry-nav-rail-feishu' : 'entry-nav-rail-discord'}
-        onClick={() => track(isChinese ? 'feishu' : 'discord')}
+        data-testid="entry-nav-rail-discord"
+        onClick={() => track('discord')}
       >
-        <Icon name={isChinese ? 'feishu' : 'discord'} size={15} />
+        <Icon name="discord" size={15} />
       </a>
       <a
         className="entry-nav-rail__social-btn"

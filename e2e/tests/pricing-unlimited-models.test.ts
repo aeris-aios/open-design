@@ -1,4 +1,4 @@
-// Pricing keeps a static marketing snapshot of the model sets it advertises.
+// Pricing keeps a static marketing snapshot of the campaign models it advertises.
 // The workbench no longer duplicates those sets: it reads Vela's authenticated
 // Coding Plan model endpoint at runtime. This test therefore validates the
 // Pricing snapshot internally without turning it back into a runtime source of
@@ -26,9 +26,6 @@ const MODEL_ID_BY_DISPLAY_NAME: Record<string, string> = {
   'MiniMax M2.7': 'minimax-m2.7',
 };
 
-const TIERS = ['go', 'plus', 'pro', 'max'] as const;
-type Tier = (typeof TIERS)[number];
-
 /** Prose in a comment ("Pro's fifth slot…") carries apostrophes that the
  *  quote-scanning below would read as model names, so comments come out first. */
 function stripLineComments(source: string): string {
@@ -51,15 +48,6 @@ function captureAll(source: string, pattern: RegExp): string[] {
   );
 }
 
-/** The `tier: …` entry inside an object literal body, up to the next entry. */
-function tierEntry(body: string, tier: Tier, what: string): string {
-  return captureOne(
-    body,
-    new RegExp(`\\n  ${tier}: ([\\s\\S]*?),(?=\\n  [a-z]+:|$)`),
-    `tier ${tier} in ${what}`,
-  );
-}
-
 /** Every `{ name: '…' }` entry in the page's `popularModels` list, in order. */
 async function pricingPopularModelNames(): Promise<string[]> {
   const source = stripLineComments(await readFile(PRICING_PAGE, 'utf8'));
@@ -71,37 +59,27 @@ async function pricingPopularModelNames(): Promise<string[]> {
   return captureAll(block, /name: '([^']+)'/g);
 }
 
-/** The page's per-tier unlimited sets, resolved to AMR model ids. */
-async function pricingUnlimitedIdsByTier(): Promise<Record<Tier, string[]>> {
+/** The page's campaign-only unlimited models, resolved to AMR model ids. */
+async function pricingCampaignUnlimitedIds(): Promise<string[]> {
   const source = stripLineComments(await readFile(PRICING_PAGE, 'utf8'));
-  const body = captureOne(
+  const block = captureOne(
     source,
-    /const unlimitedByTier: Record<TierId, Set<string>> = \{([\s\S]*?)\n\};/,
-    'unlimitedByTier on the Pricing page',
+    /const campaignUnlimitedModelNames = \[([\s\S]*?)\] as const;/,
+    'campaignUnlimitedModelNames on the Pricing page',
   );
-  const popular = await pricingPopularModelNames();
-
-  const out = {} as Record<Tier, string[]>;
-  for (const tier of TIERS) {
-    const raw = tierEntry(body, tier, 'unlimitedByTier');
-    // `max` is written as "every popular model" rather than a literal list.
-    const names = raw.includes('popularModels.map') ? popular : captureAll(raw, /'([^']+)'/g);
-    out[tier] = names.map((name) => {
-      const id = MODEL_ID_BY_DISPLAY_NAME[name];
-      expect(id, `no AMR model id mapped for the Pricing name "${name}"`).toBeTruthy();
-      return id ?? name;
-    });
-  }
-  return out;
+  return captureAll(block, /'([^']+)'/g).map((name) => {
+    const id = MODEL_ID_BY_DISPLAY_NAME[name];
+    expect(id, `no AMR model id mapped for the Pricing name "${name}"`).toBeTruthy();
+    return id ?? name;
+  });
 }
 
 describe('Pricing unlimited-model snapshot', () => {
-  it('keeps the advertised model counts (4 / 5 / 6 / 9)', async () => {
-    const pricing = await pricingUnlimitedIdsByTier();
-    expect(pricing.go).toHaveLength(4);
-    expect(pricing.plus).toHaveLength(5);
-    expect(pricing.pro).toHaveLength(6);
-    expect(pricing.max).toHaveLength(9);
+  it('advertises only the two active DeepSeek campaign models', async () => {
+    expect(await pricingCampaignUnlimitedIds()).toEqual([
+      'deepseek-v4-pro',
+      'deepseek-v4-flash',
+    ]);
   });
 
   it('puts DeepSeek V4 Flash Vision Exp first in the popular-model list', async () => {
