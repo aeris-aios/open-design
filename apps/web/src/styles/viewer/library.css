@@ -370,6 +370,9 @@
   /* removed: position, bottom, left, right, margin-bottom, fixed max-height, z-index */
 }
 .slash-popover-head {
+  /* Never a shrink target: the head is a flex child of a height-capped
+     column, so without this a long list squeezes the "COMMANDS" strip. */
+  flex: 0 0 auto;
   display: flex;
   align-items: baseline;
   justify-content: space-between;
@@ -389,6 +392,20 @@
   text-transform: none;
   letter-spacing: 0;
   color: var(--text-muted);
+}
+/* The rows' own scroll port. Command rows must NOT be direct flex children of
+   `.slash-popover`: that column is height-capped (`--cfl-max-h`), so flexbox
+   answers an overflowing list by shrinking every row down to its
+   `min-height` floor, and each row's second line (the description) spills out
+   of its own box onto its neighbours. Inside this block-level scroller the
+   rows keep their natural height and the overflow scrolls instead.
+   `min-height: 0` is what lets the scroller shrink below its content inside
+   the flex column — without it there is nothing to scroll. */
+.slash-popover-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  scroll-padding-block: 6px;
 }
 .slash-item {
   display: flex;
