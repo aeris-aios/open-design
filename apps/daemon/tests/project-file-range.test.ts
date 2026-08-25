@@ -198,6 +198,62 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
       Buffer.from(`<!doctype html><html><body>${'x'.repeat((2 * 1024 * 1024) + 256)}<script>new Worker("worker.js")</script></body></html>`),
     );
     await writeFile(path.join(dir, 'body.html'), Buffer.from('<html><body><main>Preview</main></body></html>'));
+    // `<head>` is optional markup, so a document can legally have none while a
+    // script string contains one — the head-open half of
+    // nexu-io/open-design#7410. `<header>` is here because a bare
+    // `/<head[^>]*>/` matches it too.
+    await writeFile(
+      path.join(dir, 'script-literal-head.html'),
+      Buffer.from(
+        '<!doctype html><html><body><header>Nav</header>'
+          + '<script>\n'
+          + '  const doc = `<head><title>Slip</title></head>`;\n'
+          + "  document.getElementById('slot').textContent = doc.length;\n"
+          + '</script>'
+          + '<main id="slot"></main></body></html>',
+      ),
+    );
+    // The other places a `</body>` is character data rather than a boundary:
+    // raw-text elements the parser never reads as markup, and `<template>`
+    // content, which the tree builder keeps out of the document entirely (an
+    // injection placed there would silently never run).
+    await writeFile(
+      path.join(dir, 'inert-literal-body.html'),
+      Buffer.from(
+        '<!doctype html><html><head></head><body>'
+          + '<template></body></template>'
+          + '<noscript></body></noscript>'
+          + '<xmp></body></xmp>'
+          + '<main id="slot"></main></body></html>',
+      ),
+    );
+    // The same tags are just as ordinary inside an attribute value — storing a
+    // template on a `data-` attribute is the other half of the #7410 shape.
+    // Browsers accept a literal `<` there, and the injected bridge carries
+    // quotes, so splicing into the value would close the attribute early.
+    await writeFile(
+      path.join(dir, 'attr-literal-body.html'),
+      Buffer.from(
+        '<!doctype html><html><head><title>Print</title></head><body>'
+          + '<div id="tpl" data-tpl="<body>slip</body>"></div>'
+          + '<main id="slot"></main></body></html>',
+      ),
+    );
+    // A prototype whose inline script builds an HTML document string — the
+    // shape behind nexu-io/open-design#7410. The literal `</body>` inside the
+    // template literal precedes the document's real one, so an injector that
+    // splices at the FIRST `</body>` lands inside the script and truncates it.
+    await writeFile(
+      path.join(dir, 'script-literal-body.html'),
+      Buffer.from(
+        '<!doctype html><html><head><title>Print</title></head><body>'
+          + '<script type="text/babel">\n'
+          + '  const doc = `<body>slip</body>`;\n'
+          + "  document.getElementById('slot').textContent = doc.length;\n"
+          + '</script>'
+          + '<main id="slot"></main></body></html>',
+      ),
+    );
     await writeFile(
       path.join(dir, 'guarded.html'),
       Buffer.from('<!doctype html><html><head><script src="./boot.js"></script></head><body><input autofocus></body></html>'),
@@ -423,6 +479,71 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
     const html = await bridged.text();
     expect(html.indexOf('data-od-url-scroll-bridge')).toBeGreaterThan(-1);
     expect(html.indexOf('data-od-url-scroll-bridge')).toBeLessThan(html.indexOf('</body>'));
+  });
+
+  it('injects the URL preview scroll bridge after a `</body>` written inside a script string', async () => {
+    // nexu-io/open-design#7410: splicing at the first raw-text `</body>` puts
+    // the bridge's own `</script>` inside the author's script, which ends that
+    // script early and dumps the rest of it on the page as text.
+    const bridged = await fetch(`${rawUrl('script-literal-body.html')}?odPreviewBridge=scroll`);
+    expect(bridged.status).toBe(200);
+    const html = await bridged.text();
+    const injectedAt = html.indexOf('data-od-url-scroll-bridge');
+    expect(injectedAt).toBeGreaterThan(-1);
+    // The author's script must survive intact...
+    expect(html).toContain('const doc = `<body>slip</body>`;');
+    // ...and the bridge must land after it closes, not inside it.
+    expect(injectedAt).toBeGreaterThan(html.indexOf('</script>'));
+    expect(injectedAt).toBeLessThan(html.lastIndexOf('</body>'));
+  });
+
+  it('injects the containment base after a `<head>` written inside a script string', async () => {
+    // The containment `<base>` runs after the bridges on every URL preview, and
+    // it used its own first-textual-`<head>` match. Requesting only the scroll
+    // bridge keeps any head-open guard from synthesizing a real `<head>` first,
+    // so the base injector has to find the boundary on its own.
+    const bridged = await fetch(`${rawUrl('script-literal-head.html')}?odPreviewBridge=scroll`);
+    expect(bridged.status).toBe(200);
+    const html = await bridged.text();
+    expect(html).toContain('data-od-project-preview-base');
+    expect(html).toContain('const doc = `<head><title>Slip</title></head>`;');
+  });
+
+  it('injects the URL preview sandbox shim after a `<head>` written inside a script string', async () => {
+    // nexu-io/open-design#7410, head-open half: the document has no real
+    // `<head>`, so the first textual match is the one inside the script.
+    const bridged = await fetch(`${rawUrl('script-literal-head.html')}?odPreviewBridge=sandbox`);
+    expect(bridged.status).toBe(200);
+    const html = await bridged.text();
+    const injectedAt = html.indexOf('data-od-sandbox-shim');
+    expect(injectedAt).toBeGreaterThan(-1);
+    expect(html).toContain('const doc = `<head><title>Slip</title></head>`;');
+    expect(injectedAt).toBeLessThan(html.indexOf('<script>'));
+  });
+
+  it('injects the URL preview scroll bridge after a `</body>` written in an attribute value', async () => {
+    const bridged = await fetch(`${rawUrl('attr-literal-body.html')}?odPreviewBridge=scroll`);
+    expect(bridged.status).toBe(200);
+    const html = await bridged.text();
+    const injectedAt = html.indexOf('data-od-url-scroll-bridge');
+    expect(injectedAt).toBeGreaterThan(-1);
+    expect(html).toContain('data-tpl="<body>slip</body>"');
+    expect(injectedAt).toBeGreaterThan(html.indexOf('data-tpl'));
+    expect(injectedAt).toBeLessThan(html.lastIndexOf('</body>'));
+  });
+
+  it('injects the URL preview scroll bridge after `</body>` in inert and raw-text content', async () => {
+    const bridged = await fetch(`${rawUrl('inert-literal-body.html')}?odPreviewBridge=scroll`);
+    expect(bridged.status).toBe(200);
+    const html = await bridged.text();
+    const injectedAt = html.indexOf('data-od-url-scroll-bridge');
+    expect(injectedAt).toBeGreaterThan(-1);
+    expect(html).toContain('<template></body></template>');
+    expect(html).toContain('<noscript></body></noscript>');
+    expect(html).toContain('<xmp></body></xmp>');
+    // Injected into the real body, after every inert copy.
+    expect(injectedAt).toBeGreaterThan(html.indexOf('<xmp>'));
+    expect(injectedAt).toBeLessThan(html.lastIndexOf('</body>'));
   });
 
   it('injects the URL preview selection bridge only when requested', async () => {

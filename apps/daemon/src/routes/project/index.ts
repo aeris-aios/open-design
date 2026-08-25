@@ -1443,9 +1443,140 @@ function wantsUrlPreviewRedirectGuard(value: unknown): boolean {
   return previewBridgeTokens(value).some((token) => token === 'redirect');
 }
 
+/**
+ * Elements whose content the HTML parser reads as character data, not markup.
+ * A tag written inside one of these is text the author chose to store, not a
+ * structural boundary of this document. `noscript` belongs here because the
+ * preview iframe always runs with scripting enabled, and `plaintext` runs to
+ * end of input — its missing close tag correctly reports "no boundary left".
+ */
+const PREVIEW_RAW_TEXT_ELEMENTS = [
+  'script',
+  'style',
+  'textarea',
+  'title',
+  'iframe',
+  'noembed',
+  'noframes',
+  'noscript',
+  'plaintext',
+  'xmp',
+] as const;
+
+/**
+ * Offset of the `>` that closes the start/end tag beginning at `from`, or -1
+ * when the tag never closes. Quoted attribute values are skipped, so a `>`
+ * the author wrote inside one does not end the tag early. A quote only opens
+ * a value when it directly follows `=`; anywhere else it is a literal
+ * character of an unquoted value.
+ */
+function endOfTag(html: string, from: number): number {
+  let i = from;
+  let lastSignificant = 0;
+  while (i < html.length) {
+    const ch = html.charCodeAt(i);
+    if ((ch === 34 /* " */ || ch === 39 /* ' */) && lastSignificant === 61 /* = */) {
+      const close = html.indexOf(String.fromCharCode(ch), i + 1);
+      if (close < 0) return -1;
+      i = close + 1;
+      lastSignificant = 0;
+      continue;
+    }
+    if (ch === 62 /* > */) return i;
+    if (ch > 32) lastSignificant = ch;
+    i += 1;
+  }
+  return -1;
+}
+
+/**
+ * Offset of the first `pattern` match that the HTML parser would actually
+ * treat as a tag. `pattern` is matched stickily at each `<`, so pass it
+ * unanchored and let it identify the tag name only — use `endOfTag` for the
+ * tag's extent.
+ *
+ * Every URL-preview injection splices text into the served document, so its
+ * insertion point has to be a real structural boundary. The tags we look for
+ * are also perfectly ordinary *content*: a prototype that builds an HTML
+ * document (a print window, an email template, a `srcdoc` payload) writes
+ * them into a script string or a `data-` attribute. Splicing at the first
+ * textual match lands the injected markup inside that string, which ends the
+ * author's script early — or closes their attribute early, since the
+ * injection carries quotes — and renders the remainder as page text with no
+ * console error to explain it (nexu-io/open-design#7410).
+ *
+ * So this walks tag by tag rather than character by character, skipping every
+ * place a tag-looking run of text is not this document's markup: comments and
+ * other markup declarations, raw-text element content, attribute values, and
+ * `<template>` content.
+ */
+function findRealTagOffset(html: string, pattern: RegExp): number {
+  const anchored = new RegExp(pattern.source, `${pattern.flags.replace(/[gy]/g, '')}y`);
+  const tagOpen = /<(\/?)([a-z][a-z0-9]*)/iy;
+  const lower = html.toLowerCase();
+  let i = 0;
+  while (i < html.length) {
+    if (html.charCodeAt(i) !== 60 /* < */) {
+      i += 1;
+      continue;
+    }
+    if (html.startsWith('<!--', i)) {
+      const end = html.indexOf('-->', i + 4);
+      // An unterminated comment swallows the rest of the document, so there is
+      // no real tag left to find.
+      if (end < 0) return -1;
+      i = end + 3;
+      continue;
+    }
+    if (html.startsWith('<!', i) || html.startsWith('<?', i)) {
+      // Doctype and bogus-comment states both end at the next `>`.
+      const end = html.indexOf('>', i + 2);
+      if (end < 0) return -1;
+      i = end + 1;
+      continue;
+    }
+    anchored.lastIndex = i;
+    if (anchored.test(html)) return i;
+    tagOpen.lastIndex = i;
+    const open = tagOpen.exec(html);
+    if (!open) {
+      // A `<` that starts no tag is ordinary text (`a < b`).
+      i += 1;
+      continue;
+    }
+    const tagEnd = endOfTag(html, i + open[0].length);
+    if (tagEnd < 0) return -1;
+    const tagName = (open[2] ?? '').toLowerCase();
+    if (!open[1] && (PREVIEW_RAW_TEXT_ELEMENTS as readonly string[]).includes(tagName)) {
+      const contentEnd = lower.indexOf(`</${tagName}`, tagEnd + 1);
+      // Unclosed raw text runs to the end of the document — same as above.
+      if (contentEnd < 0) return -1;
+      i = contentEnd;
+      continue;
+    }
+    if (!open[1] && tagName === 'template') {
+      // Template content is an inert fragment the tree builder keeps out of the
+      // document, so a `</body>` inside one is not this document's boundary and
+      // an injection placed there would never run.
+      const boundary = /<(\/?)template(?=[\s/>])/gi;
+      boundary.lastIndex = tagEnd + 1;
+      let depth = 1;
+      let next: RegExpExecArray | null;
+      while (depth > 0 && (next = boundary.exec(html)) !== null) {
+        depth += next[1] ? -1 : 1;
+      }
+      if (depth > 0) return -1;
+      i = boundary.lastIndex;
+      continue;
+    }
+    i = tagEnd + 1;
+  }
+  return -1;
+}
+
 function injectBeforeBodyClose(html: string, marker: string, injection: string): string {
   if (html.includes(marker)) return html;
-  const bodyCloseIndex = html.search(/<\/body\s*>/i);
+  const bodyCloseIndex = findRealTagOffset(html, /<\/body(?=[\s>])/i);
   if (bodyCloseIndex >= 0) {
     return `${html.slice(0, bodyCloseIndex)}${injection}${html.slice(bodyCloseIndex)}`;
   }
@@ -1454,11 +1585,19 @@ function injectBeforeBodyClose(html: string, marker: string, injection: string):
 
 function injectAfterHeadOpen(html: string, marker: string, injection: string): string {
   if (html.includes(marker)) return html;
-  if (/<head[^>]*>/i.test(html)) {
-    return html.replace(/<head[^>]*>/i, (match) => `${match}${injection}`);
+  const headOpenIndex = findRealTagOffset(html, /<head(?=[\s/>])/i);
+  if (headOpenIndex >= 0) {
+    const openTagEnd = endOfTag(html, headOpenIndex);
+    if (openTagEnd >= 0) {
+      return `${html.slice(0, openTagEnd + 1)}${injection}${html.slice(openTagEnd + 1)}`;
+    }
   }
-  if (/<html[^>]*>/i.test(html)) {
-    return html.replace(/<html[^>]*>/i, (match) => `${match}<head>${injection}</head>`);
+  const htmlOpenIndex = findRealTagOffset(html, /<html(?=[\s/>])/i);
+  if (htmlOpenIndex >= 0) {
+    const openTagEnd = endOfTag(html, htmlOpenIndex);
+    if (openTagEnd >= 0) {
+      return `${html.slice(0, openTagEnd + 1)}<head>${injection}</head>${html.slice(openTagEnd + 1)}`;
+    }
   }
   return `${injection}${html}`;
 }
@@ -5930,8 +6069,10 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
   ): string {
     // Respect an artifact-authored base URL. Only generated documents without
     // one need the containment base that keeps runtime-created relative URLs
-    // (for example `img.src = payload.logo`) on the minted preview scope.
-    if (/<base\b/i.test(html)) return html;
+    // (for example `img.src = payload.logo`) on the minted preview scope. A
+    // `<base>` an author merely wrote into a string does not govern this
+    // document, so it must not suppress containment.
+    if (findRealTagOffset(html, /<base(?=[\s/>])/i) >= 0) return html;
     const ownerDir = path.posix.dirname(ownerFilePath);
     const dirSuffix = ownerDir === '.'
       ? ''
@@ -5941,8 +6082,15 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
     const baseHref = `/api/projects/${encodeURIComponent(projectId)}`
       + `/preview/${encodeURIComponent(scope)}/${dirSuffix}`;
     const bridge = buildPreviewBaseHrefBridge({ href: baseHref, expiresAt });
-    const head = /<head\b[^>]*>/i;
-    if (head.test(html)) return html.replace(head, (tag) => `${tag}${baseTag}${bridge}`);
+    // Same structural rule as the bridge injectors above: a `<head>` inside a
+    // script string is text, not this document's head.
+    const headOpenIndex = findRealTagOffset(html, /<head(?=[\s/>])/i);
+    if (headOpenIndex >= 0) {
+      const openTagEnd = endOfTag(html, headOpenIndex);
+      if (openTagEnd >= 0) {
+        return `${html.slice(0, openTagEnd + 1)}${baseTag}${bridge}${html.slice(openTagEnd + 1)}`;
+      }
+    }
     return `${baseTag}${bridge}${html}`;
   }
 
