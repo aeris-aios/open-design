@@ -1631,6 +1631,9 @@ button.agent-group-rescan-btn:hover:not(:disabled) {
   min-height: 72px;
   overflow: hidden;
 }
+.agent-card-installed.agent-card--amr {
+  container-type: inline-size;
+}
 
 /* Failed-run AMR nudge: when the chat error card's "Try OpenDesign AMR" link
    opens Settings, the AMR card scrolls into view and pulses a couple of times.
@@ -2044,7 +2047,7 @@ button.agent-group-rescan-btn:hover:not(:disabled) {
 .agent-card-benefits {
   display: inline-flex;
   align-items: center;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 5px;
   min-width: min(100%, 220px);
   overflow: visible;
@@ -2317,6 +2320,57 @@ button.agent-group-rescan-btn:hover:not(:disabled) {
 .agent-card-amr-auth .amr-account-control__action:disabled {
   cursor: default;
   opacity: 0.62;
+}
+
+/* The active cloud card has two independently useful regions: identity and
+   account actions. When the card narrows, move the whole action cluster onto
+   its own row instead of squeezing the name/badges until individual labels
+   break across lines or letting actions clip outside the card. */
+@container (max-width: 680px) {
+  .agent-card-installed.agent-card--amr .agent-card-main {
+    flex-wrap: wrap;
+  }
+
+  .agent-card-installed.agent-card--amr .agent-card-select {
+    flex: 1 1 100%;
+    width: 100%;
+  }
+
+  .agent-card-installed.agent-card--amr .amr-auth-anchor {
+    flex: 1 1 100%;
+    justify-content: flex-start;
+    margin: 0 16px 14px 66px;
+  }
+}
+
+/* At phone-like card widths the identity metadata becomes two deliberate
+   lines: email first, then plan/profile/balance. Capability pills move as a
+   group and never split their own labels. */
+@container (max-width: 460px) {
+  .agent-card-installed.agent-card--amr .agent-card-name--amr {
+    align-items: flex-start;
+  }
+
+  .agent-card-installed.agent-card--amr .agent-card-benefits {
+    flex-basis: 100%;
+  }
+
+  .agent-card-installed.agent-card--amr .agent-card-amr-email {
+    flex-wrap: wrap;
+    row-gap: 6px;
+    overflow: visible;
+    white-space: normal;
+  }
+
+  .agent-card-installed.agent-card--amr .agent-card-amr-email-text {
+    flex: 1 1 100%;
+  }
+
+  .agent-card-installed.agent-card--amr .agent-card-amr-email .agent-card-amr-balance {
+    margin-left: 0;
+    padding-left: 0;
+    border-left: 0;
+  }
 }
 .agent-card-amr-auth .amr-account-control--error {
   width: 100%;

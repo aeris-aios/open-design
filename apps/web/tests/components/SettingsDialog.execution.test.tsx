@@ -2681,7 +2681,7 @@ describe('SettingsDialog execution settings Local CLI interactions', () => {
     vi.unstubAllGlobals();
   });
 
-  it('pins OpenDesign to the top of the installed CLI list', () => {
+  it('pins Open Design Cloud to the top of the installed CLI list', () => {
     const claudeAgent: AgentInfo = {
       id: 'claude',
       name: 'Claude Code',
@@ -2735,6 +2735,9 @@ describe('SettingsDialog execution settings Local CLI interactions', () => {
       'settings-agent-card-codex',
       'settings-agent-card-claude',
     ]);
+    expect(
+      within(screen.getByTestId('settings-agent-card-amr')).getByText('Open Design Cloud'),
+    ).toBeTruthy();
   });
 
   it('lets users switch to Local CLI, select an installed agent, and autosave', async () => {
