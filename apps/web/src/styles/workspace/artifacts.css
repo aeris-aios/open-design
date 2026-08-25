@@ -2326,7 +2326,7 @@ button.agent-group-rescan-btn:hover:not(:disabled) {
    account actions. When the card narrows, move the whole action cluster onto
    its own row instead of squeezing the name/badges until individual labels
    break across lines or letting actions clip outside the card. */
-@container (max-width: 680px) {
+@container (max-width: 600px) {
   .agent-card-installed.agent-card--amr .agent-card-main {
     flex-wrap: wrap;
   }
