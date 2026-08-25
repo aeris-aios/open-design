@@ -1,6 +1,6 @@
 export type OdNextRolloutMode = 'off' | 'observe' | 'active';
 
-export type OdNextRolloutTaskType = 'prototype' | 'ppt' | 'marketing' | 'hyperframes';
+export type OdNextRolloutTaskType = 'prototype' | 'ppt' | 'marketing' | 'hyperframes' | 'image';
 
 /**
  * Immutable evaluation captured once when a logical Run is claimed. The same

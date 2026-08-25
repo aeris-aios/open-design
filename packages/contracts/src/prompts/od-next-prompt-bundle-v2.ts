@@ -39,7 +39,12 @@ export interface OdNextPromptBundleHeadV2 {
   };
   sessionSkills: {
     generalOrchestrationSkill: { skillName: string; body: string };
-    taskTypeSkill: { skillName: string; body: string };
+    /**
+     * Absent when the selected task type ships no authored rule card yet
+     * (an intentionally empty task-profile asset): the slot is omitted from
+     * the Bundle instead of injecting an empty or fabricated Skill.
+     */
+    taskTypeSkill?: { skillName: string; body: string } | undefined;
     userSelectedSkills?: { skillNames: ReadonlyArray<string>; body: string } | undefined;
   };
   activeStages: ReadonlyArray<OdNextPromptBundleStageV2>;
@@ -278,12 +283,14 @@ function buildTree(input: OdNextPromptBundleV2): CanonicalXmlNode {
               'generalOrchestrationSkill.body',
             ),
           },
-          {
-            kind: 'text',
-            tag: 'task_type_skill',
-            attributes: [['skill_name', skills.taskTypeSkill.skillName]],
-            text: requireBody(skills.taskTypeSkill.body, 'taskTypeSkill.body'),
-          },
+          skills.taskTypeSkill
+            ? {
+              kind: 'text',
+              tag: 'task_type_skill',
+              attributes: [['skill_name', skills.taskTypeSkill.skillName]],
+              text: requireBody(skills.taskTypeSkill.body, 'taskTypeSkill.body'),
+            }
+            : null,
           selected
             ? {
               kind: 'text',
@@ -420,7 +427,10 @@ export function parseOdNextPromptBundleV2(source: string): OdNextPromptBundleV2 
     skills.get('general_orchestration_skill'),
     'general_orchestration_skill',
   );
-  const taskTypeSkill = requireCanonicalXmlText(skills.get('task_type_skill'), 'task_type_skill');
+  const taskTypeSkillNode = skills.get('task_type_skill');
+  const taskTypeSkill = taskTypeSkillNode
+    ? requireCanonicalXmlText(taskTypeSkillNode, 'task_type_skill')
+    : null;
   const selectedNode = skills.get('user_selected_skills');
   const metadataNode = requireCanonicalXmlElement(top.get('task_metadata'), 'task_metadata');
   const metadata = indexCanonicalXmlChildren(metadataNode, TASK_METADATA_SLOTS, 'task_metadata');
@@ -461,10 +471,18 @@ export function parseOdNextPromptBundleV2(source: string): OdNextPromptBundleV2 
         ),
         body: general.text,
       },
-      taskTypeSkill: {
-        skillName: requireCanonicalXmlAttribute(taskTypeSkill, 'skill_name', 'task_type_skill'),
-        body: taskTypeSkill.text,
-      },
+      ...(taskTypeSkill
+        ? {
+          taskTypeSkill: {
+            skillName: requireCanonicalXmlAttribute(
+              taskTypeSkill,
+              'skill_name',
+              'task_type_skill',
+            ),
+            body: taskTypeSkill.text,
+          },
+        }
+        : {}),
       ...(selectedNode
         ? {
           userSelectedSkills: {

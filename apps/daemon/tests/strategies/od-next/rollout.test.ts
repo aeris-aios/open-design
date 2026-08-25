@@ -29,11 +29,11 @@ function syntheticPolicy() {
 }
 
 describe('OD Next controlled rollout', () => {
-  it('defaults production rollout to all four owned artifact types while retaining explicit off', () => {
+  it('defaults production rollout to all owned artifact types while retaining explicit off', () => {
     const policy = readOdNextRolloutPolicy({});
     expect(policy).toMatchObject({
       requestedMode: 'active',
-      eligibleTaskTypes: ['prototype', 'ppt', 'marketing', 'hyperframes'],
+      eligibleTaskTypes: ['prototype', 'ppt', 'marketing', 'hyperframes', 'image'],
       productionActiveApproved: true,
       assignmentPercent: 100,
     });
@@ -44,10 +44,11 @@ describe('OD Next controlled rollout', () => {
       odNextTaskTypeForProjectScenarioBinding({ provenance: 'automatic_default', taskProfile: 'ppt' }),
       odNextTaskTypeForProjectScenarioBinding({ provenance: 'automatic_default', taskProfile: 'marketing' }),
       odNextTaskTypeForProjectScenarioBinding({ provenance: 'automatic_default', taskProfile: 'hyperframes' }),
-    ]).toEqual(['prototype', 'ppt', 'marketing', 'hyperframes']);
+      odNextTaskTypeForProjectScenarioBinding({ provenance: 'automatic_default', taskProfile: 'image' }),
+    ]).toEqual(['prototype', 'ppt', 'marketing', 'hyperframes', 'image']);
     expect(odNextTaskTypeForProjectScenarioBinding({ provenance: 'explicit_user', taskProfile: 'prototype' })).toBeNull();
     expect(odNextTaskTypeForProjectScenarioBinding({ provenance: 'legacy_unknown', taskProfile: 'ppt' })).toBeNull();
-    for (const taskType of ['prototype', 'ppt', 'marketing', 'hyperframes'] as const) {
+    for (const taskType of ['prototype', 'ppt', 'marketing', 'hyperframes', 'image'] as const) {
       expect(evaluateOdNextRollout({
         policy,
         assignmentIdentity: `default:${taskType}`,

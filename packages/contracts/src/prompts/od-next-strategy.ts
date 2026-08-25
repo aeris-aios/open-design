@@ -744,13 +744,15 @@ export function composeOdNextStrategyRequestPromptV2(
     input.generalOrchestration,
     'generalOrchestration',
   );
-  const taskSkill = requireText(input.taskSkill, 'taskSkill');
+  const taskSkill = typeof input.taskSkill === 'string' && input.taskSkill.trim().length > 0
+    ? input.taskSkill
+    : '';
   assertOdNextPlanningBuildOnlyV2(coreStrategy, 'coreStrategy');
   assertOdNextPlanningBuildOnlyV2(
     generalOrchestration,
     'generalOrchestration',
   );
-  assertOdNextPlanningBuildOnlyV2(taskSkill, 'taskSkill');
+  if (taskSkill) assertOdNextPlanningBuildOnlyV2(taskSkill, 'taskSkill');
   const stageBlocks = renderOdNextActiveStageBlocksV2(assertOdNextActiveStagesV2(input.activeStages));
   const sections = [
     EXECUTION_AND_SECURITY_SECTION,
@@ -760,7 +762,9 @@ export function composeOdNextStrategyRequestPromptV2(
     composeOdNextStrategyStableRequestContextV2(context),
     `## OD Next core strategy\n\n${coreStrategy}`,
     `## OD Next general orchestration\n\n${generalOrchestration}`,
-    `## Task Skill — ${input.taskType}\n\nExactly this one Task Skill is active for the logical task.\n\n${taskSkill}`,
+    taskSkill
+      ? `## Task Skill — ${input.taskType}\n\nExactly this one Task Skill is active for the logical task.\n\n${taskSkill}`
+      : '',
     ...stageBlocks,
     renderMachineOutputSection(input, context),
   ].filter((section) => section.length > 0);
@@ -790,10 +794,15 @@ function verifyOdNextRecipeV2(input: OdNextStrategyRequestRecipeV2): {
   }
   const coreStrategy = requireText(input.coreStrategy, 'coreStrategy');
   const generalOrchestration = requireText(input.generalOrchestration, 'generalOrchestration');
-  const taskSkill = requireText(input.taskSkill, 'taskSkill');
+  // An empty task-profile asset means the task type ships no authored rule
+  // card yet (currently `image`): the Task Skill slot is omitted rather than
+  // injected empty, while core strategy and orchestration still apply.
+  const taskSkill = typeof input.taskSkill === 'string' && input.taskSkill.trim().length > 0
+    ? input.taskSkill
+    : '';
   assertOdNextPlanningBuildOnlyV2(coreStrategy, 'coreStrategy');
   assertOdNextPlanningBuildOnlyV2(generalOrchestration, 'generalOrchestration');
-  assertOdNextPlanningBuildOnlyV2(taskSkill, 'taskSkill');
+  if (taskSkill) assertOdNextPlanningBuildOnlyV2(taskSkill, 'taskSkill');
   return {
     coreStrategy,
     generalOrchestration,
@@ -852,7 +861,9 @@ export function composeOdNextStrategyBundleHeadV2(
         skillName: 'general_orchestration',
         body: verified.generalOrchestration,
       },
-      taskTypeSkill: { skillName: input.taskType, body: verified.taskSkill },
+      ...(verified.taskSkill
+        ? { taskTypeSkill: { skillName: input.taskType, body: verified.taskSkill } }
+        : {}),
     },
     activeStages: verified.stages,
   };

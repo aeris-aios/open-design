@@ -210,6 +210,60 @@ describe('run deliverable validation', () => {
     });
   });
 
+  describe('image projects on the OD Next image route', () => {
+    const routedImageMetadata = {
+      kind: 'image' as const,
+      strategyBinding: {
+        schemaVersion: 1 as const,
+        provenance: 'automatic_default' as const,
+        taskProfile: 'image' as const,
+        boundAt: 1,
+      },
+    };
+
+    it('accepts an authored composition html when the image route is bound', async () => {
+      const fixture = await projectFixture({
+        'index.html': '<!doctype html><title>Poster composition</title>',
+      });
+
+      await expect(
+        validateRunDeliverable({
+          ...fixture,
+          runStatus: 'succeeded',
+          artifactCount: 1,
+          touchedPaths: ['index.html'],
+          projectMetadata: routedImageMetadata,
+        }),
+      ).resolves.toMatchObject({
+        valid: true,
+        validation: 'valid',
+        entryFile: 'index.html',
+        artifactKind: 'html',
+      });
+    });
+
+    it('still rejects html for a plain media-pipeline image project', async () => {
+      const fixture = await projectFixture({
+        'index.html': '<!doctype html><title>Not an image</title>',
+      });
+
+      await expect(
+        validateRunDeliverable({
+          ...fixture,
+          runStatus: 'succeeded',
+          artifactCount: 1,
+          touchedPaths: ['index.html'],
+          projectMetadata: { kind: 'image' },
+        }),
+      ).resolves.toMatchObject({
+        valid: false,
+        validation: 'type_mismatch',
+        entryFile: 'index.html',
+        artifactKind: 'html',
+      });
+    });
+  });
+
   it('does not promote a Studio route or pre-existing file without a run artifact', async () => {
     const fixture = await projectFixture({
       'index.html': '<!doctype html><title>Old artifact</title>',

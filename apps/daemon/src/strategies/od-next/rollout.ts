@@ -33,6 +33,7 @@ const DEFAULT_TASK_TYPES: readonly OdNextRolloutTaskType[] = [
   'ppt',
   'marketing',
   'hyperframes',
+  'image',
 ];
 const DEFAULT_AGENTS = ['codex', 'claude', 'opencode', 'amr'] as const;
 
@@ -55,7 +56,11 @@ export function readOdNextRolloutPolicy(
 ): OdNextRolloutPolicy {
   const taskTypes = list(env.OD_NEXT_STRATEGY_TASK_TYPES).filter(
     (value): value is OdNextRolloutTaskType => (
-      value === 'prototype' || value === 'ppt' || value === 'marketing' || value === 'hyperframes'
+      value === 'prototype'
+      || value === 'ppt'
+      || value === 'marketing'
+      || value === 'hyperframes'
+      || value === 'image'
     ),
   );
   const percent = Number(env.OD_NEXT_STRATEGY_ASSIGNMENT_PERCENT ?? '100');
@@ -82,6 +87,7 @@ export function odNextTaskTypeForProjectScenarioBinding(
     || binding.taskProfile === 'ppt'
     || binding.taskProfile === 'marketing'
     || binding.taskProfile === 'hyperframes'
+    || binding.taskProfile === 'image'
     ? binding.taskProfile
     : null;
 }

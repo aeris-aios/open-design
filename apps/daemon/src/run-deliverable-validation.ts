@@ -113,6 +113,17 @@ function acceptedDeliverableKinds(
   if (kind === 'video' && isHyperFramesProject(metadata)) {
     return new Set<ProjectFileKind>([...declared, 'html']);
   }
+  // An image project bound to the OD Next image route may author an HTML
+  // composition as its canonical deliverable (the exported image is a render
+  // of it), exactly like HyperFrames rides `kind: 'video'` with HTML. Plain
+  // media-pipeline image projects keep the strict image-only contract.
+  const strategyBinding = metadata?.strategyBinding as
+    | { taskProfile?: unknown }
+    | null
+    | undefined;
+  if (kind === 'image' && strategyBinding?.taskProfile === 'image') {
+    return new Set<ProjectFileKind>([...declared, 'html']);
+  }
   return declared;
 }
 
