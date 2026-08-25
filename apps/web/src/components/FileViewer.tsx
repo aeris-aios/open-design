@@ -7820,7 +7820,10 @@ function HtmlViewer({
     result: ArtifactEditResultProps['result'],
     errorCode?: ArtifactEditResultProps['error_code'],
   ) => {
-    if (!workspaceActive) return;
+    // A retained viewer can become inactive while an edit write is in flight.
+    // Read the live ref so the async continuation does not emit from the
+    // background tab after it settles.
+    if (!workspaceActiveRef.current) return;
     trackArtifactEditResult(analytics.track, {
       page_name: 'artifact',
       area: 'manual_edit',

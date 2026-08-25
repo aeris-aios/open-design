@@ -39,6 +39,9 @@ export type TrackingProjectKind =
   | 'hyperframes'
   | 'audio'
   | 'brand'
+  // Orbit runs create dedicated projects (`metadata.kind === 'orbit'`) so
+  // their editing and artifact funnels must not be folded into prototypes.
+  | 'orbit'
   // `design_system` covers DS-as-project runs (creation + regeneration).
   // The dashboard reads it on run_created / run_finished to split the
   // DS generation funnel from regular artifact runs.

@@ -80,6 +80,8 @@ export function projectKindToTracking(
       return 'audio';
     case 'brand':
       return 'brand';
+    case 'orbit':
+      return 'orbit';
     case 'live-artifact':
     case 'live_artifact':
       return 'live_artifact';
@@ -122,7 +124,11 @@ export function projectKindFromMetadataToTracking(
 export function projectKindFromMetadataToTrackingOrLegacyDefault(
   metadata: Parameters<typeof projectKindFromMetadataToTracking>[0],
 ): TrackingProjectKind {
-  return projectKindFromMetadataToTracking(metadata) ?? 'prototype';
+  const tracked = projectKindFromMetadataToTracking(metadata);
+  if (tracked) return tracked;
+  // Only a genuinely absent kind is a legacy prototype. Persisted but unknown
+  // values are explicit data and must not silently corrupt the prototype cohort.
+  return metadata?.kind == null ? 'prototype' : 'other';
 }
 
 // Code `CreateTab` from apps/web/src/components/NewProjectPanel.tsx:

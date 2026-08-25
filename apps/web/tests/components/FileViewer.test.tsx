@@ -3482,6 +3482,93 @@ describe('FileViewer SVG artifacts', () => {
     ]);
   });
 
+  it('does not emit an edit result when an in-flight save settles after deactivation', async () => {
+    analyticsTrackMock.mockClear();
+    const file = baseFile({
+      name: 'inactive-save.html',
+      path: 'inactive-save.html',
+      mime: 'text/html',
+      kind: 'html',
+      artifactManifest: {
+        version: 1,
+        kind: 'html',
+        title: 'Inactive save',
+        entry: 'inactive-save.html',
+        renderer: 'html',
+        exports: ['html'],
+      },
+    });
+    const initialSource = '<html><body><main data-od-id="hero">Hero</main></body></html>';
+    const pendingSave = deferredResponse();
+    const writes: string[] = [];
+    const onFileSaved = vi.fn();
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/files/inactive-save.html/versions')) {
+        return new Response(JSON.stringify({ versions: [] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      if (url.endsWith('/api/projects/project-1/files') && init?.method === 'POST') {
+        const body = JSON.parse(String(init.body)) as { content: string };
+        writes.push(body.content);
+        return pendingSave.promise;
+      }
+      if (url.includes('/api/projects/project-1/raw/inactive-save.html')) {
+        return new Response(initialSource, { status: 200 });
+      }
+      return new Response(JSON.stringify({ deployments: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }));
+
+    const props = {
+      projectId: 'project-1',
+      projectKind: 'prototype' as const,
+      file,
+      liveHtml: initialSource,
+      onFileSaved,
+    };
+    const { rerender } = render(<FileViewer {...props} workspaceActive />);
+
+    fireEvent.click(screen.getByTestId('manual-edit-mode-toggle'));
+    await waitFor(() => {
+      expect(screen.getByTestId('artifact-preview-frame').getAttribute('data-od-render-mode')).toBe('srcdoc');
+    });
+    const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+    const target = manualEditTarget('hero', 'Hero', 20);
+    window.dispatchEvent(new MessageEvent('message', {
+      source: frame.contentWindow,
+      data: { type: 'od-edit-select', target },
+    }));
+    window.dispatchEvent(new MessageEvent('message', {
+      source: frame.contentWindow,
+      data: {
+        type: 'od-edit-drag-commit',
+        id: 'hero',
+        transform: 'translate(12px, 8px)',
+        display: 'block',
+      },
+    }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(writes).toHaveLength(1));
+
+    rerender(<FileViewer {...props} workspaceActive={false} />);
+    act(() => {
+      pendingSave.resolve(new Response(JSON.stringify({ file }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }));
+    });
+    await waitFor(() => expect(onFileSaved).toHaveBeenCalledTimes(1));
+
+    expect(analyticsTrackMock.mock.calls.filter(
+      ([eventName]) => eventName === 'artifact_edit_result',
+    )).toHaveLength(0);
+  });
+
   it('keeps the edit iframe stable across save watcher echoes, then consumes the latest revision on exit', async () => {
     const file = baseFile({
       name: 'edit-save-watch.html',
