@@ -1,23 +1,16 @@
 ---
-title: OpenDesign 0.21.0 — 保持心流
-description: OpenDesign 0.21.0 打通从提示词到预览的完整路径，带来可主动开启的 OD Next、更可靠的 Agent 发现与 Electron 预览、更准确的模型权益，以及更顺畅的日常设计流程。
+title: OpenDesign 0.21.0 — 内建恢复力
+description: OpenDesign 0.21.0 让日常故障不再变成死路，带来更可靠的 Agent 发现与 Electron 预览、更安全的会话恢复、更准确的模型权益，以及更清晰的日常交互。
 ---
 
-### 🌟 Codename: *Stay in the Flow*
+### 🌟 Codename: *Built to Recover*
 
-🧭 **42 个 PR · 13 位贡献者 · 4 天** — **0.21.0 让从提示词到预览的整条路径
-保持连贯。** 一个损坏的 CLI shim、一次 Agent 升级、遗留的 sidecar，或 Electron
-里的一块白屏，过去都可能让工作突然停住；现在 OpenDesign 会继续找到可用路径，
-保持会话状态可信，让你回到设计本身。准备体验下一代设计策略的团队，也可以用一条
-命令开启 OD Next，而不会悄悄改变其他人的默认行为。🚀
+🛡️ **42 个 PR · 13 位贡献者 · 4 天** — **0.21.0 让日常故障不再变成死路。**
+一个损坏的 CLI shim、一次 Agent 升级、遗留的 sidecar，或 Electron 里的一块白屏，
+过去都可能让工作突然停住。现在 OpenDesign 会识别故障、保住仍然正确的状态，并从
+App 启动、Agent 运行一路到最终交付的预览，为你留下继续向前的路径。🚀
 
 ## 🔥 亮点
-
-- 🧭 **OD Next 现在可以主动开启，而不会改变所有人的默认设置。** 新的任务策略可以
-  接管 Prototype、Slide Deck、Marketing 与 HyperFrames，从规划一直走到交付；你
-  明确选择的 Plugin、Skill 和 template 仍由你决定。运行
-  `od config set odNextStrategyMode active` 即可开启，再切回 `off` 也不需要重启。
-  (#7016, #7362)
 
 - 🖼️ **HTML 预览保持可见、可交互，资源也能正确连接。** 多文件 artifact 中的
   script、样式、图片、module 和相对请求可以继续工作；切换项目、文件或
@@ -69,9 +62,6 @@ description: OpenDesign 0.21.0 打通从提示词到预览的完整路径，带�
 
 ### 🧠 Agent、runtime 与自动化
 
-- 每个安装实例都可以用 `od config set odNextStrategyMode active` 开启 OD Next；
-  下一次运行立即生效，无需重启，并能查看当前模式来自 app config、环境变量还是
-  默认值。 (#7016, #7362)
 - `OD_MCP_STDIO_IDLE_EXIT_MS` 可以配置 stdio MCP 的空闲生命周期；设为 `0` 时，
   进程会一直保持到客户端断开。 (#7288) 感谢 @huytdps13400。
 

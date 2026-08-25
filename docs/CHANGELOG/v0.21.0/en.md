@@ -1,25 +1,17 @@
 ---
-title: OpenDesign 0.21.0 — Stay in the Flow
-description: OpenDesign 0.21.0 keeps the path from prompt to preview intact, with opt-in OD Next, resilient agent discovery, stable Electron previews, honest model entitlements, and a cleaner path through everyday work.
+title: OpenDesign 0.21.0 — Built to Recover
+description: OpenDesign 0.21.0 keeps everyday failures from becoming dead ends, with resilient agent discovery, stable Electron previews, safer session recovery, honest model entitlements, and cleaner everyday interactions.
 ---
 
-### 🌟 Codename: *Stay in the Flow*
+### 🌟 Codename: *Built to Recover*
 
-🧭 **42 PRs · 13 contributors · 4 days** — **0.21.0 keeps the path from prompt
-to preview intact.** A broken CLI shim, a new agent release, a stale sidecar or
-a white Electron frame could each stop the work cold; OpenDesign now finds a
-route through, keeps the session honest and gets you back to designing. And for
-teams ready to try the next design strategy, OD Next is now one command away
-without changing everyone else's default. 🚀
+🛡️ **42 PRs · 13 contributors · 4 days** — **0.21.0 keeps everyday failures
+from becoming dead ends.** A broken CLI shim, a new agent release, a stale
+sidecar or a white Electron frame could each stop the work cold. OpenDesign now
+detects the failure, preserves what is still good and gives you a way forward —
+from app startup to the agent run to the preview you hand off. 🚀
 
 ## 🔥 Highlights
-
-- 🧭 **OD Next is ready to opt into, without moving anyone's defaults.** The new
-  task-focused strategy can own Prototype, Slide Deck, Marketing and HyperFrames
-  runs from planning through delivery, while explicit Plugins, Skills and
-  templates stay under your control. Turn it on with
-  `od config set odNextStrategyMode active`; turn it off just as quickly, with no
-  restart and no surprise rollout for the rest of the team. (#7016, #7362)
 
 - 🖼️ **HTML previews stay visible, live and correctly wired.** Multi-file
   artifacts keep their scripts, styles, images, modules and relative requests;
@@ -85,10 +77,6 @@ without changing everyone else's default. 🚀
 
 ### 🧠 Agents, runtimes and automation
 
-- OD Next can be enabled per installation with
-  `od config set odNextStrategyMode active`, takes effect on the next run without
-  a restart, and reports whether app config, environment or the default selected
-  the effective mode. (#7016, #7362)
 - `OD_MCP_STDIO_IDLE_EXIT_MS` configures the stdio MCP idle lifetime; `0` keeps
   the process alive until the client disconnects. (#7288) Thanks @huytdps13400.
 
