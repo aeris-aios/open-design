@@ -1,10 +1,21 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Button, Dialog } from '@open-design/components';
+import type { TrackingCampaignDeliveryMode } from '@open-design/contracts/analytics';
+import { useAnalytics } from '../analytics/provider';
+import {
+  trackGoPlanSunsetModalClick,
+  trackGoPlanSunsetModalSurfaceView,
+} from '../analytics/events';
+import { attributedAmrUrl, recordAmrEntry } from '../analytics/amr-attribution';
 import styles from './GoPlanSunsetDialog.module.css';
 
 interface Props {
   active: boolean;
+  deliveryMode?: TrackingCampaignDeliveryMode;
+  currentPlanId?: string;
+  locale?: string;
+  metricsConsent?: boolean;
 }
 
 const GO_PLAN_PRICING_URL =
@@ -41,9 +52,17 @@ export function resolveGoPlanSunsetCampaigns(
   return { homeCampaignModalAudience, topRightCampaignKind };
 }
 
-export function GoPlanSunsetDialog({ active }: Props) {
+export function GoPlanSunsetDialog({
+  active,
+  deliveryMode = 'demo',
+  currentPlanId = 'unknown',
+  locale = 'zh-CN',
+  metricsConsent = false,
+}: Props) {
+  const analytics = useAnalytics();
   const [open, setOpen] = useState(active);
   const dismissedRef = useRef(false);
+  const exposureTrackedRef = useRef(false);
   const dialogId = useId();
   const titleId = useId();
   const descriptionId = useId();
@@ -53,8 +72,24 @@ export function GoPlanSunsetDialog({ active }: Props) {
       setOpen(true);
     } else if (!active) {
       setOpen(false);
+      exposureTrackedRef.current = false;
     }
   }, [active]);
+
+  useEffect(() => {
+    if (!active || !open || exposureTrackedRef.current) return;
+    exposureTrackedRef.current = true;
+    trackGoPlanSunsetModalSurfaceView(analytics.track, {
+      page_name: 'home',
+      area: 'go_plan_sunset_modal',
+      element: 'modal',
+      campaign_id: 'go_plan_sunset_202608',
+      announcement_version: '2026_08_25',
+      delivery_mode: deliveryMode,
+      current_plan_id: currentPlanId,
+      locale,
+    });
+  }, [active, analytics.track, currentPlanId, deliveryMode, locale, open]);
 
   useEffect(() => {
     if (!active || !open || typeof document === 'undefined') return;
@@ -113,10 +148,45 @@ export function GoPlanSunsetDialog({ active }: Props) {
   if (!active || !open || typeof document === 'undefined') return null;
 
   const viewSubscriptions = () => {
-    window.open(GO_PLAN_PRICING_URL, '_blank', 'noopener,noreferrer');
+    trackGoPlanSunsetModalClick(analytics.track, {
+      page_name: 'home',
+      area: 'go_plan_sunset_modal',
+      element: 'view_other_subscriptions',
+      campaign_id: 'go_plan_sunset_202608',
+      announcement_version: '2026_08_25',
+      delivery_mode: deliveryMode,
+      current_plan_id: currentPlanId,
+      locale,
+    });
+    const attribution = recordAmrEntry(
+      analytics.track,
+      'go_plan_sunset_modal',
+      new Date(),
+      {
+        metricsConsent,
+        campaignId: 'go_plan_sunset_202608',
+        conversionSource: 'go_plan_sunset_modal',
+      },
+    );
+    window.open(
+      attributedAmrUrl(GO_PLAN_PRICING_URL, attribution),
+      '_blank',
+      'noopener,noreferrer',
+    );
   };
 
-  const dismiss = () => {
+  const dismiss = (element: 'acknowledge' | 'close') => {
+    trackGoPlanSunsetModalClick(analytics.track, {
+      page_name: 'home',
+      area: 'go_plan_sunset_modal',
+      element,
+      ...(element === 'close' ? { close_method: 'unknown' as const } : {}),
+      campaign_id: 'go_plan_sunset_202608',
+      announcement_version: '2026_08_25',
+      delivery_mode: deliveryMode,
+      current_plan_id: currentPlanId,
+      locale,
+    });
     dismissedRef.current = true;
     setOpen(false);
   };
@@ -127,7 +197,7 @@ export function GoPlanSunsetDialog({ active }: Props) {
       role="alertdialog"
       ariaLabelledBy={titleId}
       ariaDescribedBy={descriptionId}
-      onClose={dismiss}
+      onClose={() => dismiss('close')}
       closeOnEscape
       className={styles.panel}
       backdropClassName={styles.backdrop}
@@ -187,7 +257,7 @@ export function GoPlanSunsetDialog({ active }: Props) {
         <Button onClick={viewSubscriptions}>
           查看其他订阅
         </Button>
-        <Button variant="primary" onClick={dismiss}>
+        <Button variant="primary" onClick={() => dismiss('acknowledge')}>
           我知道了
         </Button>
       </footer>

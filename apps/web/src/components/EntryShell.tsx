@@ -607,7 +607,7 @@ export function EntryShell({
   onAmrLoginStatusChange,
   artifactUpgradeSlot,
 }: Props) {
-  const { t } = useI18n();
+  const { locale, t } = useI18n();
   // Each entry sub-view (home / projects / design-systems) is its own
   // URL now, so the browser back/forward buttons work and a deep link
   // to /design-systems lands on that section. We derive the active
@@ -1700,7 +1700,13 @@ export function EntryShell({
               lives in the rail footer, and everything below is fixed-position
               or portalled so it occupies no layout space here. */}
           <WhatsNewPopup active={shouldShowWhatsNewPopup(view === 'home', goPlanSunsetDemo)} />
-          <GoPlanSunsetDialog active={view === 'home' && goPlanSunsetDemo} />
+          <GoPlanSunsetDialog
+            active={view === 'home' && goPlanSunsetDemo}
+            deliveryMode="demo"
+            currentPlanId={deepSeekCampaignPlan ?? 'unknown'}
+            locale={locale}
+            metricsConsent={config.telemetry?.metrics === true}
+          />
           {/* The campaign badge lives in EntryNavRail's top-right cluster so it
               stays beside the account module across every entry tab. */}
           {amrBalanceGateBlock ? (

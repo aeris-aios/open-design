@@ -9,9 +9,24 @@ import {
   shouldShowWhatsNewPopup,
 } from '../../src/components/GoPlanSunsetDialog';
 
+const track = vi.hoisted(() => vi.fn());
+
+vi.mock('../../src/analytics/provider', () => ({
+  useAnalytics: () => ({ track }),
+}));
+
+const trackingProps = {
+  deliveryMode: 'demo' as const,
+  currentPlanId: 'go',
+  locale: 'zh-CN',
+  metricsConsent: false,
+};
+
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.clearAllMocks();
+  window.localStorage.clear();
 });
 
 describe('GoPlanSunsetDialog', () => {
@@ -38,6 +53,94 @@ describe('GoPlanSunsetDialog', () => {
     expect(shouldShowWhatsNewPopup(false, false)).toBe(false);
   });
 
+  it('tracks one real announcement exposure with demo and plan dimensions', () => {
+    const { rerender } = render(
+      <GoPlanSunsetDialog active {...trackingProps} />,
+    );
+
+    expect(track).toHaveBeenCalledWith('surface_view', {
+      page_name: 'home',
+      area: 'go_plan_sunset_modal',
+      element: 'modal',
+      campaign_id: 'go_plan_sunset_202608',
+      announcement_version: '2026_08_25',
+      delivery_mode: 'demo',
+      current_plan_id: 'go',
+      locale: 'zh-CN',
+    }, undefined);
+
+    rerender(<GoPlanSunsetDialog active {...trackingProps} />);
+    expect(track.mock.calls.filter(([event]) => event === 'surface_view')).toHaveLength(1);
+  });
+
+  it('tracks the subscription action and carries the same entry attribution into Pricing', () => {
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null);
+    render(<GoPlanSunsetDialog active {...trackingProps} />);
+
+    fireEvent.click(screen.getByRole('button', { name: '查看其他订阅' }));
+
+    expect(track).toHaveBeenCalledWith('ui_click', expect.objectContaining({
+      page_name: 'home',
+      area: 'go_plan_sunset_modal',
+      element: 'view_other_subscriptions',
+      campaign_id: 'go_plan_sunset_202608',
+      delivery_mode: 'demo',
+      current_plan_id: 'go',
+    }), undefined);
+    expect(track).toHaveBeenCalledWith('ui_click', expect.objectContaining({
+      page_name: 'home',
+      area: 'amr_entry',
+      element: 'go_plan_sunset_modal',
+      action: 'click_amr_entry',
+      source_detail: 'go_plan_sunset_modal',
+      campaign_id: 'go_plan_sunset_202608',
+      conversion_source: 'go_plan_sunset_modal',
+    }), undefined);
+
+    const pricingUrl = new URL(open.mock.calls[0]![0] as string);
+    expect(`${pricingUrl.origin}${pricingUrl.pathname}`).toBe(
+      'https://open-design.ai/amr/dashboard',
+    );
+    expect(pricingUrl.searchParams.get('billing')).toBe('plan');
+    expect(pricingUrl.searchParams.get('od_entry_source')).toBe('go_plan_sunset_modal');
+    expect(pricingUrl.searchParams.get('od_campaign_id')).toBe('go_plan_sunset_202608');
+    expect(pricingUrl.searchParams.get('od_conversion_source')).toBe('go_plan_sunset_modal');
+    expect(pricingUrl.searchParams.get('od_entry_id')).toMatch(/^od-amr-/);
+  });
+
+  it('tracks acknowledgement separately from an implicit dialog close', () => {
+    const { rerender } = render(<GoPlanSunsetDialog active {...trackingProps} />);
+
+    fireEvent.click(screen.getByRole('button', { name: '我知道了' }));
+    expect(track).toHaveBeenCalledWith('ui_click', expect.objectContaining({
+      area: 'go_plan_sunset_modal',
+      element: 'acknowledge',
+    }), undefined);
+    expect(track.mock.calls.filter(([, props]) => (
+      props.area === 'go_plan_sunset_modal' && props.element === 'acknowledge'
+    ))).toHaveLength(1);
+
+    rerender(<GoPlanSunsetDialog active={false} {...trackingProps} />);
+    rerender(<GoPlanSunsetDialog active {...trackingProps} />);
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+  });
+
+  it('tracks Escape as an implicit close', () => {
+    render(<GoPlanSunsetDialog active {...trackingProps} />);
+
+    fireEvent.keyDown(document, { key: 'Escape' });
+
+    expect(track).toHaveBeenCalledWith('ui_click', expect.objectContaining({
+      area: 'go_plan_sunset_modal',
+      element: 'close',
+      close_method: 'unknown',
+    }), undefined);
+    expect(track.mock.calls.filter(([, props]) => (
+      props.area === 'go_plan_sunset_modal' && props.element === 'close'
+    ))).toHaveLength(1);
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+  });
+
   it('shows the announcement on an active Home demo and dismisses it', () => {
     render(<GoPlanSunsetDialog active />);
 
@@ -59,7 +162,9 @@ describe('GoPlanSunsetDialog', () => {
     fireEvent.click(screen.getByRole('button', { name: '查看其他订阅' }));
 
     expect(open).toHaveBeenCalledWith(
-      'https://open-design.ai/amr/dashboard?source=open_design&billing=plan',
+      expect.stringContaining(
+        'https://open-design.ai/amr/dashboard?source=open_design&billing=plan&',
+      ),
       '_blank',
       'noopener,noreferrer',
     );
