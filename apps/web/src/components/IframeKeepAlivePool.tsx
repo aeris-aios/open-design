@@ -415,6 +415,10 @@ const ClientPooledIframe = forwardRef<HTMLIFrameElement, PooledIframeProps>(func
   );
   const hostRef = useRef<HTMLDivElement | null>(null);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  const appliedForwardedRefRef = useRef<{
+    ref: Ref<HTMLIFrameElement> | undefined;
+    frame: HTMLIFrameElement;
+  } | null>(null);
   const propsRef = useRef<PooledIframeProps>({ cacheKey, src, ...props });
   const appliedAttributesRef = useRef<Set<string>>(new Set());
   const appliedStyleKeysRef = useRef<Set<string>>(new Set());
@@ -426,11 +430,15 @@ const ClientPooledIframe = forwardRef<HTMLIFrameElement, PooledIframeProps>(func
     const frame = pool.attach(cacheKey, host, () => document.createElement('iframe'));
     iframeRef.current = frame;
     return () => {
-      setForwardedRef(forwardedRef, null);
+      const applied = appliedForwardedRefRef.current;
+      if (applied?.frame === frame) {
+        setForwardedRef(applied.ref, null);
+        appliedForwardedRefRef.current = null;
+      }
       iframeRef.current = null;
       pool.release(cacheKey);
     };
-  }, [cacheKey, pool, poolKeyRevision, forwardedRef]);
+  }, [cacheKey, pool, poolKeyRevision]);
 
   useLayoutEffect(() => {
     const frame = iframeRef.current;
@@ -441,7 +449,11 @@ const ClientPooledIframe = forwardRef<HTMLIFrameElement, PooledIframeProps>(func
       appliedAttributesRef.current,
       appliedStyleKeysRef.current,
     );
+    const applied = appliedForwardedRefRef.current;
+    if (applied?.ref === forwardedRef && applied.frame === frame) return;
+    if (applied) setForwardedRef(applied.ref, null);
     setForwardedRef(forwardedRef, frame);
+    appliedForwardedRefRef.current = { ref: forwardedRef, frame };
   });
 
   return (
