@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   PREVIEW_OBSERVABILITY_BRIDGE_MARKER,
   PREVIEW_OBSERVABILITY_MESSAGE_TYPE,
+  PREVIEW_OBSERVABILITY_PROTOCOL_VERSION,
   buildPreviewObservabilityBridge,
   parsePreviewObservabilityMessage,
 } from '../../src/runtime/preview-observability.js';
@@ -21,6 +22,24 @@ describe('preview observability contract', () => {
     expect(bridge).toContain('detail.source_url = text(event && event.filename, 1000)');
     expect(bridge).toContain('var MAX_EVENTS = 12');
     expect(bridge).not.toContain('JSON.stringify(arguments)');
+  });
+
+  // OPEND-2147: a deck whose stage collapses to scale ~0 renders as an empty
+  // frame, but every existing signal stays clean -- the artifact loaded, no
+  // script threw, and `visiblePaintCount()` still sees painted chrome, so
+  // `white_screen` never fires. The frame is sized and the content is simply
+  // scaled out of existence. Without a dedicated probe the failure leaves no
+  // trace at all, which is exactly why it took seven eliminations and still
+  // could not be reproduced. The bridge must carry its own measurement.
+  it('probes a sized deck frame whose stage collapsed to no scale', () => {
+    const bridge = buildPreviewObservabilityBridge();
+    expect(bridge).toContain('deck_stage_unscaled');
+    // The measurement has to be self-describing in the exported log: without
+    // the frame size, the authored canvas size, and the resolved scale we
+    // cannot tell a collapsed stage from a legitimately tiny frame.
+    for (const field of ['stage_scale_permille', 'stage_transform', 'stage_width', 'canvas_width', 'elapsed_ms']) {
+      expect(bridge).toContain(field);
+    }
   });
 
   it('accepts only the versioned preview observability wire shape', () => {
@@ -67,6 +86,30 @@ describe('preview observability contract', () => {
       sample_interval_ms: 1_500,
     });
     expect(parsed).not.toHaveProperty('ignored');
+  });
+
+  it('accepts the deck stage measurement as a versioned event', () => {
+    expect(parsePreviewObservabilityMessage({
+      type: PREVIEW_OBSERVABILITY_MESSAGE_TYPE,
+      version: PREVIEW_OBSERVABILITY_PROTOCOL_VERSION,
+      event: 'deck_stage_unscaled',
+      stage_scale_permille: 0,
+      stage_transform: 'matrix',
+      stage_width: 0,
+      stage_height: 0,
+      canvas_width: 1920,
+      canvas_height: 1080,
+      viewport_width: 1075,
+      viewport_height: 530,
+      elapsed_ms: 5000,
+    })).toMatchObject({
+      event: 'deck_stage_unscaled',
+      stage_transform: 'matrix',
+      stage_width: 0,
+      canvas_width: 1920,
+      canvas_height: 1080,
+      elapsed_ms: 5000,
+    });
   });
 
   it('rejects known fields with invalid types', () => {

@@ -14,6 +14,13 @@ export const PREVIEW_OBSERVABILITY_HOST_STATE_MESSAGE_TYPE =
 export const PREVIEW_OBSERVABILITY_PROTOCOL_VERSION = 1;
 export const PREVIEW_OBSERVABILITY_BRIDGE_MARKER = 'data-od-preview-observability';
 export const PREVIEW_WHITE_SCREEN_TIMEOUT_MS = 5_000;
+// A deck stage that is still collapsed this long after load is not mid-layout.
+// The artifact's own `fit()` plus the host's layout chase both settle well
+// inside a second on a healthy run, so anything measured here is the failure.
+export const PREVIEW_DECK_STAGE_TIMEOUT_MS = 5_000;
+// Below this the stage occupies no meaningful area: at 1920px authored width a
+// scale of 0.005 renders under 10 physical pixels.
+export const PREVIEW_DECK_STAGE_MIN_SCALE = 0.01;
 export const PREVIEW_WHITE_SCREEN_CONFIRMATION_MS = 1_500;
 export const PREVIEW_BASE_SCOPE_MESSAGE_TYPE = 'od:preview-base-scope';
 export const PREVIEW_BASE_UPDATE_MESSAGE_TYPE = 'od:preview-base-update';
@@ -81,7 +88,8 @@ export type PreviewObservabilityEvent =
   | 'unhandled_rejection'
   | 'console_error'
   | 'resource_error'
-  | 'white_screen';
+  | 'white_screen'
+  | 'deck_stage_unscaled';
 
 export interface PreviewObservabilityMessage {
   type: typeof PREVIEW_OBSERVABILITY_MESSAGE_TYPE;
@@ -103,6 +111,18 @@ export interface PreviewObservabilityMessage {
   viewport_height?: number;
   blank_observation_count?: number;
   sample_interval_ms?: number;
+  // OPEND-2147 deck stage measurement. The scale travels as an integer
+  // per-mille because the normalizer below only admits bounded non-negative
+  // integers: a fractional 0.4907 would round to 0 and read as a collapsed
+  // stage. `stage_transform` separates "fitted to nothing" from "never fitted
+  // at all", which one number cannot express.
+  stage_scale_permille?: number;
+  stage_transform?: string;
+  stage_width?: number;
+  stage_height?: number;
+  canvas_width?: number;
+  canvas_height?: number;
+  elapsed_ms?: number;
 }
 
 const EVENT_NAMES = new Set<PreviewObservabilityEvent>([
@@ -111,6 +131,7 @@ const EVENT_NAMES = new Set<PreviewObservabilityEvent>([
   'console_error',
   'resource_error',
   'white_screen',
+  'deck_stage_unscaled',
 ]);
 
 type PreviewStringField =
@@ -121,7 +142,8 @@ type PreviewStringField =
   | 'resource_tag'
   | 'resource_url'
   | 'ready_state'
-  | 'visibility_state';
+  | 'visibility_state'
+  | 'stage_transform';
 
 const STRING_FIELD_LIMITS: ReadonlyArray<readonly [PreviewStringField, number]> = [
   ['message', 500],
@@ -132,6 +154,7 @@ const STRING_FIELD_LIMITS: ReadonlyArray<readonly [PreviewStringField, number]> 
   ['resource_url', 1_000],
   ['ready_state', 32],
   ['visibility_state', 32],
+  ['stage_transform', 32],
 ];
 
 type PreviewNumberField =
@@ -142,7 +165,13 @@ type PreviewNumberField =
   | 'viewport_width'
   | 'viewport_height'
   | 'blank_observation_count'
-  | 'sample_interval_ms';
+  | 'sample_interval_ms'
+  | 'stage_scale_permille'
+  | 'stage_width'
+  | 'stage_height'
+  | 'canvas_width'
+  | 'canvas_height'
+  | 'elapsed_ms';
 
 const NUMBER_FIELDS: readonly PreviewNumberField[] = [
   'line',
@@ -153,6 +182,12 @@ const NUMBER_FIELDS: readonly PreviewNumberField[] = [
   'viewport_height',
   'blank_observation_count',
   'sample_interval_ms',
+  'stage_scale_permille',
+  'stage_width',
+  'stage_height',
+  'canvas_width',
+  'canvas_height',
+  'elapsed_ms',
 ];
 
 const MAX_PREVIEW_OBSERVABILITY_NUMBER = 10_000_000;
@@ -206,6 +241,9 @@ export function buildPreviewObservabilityBridge(): string {
   var TYPE = ${JSON.stringify(PREVIEW_OBSERVABILITY_MESSAGE_TYPE)};
   var VERSION = ${PREVIEW_OBSERVABILITY_PROTOCOL_VERSION};
   var WHITE_SCREEN_TIMEOUT = ${PREVIEW_WHITE_SCREEN_TIMEOUT_MS};
+  var DECK_STAGE_TIMEOUT = ${PREVIEW_DECK_STAGE_TIMEOUT_MS};
+  var DECK_STAGE_MIN_SCALE = ${PREVIEW_DECK_STAGE_MIN_SCALE};
+  var bridgeStartedAt = Date.now();
   var WHITE_SCREEN_CONFIRMATION_DELAY = ${PREVIEW_WHITE_SCREEN_CONFIRMATION_MS};
   var HOST_STATE_TYPE = ${JSON.stringify(PREVIEW_OBSERVABILITY_HOST_STATE_MESSAGE_TYPE)};
   var MAX_EVENTS = 12;
@@ -335,6 +373,8 @@ export function buildPreviewObservabilityBridge(): string {
     whiteScreenCheckTimer = null;
     whiteScreenConfirmationTimer = null;
   }
+  var deckStageReported = false;
+  var deckStageCheckTimer = null;
   function whiteScreenCheckEligible(){
     return hostActive &&
       document.readyState === 'complete' &&
@@ -380,6 +420,81 @@ export function buildPreviewObservabilityBridge(): string {
   function scheduleWhiteScreenCheckWhenEligible(){
     if (whiteScreenCheckEligible()) scheduleWhiteScreenCheck(WHITE_SCREEN_TIMEOUT);
   }
+  // OPEND-2147. A deck sizes itself by scaling an authored fixed canvas (the
+  // --canvas-w / --canvas-h custom properties the deck templates declare)
+  // down to the frame. When that scale resolves to ~0 the slide is still in the
+  // DOM and still paints, so visiblePaintCount() stays non-zero and no other
+  // probe here fires -- the user simply sees an empty frame. The failure has
+  // been observed once in the wild and has so far resisted reproduction, so
+  // this reports the measurement instead of guessing a cause: frame size,
+  // authored canvas size, resolved scale and document state together are what
+  // separate a collapsed stage from a frame legitimately laid out at no width.
+  function readCanvasPx(style, name){
+    if (!style) return 0;
+    var raw = String(style.getPropertyValue(name) || '').trim();
+    if (!raw) return 0;
+    var parsed = parseFloat(raw);
+    return isFinite(parsed) && parsed > 0 ? Math.round(parsed) : 0;
+  }
+  function resolvedScale(style){
+    // transform computes to a matrix whose first component is the horizontal
+    // scale. none means the artifact never applied its fit at all, which is a
+    // different failure from fitting to zero, so it reports -1 rather than
+    // being normalized to an innocent-looking 1.
+    var raw = String(style && style.transform || '').trim();
+    if (!raw || raw === 'none') return -1;
+    var open = raw.indexOf('(');
+    var close = raw.lastIndexOf(')');
+    if (open < 0 || close <= open) return -1;
+    var first = parseFloat(raw.slice(open + 1, close).split(',')[0]);
+    return isFinite(first) ? first : -1;
+  }
+  function checkDeckStage(){
+    if (deckStageReported || !whiteScreenCheckEligible()) return;
+    var stage = document.querySelector('.stage');
+    if (!stage) return;
+    var rootStyle, stageStyle, rect;
+    try {
+      rootStyle = window.getComputedStyle(document.documentElement);
+      stageStyle = window.getComputedStyle(stage);
+      rect = stage.getBoundingClientRect();
+    } catch (_) { return; }
+    var canvasW = readCanvasPx(rootStyle, '--canvas-w') || readCanvasPx(stageStyle, '--canvas-w');
+    var canvasH = readCanvasPx(rootStyle, '--canvas-h') || readCanvasPx(stageStyle, '--canvas-h');
+    // No authored canvas means this is not a fixed-canvas deck, so there is no
+    // fit contract to violate and nothing to report.
+    if (!canvasW) return;
+    var scale = resolvedScale(stageStyle);
+    if (scale > DECK_STAGE_MIN_SCALE) { deckStageReported = true; return; }
+    deckStageReported = true;
+    send('deck_stage_unscaled', {
+      stage_transform: scale < 0 ? 'none' : 'matrix',
+      stage_scale_permille: scale < 0 ? 0 : Math.round(scale * 1000),
+      stage_width: Math.round(rect.width),
+      stage_height: Math.round(rect.height),
+      canvas_width: canvasW,
+      canvas_height: canvasH,
+      viewport_width: Math.max(0, Math.round(window.innerWidth || 0)),
+      viewport_height: Math.max(0, Math.round(window.innerHeight || 0)),
+      ready_state: text(document.readyState, 32),
+      visibility_state: text(document.visibilityState, 32),
+      elapsed_ms: Math.max(0, Date.now() - bridgeStartedAt)
+    });
+  }
+  function scheduleDeckStageCheckWhenEligible(){
+    if (deckStageReported || deckStageCheckTimer !== null || !whiteScreenCheckEligible()) return;
+    deckStageCheckTimer = setTimeout(function(){
+      deckStageCheckTimer = null;
+      checkDeckStage();
+    }, DECK_STAGE_TIMEOUT);
+  }
+  // One lifecycle for both settled checks: they answer different questions
+  // about the same moment -- "did anything paint" and "did the deck fit" -- and
+  // must not drift apart on when they are allowed to run.
+  function scheduleSettledChecksWhenEligible(){
+    scheduleWhiteScreenCheckWhenEligible();
+    scheduleDeckStageCheckWhenEligible();
+  }
   window.addEventListener('message', function(event){
     var data = event && event.data;
     if (!data || data.type !== HOST_STATE_TYPE || typeof data.active !== 'boolean') return;
@@ -387,15 +502,19 @@ export function buildPreviewObservabilityBridge(): string {
     hostActive = data.active;
     if (!hostActive) {
       clearWhiteScreenTimers();
+      if (deckStageCheckTimer !== null) {
+        clearTimeout(deckStageCheckTimer);
+        deckStageCheckTimer = null;
+      }
       return;
     }
-    scheduleWhiteScreenCheckWhenEligible();
+    scheduleSettledChecksWhenEligible();
   });
-  if (document.readyState === 'complete') scheduleWhiteScreenCheckWhenEligible();
-  else window.addEventListener('load', scheduleWhiteScreenCheckWhenEligible, { once: true });
-  document.addEventListener('visibilitychange', scheduleWhiteScreenCheckWhenEligible);
-  window.addEventListener('resize', scheduleWhiteScreenCheckWhenEligible);
-  setTimeout(scheduleWhiteScreenCheckWhenEligible, WHITE_SCREEN_TIMEOUT * 2);
+  if (document.readyState === 'complete') scheduleSettledChecksWhenEligible();
+  else window.addEventListener('load', scheduleSettledChecksWhenEligible, { once: true });
+  document.addEventListener('visibilitychange', scheduleSettledChecksWhenEligible);
+  window.addEventListener('resize', scheduleSettledChecksWhenEligible);
+  setTimeout(scheduleSettledChecksWhenEligible, WHITE_SCREEN_TIMEOUT * 2);
 })();
 </script>`;
 }
