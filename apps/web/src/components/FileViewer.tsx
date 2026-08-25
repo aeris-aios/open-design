@@ -26,6 +26,7 @@ import {
   type WorkspaceCollabContext,
 } from '@open-design/contracts';
 import { PREVIEW_OBSERVABILITY_HOST_STATE_MESSAGE_TYPE } from '@open-design/contracts/runtime/preview-observability';
+import { replayPreviewBridgeModes as replayPreviewBridgeModeState } from '../runtime/replay-preview-bridge-modes';
 import {
   appendResourceQuery,
   workspaceIdentityCacheKey,
@@ -10930,8 +10931,6 @@ function HtmlViewer({
     }, '*');
   }, [mode, workspaceActive]);
   const replayPreviewBridgeModes = useCallback((target: HTMLIFrameElement | null) => {
-    postPreviewObservabilityHostState(target);
-    if (!workspaceActive) return;
     const win = target?.contentWindow;
     if (!win) return;
     const verified = verifiedSrcDocTransportRef.current;
@@ -10942,34 +10941,27 @@ function HtmlViewer({
     ) {
       postAndConsumePreviewRuntimeState(target);
     }
-    win.postMessage({
-      type: 'od:comment-mode',
-      enabled: boardMode,
-      mode: boardTool,
-    }, '*');
-    win.postMessage({ type: 'od-edit-mode', enabled: manualEditMode }, '*');
-    win.postMessage({
-      type: 'od-edit-selected-target',
-      id: manualEditMode ? selectedManualEditTarget?.id ?? null : null,
-    }, '*');
-    if (manualEditMode) {
-      for (const [id, preview] of manualEditLiveStylesRef.current) {
-        win.postMessage({
-          type: 'od-edit-preview-style',
-          id,
-          styles: preview.styles,
-          version: preview.version,
-        }, '*');
-      }
-    }
-    win.postMessage({ type: 'od:inspect-mode', enabled: inspectMode }, '*');
+    replayPreviewBridgeModeState(win, {
+      active: workspaceActive && mode === 'preview',
+      workspaceActive,
+      commentEnabled: boardMode,
+      commentMode: boardTool,
+      editEnabled: manualEditMode,
+      selectedEditTargetId: selectedManualEditTarget?.id ?? null,
+      editLiveStyles: Array.from(manualEditLiveStylesRef.current, ([id, preview]) => ({
+        id,
+        styles: preview.styles,
+        version: preview.version,
+      })),
+      inspectEnabled: inspectMode,
+    });
   }, [
     boardMode,
     boardTool,
     inspectMode,
     manualEditMode,
+    mode,
     postAndConsumePreviewRuntimeState,
-    postPreviewObservabilityHostState,
     selectedManualEditTarget?.id,
     workspaceActive,
   ]);
