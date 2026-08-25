@@ -11804,6 +11804,20 @@ export async function startServer({
         startRequestedAt: run.analyticsTelemetry?.startRequestedAt ?? run.createdAt,
       };
       persistRunAttemptAnchor(db, run);
+      // Checkpoint the run itself, not just the transcript row. `emit` only
+      // persists `state.json` on `start`, `error`, and `end`, and neither
+      // `run_retry_attempted` nor the queued backoff crosses one of those — so
+      // a daemon that dies anywhere in the 250-1000ms backoff would restart
+      // from the PREVIOUS attempt's snapshot while the transcript already names
+      // this one, and `/api/runs/:id`, reattach, and the message clock would
+      // disagree after recovery. The manual-resume boundary
+      // (`resumeForRecharge`) already checkpoints for the same reason; the
+      // automatic retry boundary did not.
+      //
+      // Written after the row on purpose: SQLite and a JSON file cannot be made
+      // atomic, so if the process dies between the two the surviving write is
+      // the one the message clock actually renders.
+      design.runs.persistState(run);
     };
     const spawnRetryAttempt = (retryChatBody = chatBody) => {
       openRetryAttemptBoundary();

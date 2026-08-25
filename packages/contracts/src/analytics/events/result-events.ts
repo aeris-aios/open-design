@@ -633,6 +633,17 @@ export interface RunFinishedProps extends Omit<RunCreatedProps, 'area'> {
   /** Compacted event count in the terminal message snapshot. */
   message_event_final_event_count?: number;
   message_event_persistence_error_count?: number;
+  /**
+   * Per-attempt clock anchor persistence. The transcript row's `attempt_*` pair
+   * is what a reload renders as elapsed time, so a rejected write is a
+   * user-visible defect (the cumulative run clock returns), not a missing
+   * metric. `error_count` counts rejected writes, `repair_count` counts the
+   * ones a later durable boundary landed, and `pending` is true when the run
+   * ended with the transcript still behind the attempt it reported.
+   */
+  message_event_attempt_anchor_error_count?: number;
+  message_event_attempt_anchor_repair_count?: number;
+  message_event_attempt_anchor_pending?: boolean;
   retry_original_failure_category?: TrackingRunFailureCategory;
   retry_original_failure_detail?: TrackingRunFailureDetail;
   retry_original_failure_stage?: TrackingRunFailureStage;

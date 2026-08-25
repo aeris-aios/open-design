@@ -8,7 +8,7 @@ import {
   finalizeMessageAgentEvents,
   upsertMessage,
 } from '../db.js';
-import { runAttemptAnchor } from '../run-lifecycle-tracer.js';
+import { runAttemptAnchor, type RunAttemptAnchor } from '../run-lifecycle-tracer.js';
 
 type SqliteDb = Database.Database;
 
@@ -56,6 +56,12 @@ export type RunMessageEventPersistenceTelemetry = {
   finalizeMaxMs: number;
   finalEventCount: number;
   persistenceErrorCount: number;
+  // The attempt clock's own persistence, counted separately from message
+  // events. The row's `attempt_*` pair is what a refresh renders as elapsed
+  // time, so a rejected write here is a user-visible defect (the cumulative
+  // clock comes back), not a missing analytics field.
+  attemptAnchorErrorCount: number;
+  attemptAnchorRepairCount: number;
 };
 
 type RunMessageEventPersistenceAnalytics = Pick<
@@ -75,6 +81,9 @@ type RunMessageEventPersistenceAnalytics = Pick<
   | 'message_event_finalize_max_ms'
   | 'message_event_final_event_count'
   | 'message_event_persistence_error_count'
+  | 'message_event_attempt_anchor_error_count'
+  | 'message_event_attempt_anchor_repair_count'
+  | 'message_event_attempt_anchor_pending'
 >;
 
 export const RUN_MESSAGE_EVENT_FLUSH_INTERVAL_MS = 250;
@@ -85,6 +94,14 @@ const messageEventPersistenceTelemetry = new WeakMap<
   ChatRunMessageState,
   RunMessageEventPersistenceTelemetry
 >();
+/**
+ * Anchors the database refused, kept so the next durable boundary can land
+ * them. Present means the transcript row is BEHIND what the run reports; empty
+ * means the two agree.
+ */
+const pendingAttemptAnchors = new WeakMap<ChatRunMessageState, RunAttemptAnchor>();
+/** One warning per run: a broken database would otherwise log per event. */
+const attemptAnchorFaultWarned = new WeakSet<ChatRunMessageState>();
 
 function ensureRunMessageEventPersistenceTelemetry(
   run: ChatRunMessageState,
@@ -107,6 +124,8 @@ function ensureRunMessageEventPersistenceTelemetry(
       finalizeMaxMs: 0,
       finalEventCount: 0,
       persistenceErrorCount: 0,
+      attemptAnchorErrorCount: 0,
+      attemptAnchorRepairCount: 0,
     };
     messageEventPersistenceTelemetry.set(run, telemetry);
   }
@@ -141,6 +160,9 @@ export function runMessageEventPersistenceAnalytics(
     message_event_finalize_max_ms: Math.round(telemetry.finalizeMaxMs),
     message_event_final_event_count: telemetry.finalEventCount,
     message_event_persistence_error_count: telemetry.persistenceErrorCount,
+    message_event_attempt_anchor_error_count: telemetry.attemptAnchorErrorCount,
+    message_event_attempt_anchor_repair_count: telemetry.attemptAnchorRepairCount,
+    message_event_attempt_anchor_pending: pendingAttemptAnchors.has(run),
   };
 }
 
@@ -165,8 +187,12 @@ export function persistRunEventToAssistantMessage(
   // the persisted row are then the same number by construction, so a refresh
   // cannot make the clock jump.
   if (event === 'start') {
-    stampAssistantMessageAttemptStart(db, run.assistantMessageId, data);
+    stampAssistantMessageAttemptStart(db, run, run.assistantMessageId, data);
   }
+  // Cheapest boundary that recurs during a live attempt: if an earlier anchor
+  // write was rejected, land it now rather than leaving the transcript a whole
+  // attempt behind the status the same client is polling.
+  retryPendingAttemptAnchor(db, run);
   const persisted = runSseEventToPersistedAgentEvent(event, data);
   if (!persisted) {
     if (event === 'end' || event === 'close') flushRunMessageEvents(run);
@@ -229,8 +255,8 @@ export function persistRunEventToAssistantMessage(
 function writeAssistantMessageAttemptAnchor(
   db: SqliteDb,
   messageId: string,
-  anchor: { attemptStartedAt: number; attemptIndex: number },
-): void {
+  anchor: RunAttemptAnchor,
+): { ok: true } | { ok: false; error: unknown } {
   try {
     db.prepare(
       `UPDATE messages
@@ -238,14 +264,89 @@ function writeAssistantMessageAttemptAnchor(
         WHERE id = ?
           AND (attempt_started_at IS NULL OR attempt_started_at <= ?)`,
     ).run(anchor.attemptStartedAt, anchor.attemptIndex, messageId, anchor.attemptStartedAt);
-  } catch (err) {
-    // The clock is a display affordance; never let it break the run.
-    console.warn('[runs] attempt clock persistence failed', err);
+    return { ok: true };
+  } catch (error) {
+    // Reported, never thrown: see recordAttemptAnchorFault for why no call site
+    // here can afford an exception.
+    return { ok: false, error };
+  }
+}
+
+/**
+ * Record a rejected anchor write so it is neither lost nor fatal.
+ *
+ * The write itself is PRODUCT behaviour: the row's `attempt_*` pair is what a
+ * refresh renders as elapsed time, so dropping it silently puts the cumulative
+ * "running for 171 minutes" clock back on screen. It therefore gets a retry and
+ * a counter rather than a `console.warn` and a shrug.
+ *
+ * It still must not throw. Every writer sits on the run's critical path — the
+ * retry timer callback and the `send` choke point every stream event passes
+ * through — so propagating a database error here would cost the user the whole
+ * run to save a timestamp. The bookkeeping below is the only part that is
+ * telemetry, and it is contained to itself for the same reason.
+ */
+function recordAttemptAnchorFault(
+  run: ChatRunMessageState,
+  messageId: string,
+  anchor: RunAttemptAnchor,
+  err: unknown,
+): void {
+  try {
+    pendingAttemptAnchors.set(run, anchor);
+    ensureRunMessageEventPersistenceTelemetry(run).attemptAnchorErrorCount += 1;
+    if (attemptAnchorFaultWarned.has(run)) return;
+    attemptAnchorFaultWarned.add(run);
+    console.warn(
+      `[runs] attempt clock persistence failed for message ${messageId}; the transcript clock will be repaired at the next durable boundary`,
+      err,
+    );
+  } catch {
+    // Bookkeeping must never be the thing that breaks a run.
+  }
+}
+
+/** Apply an anchor and, on failure, queue it for the next durable boundary. */
+function writeRunAttemptAnchor(
+  db: SqliteDb,
+  run: ChatRunMessageState,
+  messageId: string,
+  anchor: RunAttemptAnchor,
+): void {
+  const result = writeAssistantMessageAttemptAnchor(db, messageId, anchor);
+  if (result.ok) {
+    pendingAttemptAnchors.delete(run);
+    return;
+  }
+  recordAttemptAnchorFault(run, messageId, anchor, result.error);
+}
+
+/**
+ * Land an anchor an earlier write could not.
+ *
+ * Called from the boundaries the run already crosses on its own — every
+ * persisted event, and the terminal finalize — so a transient database failure
+ * heals within one event instead of leaving the transcript permanently one
+ * attempt behind what `/api/runs/:id` reports. A no-op (one WeakMap lookup)
+ * when nothing is pending, which is every run that has not hit a fault.
+ */
+function retryPendingAttemptAnchor(db: SqliteDb, run: ChatRunMessageState): void {
+  const pending = pendingAttemptAnchors.get(run);
+  if (!pending || !run.assistantMessageId) return;
+  // Still refused: keep it queued for the next boundary. The fault was already
+  // counted and warned about when it was first observed.
+  if (!writeAssistantMessageAttemptAnchor(db, run.assistantMessageId, pending).ok) return;
+  pendingAttemptAnchors.delete(run);
+  try {
+    ensureRunMessageEventPersistenceTelemetry(run).attemptAnchorRepairCount += 1;
+  } catch {
+    // See recordAttemptAnchorFault: counters never gate the repair.
   }
 }
 
 function stampAssistantMessageAttemptStart(
   db: SqliteDb,
+  run: ChatRunMessageState,
   messageId: string,
   data: unknown,
 ): void {
@@ -256,7 +357,7 @@ function stampAssistantMessageAttemptStart(
     typeof data.attemptIndex === 'number' && Number.isFinite(data.attemptIndex)
       ? data.attemptIndex
       : 0;
-  writeAssistantMessageAttemptAnchor(db, messageId, { attemptStartedAt, attemptIndex });
+  writeRunAttemptAnchor(db, run, messageId, { attemptStartedAt, attemptIndex });
 }
 
 /**
@@ -274,7 +375,7 @@ export function persistRunAttemptAnchor(db: SqliteDb, run: ChatRunMessageState):
   if (!run.assistantMessageId) return;
   const anchor = runAttemptAnchor(run);
   if (!anchor) return;
-  writeAssistantMessageAttemptAnchor(db, run.assistantMessageId, anchor);
+  writeRunAttemptAnchor(db, run, run.assistantMessageId, anchor);
 }
 
 function appendPendingMessageEvent(
@@ -324,6 +425,9 @@ export function finalizeRunMessageEvents(
 ): void {
   flushRunMessageEvents(run);
   if (!run.assistantMessageId) return;
+  // Terminal boundary: the run will not emit another event, so this is the last
+  // moment a rejected anchor can still reach the row a reload will render.
+  retryPendingAttemptAnchor(db, run);
   const telemetry = ensureRunMessageEventPersistenceTelemetry(run);
   if (finalizedInputEventCounts.get(run) === telemetry.inputEventCount) return;
   telemetry.finalizeCount += 1;

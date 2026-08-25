@@ -26,72 +26,30 @@
 // Before the fix: both fields are absent, so the only start time a client can
 // read is `createdAt` -- attempt 0's -- which is exactly the 171-minute bug.
 
-import type { Server } from 'node:http';
-import { randomUUID } from 'node:crypto';
-import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { startServer } from '../src/server.js';
-
-type StartedServer = {
-  url: string;
-  server: Server;
-  shutdown?: () => Promise<void> | void;
-};
-
-type RunDiagnosticValue = { state: string; value?: number };
-
-type RunStatus = {
-  id: string;
-  status: string;
-  createdAt: number;
-  updatedAt: number;
-  exitCode: number | null;
-  eventsLogPath: string | null;
-  // The fields under test. Absent before the fix.
-  attemptStartedAt?: number | null;
-  attemptIndex?: number;
-  executionDiagnostics?: {
-    timing?: {
-      queueDurationMs?: RunDiagnosticValue;
-      retryWaitDurationMs?: RunDiagnosticValue;
-    };
-  };
-};
-
-type ConversationMessage = {
-  id: string;
-  role: string;
-  startedAt?: number;
-  endedAt?: number;
-  attemptStartedAt?: number;
-  attemptIndex?: number;
-};
-
-type RunEventRecord = {
-  id: number;
-  event: string;
-  data: Record<string, unknown>;
-  timestamp: number;
-};
-
-// Attempt 0 must hang long enough for the watchdog to be the thing that fails
-// it, and the watchdog window must comfortably outlast daemon startup work, or
-// the run fails for the wrong reason and the retry never happens.
-const INACTIVITY_TIMEOUT_MS = 1_200;
+import {
+  configureFakeClaude,
+  createAndWaitForRun,
+  fetchConversationMessages,
+  fetchRunStatus,
+  INACTIVITY_TIMEOUT_MS,
+  readRunEvents,
+  restoreEnv,
+  silenceTelemetryEnv,
+  snapshotTelemetryEnv,
+  writeHangThenSucceedClaude,
+  type ConversationMessage,
+  type RunStatus,
+  type StartedServer,
+} from './run-attempt-clock-harness.js';
 
 describe('per-attempt run clock (red spec)', () => {
-  const originalEnv = {
-    POSTHOG_KEY: process.env.POSTHOG_KEY,
-    POSTHOG_HOST: process.env.POSTHOG_HOST,
-    LANGFUSE_PUBLIC_KEY: process.env.LANGFUSE_PUBLIC_KEY,
-    LANGFUSE_SECRET_KEY: process.env.LANGFUSE_SECRET_KEY,
-    LANGFUSE_BASE_URL: process.env.LANGFUSE_BASE_URL,
-    OPEN_DESIGN_TELEMETRY_RELAY_URL: process.env.OPEN_DESIGN_TELEMETRY_RELAY_URL,
-    OD_CHAT_RUN_INACTIVITY_TIMEOUT_MS: process.env.OD_CHAT_RUN_INACTIVITY_TIMEOUT_MS,
-  };
+  const originalEnv = snapshotTelemetryEnv();
   let started: StartedServer | null = null;
   let binDir: string | null = null;
 
@@ -103,10 +61,7 @@ describe('per-attempt run clock (red spec)', () => {
     started = null;
     if (binDir) await rm(binDir, { recursive: true, force: true });
     binDir = null;
-    for (const [key, value] of Object.entries(originalEnv)) {
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
-    }
+    restoreEnv(originalEnv);
   });
 
   // One daemon + one fake CLI whose attempt 0 hangs until the inactivity
@@ -116,21 +71,11 @@ describe('per-attempt run clock (red spec)', () => {
     binDir = await mkdtemp(path.join(os.tmpdir(), 'od-attempt-clock-bin-'));
     const fakeClaude = await writeHangThenSucceedClaude(binDir, binName);
 
-    delete process.env.POSTHOG_KEY;
-    delete process.env.POSTHOG_HOST;
-    delete process.env.LANGFUSE_PUBLIC_KEY;
-    delete process.env.LANGFUSE_SECRET_KEY;
-    delete process.env.LANGFUSE_BASE_URL;
-    delete process.env.OPEN_DESIGN_TELEMETRY_RELAY_URL;
+    silenceTelemetryEnv();
     process.env.OD_CHAT_RUN_INACTIVITY_TIMEOUT_MS = String(INACTIVITY_TIMEOUT_MS);
 
     started = await startServer({ port: 0, returnServer: true }) as StartedServer;
-    await putConfig(started.url, {
-      agentId: 'claude',
-      agentCliEnv: { claude: { CLAUDE_BIN: fakeClaude } },
-      telemetry: { metrics: true, content: false, artifactManifest: false },
-      privacyDecisionAt: Date.now(),
-    });
+    await configureFakeClaude(started.url, fakeClaude);
     return started.url;
   };
 
@@ -278,155 +223,3 @@ describe('per-attempt run clock (red spec)', () => {
     );
   }, 30_000);
 });
-
-async function writeHangThenSucceedClaude(dir: string, name: string): Promise<string> {
-  const bin = path.join(dir, name);
-  const counterPath = path.join(dir, `${name}-attempts`);
-  await writeFile(bin, `#!/usr/bin/env node
-const fs = require('node:fs');
-const counterPath = ${JSON.stringify(counterPath)};
-if (process.argv.includes('--version')) {
-  console.log('claude-code 1.0.0-attempt-clock');
-  process.exit(0);
-}
-if (process.argv.includes('--help')) {
-  console.log('Usage: claude -p [--include-partial-messages] [--add-dir DIR]');
-  process.exit(0);
-}
-// Count only real turn invocations. The daemon also spawns this bin for
-// side probes (\`claude auth status\`), which are neither --version nor --help;
-// counting those can consume attempt 0 before the turn starts, so the turn
-// takes the already-retried branch, succeeds immediately, and no retry ever
-// happens -- a flaky false green.
-if (!process.argv.includes('-p')) {
-  console.log(JSON.stringify({ type: 'system', subtype: 'init', model: 'claude-attempt-clock-test' }));
-  process.exit(0);
-}
-let attempts = 0;
-try { attempts = Number(fs.readFileSync(counterPath, 'utf8')) || 0; } catch {}
-fs.writeFileSync(counterPath, String(attempts + 1));
-console.log(JSON.stringify({ type: 'system', subtype: 'init', model: 'claude-attempt-clock-test' }));
-if (attempts === 0) {
-  // Announce, then produce nothing. The inactivity watchdog fails this attempt
-  // as a retryable no-output timeout, which is what schedules the same-run retry.
-  setTimeout(() => process.exit(0), 60000);
-} else {
-  // The retried attempt behaves normally: real text, a clean turn, exit 0.
-  console.log(JSON.stringify({
-    type: 'assistant',
-    message: {
-      id: 'msg-attempt-clock',
-      content: [{ type: 'text', text: 'recovered on the retried attempt' }],
-      stop_reason: 'end_turn',
-    },
-  }));
-  setTimeout(() => process.exit(0), 20);
-}
-`, 'utf8');
-  await chmod(bin, 0o755);
-  return bin;
-}
-
-async function putConfig(url: string, patch: Record<string, unknown>): Promise<void> {
-  const response = await fetch(`${url}/api/app-config`, {
-    method: 'PUT',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(patch),
-  });
-  expect(response.status).toBe(200);
-}
-
-async function readRunEvents(eventsLogPath: string | null): Promise<RunEventRecord[]> {
-  expect(typeof eventsLogPath).toBe('string');
-  const raw = await readFile(eventsLogPath as string, 'utf8');
-  return raw
-    .split('\n')
-    .filter((line) => line.trim().length > 0)
-    .map((line) => JSON.parse(line) as RunEventRecord);
-}
-
-async function fetchConversationMessages(
-  url: string,
-  projectId: string,
-  conversationId: string,
-): Promise<ConversationMessage[]> {
-  const response = await fetch(
-    `${url}/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/messages`,
-  );
-  expect(response.status).toBe(200);
-  const body = await response.json() as { messages?: ConversationMessage[] } | ConversationMessage[];
-  return Array.isArray(body) ? body : body.messages ?? [];
-}
-
-async function fetchRunStatus(url: string, runId: string): Promise<RunStatus> {
-  const response = await fetch(`${url}/api/runs/${encodeURIComponent(runId)}`);
-  expect(response.status).toBe(200);
-  return await response.json() as RunStatus;
-}
-
-interface RunPollContext {
-  projectId: string;
-  conversationId: string;
-  assistantMessageId: string;
-}
-
-async function createAndWaitForRun(url: string, opts?: {
-  /** Tight enough to land several samples inside a 250-1000ms retry backoff. */
-  pollIntervalMs?: number;
-  onPoll?: (run: RunStatus, ctx: RunPollContext) => Promise<void>;
-}): Promise<{
-  run: RunStatus;
-  projectId: string;
-  conversationId: string;
-  assistantMessageId: string;
-}> {
-  const projectId = `attempt_clock_${randomUUID()}`;
-  const assistantMessageId = `assistant_attempt_${randomUUID()}`;
-  const projectResponse = await fetch(`${url}/api/projects`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      id: projectId,
-      name: 'Per-attempt clock repro',
-      metadata: { kind: 'prototype' },
-      skipDiscoveryBrief: true,
-    }),
-  });
-  expect(projectResponse.status).toBe(200);
-  const projectBody = await projectResponse.json() as { conversationId: string };
-  const runResponse = await fetch(`${url}/api/runs`, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'x-od-analytics-device-id': 'attempt-clock-test',
-      'x-od-analytics-session-id': 'attempt-clock-session',
-      'x-od-analytics-client-type': 'web',
-    },
-    body: JSON.stringify({
-      projectId,
-      conversationId: projectBody.conversationId,
-      assistantMessageId,
-      clientRequestId: `client_attempt_${randomUUID()}`,
-      agentId: 'claude',
-      message: 'reproduce the per-attempt run clock',
-      currentPrompt: 'reproduce the per-attempt run clock',
-    }),
-  });
-  expect(runResponse.status).toBe(202);
-  const body = await runResponse.json() as { runId: string };
-  const ctx: RunPollContext = {
-    projectId,
-    conversationId: projectBody.conversationId,
-    assistantMessageId,
-  };
-  const waitStartedAt = Date.now();
-  while (Date.now() - waitStartedAt < 25_000) {
-    const run = await fetchRunStatus(url, body.runId);
-    if (['failed', 'succeeded', 'canceled'].includes(run.status)) {
-      return { run, ...ctx };
-    }
-    await opts?.onPoll?.(run, ctx);
-    await new Promise((resolve) => setTimeout(resolve, opts?.pollIntervalMs ?? 100));
-  }
-  throw new Error(`run ${body.runId} did not finish`);
-}
