@@ -7,9 +7,7 @@ import {
   mergeAgentModelChoice,
   persistComposioConfigChange,
   projectViewAuthorizationLifetimeKey,
-  firstOpenDownloadClaimIsWarranted,
   projectRouteSurfaceState,
-  releaseFirstOpenTeamMaterializationClaim,
   resolveDeepLinkedTeamSharedProject,
   resolveSettingsCloseConfig,
   shouldRouteToFirstRunOnboarding,
@@ -53,68 +51,6 @@ describe('projectRouteSurfaceState', () => {
     })).toBe('materialization-failed');
   });
 
-  // Red spec for OPEND-2095 ("共建文件首次下载时，下载状态指示未显示").
-  //
-  // A member's first-ever open of a team-shared project has NO local row yet,
-  // so `hasActiveProject` is false and ProjectView — which owns every existing
-  // download indicator (the design-files tab badge, the "syncing" empty state,
-  // the composer placeholder) — is deliberately not mounted yet. The route
-  // therefore spends the LONGEST part of the first open inside this function,
-  // and today it answers `resolving-deep-link`, which App renders as the
-  // generic "Loading workspace…" spinner. That spinner is indistinguishable
-  // from a wedged app while `PUT /collab/bootstrap` performs shared-owner
-  // discovery and starts the background content pull, which is exactly the
-  // "no download feedback, looks stuck" report.
-  //
-  // The lane must be nameable so the route can render a download-semantic
-  // surface for it instead of the anonymous spinner.
-  it('names the team first-open materialization lane instead of an anonymous deep-link resolve', () => {
-    expect(projectRouteSurfaceState({
-      projectsLoading: false,
-      hasActiveProject: false,
-      daemonLive: true,
-      firstOpenTeamMaterializing: true,
-    })).toBe('materializing-team-project');
-  });
-
-  // The exact-Team bootstrap deliberately starts while the ambient project
-  // list is still loading (see the deep-link effect in App). Both windows are
-  // plain loaders today, so the lane must survive that overlap — otherwise the
-  // download semantics vanish for precisely the cold-start case that is
-  // slowest.
-  it('keeps the materialization lane visible while the ambient project list loads', () => {
-    expect(projectRouteSurfaceState({
-      projectsLoading: true,
-      hasActiveProject: false,
-      daemonLive: true,
-      firstOpenTeamMaterializing: true,
-    })).toBe('materializing-team-project');
-  });
-
-  // The lane is a loader, never a way to outlive a bounded failure: a resolved
-  // project, a dead daemon, and a terminal deep-link failure all still win.
-  it('never lets the materialization lane mask a resolved project or a terminal failure', () => {
-    expect(projectRouteSurfaceState({
-      projectsLoading: false,
-      hasActiveProject: true,
-      daemonLive: true,
-      firstOpenTeamMaterializing: true,
-    })).toBe('ready');
-    expect(projectRouteSurfaceState({
-      projectsLoading: false,
-      hasActiveProject: false,
-      daemonLive: false,
-      firstOpenTeamMaterializing: true,
-    })).toBe('daemon-unavailable');
-    expect(projectRouteSurfaceState({
-      projectsLoading: false,
-      hasActiveProject: false,
-      daemonLive: true,
-      resolutionFailure: 'materialization-failed',
-      firstOpenTeamMaterializing: true,
-    })).toBe('materialization-failed');
-  });
-
   it('renders a loaded project regardless of stale failure metadata', () => {
     expect(projectRouteSurfaceState({
       projectsLoading: false,
@@ -122,79 +58,6 @@ describe('projectRouteSurfaceState', () => {
       daemonLive: true,
       resolutionFailure: 'missing',
     })).toBe('ready');
-  });
-});
-
-// Red spec for the review finding on PR #7350 (Looper/codex, App.tsx:4694).
-//
-// The deep-link effect that owns the "downloading a team project" indicator
-// depends on `projects`, `projectsLoading` and `daemonLive`. Any of those
-// changing while `bootstrapFirstOpenTeamProjectRoute` is still pending cancels
-// that run and starts a fresh one FOR THE SAME ROUTE, which claims the same
-// project id. Keyed on the project id, the cancelled run's cleanup then
-// retracts the LIVE run's claim while its bootstrap is still downloading — so
-// the anonymous "Loading workspace…" spinner comes back during exactly the
-// slow path this indicator exists to explain.
-// Red spec for the second review finding on PR #7350 (Looper/codex,
-// App.tsx:4629). `firstOpenTeamContext` is `exactOpenContext ?? deepLinkContext`.
-// On the ambient path that is just the shell's Workspace context: it proves the
-// user is in an active Team, but it does not name or authorize `projectId` —
-// this lane is reached precisely BECAUSE the local scope lookup returned
-// not-found. Claiming the download there shows "Syncing files from the team…"
-// over any missing / revoked / unauthorized project URL until the request
-// returns, i.e. it presents an unverified download as fact and changes a
-// failure surface this PR explicitly intends to leave untouched.
-describe('firstOpenDownloadClaimIsWarranted', () => {
-  it('never claims on an active Team context alone', () => {
-    // The unknown-project-id regression the reviewer asked for: a Team
-    // workspace is selected, but nothing has named this project.
-    expect(firstOpenDownloadClaimIsWarranted({
-      projectScopedWitness: false,
-      sharedProjectConfirmed: false,
-    })).toBe(false);
-  });
-
-  it('claims immediately for a project-scoped opening witness', () => {
-    expect(firstOpenDownloadClaimIsWarranted({
-      projectScopedWitness: true,
-      sharedProjectConfirmed: false,
-    })).toBe(true);
-  });
-
-  it('claims once the hub confirms the project is shared to this team', () => {
-    expect(firstOpenDownloadClaimIsWarranted({
-      projectScopedWitness: false,
-      sharedProjectConfirmed: true,
-    })).toBe(true);
-  });
-});
-
-describe('releaseFirstOpenTeamMaterializationClaim', () => {
-  it('lets a run retract its own claim', () => {
-    const claim = { projectId: 'p-1', run: 1 };
-    expect(releaseFirstOpenTeamMaterializationClaim(claim, claim)).toBeNull();
-  });
-
-  it('keeps a newer run\'s claim on the same project when an older run settles', () => {
-    // run 1 was cancelled by a dependency change; run 2 re-claimed the same
-    // route and is still downloading when run 1's promise finally settles.
-    const live = { projectId: 'p-1', run: 2 };
-    expect(
-      releaseFirstOpenTeamMaterializationClaim(live, { projectId: 'p-1', run: 1 }),
-    ).toEqual(live);
-  });
-
-  it('leaves an unrelated project\'s claim alone', () => {
-    const other = { projectId: 'p-2', run: 5 };
-    expect(
-      releaseFirstOpenTeamMaterializationClaim(other, { projectId: 'p-1', run: 4 }),
-    ).toEqual(other);
-  });
-
-  it('is a no-op when nothing is claimed', () => {
-    expect(
-      releaseFirstOpenTeamMaterializationClaim(null, { projectId: 'p-1', run: 1 }),
-    ).toBeNull();
   });
 });
 

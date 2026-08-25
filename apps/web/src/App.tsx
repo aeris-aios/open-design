@@ -114,7 +114,6 @@ import {
   isAmrSessionAuthenticated,
 } from './components/amrLoginPolling';
 import { CollabDemoView } from './collab/CollabDemoView';
-import { TeamProjectDownloadingView } from './components/TeamProjectDownloadingView';
 import {
   WorkspaceMemberDirectoryPreloader,
 } from './collab/WorkspaceMemberDirectoryPreloader';
@@ -717,12 +716,6 @@ export type ProjectRouteSurfaceState =
   | 'ready'
   | 'loading-projects'
   | 'resolving-deep-link'
-  // The exact-Team first-open lane: the hub has a project this daemon has no
-  // local row for, so ProjectView (which owns every download indicator) cannot
-  // mount yet while `PUT /collab/bootstrap` discovers the shared owner and
-  // starts the content pull. A named state so the route can say "downloading
-  // the team's files" instead of rendering an anonymous spinner.
-  | 'materializing-team-project'
   | 'missing'
   | 'materialization-failed'
   | 'daemon-unavailable';
@@ -743,83 +736,12 @@ export function projectRouteSurfaceState(input: {
   hasActiveProject: boolean;
   daemonLive: boolean;
   resolutionFailure?: 'missing' | 'materialization-failed';
-  /**
-   * The exact-Team first-open bootstrap is running for this route. Positive
-   * evidence, set only after a verified active Team context named the project:
-   * it is never inferred from "the row is missing", which is also how an
-   * unknown id looks.
-   */
-  firstOpenTeamMaterializing?: boolean;
 }): ProjectRouteSurfaceState {
   if (input.hasActiveProject) return 'ready';
-  // Only the two LOADER outcomes are refined. Every terminal outcome below
-  // keeps deciding exactly as before, so a stuck lane flag can never outlive a
-  // dead daemon or a bounded deep-link failure.
-  if (input.projectsLoading) {
-    return input.firstOpenTeamMaterializing
-      ? 'materializing-team-project'
-      : 'loading-projects';
-  }
+  if (input.projectsLoading) return 'loading-projects';
   if (!input.daemonLive) return 'daemon-unavailable';
   if (input.resolutionFailure) return input.resolutionFailure;
-  return input.firstOpenTeamMaterializing
-    ? 'materializing-team-project'
-    : 'resolving-deep-link';
-}
-
-/**
- * One run's claim on the "this route is downloading a team project" indicator.
- *
- * The project id alone is NOT a safe identity for the claim. The deep-link
- * effect that owns it also depends on `projects`, `projectsLoading` and
- * `daemonLive`, so any of those changing while `bootstrapFirstOpenTeamProjectRoute`
- * is still pending cancels that run and starts a FRESH one for the same route,
- * which re-claims the same project id.
- */
-export interface FirstOpenTeamMaterializationClaim {
-  projectId: string;
-  /** Monotonic per-effect-run id. Only the run that made a claim may release it. */
-  run: number;
-}
-
-/**
- * Whether the route may yet claim "this team's project is downloading".
- *
- * An active Team workspace does NOT authorize a project id. The first-open
- * lane is entered precisely because the local scope lookup returned
- * `not-found`, so a missing, revoked, or unauthorized project URL is
- * indistinguishable from a real first open until something names the project.
- * Two signals can do that, and nothing else may:
- *
- *  - a project-scoped opening witness (the user opened THIS project from a
- *    surface that already resolved it), or
- *  - `PUT /collab/bootstrap` answering 2xx, which is the hub confirming the
- *    project exists and is shared to this Team.
- *
- * Claiming on the ambient deep-link context alone presents an unverified
- * download as fact on a surface that is about to become "project missing".
- */
-export function firstOpenDownloadClaimIsWarranted(signals: {
-  projectScopedWitness: boolean;
-  sharedProjectConfirmed: boolean;
-}): boolean {
-  return signals.projectScopedWitness || signals.sharedProjectConfirmed;
-}
-
-/**
- * Release the indicator on behalf of one finished run.
- *
- * A run may only retract its OWN claim. Keyed on the project id instead, a
- * cancelled run's cleanup retracts the claim of the LIVE run that replaced it
- * — while that run's bootstrap is still downloading — and the anonymous
- * spinner returns during exactly the slow path this indicator exists to
- * explain.
- */
-export function releaseFirstOpenTeamMaterializationClaim(
-  current: FirstOpenTeamMaterializationClaim | null,
-  releasing: FirstOpenTeamMaterializationClaim,
-): FirstOpenTeamMaterializationClaim | null {
-  return current?.run === releasing.run ? null : current;
+  return 'resolving-deep-link';
 }
 
 /**
@@ -1088,18 +1010,6 @@ function AppInner() {
     failure: 'missing' | 'materialization-failed';
   } | null>(null);
   const [deepLinkRetryRevision, setDeepLinkRetryRevision] = useState(0);
-  // Which project the exact-Team first-open bootstrap is currently running
-  // for. ProjectView owns every download indicator but cannot mount before a
-  // local row exists, so without this the longest stretch of a member's first
-  // open renders the same anonymous "Loading workspace…" spinner as any other
-  // cold start (OPEND-2095).
-  const [firstOpenTeamMaterializing, setFirstOpenTeamMaterializing] =
-    useState<FirstOpenTeamMaterializationClaim | null>(null);
-  // Monotonic id for each run of the deep-link bootstrap effect below. The
-  // effect re-runs on `projects` / `projectsLoading` / `daemonLive` changes, so
-  // several runs can claim the SAME project id in sequence; only the run that
-  // made a claim may release it.
-  const firstOpenTeamMaterializingRunRef = useRef(0);
   const [settingsWelcome, setSettingsWelcome] = useState(false);
   const [settingsInitialSection, setSettingsInitialSection] = useState<SettingsSection>('execution');
   const [settingsHighlight, setSettingsHighlight] = useState<SettingsHighlight>(null);
@@ -4581,11 +4491,6 @@ function AppInner() {
     if (projects.some((p) => p.id === route.projectId)) return;
     let cancelled = false;
     const projectId = route.projectId;
-    // Identity for THIS run's indicator claim. A dependency change can cancel
-    // this run and start another for the same route; both would otherwise
-    // claim (and retract) the same project id.
-    const bootstrapRun = firstOpenTeamMaterializingRunRef.current + 1;
-    firstOpenTeamMaterializingRunRef.current = bootstrapRun;
     setDeepLinkResolutionFailure((current) =>
       current?.projectId === projectId ? null : current
     );
@@ -4647,37 +4552,9 @@ function AppInner() {
         && firstOpenTeamContext.memberStatus === 'active'
         && firstOpenTeamContext.lifecycleState === 'active'
       ) {
-        // Say the route is downloading — but only once something has actually
-        // named THIS project. `exactOpenContext` is a project-scoped witness,
-        // so it warrants the claim immediately; the ambient deep-link context
-        // only proves an active Team, so it must wait for the hub to confirm
-        // the project through `PUT /collab/bootstrap`. Cleared by the effect
-        // teardown below on every exit path.
-        const claimFirstOpenDownload = () => {
-          setFirstOpenTeamMaterializing({ projectId, run: bootstrapRun });
-        };
-        if (
-          firstOpenDownloadClaimIsWarranted({
-            projectScopedWitness: exactOpenContext != null,
-            sharedProjectConfirmed: false,
-          })
-        ) {
-          claimFirstOpenDownload();
-        }
         const progressive = await bootstrapFirstOpenTeamProjectRoute(projectId, {
           accountGeneration,
           exactContext: firstOpenTeamContext,
-          onSharedProjectConfirmed: () => {
-            if (cancelled || accountChanged()) return;
-            if (
-              firstOpenDownloadClaimIsWarranted({
-                projectScopedWitness: exactOpenContext != null,
-                sharedProjectConfirmed: true,
-              })
-            ) {
-              claimFirstOpenDownload();
-            }
-          },
         });
         if (
           cancelled
@@ -4767,25 +4644,13 @@ function AppInner() {
       if (!fetchedProject && !knownLocalProject) {
         setDeepLinkResolutionFailure({ projectId, failure: 'missing' });
       }
-    })()
-      .catch(() => {
-        if (cancelled || identityChanged()) return;
-        setDeepLinkResolutionFailure({
-          projectId,
-          failure: 'materialization-failed',
-        });
-      })
-      .finally(() => {
-        // The lane is over the moment this run stops working on the project,
-        // however it ended. Only retract our OWN claim: a later run for the
-        // same route may already have re-armed it.
-        setFirstOpenTeamMaterializing((current) =>
-          releaseFirstOpenTeamMaterializationClaim(current, {
-            projectId,
-            run: bootstrapRun,
-          })
-        );
+    })().catch(() => {
+      if (cancelled || identityChanged()) return;
+      setDeepLinkResolutionFailure({
+        projectId,
+        failure: 'materialization-failed',
       });
+    });
     return () => {
       cancelled = true;
     };
@@ -5252,8 +5117,6 @@ function AppInner() {
         deepLinkResolutionFailure?.projectId === route.projectId
           ? deepLinkResolutionFailure.failure
           : undefined,
-      firstOpenTeamMaterializing:
-        firstOpenTeamMaterializing?.projectId === route.projectId,
     });
     if (pendingCreation && activeProject) {
       // Same `div.app` element as the ProjectView branch below, deliberately.
@@ -5270,17 +5133,6 @@ function AppInner() {
             agentId={config.agentId}
             onBack={handleBack}
           />
-        </div>
-      );
-    } else if (routeSurfaceState === 'materializing-team-project') {
-      // Same shell as the generic loader below, different sentence: this one
-      // states what is actually happening (the team's files are coming down)
-      // instead of leaving a member to read a bare spinner as a hang. The copy
-      // is the SAME string ProjectView shows once it mounts, so the first open
-      // reads as one continuous download rather than two unrelated waits.
-      appMain = (
-        <div className="entry-shell entry-shell--no-header">
-          <TeamProjectDownloadingView />
         </div>
       );
     } else if (
