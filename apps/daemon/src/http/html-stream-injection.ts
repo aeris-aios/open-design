@@ -223,7 +223,10 @@ export async function scanHtmlHeadForStreamingInjection(
       }
 
       prelude = false;
-      if (RAW_TEXT_TAGS.has(tag.name) && !/\/\s*>$/.test(token)) {
+      // HTML ignores self-closing syntax on non-void raw-text/RCDATA
+      // elements. `<script/>` therefore still consumes text until a matching
+      // end tag, and markup-shaped text inside it must remain inert.
+      if (RAW_TEXT_TAGS.has(tag.name)) {
         rawTextTag = tag.name;
       }
     }

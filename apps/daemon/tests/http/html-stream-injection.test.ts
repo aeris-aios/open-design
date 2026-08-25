@@ -106,6 +106,36 @@ describe('scanHtmlHeadForStreamingInjection', () => {
     expect(fixture.result.hasAuthoredBase).toBe(true);
   });
 
+  it('treats self-closing syntax on raw-text elements as an opening tag', async () => {
+    for (const [open, close] of [
+      ['<script/>', '</script>'],
+      ['<style />', '</style>'],
+    ]) {
+      const fixture = await scan([
+        '<html><head>',
+        open,
+        '<base href=/fake/>',
+        close,
+        '</head><body>ok</body></html>',
+      ].join(''));
+      expect(fixture.result.hasAuthoredBase).toBe(false);
+    }
+  });
+
+  it('recognizes a self-closing raw-text start tag split across read chunks', async () => {
+    const prefix = '<html><head>';
+    const splitCandidate = '<style ';
+    const padding = ' '.repeat((64 * 1024) - prefix.length - splitCandidate.length);
+    const fixture = await scan([
+      prefix,
+      padding,
+      splitCandidate,
+      '/><base href=/fake/></style>',
+      '</head><body>ok</body></html>',
+    ].join(''));
+    expect(fixture.result.hasAuthoredBase).toBe(false);
+  });
+
   it('keeps malformed attacker-sized tags bounded and returns a parser-safe fallback', async () => {
     const fixture = `<!doctype html><${'x'.repeat((256 * 1024) + 1)}`;
     const { result } = await scan(fixture);
