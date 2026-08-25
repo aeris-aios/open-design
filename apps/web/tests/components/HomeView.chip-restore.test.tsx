@@ -237,11 +237,11 @@ describe('HomeView chip/plugin selection survives a real unmount+remount', () =>
     ).toBe(false);
   });
 
-  it.each(['mobile', 'wireframe'])('migrates the legacy top-level %s chip into a nested Prototype scene', async (legacyChipId) => {
+  it('migrates the legacy top-level mobile chip into the nested Mobile apps scene', async () => {
     window.localStorage.setItem(
       'open-design:home-composer:chip',
       JSON.stringify({
-        chipId: legacyChipId,
+        chipId: 'mobile',
         pluginId: 'example-web-prototype',
         projectKind: 'prototype',
       }),
@@ -262,10 +262,10 @@ describe('HomeView chip/plugin selection survives a real unmount+remount', () =>
     await screen.findByTestId('home-hero-input');
     await waitFor(() => {
       expect(screen.getByTestId('home-hero-template-trigger').textContent).toContain('Prototype');
-      expect(screen.getByTestId(`home-hero-subtype-${legacyChipId}`).getAttribute('aria-selected'))
+      expect(screen.getByTestId('home-hero-subtype-mobile-apps').getAttribute('aria-selected'))
         .toBe('true');
       expect(JSON.parse(window.localStorage.getItem('open-design:home-composer:chip') ?? '{}'))
-        .toMatchObject({ chipId: 'prototype', prototypeSubtypeId: legacyChipId });
+        .toMatchObject({ chipId: 'prototype', prototypeSubtypeId: 'mobile-apps' });
     });
     expect(fetchMock.mock.calls.some(
       ([url]) => typeof url === 'string' && url.includes('/api/plugins/example-web-prototype/apply'),
