@@ -242,6 +242,49 @@ describe('run deliverable validation', () => {
       });
     });
 
+    it('rejects html when the binding is partial, mis-provenanced, or metadata-mismatched', async () => {
+      // HTML authority requires the FULL verified binding, not the bare
+      // taskProfile field: a hand-shaped or stale object must fail closed.
+      const bindings = [
+        // partial: taskProfile alone
+        { taskProfile: 'image' },
+        // wrong provenance
+        { schemaVersion: 1, provenance: 'explicit_user', taskProfile: 'image', boundAt: 1 },
+        // metadata mismatch: an intent moves the project off the image route
+        null,
+      ];
+      for (const [index, strategyBinding] of bindings.entries()) {
+        const fixture = await projectFixture({
+          'index.html': '<!doctype html><title>Not authorized</title>',
+        });
+        const projectMetadata = index === 2
+          ? {
+              kind: 'image' as const,
+              intent: 'document',
+              strategyBinding: {
+                schemaVersion: 1,
+                provenance: 'automatic_default',
+                taskProfile: 'image',
+                boundAt: 1,
+              },
+            }
+          : { kind: 'image' as const, strategyBinding };
+        await expect(
+          validateRunDeliverable({
+            ...fixture,
+            runStatus: 'succeeded',
+            artifactCount: 1,
+            touchedPaths: ['index.html'],
+            projectMetadata: projectMetadata as never,
+          }),
+        ).resolves.toMatchObject({
+          valid: false,
+          validation: 'type_mismatch',
+          artifactKind: 'html',
+        });
+      }
+    });
+
     it('still rejects html for a plain media-pipeline image project', async () => {
       const fixture = await projectFixture({
         'index.html': '<!doctype html><title>Not an image</title>',

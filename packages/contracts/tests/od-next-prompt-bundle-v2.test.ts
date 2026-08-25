@@ -62,6 +62,23 @@ describe('OD Next canonical Prompt Bundle v2', () => {
     expect(parsed.taskMetadata.taskType).toBe('image');
     // Round-trip stability with the slot absent.
     expect(serializeOdNextPromptBundleV2(parsed)).toBe(xml);
+
+    // An authored task type may never omit the slot: the serializer refuses
+    // to build such a bundle, and the parser (via its canonical round-trip)
+    // refuses to accept one arriving off the wire.
+    expect(() => serializeOdNextPromptBundleV2(bundle({
+      sessionSkills: {
+        generalOrchestrationSkill: {
+          skillName: 'general_orchestration',
+          body: '# OD Next General Orchestration v2.0.0',
+        },
+      },
+      taskMetadata: { taskType: 'prototype' },
+    }))).toThrow(/rule-card-optional/);
+    // Canonical XML wraps text in CDATA, so forge the payload there.
+    expect(xml).toContain('<![CDATA[image]]>');
+    const forged = xml.replace('<![CDATA[image]]>', '<![CDATA[prototype]]>');
+    expect(() => parseOdNextPromptBundleV2(forged)).toThrow(/rule-card-optional/);
   });
 
   it('emits a nested tree with user_first_prompt as the last content element', () => {

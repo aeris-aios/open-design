@@ -9,6 +9,7 @@ import type {
   ProjectMetadata,
 } from '@open-design/contracts';
 
+import { readVerifiedProjectStrategyBinding } from './plugins/strategy-binding.js';
 import { listFiles, resolveProjectDir } from './projects.js';
 
 export type RunDeliverableValidation =
@@ -115,14 +116,19 @@ function acceptedDeliverableKinds(
   }
   // An image project bound to the OD Next image route may author an HTML
   // composition as its canonical deliverable (the exported image is a render
-  // of it), exactly like HyperFrames rides `kind: 'video'` with HTML. Plain
-  // media-pipeline image projects keep the strict image-only contract.
-  const strategyBinding = metadata?.strategyBinding as
-    | { taskProfile?: unknown }
-    | null
-    | undefined;
-  if (kind === 'image' && strategyBinding?.taskProfile === 'image') {
-    return new Set<ProjectFileKind>([...declared, 'html']);
+  // of it), exactly like HyperFrames rides `kind: 'video'` with HTML. The
+  // authority comes from the fully verified strategy binding — schema version,
+  // automatic provenance, boundAt, and agreement with this exact metadata —
+  // so a stale or hand-shaped `{ strategyBinding: { taskProfile: 'image' } }`
+  // cannot widen the contract. Plain media-pipeline image projects keep the
+  // strict image-only contract.
+  if (kind === 'image') {
+    const binding = readVerifiedProjectStrategyBinding(
+      metadata as ProjectMetadata | null | undefined,
+    );
+    if (binding?.taskProfile === 'image') {
+      return new Set<ProjectFileKind>([...declared, 'html']);
+    }
   }
   return declared;
 }

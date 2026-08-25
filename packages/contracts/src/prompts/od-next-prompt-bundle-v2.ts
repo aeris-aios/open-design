@@ -8,6 +8,7 @@ import {
   requireCanonicalXmlText,
   serializeCanonicalXml,
 } from './canonical-xml.js';
+import { odNextTaskSkillOptionalV2 } from '../plugins/strategy-v2.js';
 
 export const OD_NEXT_PROMPT_BUNDLE_SCHEMA_V2 =
   'open-design.od-next-prompt-bundle/v2' as const;
@@ -40,9 +41,12 @@ export interface OdNextPromptBundleHeadV2 {
   sessionSkills: {
     generalOrchestrationSkill: { skillName: string; body: string };
     /**
-     * Absent when the selected task type ships no authored rule card yet
-     * (an intentionally empty task-profile asset): the slot is omitted from
-     * the Bundle instead of injecting an empty or fabricated Skill.
+     * Absent only when the selected task type is rule-card-optional (see
+     * `OD_NEXT_RULE_CARD_OPTIONAL_TASK_TYPES_V2`; currently `image`) — no
+     * authored rule card exists yet, so the slot is omitted instead of
+     * injecting an empty or fabricated Skill. For every other task type the
+     * slot is mandatory and both the serializer and the parser fail closed
+     * when it is missing.
      */
     taskTypeSkill?: { skillName: string; body: string } | undefined;
     userSelectedSkills?: { skillNames: ReadonlyArray<string>; body: string } | undefined;
@@ -171,6 +175,21 @@ function requireBody(value: string, field: string): string {
   return value;
 }
 
+/**
+ * A missing task_type_skill slot is legal only for a rule-card-optional task
+ * type. Returning null keeps the serializer's `present()` filter shape; every
+ * other task type fails closed instead of emitting a prompt without its
+ * specialist instructions.
+ */
+function requireTaskTypeSkillOptional(taskType: string): null {
+  if (!odNextTaskSkillOptionalV2(taskType)) {
+    throw new TypeError(
+      'taskTypeSkill is required for task type "' + taskType + '"; only a rule-card-optional task type may omit it.',
+    );
+  }
+  return null;
+}
+
 /** Emit a text slot only when it has content, per the spec's no-empty-slot rule. */
 function optionalTextNode(
   tag: string,
@@ -290,7 +309,7 @@ function buildTree(input: OdNextPromptBundleV2): CanonicalXmlNode {
               attributes: [['skill_name', skills.taskTypeSkill.skillName]],
               text: requireBody(skills.taskTypeSkill.body, 'taskTypeSkill.body'),
             }
-            : null,
+            : requireTaskTypeSkillOptional(input.taskMetadata.taskType),
           selected
             ? {
               kind: 'text',
@@ -431,6 +450,10 @@ export function parseOdNextPromptBundleV2(source: string): OdNextPromptBundleV2 
   const taskTypeSkill = taskTypeSkillNode
     ? requireCanonicalXmlText(taskTypeSkillNode, 'task_type_skill')
     : null;
+  // An absent slot is validated against task_metadata by the canonical
+  // round-trip at the end of this parser: re-serializing the parsed bundle
+  // runs requireTaskTypeSkillOptional, so a non-optional task type without
+  // the slot throws there.
   const selectedNode = skills.get('user_selected_skills');
   const metadataNode = requireCanonicalXmlElement(top.get('task_metadata'), 'task_metadata');
   const metadata = indexCanonicalXmlChildren(metadataNode, TASK_METADATA_SLOTS, 'task_metadata');
