@@ -8,6 +8,7 @@ import {
   persistComposioConfigChange,
   projectViewAuthorizationLifetimeKey,
   projectRouteSurfaceState,
+  releaseFirstOpenTeamMaterializationClaim,
   resolveDeepLinkedTeamSharedProject,
   resolveSettingsCloseConfig,
   shouldRouteToFirstRunOnboarding,
@@ -120,6 +121,45 @@ describe('projectRouteSurfaceState', () => {
       daemonLive: true,
       resolutionFailure: 'missing',
     })).toBe('ready');
+  });
+});
+
+// Red spec for the review finding on PR #7350 (Looper/codex, App.tsx:4694).
+//
+// The deep-link effect that owns the "downloading a team project" indicator
+// depends on `projects`, `projectsLoading` and `daemonLive`. Any of those
+// changing while `bootstrapFirstOpenTeamProjectRoute` is still pending cancels
+// that run and starts a fresh one FOR THE SAME ROUTE, which claims the same
+// project id. Keyed on the project id, the cancelled run's cleanup then
+// retracts the LIVE run's claim while its bootstrap is still downloading — so
+// the anonymous "Loading workspace…" spinner comes back during exactly the
+// slow path this indicator exists to explain.
+describe('releaseFirstOpenTeamMaterializationClaim', () => {
+  it('lets a run retract its own claim', () => {
+    const claim = { projectId: 'p-1', run: 1 };
+    expect(releaseFirstOpenTeamMaterializationClaim(claim, claim)).toBeNull();
+  });
+
+  it('keeps a newer run\'s claim on the same project when an older run settles', () => {
+    // run 1 was cancelled by a dependency change; run 2 re-claimed the same
+    // route and is still downloading when run 1's promise finally settles.
+    const live = { projectId: 'p-1', run: 2 };
+    expect(
+      releaseFirstOpenTeamMaterializationClaim(live, { projectId: 'p-1', run: 1 }),
+    ).toEqual(live);
+  });
+
+  it('leaves an unrelated project\'s claim alone', () => {
+    const other = { projectId: 'p-2', run: 5 };
+    expect(
+      releaseFirstOpenTeamMaterializationClaim(other, { projectId: 'p-1', run: 4 }),
+    ).toEqual(other);
+  });
+
+  it('is a no-op when nothing is claimed', () => {
+    expect(
+      releaseFirstOpenTeamMaterializationClaim(null, { projectId: 'p-1', run: 1 }),
+    ).toBeNull();
   });
 });
 

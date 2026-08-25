@@ -768,6 +768,37 @@ export function projectRouteSurfaceState(input: {
 }
 
 /**
+ * One run's claim on the "this route is downloading a team project" indicator.
+ *
+ * The project id alone is NOT a safe identity for the claim. The deep-link
+ * effect that owns it also depends on `projects`, `projectsLoading` and
+ * `daemonLive`, so any of those changing while `bootstrapFirstOpenTeamProjectRoute`
+ * is still pending cancels that run and starts a FRESH one for the same route,
+ * which re-claims the same project id.
+ */
+export interface FirstOpenTeamMaterializationClaim {
+  projectId: string;
+  /** Monotonic per-effect-run id. Only the run that made a claim may release it. */
+  run: number;
+}
+
+/**
+ * Release the indicator on behalf of one finished run.
+ *
+ * A run may only retract its OWN claim. Keyed on the project id instead, a
+ * cancelled run's cleanup retracts the claim of the LIVE run that replaced it
+ * — while that run's bootstrap is still downloading — and the anonymous
+ * spinner returns during exactly the slow path this indicator exists to
+ * explain.
+ */
+export function releaseFirstOpenTeamMaterializationClaim(
+  current: FirstOpenTeamMaterializationClaim | null,
+  releasing: FirstOpenTeamMaterializationClaim,
+): FirstOpenTeamMaterializationClaim | null {
+  return current?.run === releasing.run ? null : current;
+}
+
+/**
  * Resolves a project a member has just deep-linked to but has no local
  * record of yet. Bounded-retries `getProject` + `pullTeamSharedProjectIfAvailable`
  * so a first-ever open of a freshly team-shared project survives the local
@@ -1038,8 +1069,13 @@ function AppInner() {
   // local row exists, so without this the longest stretch of a member's first
   // open renders the same anonymous "Loading workspace…" spinner as any other
   // cold start (OPEND-2095).
-  const [firstOpenTeamMaterializingProjectId, setFirstOpenTeamMaterializingProjectId] =
-    useState<string | null>(null);
+  const [firstOpenTeamMaterializing, setFirstOpenTeamMaterializing] =
+    useState<FirstOpenTeamMaterializationClaim | null>(null);
+  // Monotonic id for each run of the deep-link bootstrap effect below. The
+  // effect re-runs on `projects` / `projectsLoading` / `daemonLive` changes, so
+  // several runs can claim the SAME project id in sequence; only the run that
+  // made a claim may release it.
+  const firstOpenTeamMaterializingRunRef = useRef(0);
   const [settingsWelcome, setSettingsWelcome] = useState(false);
   const [settingsInitialSection, setSettingsInitialSection] = useState<SettingsSection>('execution');
   const [settingsHighlight, setSettingsHighlight] = useState<SettingsHighlight>(null);
@@ -4521,6 +4557,11 @@ function AppInner() {
     if (projects.some((p) => p.id === route.projectId)) return;
     let cancelled = false;
     const projectId = route.projectId;
+    // Identity for THIS run's indicator claim. A dependency change can cancel
+    // this run and start another for the same route; both would otherwise
+    // claim (and retract) the same project id.
+    const bootstrapRun = firstOpenTeamMaterializingRunRef.current + 1;
+    firstOpenTeamMaterializingRunRef.current = bootstrapRun;
     setDeepLinkResolutionFailure((current) =>
       current?.projectId === projectId ? null : current
     );
@@ -4585,7 +4626,7 @@ function AppInner() {
         // The verified Team context named this project, so from here the route
         // is genuinely downloading it — say so instead of spinning anonymously.
         // Cleared by the effect teardown below on every exit path.
-        setFirstOpenTeamMaterializingProjectId(projectId);
+        setFirstOpenTeamMaterializing({ projectId, run: bootstrapRun });
         const progressive = await bootstrapFirstOpenTeamProjectRoute(projectId, {
           accountGeneration,
           exactContext: firstOpenTeamContext,
@@ -4690,8 +4731,11 @@ function AppInner() {
         // The lane is over the moment this run stops working on the project,
         // however it ended. Only retract our OWN claim: a later run for the
         // same route may already have re-armed it.
-        setFirstOpenTeamMaterializingProjectId((current) =>
-          current === projectId ? null : current
+        setFirstOpenTeamMaterializing((current) =>
+          releaseFirstOpenTeamMaterializationClaim(current, {
+            projectId,
+            run: bootstrapRun,
+          })
         );
       });
     return () => {
@@ -5161,7 +5205,7 @@ function AppInner() {
           ? deepLinkResolutionFailure.failure
           : undefined,
       firstOpenTeamMaterializing:
-        firstOpenTeamMaterializingProjectId === route.projectId,
+        firstOpenTeamMaterializing?.projectId === route.projectId,
     });
     if (pendingCreation && activeProject) {
       // Same `div.app` element as the ProjectView branch below, deliberately.
