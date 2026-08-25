@@ -494,7 +494,13 @@ export function buildPreviewObservabilityBridge(): string {
     // carries no transform, and reporting those would bury the real signal.
     if (canvasW < 640 || Math.abs(canvasW - frameW) <= 1) return;
     var scale = resolvedScale(stageStyle);
-    if (scale > DECK_STAGE_MIN_SCALE) { deckStageReported = true; return; }
+    // Deliberately does NOT latch on a healthy sample. OPEND-2147 is a race, so
+    // "fitted correctly at the first eligible check" is not a verdict for the
+    // life of the document: a stage can fit and collapse later in the same one,
+    // and resize / visibilitychange keep re-scheduling this check. The
+    // white-screen probe above draws the same distinction -- it returns on a
+    // healthy sample and only latches once it has actually reported.
+    if (scale > DECK_STAGE_MIN_SCALE) return;
     deckStageReported = true;
     send('deck_stage_unscaled', {
       stage_kind: found.kind,

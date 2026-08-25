@@ -182,6 +182,27 @@ describe('deck stage probe (OPEND-2147)', () => {
     expect(deckMessages(post)).toHaveLength(0);
   });
 
+  it('still reports a stage that collapses after a healthy first sample', () => {
+    // OPEND-2147 is a race, so "fitted correctly at the first eligible check"
+    // is not a verdict for the life of the document. White-screen makes the
+    // same distinction: it returns on a healthy sample without latching, and
+    // only latches once it has actually reported.
+    mountDeckStage('matrix(0.4907, 0, 0, 0.4907, 0, 0)');
+    run(post);
+    expect(deckMessages(post)).toHaveLength(0);
+
+    const stage = document.querySelector('.deck-stage') as HTMLElement;
+    stage.style.transform = 'matrix(0, 0, 0, 0, 0, 0)';
+    window.dispatchEvent(new Event('resize'));
+    vi.advanceTimersByTime(DECK_TIMEOUT_MS);
+
+    expect(deckMessages(post)).toHaveLength(1);
+    expect(deckMessages(post)[0]).toMatchObject({
+      stage_kind: 'deck-stage',
+      stage_scale_permille: 0,
+    });
+  });
+
   it('stays quiet until the host reports an active preview', () => {
     mountDeckStage('matrix(0, 0, 0, 0, 0, 0)');
     installBridge();

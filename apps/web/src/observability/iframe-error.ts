@@ -142,6 +142,7 @@ function prunePreviewMessageBuffer(): void {
 function logDeckStageMeasurement(measurement: Record<string, unknown>): void {
   if (typeof console === 'undefined' || typeof console.warn !== 'function') return;
   const fields = [
+    `stage_kind=${measurement.stage_kind ?? 'n/a'}`,
     `stage_scale=${measurement.stage_scale ?? 'n/a'}`,
     `stage_transform=${measurement.stage_transform ?? 'n/a'}`,
     `stage=${measurement.stage_width ?? 'n/a'}x${measurement.stage_height ?? 'n/a'}`,
@@ -207,6 +208,10 @@ export function reportPreviewIframeMessage(
     const measurement = {
       ...common,
       reason: 'stage_scale_collapsed',
+      // Which authored shape collapsed: the canonical `.deck-stage`, a
+      // `<deck-stage>` shadow canvas, or a template `.stage`. Frequency alone
+      // cannot triage this, and the bridge went to some trouble to resolve it.
+      stage_kind: boundedText(message.stage_kind, 32),
       // Restored to the decimal the reader actually thinks in. The wire keeps
       // it as an integer per-mille only because the shared normalizer rounds.
       stage_scale: decimalFromPermille(message.stage_scale_permille),

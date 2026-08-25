@@ -188,6 +188,7 @@ describe('preview iframe observability', () => {
       type: PREVIEW_OBSERVABILITY_MESSAGE_TYPE,
       version: 1,
       event: 'deck_stage_unscaled',
+      stage_kind: 'deck-stage',
       stage_scale_permille: 0,
       stage_transform: 'matrix',
       stage_width: 0,
@@ -204,6 +205,9 @@ describe('preview iframe observability', () => {
     expect(reportSafetyEvent).toHaveBeenCalledWith('client_preview_deck_stage_unscaled', expect.objectContaining({
       surface: 'artifact_preview',
       render_mode: 'srcdoc',
+      // Frequency alone cannot triage this: three authored shapes can collapse,
+      // and which one did is the whole reason the bridge sends stage_kind.
+      stage_kind: 'deck-stage',
       stage_scale: 0,
       stage_transform: 'matrix',
       stage_width: 0,
@@ -230,6 +234,7 @@ describe('preview iframe observability', () => {
         type: PREVIEW_OBSERVABILITY_MESSAGE_TYPE,
         version: 1,
         event: 'deck_stage_unscaled',
+        stage_kind: 'deck-stage',
         stage_scale_permille: 0,
         stage_transform: 'matrix',
         stage_width: 0,
@@ -246,7 +251,7 @@ describe('preview iframe observability', () => {
       expect(warn).toHaveBeenCalledTimes(1);
       const line = warn.mock.calls[0]?.join(' ') ?? '';
       expect(line).toContain('[od:preview-observability] deck_stage_unscaled');
-      for (const fragment of ['stage_scale=0', 'canvas=1920x1080', 'frame=1075x530', 'elapsed_ms=5000']) {
+      for (const fragment of ['stage_kind=deck-stage', 'stage_scale=0', 'canvas=1920x1080', 'frame=1075x530', 'elapsed_ms=5000']) {
         expect(line).toContain(fragment);
       }
     } finally {
