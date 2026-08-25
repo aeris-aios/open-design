@@ -133,6 +133,25 @@ describe("inspectExistingDesktopForLauncher", () => {
       await rm(root, { force: true, recursive: true });
     }
   });
+
+  it("reuses a healthy same-mode headless generation instead of restarting it", async () => {
+    const root = await mkdtemp(join(tmpdir(), "od-launcher-existing-headless-"));
+    const headlessStamp = { ...stamp(), mode: "headless" as const };
+    const stop = vi.fn(async () => sidecarStop(4321));
+    try {
+      await expect(inspectExistingDesktopForLauncher(headlessStamp, {
+        getStatus: vi.fn(async (target: SidecarStamp) => target.app === APP_KEYS.DESKTOP
+          ? { pid: 4321, state: "running", updatedAt: new Date().toISOString(), windowVisible: false }
+          : { state: "running", url: "http://127.0.0.1:1234" }) as never,
+        modes: ["headless"],
+        paths: fakePaths(root),
+        stopSidecar: stop,
+      })).resolves.toEqual({ action: "exit", reason: "existing-headless" });
+      expect(stop).not.toHaveBeenCalled();
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  });
 });
 
 it("exits Electron only for an existing desktop result", () => {

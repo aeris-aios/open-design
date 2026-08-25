@@ -68,13 +68,14 @@ function appStamp(
   config: ToolPackConfig,
   app: SidecarStamp["app"] = APP_KEYS.DESKTOP,
   source: typeof SIDECAR_SOURCES.TOOLS_PACK | typeof SIDECAR_SOURCES.PACKAGED = SIDECAR_SOURCES.TOOLS_PACK,
+  mode: SidecarStamp["mode"] = SIDECAR_MODES.RUNTIME,
 ): SidecarStamp & { source: typeof SIDECAR_SOURCES.TOOLS_PACK | typeof SIDECAR_SOURCES.PACKAGED } {
   return {
     app,
     channel: releaseChannelFromVersion(config.appVersion)
       ?? releaseChannelFromNamespace(config.namespace, "default")
       ?? "stable",
-    mode: SIDECAR_MODES.RUNTIME,
+    mode,
     namespace: config.namespace,
     source,
   };
@@ -338,10 +339,12 @@ async function waitForNoManagedDesktopProcesses(config: ToolPackConfig, timeoutM
 }
 
 export async function stopPackedWinApp(config: ToolPackConfig): Promise<WinStopResult> {
-  const stopped = await Promise.all([
-    stopSidecar(appStamp(config, APP_KEYS.DESKTOP, SIDECAR_SOURCES.TOOLS_PACK)),
-    stopSidecar(appStamp(config, APP_KEYS.DESKTOP, SIDECAR_SOURCES.PACKAGED)),
-  ]);
+  const stopped = await Promise.all(
+    [SIDECAR_SOURCES.TOOLS_PACK, SIDECAR_SOURCES.PACKAGED].flatMap((source) => [
+      stopSidecar(appStamp(config, APP_KEYS.DESKTOP, source, SIDECAR_MODES.RUNTIME)),
+      stopSidecar(appStamp(config, APP_KEYS.DESKTOP, source, "headless")),
+    ]),
+  );
   const gracefulRequested = stopped.some((result) => result.gracefulAccepted);
   const matchedPids = stopped.flatMap((result) => result.matchedPids);
   const remainingPids = stopped.flatMap((result) => result.remainingPids);

@@ -35,13 +35,13 @@ vi.mock("@open-design/sidecar", async () => {
     getSidecarStatus: async (stamp: { app: string; source: string }) => await requestSidecar(stamp.app, { type: SIDECAR_MESSAGES.STATUS }, stamp.source),
     invokeSidecar: async (stamp: { app: string; source: string }, action: string, input: unknown) => await requestSidecar(stamp.app, { input, type: action }, stamp.source),
     launchSidecar: spawnBackgroundProcess,
-    stopSidecar: async (stamp: { source: string }) => ({
-      alreadyStopped: stamp.source !== "packaged",
+    stopSidecar: async (stamp: { mode: string; source: string }) => ({
+      alreadyStopped: stamp.source !== "packaged" || stamp.mode !== "headless",
       forcedPids: [],
-      gracefulAccepted: stamp.source === "packaged",
-      matchedPids: stamp.source === "packaged" ? [4242] : [],
+      gracefulAccepted: stamp.source === "packaged" && stamp.mode === "headless",
+      matchedPids: stamp.source === "packaged" && stamp.mode === "headless" ? [4242] : [],
       remainingPids: [],
-      stoppedPids: stamp.source === "packaged" ? [4242] : [],
+      stoppedPids: stamp.source === "packaged" && stamp.mode === "headless" ? [4242] : [],
     }),
   };
 });

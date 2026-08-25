@@ -24,7 +24,47 @@ const HEADLESS_SIDECAR_MODE = "headless";
 
 export type LauncherExistingDesktopGateResult =
   | { action: "continue"; reason: "headless-owner" | "inspect-failed" | "not-running" | "stale-sidecar" | "superseded-version" }
-  | { action: "exit"; reason: "existing-focused" | "existing-focus-failed" };
+  | { action: "exit"; reason: "existing-focused" | "existing-focus-failed" | "existing-headless" };
+
+type ExistingDesktopOwnerInspection = {
+  lastError: unknown;
+  observedNotRunning: DesktopStatusSnapshot | null;
+  running: { stamp: SidecarStamp; status: DesktopStatusSnapshot } | null;
+};
+
+async function inspectExistingDesktopOwnerCandidates(
+  stamp: SidecarStamp,
+  modes: readonly SidecarStamp["mode"][],
+  getStatus: typeof getSidecarStatus,
+): Promise<ExistingDesktopOwnerInspection> {
+  let lastError: unknown = null;
+  let observedNotRunning: DesktopStatusSnapshot | null = null;
+  for (const mode of [...new Set(modes)]) {
+    const candidate = { ...stamp, mode };
+    try {
+      const status = await getStatus<DesktopStatusSnapshot>(candidate, { timeoutMs: 350 });
+      if (status.state === "running") {
+        return { lastError, observedNotRunning, running: { stamp: candidate, status } };
+      }
+      observedNotRunning ??= status;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  return { lastError, observedNotRunning, running: null };
+}
+
+export async function findExistingPackagedDesktopOwner(
+  stamp: SidecarStamp,
+  options: {
+    getStatus?: typeof getSidecarStatus;
+    modes?: readonly SidecarStamp["mode"][];
+  } = {},
+): Promise<{ stamp: SidecarStamp; status: DesktopStatusSnapshot } | null> {
+  const getStatus = options.getStatus ?? getSidecarStatus;
+  const modes = options.modes ?? [stamp.mode];
+  return (await inspectExistingDesktopOwnerCandidates(stamp, modes, getStatus)).running;
+}
 
 /**
  * Finish a duplicate packaged entry after the healthy namespace desktop has
@@ -172,30 +212,13 @@ export async function inspectExistingDesktopForLauncher(
   const getStatus = options.getStatus ?? getSidecarStatus;
   const invoke = options.invoke ?? invokeSidecar;
   const stop = options.stopSidecar ?? stopSidecar;
-  let status: DesktopStatusSnapshot | null = null;
-  let inspectedStamp: SidecarStamp | null = null;
-  let lastError: unknown = null;
-  let observedNotRunning: DesktopStatusSnapshot | null = null;
   const modes = options.modes ?? [
     stamp.mode,
     stamp.mode === HEADLESS_SIDECAR_MODE ? SIDECAR_MODES.RUNTIME : HEADLESS_SIDECAR_MODE,
   ];
-  for (const mode of [...new Set(modes)]) {
-    const candidate = { ...stamp, mode };
-    try {
-      const candidateStatus = await getStatus<DesktopStatusSnapshot>(candidate, { timeoutMs: 350 });
-      if (candidateStatus.state !== "running") {
-        observedNotRunning ??= candidateStatus;
-        continue;
-      }
-      inspectedStamp = candidate;
-      status = candidateStatus;
-      break;
-    } catch (error) {
-      lastError = error;
-    }
-  }
-  if (status == null || inspectedStamp == null) {
+  const ownerInspection = await inspectExistingDesktopOwnerCandidates(stamp, modes, getStatus);
+  if (ownerInspection.running == null) {
+    const { lastError, observedNotRunning } = ownerInspection;
     if (observedNotRunning != null) {
       await writeLauncherAfterQuitLog(options.paths, `inspect-not-running namespace=${namespace} state=${observedNotRunning.state}`);
       return { action: "continue", reason: "not-running" };
@@ -205,6 +228,7 @@ export async function inspectExistingDesktopForLauncher(
     logger.info?.(`[open-design launcher] ${message}`);
     return { action: "continue", reason: "inspect-failed" };
   }
+  const { stamp: inspectedStamp, status } = ownerInspection.running;
 
   const staleSidecars: AppKey[] = [];
   for (const app of [APP_KEYS.DAEMON, APP_KEYS.WEB]) {
@@ -258,6 +282,13 @@ export async function inspectExistingDesktopForLauncher(
 
   if (status.windowVisible === false) {
     const pid = typeof status.pid === "number" ? status.pid : null;
+    if (stamp.mode === HEADLESS_SIDECAR_MODE && inspectedStamp.mode === HEADLESS_SIDECAR_MODE) {
+      await writeLauncherAfterQuitLog(
+        options.paths,
+        `inspect-found-existing namespace=${namespace} action=reuse reason=existing-headless pid=${pid ?? "unknown"}`,
+      );
+      return { action: "exit", reason: "existing-headless" };
+    }
     await writeLauncherAfterQuitLog(
       options.paths,
       `inspect-found-existing namespace=${namespace} action=restart reason=headless-owner pid=${pid ?? "unknown"}`,

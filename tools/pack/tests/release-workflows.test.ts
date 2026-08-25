@@ -181,24 +181,19 @@ describe("release workflows", () => {
     expect(buildWin).toContain('Measure-Step "validate launcher payload artifact"');
     expect(buildWin).toContain('Measure-Step "validate launcher payload update fixture"');
     expect(buildWin).toContain('Test-JsonString $manifest.entry.executable "entry.executable" "payload/Open Design.exe"');
+    expect(winApp).toContain("return ensureWorkspaceBuildArtifacts(");
+    expect(macWorkspace).toContain("await ensureWorkspaceBuildArtifacts(");
+    expect(linuxPack).toContain("await runWorkspaceBuild(");
     for (const buildSource of [winApp, macWorkspace, linuxPack]) {
-      const sidecarProtoBuild = 'await runPnpm(config, ["--filter", "@open-design/sidecar-proto", "build"])';
-      const launcherProtoBuild = 'await runPnpm(config, ["--filter", "@open-design/launcher-proto", "build"])';
-      const platformBuild = 'await runPnpm(config, ["--filter", "@open-design/platform", "build"])';
-      const sidecarBuild = 'await runPnpm(config, ["--filter", "@open-design/sidecar", "build"])';
-      const dshRuntimeBuild = 'await runPnpm(config, ["--filter", "@open-design/dsh-runtime", "build"])';
-      const daemonBuild = 'await runPnpm(config, ["--filter", "@open-design/daemon", "build"])';
-      expect(buildSource).toContain(launcherProtoBuild);
-      expect(buildSource).toContain(platformBuild);
-      expect(buildSource).toContain(dshRuntimeBuild);
-      expect(buildSource.indexOf(sidecarProtoBuild)).toBeLessThan(buildSource.indexOf(launcherProtoBuild));
-      expect(buildSource.indexOf(launcherProtoBuild)).toBeLessThan(buildSource.indexOf(sidecarBuild));
-      expect(buildSource.indexOf(platformBuild)).toBeLessThan(buildSource.indexOf(sidecarBuild));
-      expect(buildSource.indexOf(dshRuntimeBuild)).toBeLessThan(buildSource.indexOf(daemonBuild));
+      expect(buildSource).not.toContain('["--filter", "@open-design/platform", "build"]');
+      expect(buildSource).not.toContain('["--filter", "@open-design/sidecar", "build"]');
     }
-    const sharedPlatformBuild = '{ args: ["--filter", "@open-design/platform", "build"] }';
-    const sharedSidecarBuild = '{ args: ["--filter", "@open-design/sidecar", "build"] }';
-    expect(workspaceBuild.indexOf(sharedPlatformBuild)).toBeLessThan(workspaceBuild.indexOf(sharedSidecarBuild));
+    const dependencyClosureBuild = '"--filter", "@open-design/packaged^..."';
+    const webSidecarBuild = '"--filter", "@open-design/web", "run", "build:sidecar"';
+    const packagedBuild = '"--filter", "@open-design/packaged", "run", "build"';
+    expect(workspaceBuild).toContain('"--filter", "@open-design/dsh-runtime..."');
+    expect(workspaceBuild.indexOf(dependencyClosureBuild)).toBeLessThan(workspaceBuild.indexOf(webSidecarBuild));
+    expect(workspaceBuild.indexOf(webSidecarBuild)).toBeLessThan(workspaceBuild.indexOf(packagedBuild));
     expect(prerelease).toContain("name: release-prerelease");
     expect(prerelease).toContain("pnpm exec tools-release prepare prerelease");
     expect(prerelease).toContain("OPEN_DESIGN_PRERELEASE_METADATA_URL");

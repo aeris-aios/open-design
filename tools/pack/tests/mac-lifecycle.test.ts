@@ -36,13 +36,13 @@ const spawnSidecar = vi.fn(async (request: { env: NodeJS.ProcessEnv; stamp: Reco
   stamp: request.stamp,
   stop: vi.fn(),
 }));
-const stopSidecar = vi.fn(async (stamp: { source: string }) => ({
-  alreadyStopped: stamp.source !== "packaged",
+const stopSidecar = vi.fn(async (stamp: { mode: string; source: string }) => ({
+  alreadyStopped: stamp.source !== "packaged" || stamp.mode !== "headless",
   forcedPids: [],
-  gracefulAccepted: stamp.source === "packaged",
-  matchedPids: stamp.source === "packaged" ? [4242] : [],
+  gracefulAccepted: stamp.source === "packaged" && stamp.mode === "headless",
+  matchedPids: stamp.source === "packaged" && stamp.mode === "headless" ? [4242] : [],
   remainingPids: [],
-  stoppedPids: stamp.source === "packaged" ? [4242] : [],
+  stoppedPids: stamp.source === "packaged" && stamp.mode === "headless" ? [4242] : [],
 }));
 
 vi.mock("@open-design/sidecar", async () => ({
@@ -289,6 +289,7 @@ describe("stopPackedMacApp", () => {
         stoppedPids: [payloadDesktop.pid],
       });
       expect(stopSidecar).toHaveBeenCalledWith(expect.objectContaining({ namespace: config.namespace, source: "packaged" }));
+      expect(stopSidecar).toHaveBeenCalledWith(expect.objectContaining({ mode: "headless", source: "packaged" }));
       expect(stopProcesses).not.toHaveBeenCalled();
     } finally {
       await rm(root, { force: true, recursive: true });

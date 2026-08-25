@@ -7,11 +7,13 @@ import {
   type SidecarStamp as LegacySidecarStamp,
 } from "@open-design/sidecar-proto";
 import {
+  getSidecarStatus,
   registerSidecarProcess,
   readCurrentSidecarStamp,
   SidecarFactory,
   type SidecarClient,
   type SidecarRuntimeContext,
+  type SidecarStamp,
 } from "@open-design/sidecar";
 import { releaseChannelFromNamespace, releaseChannelFromVersion } from "@open-design/release";
 
@@ -38,6 +40,24 @@ export interface PackagedHeadlessRequest {
 
 export interface RunPackagedHeadlessOptions {
   mcpBootstrapLaunch?: PackagedMcpBootstrapLaunch;
+}
+
+export async function runPackagedMcpActionAgainstExistingDaemon(
+  request: PackagedHeadlessRequest,
+  stamp: SidecarStamp,
+  dependencies: {
+    getStatus?: typeof getSidecarStatus;
+    installMcp?: (daemonUrl: string | null) => Promise<void>;
+  } = {},
+): Promise<boolean> {
+  if (request.mcpInstallAgent == null) return false;
+  const status = await (dependencies.getStatus ?? getSidecarStatus)<{ state?: unknown; url?: unknown }>(
+    { ...stamp, app: APP_KEYS.DAEMON, mode: SIDECAR_MODES.RUNTIME },
+    { timeoutMs: 350 },
+  ).catch(() => null);
+  if (status?.state !== "running" || typeof status.url !== "string" || status.url.length === 0) return false;
+  await (dependencies.installMcp ?? installCodexMcp)(status.url);
+  return true;
 }
 
 export interface PackagedHeadlessStartupDependencies {

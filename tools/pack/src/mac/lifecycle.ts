@@ -45,13 +45,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function convergedDesktopStamp(
   config: ToolPackConfig,
   source: typeof SIDECAR_SOURCES.TOOLS_PACK | typeof SIDECAR_SOURCES.PACKAGED = SIDECAR_SOURCES.TOOLS_PACK,
+  mode: ConvergedSidecarStamp["mode"] = SIDECAR_MODES.RUNTIME,
 ): ConvergedSidecarStamp {
   return {
     app: APP_KEYS.DESKTOP,
     channel: releaseChannelFromVersion(config.appVersion)
       ?? releaseChannelFromNamespace(config.namespace, "default")
       ?? "stable",
-    mode: SIDECAR_MODES.RUNTIME,
+    mode,
     namespace: config.namespace,
     source,
   };
@@ -456,10 +457,12 @@ export async function startPackedMacApp(config: ToolPackConfig): Promise<MacStar
 }
 
 export async function stopPackedMacApp(config: ToolPackConfig): Promise<MacStopResult> {
-  const results = await Promise.all([
-    stopSidecar(convergedDesktopStamp(config, SIDECAR_SOURCES.TOOLS_PACK)),
-    stopSidecar(convergedDesktopStamp(config, SIDECAR_SOURCES.PACKAGED)),
-  ]);
+  const results = await Promise.all(
+    [SIDECAR_SOURCES.TOOLS_PACK, SIDECAR_SOURCES.PACKAGED].flatMap((source) => [
+      stopSidecar(convergedDesktopStamp(config, source, SIDECAR_MODES.RUNTIME)),
+      stopSidecar(convergedDesktopStamp(config, source, "headless")),
+    ]),
+  );
   const matchedPids = results.flatMap((result) => result.matchedPids);
   const remainingPids = results.flatMap((result) => result.remainingPids);
   const stoppedPids = results.flatMap((result) => result.stoppedPids);

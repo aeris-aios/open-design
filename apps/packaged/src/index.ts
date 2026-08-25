@@ -37,10 +37,12 @@ import {
 import {
   parsePackagedHeadlessRequest,
   resolvePackagedMcpBootstrapLaunch,
+  runPackagedMcpActionAgainstExistingDaemon,
 } from "./headless-runtime.js";
 import { PackagedPathAccessError } from "./errors.js";
 import {
   exitPackagedLauncherForExistingDesktop,
+  findExistingPackagedDesktopOwner,
   inspectExistingDesktopForLauncher,
   waitForLauncherAfterQuit,
 } from "./launcher-after-quit.js";
@@ -130,6 +132,20 @@ async function main(): Promise<void> {
     namespace,
     source: convergedArgvStamp?.source ?? SIDECAR_SOURCES.PACKAGED,
   };
+  if (await runPackagedMcpActionAgainstExistingDaemon(headlessRequest, launchStamp)) {
+    app.exit(0);
+    return;
+  }
+  if (headlessRequest.mcpInstallAgent != null) {
+    const existingOwner = await findExistingPackagedDesktopOwner(launchStamp, {
+      modes: [SIDECAR_MODES.RUNTIME, "headless"],
+    });
+    if (existingOwner != null) {
+      throw new Error(
+        `Cannot install MCP while the existing ${existingOwner.stamp.mode} desktop runtime has no healthy daemon. Quit Open Design and retry.`,
+      );
+    }
+  }
   const oppositeDesktop = await inspectExistingDesktopForLauncher(launchStamp, {
     deeplinkUrl: findPackagedDeeplinkArg(process.argv),
     logger: console,

@@ -4,7 +4,9 @@ import {
   acquirePackagedHeadlessStartup,
   parsePackagedHeadlessRequest,
   resolvePackagedMcpBootstrapLaunch,
+  runPackagedMcpActionAgainstExistingDaemon,
 } from "../src/headless-runtime.js";
+import { APP_KEYS } from "@open-design/sidecar-proto";
 
 describe("parsePackagedHeadlessRequest", () => {
   it("accepts a headless Codex MCP install request", () => {
@@ -55,6 +57,48 @@ describe("resolvePackagedMcpBootstrapLaunch", () => {
       command: "/opt/open-design/open-design",
       args: ["--headless"],
     });
+  });
+});
+
+describe("runPackagedMcpActionAgainstExistingDaemon", () => {
+  const launchStamp = {
+    app: APP_KEYS.DESKTOP,
+    channel: "beta",
+    mode: "headless",
+    namespace: "release-beta",
+    source: "packaged",
+  } as const;
+
+  it("installs through a healthy existing runtime daemon without bootstrapping", async () => {
+    const installMcp = vi.fn(async () => undefined);
+    const getStatus = vi.fn(async () => ({
+      state: "running",
+      url: "http://127.0.0.1:7457",
+    }));
+
+    await expect(runPackagedMcpActionAgainstExistingDaemon(
+      { headless: true, mcpInstallAgent: "codex" },
+      launchStamp,
+      { getStatus: getStatus as never, installMcp },
+    )).resolves.toBe(true);
+    expect(getStatus).toHaveBeenCalledWith(
+      { ...launchStamp, app: APP_KEYS.DAEMON, mode: "runtime" },
+      { timeoutMs: 350 },
+    );
+    expect(installMcp).toHaveBeenCalledWith("http://127.0.0.1:7457");
+  });
+
+  it("leaves bootstrap to the caller when no healthy daemon exists", async () => {
+    const installMcp = vi.fn(async () => undefined);
+    await expect(runPackagedMcpActionAgainstExistingDaemon(
+      { headless: true, mcpInstallAgent: "codex" },
+      launchStamp,
+      {
+        getStatus: vi.fn(async () => ({ state: "stopped", url: "http://127.0.0.1:7457" })) as never,
+        installMcp,
+      },
+    )).resolves.toBe(false);
+    expect(installMcp).not.toHaveBeenCalled();
   });
 });
 
