@@ -4,6 +4,7 @@ type RankingRow = {
   maker: string;
   icon: string;
   color: string;
+  badge?: string;
   score: number;
   pdr: number;
   cost: number;
@@ -117,7 +118,7 @@ group.rows.slice(0, 3).forEach((row) => {
               </span>
               <span class="ranking-model">
                 <i data-ranking-position>{index + 1}</i>
-                <span><strong>{model.name}</strong><small>{model.maker}</small></span>
+                <span><strong>{model.name}{model.badge ? <em class="model-badge">{model.badge}</em> : null}</strong><small>{model.maker}</small></span>
               </span>
             </div>
           ))}

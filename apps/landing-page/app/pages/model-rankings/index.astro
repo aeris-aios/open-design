@@ -1,11 +1,13 @@
 ---
 import Layout from '../../_components/sub-page-layout.astro';
 import ModelRankingPair from '../../_components/model-ranking-pair.astro';
-import { localeFromPath } from '../../i18n';
+import { localeFromPath, localizedHref } from '../../i18n';
+import { DOWNLOAD_HREF, OPEN_DESIGN_DISCORD, OPEN_DESIGN_FEISHU } from '../../cta-actions';
 import './model-rankings.css';
 
 const locale = localeFromPath(Astro.url.pathname);
 const isZh = locale === 'zh';
+const href = (path: string) => localizedHref(path, locale);
 
 const copy = isZh ? {
   title: 'AI 设计模型排行榜 | OpenDesign',
@@ -42,8 +44,20 @@ const copy = isZh ? {
     ['EFF', '单独报告', '模型效率', '展示模型获得当前结果所需的资源，不会增加或降低 PDR。', ['单次设计任务成本', '工具调用次数', '不同难度任务的总运行时间']],
   ],
   disclosures: [['公平对比', '所有模型均通过同一套 OpenDesign harness、私有基准和评分框架运行。'], ['基准边界', '任务集保持私有，以降低数据污染。排行榜仅公布模型级结果，不公开基准提示词。'], ['如何解读', '分数描述指定版本模型在 OpenDesign 中的表现，不代表通用智能水平排名。']],
+  stripLead: '榜单上的每个模型，都能在 OpenDesign 里用你自己的 API Key 直接调用。',
+  stripCta: '下载客户端',
+  ctaIndex: '05 / 上手试用',
+  ctaKicker: '从榜单到你的桌面',
+  ctaTitle: '亲手复现这份榜单',
+  ctaBody: 'OpenDesign 是开源、BYOK 的设计工作台：接入你自己的 API Key，在榜单上的任意模型之间自由切换，把同样的设计任务跑在你自己的电脑上。',
+  ctaDownload: '下载 OpenDesign',
+  ctaDownloadNote: '免费开源 · macOS / Windows',
+  ctaDiscord: '加入 Discord',
+  ctaDiscordNote: '讨论评测结果，提名下一个进入榜单的模型',
+  ctaFeishu: '加入飞书群',
+  ctaFeishuNote: '中文社区交流',
 } : {
-  title: 'AI Design Model Rankings | OpenDesign', description: 'Independent model rankings for design work, evaluated with the same private OpenDesign benchmark and scoring framework.', kicker: 'OpenDesign Model Index', heading: 'AI Design Model Rankings', intro: 'One private benchmark and one scoring framework, comparing leading models on real design work in OpenDesign.', preview: 'Preview data', previewNote: 'Final launch scores will replace the demonstration dataset without changing this page structure.', overallIndex: '01 / Overall', leaderboard: 'Model Leaderboard', leaderboardDesc: 'Overall ranking on the OpenDesign benchmark. PDR is the primary score; D0, D1, and D2 explain the result.', metricAria: 'Ranking metric', metrics: [['pdr', 'PDR', 'Overall'], ['d0', 'D0', 'Renderability'], ['d1', 'D1', 'Requirement'], ['d2', 'D2', 'Design quality']], scoreAria: 'How to read the evaluation scores', primer: [['PDR', 'Headline result'], ['D0', 'Renderability gate'], ['D1 · 65', 'Requirement fulfillment'], ['D2 · 35', 'Design quality'], ['EFF', 'Reported separately']], valueFormatAria: 'Leaderboard value format', percentage: 'Percentage', score: 'Score', model: 'Model', taskIndex: '02 / Best by task', taskHeading: 'Top models by task', taskDesc: 'Go beyond the overall winner. See which model leads each design task on OpenDesign.', taskLegendAria: 'Task category share', taskGroups: { Visual: 'Visual', Product: 'Product', Interface: 'Interface', Data: 'Data' }, analysisIndex: '03 / Deep dive', analysisHeading: 'Explore model trade-offs', analysisDesc: 'Compare score composition, efficiency, and the balance between requirement fulfillment and design quality.', analysisAria: 'Model analysis view', profile: 'Score profile', speed: 'Speed', cost: 'Cost', calls: 'Tool calls', balance: 'D1 × D2', difficulty: 'Task difficulty', simple: 'Simple', general: 'General', difficult: 'Difficult', profileEyebrow: 'Score composition', profileHeading: 'Evaluation profile', profileDesc: 'Compare D0 renderability, D1 requirement fulfillment, and D2 design quality across all evaluated models.', profileAria: 'Evaluation profile by model', lowerBetter: 'lower is better', pdrVsSpeed: 'PDR vs Speed', chartDesc: 'Top-left quadrant shows models with stronger design performance and better efficiency.', pdrHigher: 'PDR (higher ↑)', runtimeSlower: 'Runtime (slower →)', idealZone: 'High PDR · High efficiency', models: 'Models', requirement: 'Requirement fulfillment', design: 'Design quality', showPareto: 'Show Pareto', topModels: 'Top 10 evaluated models', higherBetter: 'Higher is better ↗', balancedLeaders: 'Balanced leaders', methodIndex: '04 / Method', methodHeading: 'Evaluation framework', methodDesc: 'One end-to-end performance score, explained by three evaluation dimensions. Efficiency is reported separately.', primaryMetric: 'Primary metric', pdrName: 'Primary Design Result', pdrDesc: "The normalized headline index for a model's end-to-end design performance on the OpenDesign benchmark. D0, D1, and D2 explain where that result comes from.", flowAria: 'Evaluation sequence', flow: [['Run', 'Same private task set and OpenDesign harness'], ['Gate', 'D0 checks whether the result can render'], ['Score', 'D1 requirement, 65 points · D2 design, 35 points'], ['Report', 'PDR ranking plus separate efficiency metrics']], methods: [['D0', 'Hard gate', 'HTML renderability', 'Confirms that the generated result opens as a usable webpage before quality is judged.', ['HTML loads successfully', 'No blank or blocked result', 'No fatal runtime failure']], ['D1', '65 points', 'Requirement fulfillment', 'Measures whether the requested product and interaction requirements are actually implemented.', ['Page and module coverage', 'Required content and states', 'Interactions and constraints']], ['D2', '35 points', 'Design quality', 'Reviews the visible quality and usability of the final rendered experience.', ['Hierarchy and composition', 'Typography and visual finish', 'Readability and responsive behavior']], ['EFF', 'Separate', 'Model efficiency', 'Shows the resources required to reach the result and does not increase or reduce PDR.', ['Cost per design session', 'Tool-call count', 'Total runtime by task difficulty']]], disclosures: [['Fair comparison', 'Models run through the same OpenDesign harness, private benchmark, and scoring framework.'], ['Benchmark boundary', 'Tasks remain private to reduce contamination. The leaderboard publishes model-level results, not benchmark prompts.'], ['How to interpret it', 'Scores describe the evaluated model version in OpenDesign. This is not a general intelligence ranking.']],
+  title: 'AI Design Model Rankings | OpenDesign', description: 'Independent model rankings for design work, evaluated with the same private OpenDesign benchmark and scoring framework.', kicker: 'OpenDesign Model Index', heading: 'AI Design Model Rankings', intro: 'One private benchmark and one scoring framework, comparing leading models on real design work in OpenDesign.', preview: 'Preview data', previewNote: 'Final launch scores will replace the demonstration dataset without changing this page structure.', overallIndex: '01 / Overall', leaderboard: 'Model Leaderboard', leaderboardDesc: 'Overall ranking on the OpenDesign benchmark. PDR is the primary score; D0, D1, and D2 explain the result.', metricAria: 'Ranking metric', metrics: [['pdr', 'PDR', 'Overall'], ['d0', 'D0', 'Renderability'], ['d1', 'D1', 'Requirement'], ['d2', 'D2', 'Design quality']], scoreAria: 'How to read the evaluation scores', primer: [['PDR', 'Headline result'], ['D0', 'Renderability gate'], ['D1 · 65', 'Requirement fulfillment'], ['D2 · 35', 'Design quality'], ['EFF', 'Reported separately']], valueFormatAria: 'Leaderboard value format', percentage: 'Percentage', score: 'Score', model: 'Model', taskIndex: '02 / Best by task', taskHeading: 'Top models by task', taskDesc: 'Go beyond the overall winner. See which model leads each design task on OpenDesign.', taskLegendAria: 'Task category share', taskGroups: { Visual: 'Visual', Product: 'Product', Interface: 'Interface', Data: 'Data' }, analysisIndex: '03 / Deep dive', analysisHeading: 'Explore model trade-offs', analysisDesc: 'Compare score composition, efficiency, and the balance between requirement fulfillment and design quality.', analysisAria: 'Model analysis view', profile: 'Score profile', speed: 'Speed', cost: 'Cost', calls: 'Tool calls', balance: 'D1 × D2', difficulty: 'Task difficulty', simple: 'Simple', general: 'General', difficult: 'Difficult', profileEyebrow: 'Score composition', profileHeading: 'Evaluation profile', profileDesc: 'Compare D0 renderability, D1 requirement fulfillment, and D2 design quality across all evaluated models.', profileAria: 'Evaluation profile by model', lowerBetter: 'lower is better', pdrVsSpeed: 'PDR vs Speed', chartDesc: 'Top-left quadrant shows models with stronger design performance and better efficiency.', pdrHigher: 'PDR (higher ↑)', runtimeSlower: 'Runtime (slower →)', idealZone: 'High PDR · High efficiency', models: 'Models', requirement: 'Requirement fulfillment', design: 'Design quality', showPareto: 'Show Pareto', topModels: 'Top 10 evaluated models', higherBetter: 'Higher is better ↗', balancedLeaders: 'Balanced leaders', methodIndex: '04 / Method', methodHeading: 'Evaluation framework', methodDesc: 'One end-to-end performance score, explained by three evaluation dimensions. Efficiency is reported separately.', primaryMetric: 'Primary metric', pdrName: 'Primary Design Result', pdrDesc: "The normalized headline index for a model's end-to-end design performance on the OpenDesign benchmark. D0, D1, and D2 explain where that result comes from.", flowAria: 'Evaluation sequence', flow: [['Run', 'Same private task set and OpenDesign harness'], ['Gate', 'D0 checks whether the result can render'], ['Score', 'D1 requirement, 65 points · D2 design, 35 points'], ['Report', 'PDR ranking plus separate efficiency metrics']], methods: [['D0', 'Hard gate', 'HTML renderability', 'Confirms that the generated result opens as a usable webpage before quality is judged.', ['HTML loads successfully', 'No blank or blocked result', 'No fatal runtime failure']], ['D1', '65 points', 'Requirement fulfillment', 'Measures whether the requested product and interaction requirements are actually implemented.', ['Page and module coverage', 'Required content and states', 'Interactions and constraints']], ['D2', '35 points', 'Design quality', 'Reviews the visible quality and usability of the final rendered experience.', ['Hierarchy and composition', 'Typography and visual finish', 'Readability and responsive behavior']], ['EFF', 'Separate', 'Model efficiency', 'Shows the resources required to reach the result and does not increase or reduce PDR.', ['Cost per design session', 'Tool-call count', 'Total runtime by task difficulty']]], disclosures: [['Fair comparison', 'Models run through the same OpenDesign harness, private benchmark, and scoring framework.'], ['Benchmark boundary', 'Tasks remain private to reduce contamination. The leaderboard publishes model-level results, not benchmark prompts.'], ['How to interpret it', 'Scores describe the evaluated model version in OpenDesign. This is not a general intelligence ranking.']], stripLead: 'Every model on this board runs in OpenDesign with your own API key.', stripCta: 'Download the app', ctaIndex: '05 / Try it', ctaKicker: 'From ranking to your desktop', ctaTitle: 'Reproduce this leaderboard yourself', ctaBody: 'OpenDesign is an open-source, BYOK design workspace: plug in your own API key, switch between any model ranked here, and run the same design tasks on your own machine.', ctaDownload: 'Download OpenDesign', ctaDownloadNote: 'Free & open source · macOS / Windows', ctaDiscord: 'Join the Discord', ctaDiscordNote: 'Discuss results and nominate the next model we evaluate', ctaFeishu: 'Join the Feishu group', ctaFeishuNote: 'Chinese community',
 };
 const methodCards = copy.methods as Array<[string, string, string, string, string[]]>;
 
@@ -52,6 +66,7 @@ type Model = {
   maker: string;
   icon: string;
   color: string;
+  badge?: string;
   pdr: number;
   d0: number;
   d1: number;
@@ -61,17 +76,24 @@ type Model = {
   calls: number;
 };
 
+const stealthBadge = isZh ? '隐身' : 'Stealth';
 const models: Model[] = [
   { name: 'Claude Opus 5', maker: 'Anthropic', icon: '/agents/anthropic.svg', color: '#ff7c3f', pdr: 89.8, d0: 98.9, d1: 61.2, d2: 32.9, time: 178, cost: 2.31, calls: 17.8 },
+  { name: 'Claude Fable 5', maker: 'Anthropic', icon: '/agents/anthropic.svg', color: '#b85c33', pdr: 89.1, d0: 99.1, d1: 60.9, d2: 32.5, time: 151, cost: 1.98, calls: 16.1 },
   { name: 'GPT-5.6 Sol', maker: 'OpenAI', icon: '/agents/openai.svg', color: '#151714', pdr: 88.3, d0: 99.3, d1: 60.6, d2: 31.8, time: 142, cost: 1.84, calls: 15.1 },
   { name: 'Claude Sonnet 5', maker: 'Anthropic', icon: '/agents/anthropic.svg', color: '#df9b70', pdr: 86.5, d0: 98.4, d1: 59.1, d2: 31.4, time: 108, cost: 1.12, calls: 12.8 },
   { name: 'GPT-5.6 Luna', maker: 'OpenAI', icon: '/agents/openai.svg', color: '#66706a', pdr: 84.2, d0: 98.6, d1: 57.9, d2: 30.7, time: 94, cost: .88, calls: 11.4 },
+  { name: 'Ox Alpha', maker: isZh ? '匿名实验室' : 'Undisclosed lab', icon: '/agents/ox.svg', color: '#3f463f', badge: stealthBadge, pdr: 83.6, d0: 97.2, d1: 57.4, d2: 30.1, time: 137, cost: 0, calls: 14.2 },
   { name: 'Gemini 3.1 Pro', maker: 'Google', icon: '/agents/gemini.svg', color: '#168cf3', pdr: 81.9, d0: 98.7, d1: 56.2, d2: 29.2, time: 164, cost: 1.92, calls: 16.4 },
   { name: 'Grok 4.6', maker: 'xAI', icon: '/agents/xai.svg', color: '#7a63e8', pdr: 79.8, d0: 96.4, d1: 55.1, d2: 28.7, time: 126, cost: 1.44, calls: 13.1 },
   { name: 'Kimi K3', maker: 'Moonshot AI', icon: '/agents/moonshot.svg', color: '#6350cf', pdr: 78.1, d0: 96.8, d1: 54.3, d2: 28.1, time: 118, cost: .94, calls: 12.9 },
   { name: 'Gemini 3.7 Flash', maker: 'Google', icon: '/agents/gemini.svg', color: '#54bff2', pdr: 76.2, d0: 98.1, d1: 53.4, d2: 27.5, time: 68, cost: .58, calls: 9.4 },
+  { name: 'GLM-5.3', maker: 'Z.ai', icon: '/agents/zhipu.svg', color: '#2743d6', pdr: 75.4, d0: 96.1, d1: 53.0, d2: 27.1, time: 97, cost: .57, calls: 11.3 },
   { name: 'Qwen 3.8-Max', maker: 'Alibaba', icon: '/agents/qwen.svg', color: '#564bd0', pdr: 74.3, d0: 95.9, d1: 52.6, d2: 26.9, time: 89, cost: .62, calls: 10.6 },
   { name: 'DeepSeek-V4-Pro', maker: 'DeepSeek', icon: '/agents/deepseek.svg', color: '#5277f6', pdr: 72.4, d0: 94.8, d1: 51.6, d2: 26.4, time: 83, cost: .52, calls: 10.1 },
+  { name: 'MiniMax M3', maker: 'MiniMax', icon: '/agents/minimax.svg', color: '#d9418c', pdr: 70.9, d0: 94.2, d1: 50.6, d2: 25.9, time: 91, cost: .47, calls: 10.9 },
+  { name: 'Mistral Medium 3.5', maker: 'Mistral AI', icon: '/agents/mistral.svg', color: '#efb02b', pdr: 69.7, d0: 94.6, d1: 49.8, d2: 25.4, time: 76, cost: .44, calls: 9.8 },
+  { name: 'Claude Haiku 4.5', maker: 'Anthropic', icon: '/agents/anthropic.svg', color: '#8f7a63', pdr: 68.2, d0: 95.2, d1: 48.9, d2: 24.7, time: 52, cost: .34, calls: 8.4 },
 ];
 
 const scenarios = [
@@ -117,7 +139,7 @@ const leaderboardGroups = [
     label: isZh ? '综合总榜' : 'Overall',
     detail: isZh ? '所有五个设计场景的综合表现' : 'Combined performance across all five design scenarios',
     rows: scenarioResults.map((model) => ({
-      name: model.name, maker: model.maker, icon: model.icon, color: model.color,
+      name: model.name, maker: model.maker, icon: model.icon, color: model.color, badge: model.badge,
       score: Number((model.d1 + model.d2).toFixed(1)), pdr: model.pdr, cost: model.cost,
       x: costPlotX(model.cost), y: costPlotY(model.pdr),
     })).sort((a, b) => b.score - a.score),
@@ -129,7 +151,7 @@ const leaderboardGroups = [
     rows: scenarioResults.map((model) => {
       const result = model.scenarios[scenarioIndex]!;
       return {
-        name: model.name, maker: model.maker, icon: model.icon, color: model.color,
+        name: model.name, maker: model.maker, icon: model.icon, color: model.color, badge: model.badge,
         score: result.score, pdr: result.pdr, cost: result.cost,
         x: costPlotX(result.cost), y: costPlotY(result.pdr),
       };
@@ -192,6 +214,11 @@ const clientCopyJson = JSON.stringify({
       </div>
 
       <ModelRankingPair group={leaderboardGroups[0]!} isZh={isZh} prominent />
+
+      <aside class="ranking-strip">
+        <p>{copy.stripLead}</p>
+        <a href={href(DOWNLOAD_HREF)}>{copy.stripCta}<span aria-hidden="true"> →</span></a>
+      </aside>
     </section>
 
     <section class="model-section scenario-rankings-section" aria-labelledby="task-title">
@@ -274,7 +301,7 @@ const clientCopyJson = JSON.stringify({
                 {models.map((model) => (
                   <div class="efficiency-model-row" data-efficiency-row={model.name}>
                     <span class="model-icon"><img src={model.icon} alt="" width="28" height="28" /></span>
-                    <span><strong>{model.name}</strong><small>{model.maker}</small></span><b>{model.time}s</b>
+                    <span><strong>{model.name}{model.badge ? <em class="model-badge">{model.badge}</em> : null}</strong><small>{model.maker}</small></span><b>{model.time}s</b>
                   </div>
                 ))}
               </div>
@@ -309,6 +336,29 @@ const clientCopyJson = JSON.stringify({
         {copy.disclosures.map(([heading, body]) => <div><strong>{heading}</strong><p>{body}</p></div>)}
       </div>
     </section>
+
+    <section class="model-section model-cta-section" aria-labelledby="cta-title">
+      <div class="model-cta">
+        <div class="model-cta-copy">
+          <p class="model-index-kicker">{copy.ctaKicker}</p>
+          <h2 id="cta-title">{copy.ctaTitle}</h2>
+          <p>{copy.ctaBody}</p>
+        </div>
+        <div class="model-cta-actions">
+          <a class="model-cta-action model-cta-primary" href={href(DOWNLOAD_HREF)}>
+            <strong>{copy.ctaDownload}</strong><small>{copy.ctaDownloadNote}</small>
+          </a>
+          <a class="model-cta-action" href={OPEN_DESIGN_DISCORD} target="_blank" rel="noopener">
+            <strong>{copy.ctaDiscord}</strong><small>{copy.ctaDiscordNote}</small>
+          </a>
+          {isZh ? (
+            <a class="model-cta-action" href={OPEN_DESIGN_FEISHU} target="_blank" rel="noopener">
+              <strong>{copy.ctaFeishu}</strong><small>{copy.ctaFeishuNote}</small>
+            </a>
+          ) : null}
+        </div>
+      </div>
+    </section>
   </article>
   <script is:inline type="application/json" id="model-rankings-data" set:html={modelsJson}></script>
   <script is:inline type="application/json" id="model-rankings-scenarios" set:html={scenariosJson}></script>
@@ -323,6 +373,7 @@ const clientCopyJson = JSON.stringify({
       maker: string;
       icon: string;
       color: string;
+      badge?: string;
       pdr: number;
       d0: number;
       d1: number;
@@ -515,7 +566,7 @@ const clientCopyJson = JSON.stringify({
             return `<div><span><i style="background:${scenario.color}"></i>${scenario.label}</span><b>${result.score.toFixed(1)}</b></div>`;
           }).join('');
           return `<article class="compare-card" style="--compare-color:${model.color}">
-            <header><span class="model-icon"><img src="${model.icon}" alt="" width="28" height="28"></span><span><strong>${model.name}</strong><small>${model.maker}</small></span></header>
+            <header><span class="model-icon"><img src="${model.icon}" alt="" width="28" height="28"></span><span><strong>${model.name}${model.badge ? `<em class="model-badge">${model.badge}</em>` : ''}</strong><small>${model.maker}</small></span></header>
             <div class="compare-headline"><span>PDR <strong>${model.pdr.toFixed(1)}%</strong></span><span>${clientCopy.quality} <strong>${(model.d1 + model.d2).toFixed(1)}</strong></span></div>
             <div class="compare-metrics"><div><small>D1</small><strong>${model.d1.toFixed(1)}<i>/65</i></strong></div><div><small>D2</small><strong>${model.d2.toFixed(1)}<i>/35</i></strong></div><div><small>Speed</small><strong>${model.time}s</strong></div><div><small>Cost</small><strong>$${model.cost.toFixed(2)}</strong></div><div><small>Calls</small><strong>${model.calls.toFixed(1)}</strong></div></div>
             <div class="compare-scenes">${sceneRows}</div>
