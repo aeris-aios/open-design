@@ -218,3 +218,172 @@ register('tweaks',function(){return {
 `,
   };
 }
+
+/** Palette changes are DOM-local runtime state and never require navigation. */
+export function buildPaletteRuntimeModule(): PreviewRuntimeModuleSource {
+  return {
+    capabilities: ['palette'],
+    source: String.raw`
+var paletteEnabled=false;
+var paletteReady=document.readyState!=='loading';
+var currentPalette=null;
+var PALETTES={
+  'coral':{hue:10,satFloor:0.55,mono:false},
+  'electric':{hue:262,satFloor:0.55,mono:false},
+  'acid-forest':{hue:142,satFloor:0.55,mono:false},
+  'risograph':{hue:349,satFloor:0.60,mono:false},
+  'mono-noir':{hue:0,satFloor:0,mono:true}
+};
+var paletteAttr='data-od-palette-fix';
+var savedKey='__odPaletteSaved__';
+var minSaturation=0.08;
+var walkLimit=12000;
+var styleRuleLimit=5000;
+var rootSelector=/(^|,)\s*(:root|html|body|:host)\s*($|,)/;
+var appliedVars=Object.create(null);
+var colorProbe=null;
+function parseRgb(value){
+  var text=String(value||'').trim();
+  if(!text||text==='transparent'||text==='none')return null;
+  var match=text.match(/rgba?\(([^)]+)\)/);
+  if(!match)return null;
+  var parts=match[1].split(/[\s,/]+/).filter(Boolean).map(function(part){return parseFloat(part);});
+  if(parts.length<3)return null;
+  return {r:parts[0]||0,g:parts[1]||0,b:parts[2]||0,a:parts[3]==null?1:parts[3]};
+}
+function rgbToHsl(r,g,b){
+  r/=255;g/=255;b/=255;
+  var max=Math.max(r,g,b),min=Math.min(r,g,b),h=0,s=0,l=(max+min)/2;
+  if(max!==min){
+    var delta=max-min;
+    s=l>0.5?delta/(2-max-min):delta/(max+min);
+    if(max===r)h=(g-b)/delta+(g<b?6:0);
+    else if(max===g)h=(b-r)/delta+2;
+    else h=(r-g)/delta+4;
+    h*=60;
+  }
+  return {h:h,s:s,l:l};
+}
+function hueToRgb(p,q,t){
+  if(t<0)t+=1;if(t>1)t-=1;
+  if(t<1/6)return p+(q-p)*6*t;
+  if(t<1/2)return q;
+  if(t<2/3)return p+(q-p)*(2/3-t)*6;
+  return p;
+}
+function hslString(h,s,l){
+  h=((h%360)+360)%360/360;
+  var r,g,b;
+  if(s===0)r=g=b=l;
+  else{
+    var q=l<0.5?l*(1+s):l+s-l*s;
+    var p=2*l-q;
+    r=hueToRgb(p,q,h+1/3);g=hueToRgb(p,q,h);b=hueToRgb(p,q,h-1/3);
+  }
+  return 'rgb('+Math.round(r*255)+','+Math.round(g*255)+','+Math.round(b*255)+')';
+}
+function chromatic(color){
+  if(!color||color.a<0.3)return null;
+  var hsl=rgbToHsl(color.r,color.g,color.b);
+  if(hsl.s<minSaturation||hsl.l<0.04||hsl.l>0.98)return null;
+  return hsl;
+}
+function shiftedColor(hsl,palette){
+  if(palette.mono)return hslString(0,0,hsl.l);
+  return hslString(palette.hue,Math.max(hsl.s,palette.satFloor*0.7),hsl.l);
+}
+function normalizedColor(value){
+  var raw=String(value||'').trim();
+  if(!raw)return null;
+  var direct=parseRgb(raw);
+  if(direct)return direct;
+  if(raw.indexOf('var(')===0||raw.indexOf('--')===0)return null;
+  if(!colorProbe){
+    colorProbe=document.createElement('div');
+    colorProbe.style.display='none';
+    (document.body||document.documentElement).appendChild(colorProbe);
+  }
+  colorProbe.style.color='';
+  try{colorProbe.style.color=raw;}catch(_){return null;}
+  return colorProbe.style.color?parseRgb(colorProbe.style.color):null;
+}
+function walkStyleRules(rules,visit,budget){
+  if(!rules||!budget.left)return;
+  for(var i=0;i<rules.length&&budget.left>0;i++){
+    var rule=rules[i];budget.left--;
+    if(rule.selectorText&&rule.style&&rootSelector.test(String(rule.selectorText)))visit(rule);
+    if(rule.cssRules&&rule.cssRules.length)walkStyleRules(rule.cssRules,visit,budget);
+  }
+}
+function applyPaletteVars(palette){
+  var sheets=document.styleSheets;
+  if(!sheets||!sheets.length)return;
+  var budget={left:styleRuleLimit};
+  for(var i=0;i<sheets.length;i++){
+    var rules=null;
+    try{rules=sheets[i].cssRules;}catch(_){continue;}
+    walkStyleRules(rules,function(rule){
+      var declaration=rule.style;
+      for(var j=0;j<declaration.length;j++){
+        var name=declaration[j];
+        if(name.indexOf('--')!==0)continue;
+        var hsl=chromatic(normalizedColor(declaration.getPropertyValue(name)));
+        if(!hsl)continue;
+        document.documentElement.style.setProperty(name,shiftedColor(hsl,palette));
+        appliedVars[name]=true;
+      }
+    },budget);
+  }
+}
+function restorePalette(){
+  for(var name in appliedVars)document.documentElement.style.setProperty(name,'');
+  appliedVars=Object.create(null);
+  var nodes=document.querySelectorAll('['+paletteAttr+']');
+  for(var i=0;i<nodes.length;i++){
+    var element=nodes[i],saved=element[savedKey];
+    if(saved){
+      if('bg' in saved)element.style.backgroundColor=saved.bg;
+      if('color' in saved)element.style.color=saved.color;
+      if('border' in saved)element.style.borderColor=saved.border;
+      if('fill' in saved){if(saved.fill)element.setAttribute('fill',saved.fill);else element.removeAttribute('fill');}
+      if('stroke' in saved){if(saved.stroke)element.setAttribute('stroke',saved.stroke);else element.removeAttribute('stroke');}
+    }
+    element.removeAttribute(paletteAttr);delete element[savedKey];
+  }
+}
+function applyPalette(){
+  restorePalette();
+  if(!paletteEnabled||!paletteReady||!currentPalette||!PALETTES[currentPalette])return;
+  var palette=PALETTES[currentPalette];
+  applyPaletteVars(palette);
+  var elements=document.body?document.body.querySelectorAll('*'):[];
+  for(var i=0;i<elements.length&&i<walkLimit;i++){
+    var element=elements[i],computed=getComputedStyle(element),saved={},changed=false;
+    var bg=chromatic(parseRgb(computed.backgroundColor));
+    if(bg){saved.bg=element.style.backgroundColor;element.style.setProperty('background-color',shiftedColor(bg,palette),'important');changed=true;}
+    var fg=chromatic(parseRgb(computed.color));
+    if(fg){saved.color=element.style.color;element.style.setProperty('color',shiftedColor(fg,palette),'important');changed=true;}
+    var border=chromatic(parseRgb(computed.borderTopColor));
+    if(border){saved.border=element.style.borderColor;element.style.setProperty('border-color',shiftedColor(border,palette),'important');changed=true;}
+    var fill=element.getAttribute&&element.getAttribute('fill');
+    if(fill){var fillHsl=chromatic(parseRgb(computed.fill));if(fillHsl){saved.fill=fill;element.setAttribute('fill',shiftedColor(fillHsl,palette));changed=true;}}
+    var stroke=element.getAttribute&&element.getAttribute('stroke');
+    if(stroke){var strokeHsl=chromatic(parseRgb(computed.stroke));if(strokeHsl){saved.stroke=stroke;element.setAttribute('stroke',shiftedColor(strokeHsl,palette));changed=true;}}
+    if(changed){element[savedKey]=saved;element.setAttribute(paletteAttr,'1');}
+  }
+}
+window.addEventListener('message',function(event){
+  if(event.source!==parent)return;
+  var data=event.data;
+  if(!data||data.type!=='od:palette')return;
+  currentPalette=data.palette?String(data.palette):null;
+  applyPalette();
+});
+if(!paletteReady)document.addEventListener('DOMContentLoaded',function(){paletteReady=true;applyPalette();},{once:true});
+register('palette',function(){return {
+  enable:function(){paletteEnabled=true;applyPalette();},
+  disable:function(){paletteEnabled=false;restorePalette();}
+};});
+`,
+  };
+}

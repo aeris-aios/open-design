@@ -1,14 +1,53 @@
+import { createRequire } from 'node:module';
 import vm from 'node:vm';
 import { describe, expect, it } from 'vitest';
 import { buildPreviewRuntimeBootstrap } from '../../src/http/preview-runtime-bootstrap.js';
 import {
   buildInstalledScriptRuntimeModule,
   buildLazyScriptRuntimeModule,
+  buildPaletteRuntimeModule,
   buildScrollAndMeasurementRuntimeModule,
   buildTweaksRuntimeModule,
 } from '../../src/http/preview-runtime-modules.js';
 
+const require = createRequire(import.meta.url);
+const { JSDOM } = require('jsdom') as {
+  JSDOM: new (html: string, options: Record<string, unknown>) => any;
+};
+
 describe('preview runtime modules', () => {
+  it('applies and restores palette state without replacing the document', () => {
+    const dom = new JSDOM(
+      '<!doctype html><html><head><style>:root{--accent:rgb(220,40,40)}</style></head>'
+        + '<body><div id="card" style="background-color:rgb(220,40,40)">Card</div></body></html>',
+      { runScripts: 'outside-only', url: 'http://n-scope.localhost/index.html' },
+    );
+    let hooks: { enable: () => void; disable: () => void } | null = null;
+    const context = dom.getInternalVMContext() as vm.Context & Record<string, any>;
+    context.parent = dom.window;
+    context.send = () => {};
+    context.register = (_capability: string, create: () => typeof hooks) => { hooks = create(); };
+    vm.runInContext(buildPaletteRuntimeModule().source, context);
+    expect(hooks).not.toBeNull();
+    dom.window.document.dispatchEvent(new dom.window.Event('DOMContentLoaded'));
+    hooks!.enable();
+
+    dom.window.dispatchEvent(new dom.window.MessageEvent('message', {
+      source: dom.window,
+      data: { type: 'od:palette', palette: 'electric' },
+    }));
+    const root = dom.window.document.documentElement;
+    const card = dom.window.document.querySelector('#card');
+    expect(root.style.getPropertyValue('--accent')).not.toBe('');
+    expect(card.hasAttribute('data-od-palette-fix')).toBe(true);
+
+    hooks!.disable();
+    expect(root.style.getPropertyValue('--accent')).toBe('');
+    expect(card.hasAttribute('data-od-palette-fix')).toBe(false);
+    expect(card.style.backgroundColor).toBe('rgb(220, 40, 40)');
+    dom.window.close();
+  });
+
   it('prevents Tweaks panel flash and activates host control only after negotiation', async () => {
     const source = buildPreviewRuntimeBootstrap({
       sessionId: 'session-1',

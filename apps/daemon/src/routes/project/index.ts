@@ -96,6 +96,7 @@ import {
 import {
   buildInstalledScriptRuntimeModule,
   buildLazyScriptRuntimeModule,
+  buildPaletteRuntimeModule,
   buildScrollAndMeasurementRuntimeModule,
   buildTweaksRuntimeModule,
 } from '../../http/preview-runtime-modules.js';
@@ -5505,6 +5506,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
     'observability',
     'selection',
     'tweaks',
+    'palette',
   ] as const satisfies readonly PreviewRuntimeCapability[];
 
   function htmlPreviewDocumentVersion(meta: { size: number; mtime: number }): string {
@@ -6933,6 +6935,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
             PREVIEW_OBSERVABILITY_BRIDGE_MARKER,
           ),
           buildTweaksRuntimeModule(),
+          buildPaletteRuntimeModule(),
         ],
       });
       const streamRuntimeBootstrap = /^text\/html(?:;|$)/iu.test(previewMeta.mime)
