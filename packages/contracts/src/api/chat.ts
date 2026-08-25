@@ -668,6 +668,8 @@ export interface ChatRunStatusResponse {
   status: ChatRunStatus;
   createdAt: number;
   updatedAt: number;
+  /** The immutable instant this Run entered its terminal status, when terminal. */
+  terminalAt?: number | null;
   cancelRequested?: boolean;
   /**
    * Actor or lifecycle path that requested cancellation. Only `user_stop`
