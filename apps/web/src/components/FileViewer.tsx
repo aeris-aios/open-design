@@ -17518,7 +17518,7 @@ function HtmlViewer({
           <button
             type="button"
             className="present-exit-btn"
-            onClick={() => setInTabPresent(false)}
+            onClick={() => closeInTabPresentation()}
             title={t('fileViewer.exitPresentation')}
             aria-label={t('fileViewer.exitPresentation')}
           >

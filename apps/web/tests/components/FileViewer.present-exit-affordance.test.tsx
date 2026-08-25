@@ -62,6 +62,26 @@ function Wrap({ children }: { children: ReactNode }) {
   return <CollabProvider value={collabValue()}>{children}</CollabProvider>;
 }
 
+function deckFile(): ProjectFile {
+  return {
+    name: 'deck.html',
+    path: 'deck.html',
+    type: 'file',
+    size: 2048,
+    mtime: 1710000000,
+    kind: 'html',
+    mime: 'text/html',
+    artifactManifest: {
+      version: 1,
+      kind: 'deck',
+      title: 'Deck',
+      entry: 'deck.html',
+      renderer: 'deck-html',
+      exports: ['html'],
+    },
+  };
+}
+
 function pageFile(): ProjectFile {
   return {
     name: 'page.html',
@@ -115,6 +135,28 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+const DECK_HTML =
+  '<html><body>'
+  + '<section class="slide"><h1>one</h1></section>'
+  + '<section class="slide"><p>two</p></section>'
+  + '</body></html>';
+
+function installDeckFetchMock(projectId: string) {
+  const filesUrl = `/api/projects/${encodeURIComponent(projectId)}/files`;
+  const rawUrl = `/api/projects/${encodeURIComponent(projectId)}/raw/deck.html`;
+  vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
+    const url = typeof input === 'string' ? input : input instanceof Request ? input.url : String(input);
+    if (url.split('?')[0] === filesUrl) {
+      return new Response(
+        JSON.stringify({ files: [deckFile()] }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    }
+    if (url.startsWith(rawUrl)) return new Response(DECK_HTML, { status: 200 });
+    return new Response('', { status: 404 });
+  }));
+}
+
 describe('presentation overlay exit affordance (OPEND-2156)', () => {
   it('renders an exit control inside the overlay', async () => {
     const projectId = 'proj-present-exit-control';
@@ -160,5 +202,41 @@ describe('presentation overlay exit affordance (OPEND-2156)', () => {
     fireEvent.click(exit!);
 
     await waitFor(() => expect(overlay()).toBeNull());
+  });
+
+  // Presenting a deck opens a second window for speaker notes
+  // (`presentInThisTab` → `openPresenterWindow`). The reported symptom was that
+  // BOTH the app and that popup turn into the presentation, so an exit that
+  // only unmounts the overlay leaves the user still presenting in the popup —
+  // half the bug. The real teardown is `closeInTabPresentation()`, which is
+  // also what Esc and presenter-close use; this control has to go through it.
+  it('tears down the speaker-notes popup too, not just the overlay', async () => {
+    const projectId = 'proj-present-exit-popup';
+    installDeckFetchMock(projectId);
+
+    const popupClose = vi.fn();
+    const fakePopup = {
+      closed: false,
+      close: popupClose,
+      focus: vi.fn(),
+      document: { open: vi.fn(), write: vi.fn(), close: vi.fn() },
+    };
+    vi.stubGlobal('open', vi.fn(() => fakePopup));
+
+    render(
+      <Wrap>
+        <FileViewer projectId={projectId} projectKind="deck" file={deckFile()} isDeck />
+      </Wrap>,
+    );
+
+    await waitFor(() => expect(document.querySelector('.present-trigger')).not.toBeNull());
+    await enterPresentation();
+
+    const exit = overlay()!.querySelector('button');
+    expect(exit).not.toBeNull();
+    fireEvent.click(exit!);
+
+    await waitFor(() => expect(overlay()).toBeNull());
+    expect(popupClose).toHaveBeenCalled();
   });
 });
