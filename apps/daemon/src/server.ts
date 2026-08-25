@@ -11523,6 +11523,12 @@ export async function startServer({
           lifecycleMarkers.firstModelEventAt,
         );
       }
+      // Sole owner of `first_visible_output`. `send` is the last thing every
+      // stream handler goes through, so a mark here means the bytes really did
+      // leave the daemon — past the title-marker stripper, past the role-marker
+      // guard, past close-time buffering. Do not stamp this mark from a decode
+      // site: doing so is what made `time_to_first_visible_output_ms` identical
+      // to `time_to_first_token_ms` on every run.
       if (lifecycleMarkers.firstVisibleOutput) {
         lifecycle.mark('first_visible_output');
       }
@@ -13644,10 +13650,19 @@ export async function startServer({
       'text_delta',
       'thinking_delta',
     ]);
+    // Stamps ONLY `first_token`. `first_visible_output` deliberately does not
+    // ride along: it belongs to the single emission choke point in `send()`,
+    // which runs after the title-marker stripper and the fabricated-role-marker
+    // guard have decided whether these bytes reach the client at all. Stamping
+    // both here made `time_to_first_visible_output_ms` a byte-for-byte copy of
+    // `time_to_first_token_ms` — the mark is first-write-wins, so this call
+    // always won and the `send()` mark could never fire. The two are equal
+    // whenever output streams straight through (the common case, and correct);
+    // they diverge exactly when the daemon HOLDS bytes back, which is the
+    // window the metric exists to measure.
     const noteFirstTokenAt = (timestamp = Date.now()) => {
       if (run.analyticsTelemetry?.firstTokenAt) return;
       lifecycle.mark('first_token', timestamp);
-      lifecycle.mark('first_visible_output', timestamp);
     };
     // Subsegment markers inside `processSpawnedAt -> firstTokenAt` (#3408 §4).
     // `cliReadyAt` is the first well-formed adapter output and is stamped for
