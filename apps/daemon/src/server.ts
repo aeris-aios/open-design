@@ -5030,7 +5030,7 @@ export async function startServer({
       }),
     onDeferred: (info) => {
       console.info(
-        '[od] background shared-project pull deferred (oversized): ' +
+        `[od] background shared-project pull deferred (${info.reason}): ` +
           `projectId=${info.projectId} workspaceId=${info.workspaceId} ` +
           `version=${info.version} entries=${info.entryCount} ` +
           `maxEntries=${info.maxEntries}; opening the project pulls it on demand`,
