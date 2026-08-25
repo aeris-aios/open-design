@@ -49,6 +49,21 @@ function completeTagEnd(input: string): number {
   return -1;
 }
 
+function rawTextCloseStart(input: string, tagName: string): number {
+  const closeNeedle = `</${tagName}`;
+  const lower = input.toLowerCase();
+  let candidate = lower.indexOf(closeNeedle);
+  while (candidate >= 0) {
+    const delimiter = lower[candidate + closeNeedle.length];
+    // HTML only recognizes a raw-text end tag name when the next character is
+    // ASCII whitespace, '/', or '>'. Prefixes such as </scripture> remain
+    // author text and must not return the scanner to normal tag parsing.
+    if (delimiter !== undefined && /[\t\n\f\r />]/.test(delimiter)) return candidate;
+    candidate = lower.indexOf(closeNeedle, candidate + closeNeedle.length);
+  }
+  return -1;
+}
+
 /**
  * Scan only HTML parser state needed to choose a safe head insertion point.
  * Source bytes are decoded as latin1 so string offsets remain byte offsets;
@@ -108,10 +123,11 @@ export async function scanHtmlHeadForStreamingInjection(
 
       if (rawTextTag) {
         const closeNeedle = `</${rawTextTag}`;
-        const lower = buffer.toLowerCase();
-        const close = lower.indexOf(closeNeedle);
+        const close = rawTextCloseStart(buffer, rawTextTag);
         const contentEnd = close < 0
-          ? Math.max(0, buffer.length - closeNeedle.length)
+          // Keep the candidate plus one delimiter byte so a tag name ending at
+          // a stream boundary cannot be accepted before its delimiter arrives.
+          ? Math.max(0, buffer.length - closeNeedle.length - 1)
           : close;
         if (rawTextTag === 'script' && contentEnd > 0 && !hasLoadTimeLocationNavigation) {
           const sample = scriptSignalTail + buffer.slice(0, contentEnd);

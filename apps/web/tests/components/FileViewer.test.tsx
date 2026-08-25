@@ -9055,6 +9055,141 @@ describe('FileViewer tweaks toolbar', () => {
     }
   });
 
+  it('recreates an exact aborted active URL iframe and holds the loader until it paints', () => {
+    let latestNavigationFailure: OpenDesignHostPreviewNavigationFailure | null = null;
+    let navigationFailureListener: OpenDesignHostPreviewNavigationFailureListener | null = null;
+    const emitNavigationFailure = (failure: OpenDesignHostPreviewNavigationFailure) => {
+      latestNavigationFailure = failure;
+      navigationFailureListener?.(failure);
+    };
+    const restoreHost = installMockOpenDesignHost({
+      host: {
+        preview: {
+          getLatestNavigationFailure: () => latestNavigationFailure,
+          subscribeNavigationFailure: (listener) => {
+            navigationFailureListener = listener;
+            return () => undefined;
+          },
+        },
+      },
+    });
+    try {
+      render(
+        <IframeKeepAliveProvider>
+          <FileViewer
+            projectId="project-1"
+            projectKind="prototype"
+            file={htmlPreviewFile({ name: 'index.html', path: 'index.html' })}
+            liveHtml={'<!doctype html><html><body><main>URL preview</main></body></html>'}
+            workspaceActive
+          />
+        </IframeKeepAliveProvider>,
+      );
+      const failedFrame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+      expect(failedFrame.getAttribute('data-od-render-mode')).toBe('url-load');
+      fireEvent.load(failedFrame);
+      expect(screen.queryByTestId('artifact-preview-first-load')).not.toBeInTheDocument();
+
+      const failedUrl = new URL(
+        failedFrame.getAttribute('src') ?? '',
+        window.location.href,
+      ).href;
+      act(() => {
+        emitNavigationFailure({
+          errorCode: -3,
+          eventId: 1,
+          occurredAtMs: Date.now(),
+          validatedUrl: failedUrl,
+        });
+      });
+
+      const recoveredFrame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+      expect(recoveredFrame).not.toBe(failedFrame);
+      expect(recoveredFrame.getAttribute('src')).toBe(failedFrame.getAttribute('src'));
+      expect(screen.getByTestId('artifact-preview-first-load')).toBeInTheDocument();
+
+      fireEvent.load(recoveredFrame);
+      expect(screen.queryByTestId('artifact-preview-first-load')).not.toBeInTheDocument();
+
+      act(() => emitNavigationFailure({
+        errorCode: -3,
+        eventId: 1,
+        occurredAtMs: Date.now(),
+        validatedUrl: failedUrl,
+      }));
+      expect(screen.getByTestId('artifact-preview-frame')).toBe(recoveredFrame);
+    } finally {
+      restoreHost();
+    }
+  });
+
+  it('drops the first-load cover on exact visible paint before slow resources finish loading', () => {
+    const teardownObserver = installPreviewIframeMessageObserver();
+    try {
+      render(
+        <IframeKeepAliveProvider>
+          <FileViewer
+            projectId="project-1"
+            projectKind="prototype"
+            file={htmlPreviewFile({ name: 'index.html', path: 'index.html' })}
+            liveHtml={'<!doctype html><html><body><main>URL preview</main></body></html>'}
+            workspaceActive
+          />
+        </IframeKeepAliveProvider>,
+      );
+      const activeFrame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+      const inactiveFrame = screen.getByTestId('artifact-preview-frame-srcdoc') as HTMLIFrameElement;
+      expect(screen.getByTestId('artifact-preview-first-load')).toBeInTheDocument();
+
+      act(() => {
+        window.dispatchEvent(new MessageEvent('message', {
+          source: inactiveFrame.contentWindow,
+          data: {
+            type: 'od:preview-observability',
+            version: 1,
+            event: 'visible_paint',
+            source_url: new URL(activeFrame.src).href,
+            visible_element_count: 1,
+          },
+        }));
+      });
+      expect(screen.getByTestId('artifact-preview-first-load')).toBeInTheDocument();
+
+      act(() => {
+        window.dispatchEvent(new MessageEvent('message', {
+          source: activeFrame.contentWindow,
+          data: {
+            type: 'od:preview-observability',
+            version: 1,
+            event: 'visible_paint',
+            source_url: 'od://app/api/projects/project-1/raw/other.html?odPreviewEpoch=1',
+            visible_element_count: 1,
+          },
+        }));
+      });
+      expect(screen.getByTestId('artifact-preview-first-load')).toBeInTheDocument();
+
+      act(() => {
+        window.dispatchEvent(new MessageEvent('message', {
+          source: activeFrame.contentWindow,
+          data: {
+            type: 'od:preview-observability',
+            version: 1,
+            event: 'visible_paint',
+            source_url: new URL(activeFrame.src).href,
+            visible_element_count: 1,
+          },
+        }));
+      });
+
+      expect(screen.queryByTestId('artifact-preview-first-load')).not.toBeInTheDocument();
+      expect(activeFrame.dataset.odLoadedAtMs).toBeUndefined();
+      expect(safetyEventMock).not.toHaveBeenCalled();
+    } finally {
+      teardownObserver();
+    }
+  });
+
   it('uses an exact active ERR_ABORTED to probe an unverified generation once', () => {
     vi.useFakeTimers();
     let navigationFailureListener: OpenDesignHostPreviewNavigationFailureListener | null = null;

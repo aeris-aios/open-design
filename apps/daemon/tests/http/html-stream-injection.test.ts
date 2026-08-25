@@ -82,6 +82,30 @@ describe('scanHtmlHeadForStreamingInjection', () => {
     expect(result.hasLoadTimeLocationNavigation).toBe(true);
   });
 
+  it('does not close raw-text elements on end-tag-name prefixes', async () => {
+    const fixture = await scan([
+      '<html><head><script>',
+      'const samples = "</scripture><base href=/fake-a/>";',
+      'const other = "</script-not-a-tag><base href=/fake-b/>";',
+      '</script></head><body>ok</body></html>',
+    ].join(''));
+    expect(fixture.result.hasAuthoredBase).toBe(false);
+  });
+
+  it('waits for the raw-text end-tag delimiter across read chunks', async () => {
+    const prefix = '<html><head><script>';
+    const splitCandidate = '</script';
+    const padding = 'x'.repeat((64 * 1024) - prefix.length - splitCandidate.length);
+    const fixture = await scan([
+      prefix,
+      padding,
+      splitCandidate,
+      'ure><base href=/fake/>',
+      '</script><base href=/real/></head><body>ok</body></html>',
+    ].join(''));
+    expect(fixture.result.hasAuthoredBase).toBe(true);
+  });
+
   it('keeps malformed attacker-sized tags bounded and returns a parser-safe fallback', async () => {
     const fixture = `<!doctype html><${'x'.repeat((256 * 1024) + 1)}`;
     const { result } = await scan(fixture);

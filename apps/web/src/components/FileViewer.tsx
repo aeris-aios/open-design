@@ -8258,6 +8258,7 @@ function HtmlViewer({
   // iframes still streaming in) — leaving a bare white pane with no feedback.
   // Until that first load event lands, keep a loader over the transport stack.
   const urlPreviewLoadedKeysRef = useRef<Set<string>>(new Set());
+  const urlPreviewKeepAliveKeyRef = useRef<string | null>(null);
   const [urlPreviewFirstLoadPending, setUrlPreviewFirstLoadPending] = useState(false);
   const [boardMode, setBoardMode] = useState(false);
   const [commentPanelOpen, setCommentPanelOpen] = useState(false);
@@ -8369,6 +8370,10 @@ function HtmlViewer({
   const handledHostPreviewNavigationFailureRef = useRef<{
     eventId: number;
     generation: string;
+  } | null>(null);
+  const handledHostUrlPreviewNavigationFailureRef = useRef<{
+    eventId: number;
+    keepAliveKey: string;
   } | null>(null);
   const srcDocContentReadyRef = useRef<{
     frame: HTMLIFrameElement;
@@ -10455,6 +10460,29 @@ function HtmlViewer({
         ? urlPreviewIframeRef.current
         : srcDocPreviewIframeRef.current;
       if (!activeFrame || messageSource !== activeFrame.contentWindow) return;
+      if (useUrlLoadPreview && data.event === 'visible_paint') {
+        const keepAliveKey = urlPreviewKeepAliveKeyRef.current;
+        const sourceUrl = data.source_url;
+        let exactCurrentDocument = false;
+        try {
+          exactCurrentDocument = typeof sourceUrl === 'string'
+            && new URL(sourceUrl).href === new URL(
+              activeFrame.getAttribute('src') ?? '',
+              window.location.href,
+            ).href;
+        } catch {
+          exactCurrentDocument = false;
+        }
+        if (
+          keepAliveKey
+          && exactCurrentDocument
+          && (data.visible_element_count ?? 0) > 0
+        ) {
+          activeFrame.dataset.odVisiblePaintAtMs = String(Date.now());
+          urlPreviewLoadedKeysRef.current.add(keepAliveKey);
+          setUrlPreviewFirstLoadPending(false);
+        }
+      }
       reportPreviewIframeMessage(data, {
         surface: 'artifact_preview',
         renderMode: useUrlLoadPreview ? 'url_load' : 'srcdoc',
@@ -11135,6 +11163,14 @@ function HtmlViewer({
     recoverUnacknowledgedSrcDocTransport,
     scheduleSrcDocTransportTimeout,
   ]);
+  // Segregate the pooled-iframe cache by powered-ness: a powered frame carries
+  // a different origin + sandbox, so reusing a plain frame's DOM node for it
+  // (or vice-versa) would leave a stale sandbox attribute on a live iframe.
+  const urlPreviewKeepAliveKey =
+    `${previewIframeKeepAliveKey(projectId, file.name)}`
+    + `:scope:${encodeURIComponent(sourceAuthorizationScopeKey ?? 'pending')}`
+    + (usePoweredPreview ? ':powered' : '');
+  urlPreviewKeepAliveKeyRef.current = urlPreviewKeepAliveKey;
   const handleHostPreviewNavigationFailure = useCallback((
     failure: OpenDesignHostPreviewNavigationFailure,
   ) => {
@@ -11142,11 +11178,55 @@ function HtmlViewer({
     const localBlobFailure = failure.validatedUrl.startsWith('blob:od://app/');
     if (
       failure.errorCode !== -3
-      || (!aboutSrcDocFailure && !localBlobFailure)
       || !Number.isSafeInteger(failure.eventId)
       || !Number.isFinite(failure.occurredAtMs)
-      || Date.now() - failure.occurredAtMs > SRC_DOC_PREVIEW_FAILURE_FRESHNESS_MS
     ) return;
+    if (!aboutSrcDocFailure && !localBlobFailure) {
+      const frame = urlPreviewIframeRef.current;
+      if (
+        !workspaceActiveRef.current
+        || mode !== 'preview'
+        || !useUrlLoadPreview
+        || !frame?.isConnected
+        || frame.dataset.odActive !== 'true'
+      ) return;
+      let matches: boolean;
+      try {
+        matches = new URL(failure.validatedUrl).href
+          === new URL(frame.getAttribute('src') ?? '', window.location.href).href;
+      } catch {
+        return;
+      }
+      if (!matches) return;
+      const loadedAtMs = Number(frame.dataset.odLoadedAtMs ?? 0);
+      const failureIsFresh = Date.now() - failure.occurredAtMs
+        <= SRC_DOC_PREVIEW_FAILURE_FRESHNESS_MS;
+      // A pooled frame keeps this timestamp across route/project parking. An
+      // abort newer than its last successful load proves the cached browsing
+      // context is poisoned even if the user returns much later. A brand-new
+      // frame has no timestamp, so only a fresh host signal may replace it.
+      if (
+        (loadedAtMs > 0 && loadedAtMs > failure.occurredAtMs)
+        || (loadedAtMs === 0 && !failureIsFresh)
+      ) return;
+      const handled = handledHostUrlPreviewNavigationFailureRef.current;
+      if (
+        handled?.keepAliveKey === urlPreviewKeepAliveKey
+        && failure.eventId <= handled.eventId
+      ) return;
+      handledHostUrlPreviewNavigationFailureRef.current = {
+        eventId: failure.eventId,
+        keepAliveKey: urlPreviewKeepAliveKey,
+      };
+      urlPreviewLoadedKeysRef.current.delete(urlPreviewKeepAliveKey);
+      setUrlPreviewFirstLoadPending(true);
+      // Replacing only the poisoned pooled DOM node starts one clean navigation
+      // at the same real artifact URL. Source state, scroll/deck state, bridge
+      // mode, and every other retained file tab remain untouched.
+      iframeKeepAlivePool.evict(urlPreviewKeepAliveKey);
+      return;
+    }
+    if (Date.now() - failure.occurredAtMs > SRC_DOC_PREVIEW_FAILURE_FRESHNESS_MS) return;
     const frame = srcDocPreviewIframeRef.current;
     const generation = expectedSrcDocTransportGenerationRef.current;
     if (
@@ -11190,7 +11270,14 @@ function HtmlViewer({
     // replace at most one shell per visible activation, so an unscoped host
     // signal cannot create a reload loop or disturb a verified preview.
     probeSrcDocTransport(generation, true);
-  }, [mode, probeSrcDocTransport, recoverUnacknowledgedSrcDocTransport, useUrlLoadPreview]);
+  }, [
+    iframeKeepAlivePool,
+    mode,
+    probeSrcDocTransport,
+    recoverUnacknowledgedSrcDocTransport,
+    urlPreviewKeepAliveKey,
+    useUrlLoadPreview,
+  ]);
   useEffect(() => {
     const unsubscribe = subscribeHostPreviewNavigationFailure(
       handleHostPreviewNavigationFailure,
@@ -11209,13 +11296,6 @@ function HtmlViewer({
   // visibility swap with no re-load. Reset on file/project change.
   const [srcDocMaterialized, setSrcDocMaterialized] = useState(false);
   const wasUrlLoadPreviewRef = useRef(useUrlLoadPreview);
-  // Segregate the pooled-iframe cache by powered-ness: a powered frame carries
-  // a different origin + sandbox, so reusing a plain frame's DOM node for it
-  // (or vice-versa) would leave a stale sandbox attribute on a live iframe.
-  const urlPreviewKeepAliveKey =
-    `${previewIframeKeepAliveKey(projectId, file.name)}`
-    + `:scope:${encodeURIComponent(sourceAuthorizationScopeKey ?? 'pending')}`
-    + (usePoweredPreview ? ':powered' : '');
   const previousUrlPreviewKeepAliveKeyRef = useRef(urlPreviewKeepAliveKey);
   useEffect(() => {
     const previousKey = previousUrlPreviewKeepAliveKeyRef.current;
@@ -17015,6 +17095,7 @@ function HtmlViewer({
                             const frame = urlPreviewIframeRef.current;
                             if (useUrlLoadPreview) iframeRef.current = frame;
                             if (frame) frame.dataset.odLoadedSrc = frame.getAttribute('src') ?? '';
+                            if (frame) frame.dataset.odLoadedAtMs = String(Date.now());
                             if (frame) {
                               frame.dataset.odLoadedPreviewEpoch =
                                 new URL(frame.getAttribute('src') ?? '', window.location.href)
@@ -17058,6 +17139,7 @@ function HtmlViewer({
                             const frame = urlPreviewIframeRef.current;
                             if (useUrlLoadPreview) iframeRef.current = frame;
                             if (frame) frame.dataset.odLoadedSrc = frame.getAttribute('src') ?? '';
+                            if (frame) frame.dataset.odLoadedAtMs = String(Date.now());
                             if (frame) {
                               frame.dataset.odLoadedPreviewEpoch =
                                 new URL(frame.getAttribute('src') ?? '', window.location.href)

@@ -125,6 +125,32 @@ afterEach(() => {
 });
 
 describe('preview observability white-screen bridge', () => {
+  it('reports visible paint without waiting for the window load event', () => {
+    const harness = createBridgeHarness('<main>Rendered while a resource is pending</main>');
+    harnesses.push(harness);
+    const main = harness.window.document.querySelector('main');
+    if (!main) throw new Error('missing preview fixture');
+    main.getBoundingClientRect = () => ({
+      bottom: 100,
+      height: 100,
+      left: 0,
+      right: 100,
+      top: 0,
+      width: 100,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    });
+
+    harness.advanceBy(0);
+
+    expect(harness.events).toContainEqual(expect.objectContaining({
+      event: 'visible_paint',
+      source_url: 'http://preview.test/',
+      visible_element_count: 1,
+    }));
+  });
+
   it('starts the white-screen window only after a retained preview becomes active', () => {
     const harness = createBridgeHarness('', false);
     harnesses.push(harness);
@@ -203,7 +229,11 @@ describe('preview observability white-screen bridge', () => {
     harness.advanceBy(20_000);
 
     expect(layoutNudged).toBe(true);
-    expect(harness.events).toEqual([]);
+    expect(harness.events).toContainEqual(expect.objectContaining({
+      event: 'visible_paint',
+      visible_element_count: 1,
+    }));
+    expect(harness.events.some((event) => event.event === 'white_screen')).toBe(false);
   });
 
   it('reports only after two blank observations and includes confirmation metadata', () => {

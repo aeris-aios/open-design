@@ -52,7 +52,16 @@ const ABORTED_NAVIGATION_ERROR_CODE = -3;
 let previewNavigationFailureEventSequence = 0;
 
 function isPreviewTransportNavigationUrl(url: string): boolean {
-  return url === "about:srcdoc" || url.startsWith("blob:od://app/");
+  if (url === "about:srcdoc" || url.startsWith("blob:od://app/")) return true;
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "od:"
+      && parsed.hostname === "app"
+      && /^\/api\/projects\/[^/]+\/raw\/.+/.test(parsed.pathname)
+      && parsed.searchParams.has("odPreviewEpoch");
+  } catch {
+    return false;
+  }
 }
 
 export function previewNavigationFailureFromDidFailLoad(input: {

@@ -1,8 +1,8 @@
 /**
  * Cross-runtime protocol used by generated artifact previews to report
- * failures to the OpenDesign host. The bridge runs inside both srcDoc and
- * URL-loaded preview iframes; the host validates this narrow payload before it
- * reaches analytics.
+ * failures and first-visible-paint readiness to the OpenDesign host. The
+ * bridge runs inside both srcDoc and URL-loaded preview iframes; the host
+ * validates this narrow payload before any failure reaches analytics.
  *
  * Keep this module browser-API free. The browser code is serialized as a
  * string so both the web and daemon runtimes inject exactly the same script.
@@ -81,6 +81,7 @@ export type PreviewObservabilityEvent =
   | 'unhandled_rejection'
   | 'console_error'
   | 'resource_error'
+  | 'visible_paint'
   | 'white_screen';
 
 export interface PreviewObservabilityMessage {
@@ -110,6 +111,7 @@ const EVENT_NAMES = new Set<PreviewObservabilityEvent>([
   'unhandled_rejection',
   'console_error',
   'resource_error',
+  'visible_paint',
   'white_screen',
 ]);
 
@@ -196,7 +198,8 @@ export function parsePreviewObservabilityMessage(
 
 /**
  * Runs before author scripts and emits a bounded, deduplicated diagnostic
- * stream. It deliberately does not serialize arbitrary objects or DOM text.
+ * stream plus a source-scoped first-visible-paint readiness signal. It
+ * deliberately does not serialize arbitrary objects or DOM text.
  */
 export function buildPreviewObservabilityBridge(): string {
   return `<script ${PREVIEW_OBSERVABILITY_BRIDGE_MARKER}>
@@ -325,10 +328,64 @@ export function buildPreviewObservabilityBridge(): string {
     }
     return count;
   }
+  var visiblePaintDetected = 0;
+  var visiblePaintAnnounced = false;
+  var visiblePaintCheckTimer = null;
+  var visiblePaintObserver = null;
   var whiteScreenReported = false;
   var whiteScreenCheckTimer = null;
   var whiteScreenConfirmationTimer = null;
   var hostActive = false;
+  function announceVisiblePaint(force){
+    if (visiblePaintDetected <= 0 || (visiblePaintAnnounced && !force)) return;
+    visiblePaintAnnounced = true;
+    try {
+      window.parent.postMessage({
+        type: TYPE,
+        version: VERSION,
+        event: 'visible_paint',
+        source_url: text(String(window.location.href || ''), 1000),
+        ready_state: text(document.readyState, 32),
+        visibility_state: text(document.visibilityState, 32),
+        body_child_count: document.body ? document.body.children.length : 0,
+        visible_element_count: visiblePaintDetected,
+        viewport_width: Math.max(0, Math.round(window.innerWidth || 0)),
+        viewport_height: Math.max(0, Math.round(window.innerHeight || 0))
+      }, '*');
+    } catch (_) {}
+  }
+  function checkVisiblePaint(){
+    visiblePaintCheckTimer = null;
+    if (visiblePaintDetected > 0) {
+      announceVisiblePaint(false);
+      return;
+    }
+    visiblePaintDetected = visiblePaintCount();
+    if (visiblePaintDetected <= 0) return;
+    if (visiblePaintObserver) visiblePaintObserver.disconnect();
+    visiblePaintObserver = null;
+    announceVisiblePaint(false);
+  }
+  function scheduleVisiblePaintCheck(){
+    if (visiblePaintDetected > 0) {
+      announceVisiblePaint(false);
+      return;
+    }
+    if (visiblePaintCheckTimer !== null) return;
+    visiblePaintCheckTimer = setTimeout(checkVisiblePaint, 0);
+  }
+  try {
+    if (typeof MutationObserver === 'function') {
+      visiblePaintObserver = new MutationObserver(scheduleVisiblePaintCheck);
+      visiblePaintObserver.observe(document.documentElement, {
+        attributes: true,
+        childList: true,
+        subtree: true
+      });
+    }
+  } catch (_) {}
+  scheduleVisiblePaintCheck();
+  document.addEventListener('DOMContentLoaded', scheduleVisiblePaintCheck, { once: true });
   function clearWhiteScreenTimers(){
     if (whiteScreenCheckTimer !== null) clearTimeout(whiteScreenCheckTimer);
     if (whiteScreenConfirmationTimer !== null) clearTimeout(whiteScreenConfirmationTimer);
@@ -389,12 +446,18 @@ export function buildPreviewObservabilityBridge(): string {
       clearWhiteScreenTimers();
       return;
     }
+    announceVisiblePaint(true);
+    scheduleVisiblePaintCheck();
     scheduleWhiteScreenCheckWhenEligible();
   });
   if (document.readyState === 'complete') scheduleWhiteScreenCheckWhenEligible();
   else window.addEventListener('load', scheduleWhiteScreenCheckWhenEligible, { once: true });
   document.addEventListener('visibilitychange', scheduleWhiteScreenCheckWhenEligible);
-  window.addEventListener('resize', scheduleWhiteScreenCheckWhenEligible);
+  document.addEventListener('visibilitychange', scheduleVisiblePaintCheck);
+  window.addEventListener('resize', function(){
+    scheduleVisiblePaintCheck();
+    scheduleWhiteScreenCheckWhenEligible();
+  });
   setTimeout(scheduleWhiteScreenCheckWhenEligible, WHITE_SCREEN_TIMEOUT * 2);
 })();
 </script>`;

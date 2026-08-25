@@ -16,6 +16,7 @@ describe('preview observability contract', () => {
     expect(bridge).toContain("send('unhandled_rejection'");
     expect(bridge).toContain("send('console_error'");
     expect(bridge).toContain("send('resource_error'");
+    expect(bridge).toContain("event: 'visible_paint'");
     expect(bridge).toContain("send('white_screen'");
     expect(bridge).toContain('stack: text(value.stack, 2000)');
     expect(bridge).toContain('detail.source_url = text(event && event.filename, 1000)');
@@ -30,6 +31,16 @@ describe('preview observability contract', () => {
       event: 'runtime_error',
       message: 'boom',
     })).toMatchObject({ event: 'runtime_error', message: 'boom' });
+    expect(parsePreviewObservabilityMessage({
+      type: PREVIEW_OBSERVABILITY_MESSAGE_TYPE,
+      version: 1,
+      event: 'visible_paint',
+      source_url: 'od://app/api/projects/project-1/raw/index.html?odPreviewEpoch=1',
+      visible_element_count: 1,
+    })).toMatchObject({
+      event: 'visible_paint',
+      visible_element_count: 1,
+    });
 
     expect(parsePreviewObservabilityMessage({
       type: PREVIEW_OBSERVABILITY_MESSAGE_TYPE,
