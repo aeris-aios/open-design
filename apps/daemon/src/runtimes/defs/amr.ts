@@ -672,7 +672,7 @@ export const amrAgentDef = {
   inactivityTimeoutMs: 30 * 60 * 1000,
   // Once the ACP handshake has completed and session/prompt is waiting on the
   // provider, transport/status heartbeats must not leave the UI in Preparing
-  // indefinitely. Two minutes leaves conservative provider-startup headroom
-  // while still bounding the user's wait and one safe same-run retry.
-  firstOutputTimeoutMs: 2 * 60 * 1000,
+  // indefinitely. 150 seconds (2.5 minutes) leaves enough provider-startup
+  // headroom while still bounding the user's wait and one safe same-run retry.
+  firstOutputTimeoutMs: 150_000,
 } satisfies RuntimeAgentDef;

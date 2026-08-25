@@ -309,7 +309,9 @@ describe('same-run retry runtime', () => {
     delete process.env.OPEN_DESIGN_TELEMETRY_RELAY_URL;
     process.env.VELA_RUNTIME_KEY = `fake-runtime-key-${randomUUID()}`;
     process.env.VELA_LINK_URL = 'https://amr-link.open-design.ai/v1';
-    process.env.OD_CHAT_RUN_FIRST_OUTPUT_TIMEOUT_MS = '100';
+    // Keep both watchdog attempts fast while proving the user-facing stall text
+    // is derived from the configured deadline, rather than a stale literal.
+    process.env.OD_CHAT_RUN_FIRST_OUTPUT_TIMEOUT_MS = '1200';
     process.env.OD_CHAT_RUN_INACTIVITY_TIMEOUT_MS = STALL_WATCHDOG_TIMEOUT_MS;
     process.env.OD_ACP_STAGE_TIMEOUT_MS = STALL_WATCHDOG_TIMEOUT_MS;
 
@@ -323,7 +325,7 @@ describe('same-run retry runtime', () => {
 
     const run = await createAndWaitForRun(started.url, 'amr');
     expect(run.status).toBe('failed');
-    expect(run.error).toContain('without emitting a first output');
+    expect(run.error).toContain('Agent stalled without emitting a first output for 1s.');
     expect(run.terminalTrigger).toBe('first_output_deadline');
 
     const events = await readRunEvents(run.eventsLogPath);

@@ -194,13 +194,13 @@ describe('resolveChatRunFirstOutputTimeoutMs', () => {
 
   it('uses the runtime default and lets the operator override or disable it', () => {
     delete process.env[FIRST_OUTPUT_ENV_KEY];
-    expect(resolveChatRunFirstOutputTimeoutMs(120_000)).toBe(120_000);
+    expect(resolveChatRunFirstOutputTimeoutMs(150_000)).toBe(150_000);
 
     process.env[FIRST_OUTPUT_ENV_KEY] = '90000';
-    expect(resolveChatRunFirstOutputTimeoutMs(120_000)).toBe(90_000);
+    expect(resolveChatRunFirstOutputTimeoutMs(150_000)).toBe(90_000);
 
     process.env[FIRST_OUTPUT_ENV_KEY] = '0';
-    expect(resolveChatRunFirstOutputTimeoutMs(120_000)).toBe(0);
+    expect(resolveChatRunFirstOutputTimeoutMs(150_000)).toBe(0);
   });
 
   it('rejects an invalid checked-in runtime default', () => {
@@ -222,8 +222,8 @@ describe('amrAgentDef.inactivityTimeoutMs', () => {
     expect(amrAgentDef.inactivityTimeoutMs).toBe(THIRTY_MINUTES_MS);
   });
 
-  it('ships a two-minute absolute first-output deadline', () => {
-    expect(amrAgentDef.firstOutputTimeoutMs).toBe(120_000);
+  it('ships a 150-second (2.5-minute) absolute first-output deadline', () => {
+    expect(amrAgentDef.firstOutputTimeoutMs).toBe(150_000);
   });
 });
 
