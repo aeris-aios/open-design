@@ -6,6 +6,7 @@ import { load } from 'cheerio';
 import type { Express, Request, Response } from 'express';
 import type { LintArtifactRequest, LintArtifactResponse } from '@open-design/contracts';
 import type { PreviewRuntimeCapability } from '@open-design/contracts/runtime/preview-runtime';
+import { annotateManualEditSourceOrdinals } from '@open-design/preview-runtime/manual-edit-source';
 import {
   PREVIEW_OBSERVABILITY_BRIDGE_MARKER,
   buildPreviewBaseHrefBridge,
@@ -83,6 +84,7 @@ import {
 import { connectorService } from '../../connectors/service.js';
 import {
   streamFileWithInjection,
+  streamFileWithInjectionAndManualEditSourceAnnotations,
 } from '../../http/html-stream-injection.js';
 import { HtmlPreviewPolicyIndex } from '../../http/html-preview-policy-index.js';
 import {
@@ -97,6 +99,7 @@ import {
   buildDeckRuntimeModule,
   buildInstalledScriptRuntimeModule,
   buildLazyScriptRuntimeModule,
+  buildManualEditRuntimeModule,
   buildPaletteRuntimeModule,
   buildScrollAndMeasurementRuntimeModule,
   buildSharedLazyScriptRuntimeModule,
@@ -5512,6 +5515,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
     'draw',
     'tweaks',
     'palette',
+    'edit',
   ] as const satisfies readonly PreviewRuntimeCapability[];
 
   function htmlPreviewDocumentVersion(meta: { size: number; mtime: number }): string {
@@ -5825,7 +5829,11 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
       mime: string;
       size: number;
       mtime: number;
-    }) => Promise<{ insertionOffset: number; content: Buffer } | null>,
+    }) => Promise<{
+      insertionOffset: number;
+      content: Buffer;
+      annotateManualEditSource?: boolean;
+    } | null>,
   ) {
     const meta = await resolveProjectFilePath(
       PROJECTS_DIR,
@@ -5856,6 +5864,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
         .update(String(Math.floor(meta.mtime)))
         .update(':')
         .update(injected.content)
+        .update(injected.annotateManualEditSource ? ':manual-edit-source-v1' : '')
         .digest('hex')
         .slice(0, 16)}"`;
       res.setHeader('ETag', currentEtag);
@@ -5873,8 +5882,33 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
     }
 
     if (shouldStreamBody) {
-      res.setHeader('Accept-Ranges', 'bytes');
       res.setHeader('Content-Type', meta.mime);
+
+      if (injected?.annotateManualEditSource) {
+        // The source-identity transform adds a bounded attribute to every
+        // editable authored tag, so the final byte length is intentionally not
+        // materialized. A browser document navigation may ignore Range; assets
+        // and untransformed files retain the normal range path below.
+        res.status(200);
+        if (req.method === 'HEAD') return res.end();
+        const stream = Readable.from(streamFileWithInjectionAndManualEditSourceAnnotations(
+          meta.filePath,
+          meta.size,
+          injected.insertionOffset,
+          injected.content,
+        ));
+        stream.on('error', (streamErr: any) => {
+          if (!res.headersSent) {
+            sendApiError(res, 500, 'STREAM_ERROR', String(streamErr));
+          } else {
+            res.destroy(streamErr);
+          }
+        });
+        stream.pipe(res);
+        return;
+      }
+
+      res.setHeader('Accept-Ranges', 'bytes');
 
       const responseSize = meta.size + (injected?.content.byteLength ?? 0);
 
@@ -6946,6 +6980,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
           ),
           buildTweaksRuntimeModule(),
           buildPaletteRuntimeModule(),
+          buildManualEditRuntimeModule(),
           ...(deckRuntime ? [deckRuntime] : []),
         ],
       });
@@ -6986,11 +7021,11 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
           );
           if (!/^text\/html(?:;|$)/iu.test(file.mime)) return bridged;
           const html = Buffer.isBuffer(bridged) ? bridged.toString('utf8') : String(bridged);
-          return injectAfterHeadOpen(
+          return annotateManualEditSourceOrdinals(injectAfterHeadOpen(
             html,
             PREVIEW_RUNTIME_BOOTSTRAP_MARKER,
             runtimeBootstrap,
-          );
+          ));
         },
         true,
         streamRuntimeBootstrap
@@ -7020,6 +7055,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
                     scan.hasLoadTimeLocationNavigation,
                   ),
                 ),
+                annotateManualEditSource: true,
               };
             }
           : undefined,

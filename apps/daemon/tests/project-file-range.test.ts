@@ -755,9 +755,11 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
     expect(html.body).toContain('data-od-preview-observability');
     expect(html.body).toContain("register(\"observability\"");
     expect(html.body).toContain('data-od-preview-runtime');
-    expect(html.body).toContain('"content_measurement","scroll","snapshot","observability","selection","comment","inspect","draw","tweaks","palette"');
+    expect(html.body).toContain('"content_measurement","scroll","snapshot","observability","selection","comment","inspect","draw","tweaks","palette","edit"');
     expect(html.body).toContain("register('tweaks'");
     expect(html.body).toContain("register('palette'");
+    expect(html.body).toContain("register('edit'");
+    expect(html.body).toContain('data-od-generated-source-path');
     expect(html.body.indexOf('data-od-preview-runtime')).toBeLessThan(
       html.body.indexOf('<script src="./scripts/support.js">'),
     );
@@ -782,6 +784,8 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
     expect(large.body).toContain('data-od-preview-runtime');
     expect(large.body).toContain("register('scroll'");
     expect(large.body).toContain('data-od-url-selection-bridge');
+    expect(large.body).toContain("register('edit'");
+    expect(large.body).toContain('data-od-generated-source-path');
     expect(large.body.match(/type="text\/babel"/gu)).toHaveLength(43);
     expect(large.body.indexOf('data-od-preview-runtime')).toBeLessThan(
       large.body.indexOf('<script src="./support.js">'),
@@ -797,9 +801,9 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
     expect(smallDeck.body).toContain('__odDeckStageFallbackInstalled');
     expect(smallDeck.body).toContain('var odHasArtifactKeydownListener = true;');
     expect(smallDeck.body).toContain('var odHasExternalSlideMessageListener = true;');
-    expect(smallDeck.body.indexOf('__odDeckStageFallbackInstalled')).toBeLessThan(
-      smallDeck.body.indexOf('<main id="deck-stage">'),
-    );
+    const smallDeckStage = /<main\b[^>]*\bid="deck-stage"[^>]*>/u.exec(smallDeck.body);
+    expect(smallDeckStage).not.toBeNull();
+    expect(smallDeck.body.indexOf('__odDeckStageFallbackInstalled')).toBeLessThan(smallDeckStage!.index);
 
     const largeDeck = await scopedRequest(
       '/large-deck.html?odPreviewRuntime=deck',
@@ -811,9 +815,9 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
     expect(largeDeck.body).toContain('__odDeckStageFallbackInstalled');
     expect(largeDeck.body).toContain('var odHasArtifactKeydownListener = true;');
     expect(largeDeck.body).toContain('var odHasExternalSlideMessageListener = true;');
-    expect(largeDeck.body.indexOf('__odDeckStageFallbackInstalled')).toBeLessThan(
-      largeDeck.body.indexOf('<main id="deck-stage">'),
-    );
+    const largeDeckStage = /<main\b[^>]*\bid="deck-stage"[^>]*>/u.exec(largeDeck.body);
+    expect(largeDeckStage).not.toBeNull();
+    expect(largeDeck.body.indexOf('__odDeckStageFallbackInstalled')).toBeLessThan(largeDeckStage!.index);
 
     const api = await scopedRequest('/api/projects', normalHost);
     expect(api.status).toBe(403);

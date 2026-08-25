@@ -3,7 +3,10 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { scanHtmlHeadForStreamingInjection } from '../../src/http/html-stream-injection.js';
+import {
+  scanHtmlHeadForStreamingInjection,
+  streamFileWithInjectionAndManualEditSourceAnnotations,
+} from '../../src/http/html-stream-injection.js';
 
 describe('scanHtmlHeadForStreamingInjection', () => {
   const dirs: string[] = [];
@@ -21,6 +24,21 @@ describe('scanHtmlHeadForStreamingInjection', () => {
       source: Buffer.isBuffer(source) ? source : Buffer.from(source),
       result: await scanHtmlHeadForStreamingInjection(filePath),
     };
+  }
+
+  async function collect(source: string, injection: string, insertionOffset: number): Promise<string> {
+    const dir = await mkdtemp(path.join(tmpdir(), 'od-html-stream-transform-'));
+    dirs.push(dir);
+    const filePath = path.join(dir, 'index.html');
+    await writeFile(filePath, source);
+    const chunks: Buffer[] = [];
+    for await (const chunk of streamFileWithInjectionAndManualEditSourceAnnotations(
+      filePath,
+      Buffer.byteLength(source),
+      insertionOffset,
+      Buffer.from(injection),
+    )) chunks.push(chunk);
+    return Buffer.concat(chunks).toString('utf8');
   }
 
   it('inserts after an explicit head without disturbing a BOM, doctype, or leading comments', async () => {
@@ -250,5 +268,38 @@ describe('scanHtmlHeadForStreamingInjection', () => {
     const { result } = await scan(fixture);
     expect(result.insertionOffset).toBe('<!doctype html>'.length);
     expect(result.hasAuthoredBase).toBe(false);
+  });
+
+  it('streams runtime injection and source identities without corrupting UTF-8 authored text', async () => {
+    const prefix = '<!doctype html><html><head>';
+    const source = `${prefix}<title>中文</title></head><body><main><h1>你好 🌏</h1></main></body></html>`;
+    const injection = '<script data-runtime>window.runtimeReady=true;</script>';
+
+    const transformed = await collect(source, injection, Buffer.byteLength(prefix));
+
+    expect(transformed).toContain(`${prefix}${injection}<title>中文</title>`);
+    expect(transformed).toContain('<main data-od-source-path="source-0" data-od-generated-source-path>');
+    expect(transformed).toContain('<h1 data-od-source-path="source-1" data-od-generated-source-path>你好 🌏</h1>');
+  });
+
+  it('keeps runtime script markup and authored raw text out of source ordinals', async () => {
+    const source = '<html><head></head><body><script>const fake="<p>fake</p>";</script><p>real</p></body></html>';
+    const injection = '<script>const injected="<section>runtime</section>";</script>';
+    const insertionOffset = source.indexOf('</head>');
+
+    const transformed = await collect(source, injection, insertionOffset);
+
+    expect(transformed).toContain('<p data-od-source-path="source-0" data-od-generated-source-path>real</p>');
+    expect(transformed.match(/data-od-source-path/g)).toHaveLength(1);
+  });
+
+  it('streams source identities after a 2 MiB body prefix', async () => {
+    const prefix = '<html><head></head><body>';
+    const source = `${prefix}${'x'.repeat((2 * 1024 * 1024) + 17)}<p>late target</p></body></html>`;
+
+    const transformed = await collect(source, '<script>window.runtimeReady=true;</script>', prefix.indexOf('</head>'));
+
+    expect(transformed).toContain('<p data-od-source-path="source-0" data-od-generated-source-path>late target</p>');
+    expect(Buffer.byteLength(transformed)).toBeGreaterThan(Buffer.byteLength(source));
   });
 });

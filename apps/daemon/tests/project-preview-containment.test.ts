@@ -370,6 +370,7 @@ describe('project preview containment routes', () => {
     expect(scopedHtml.status).toBe(200);
     expect(scopedHtml.body).toContain('<title>Brand</title>');
     expect(scopedHtml.body).toContain('data-od-preview-runtime');
+    expect(scopedHtml.body).toContain("register('edit'");
     const scopedLogo = await scopedHostRequest('/logos/mark.png', scopedNormalUrl.host);
     expect(scopedLogo).toEqual({ status: 200, body: 'brand-logo-bytes' });
 

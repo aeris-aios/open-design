@@ -9,6 +9,11 @@ import {
   detectArtifactKeyboardNavigation,
   type DeckBridgeOptions,
 } from '@open-design/preview-runtime/srcdoc';
+import {
+  buildManualEditBridge,
+  buildManualEditBridgeStyle,
+  buildManualEditKeyboardGuard,
+} from '@open-design/preview-runtime/manual-edit';
 import type { PreviewRuntimeModuleSource } from './preview-runtime-bootstrap.js';
 
 function scriptBody(scriptTag: string): string {
@@ -71,6 +76,35 @@ export function buildSharedLazyScriptRuntimeModule(
       + capabilities.map((capability) => (
         `register(${JSON.stringify(capability)},function(){return {enable:installSharedBridge,disable:function(){}};});`
       )).join('\n'),
+  };
+}
+
+/**
+ * Install the keyboard guard before authored startup, then activate the exact
+ * production edit bridge only while the host negotiates the edit capability.
+ * Source identities are provided by the streamed HTML transform rather than
+ * by a browser DOMParser pass.
+ */
+export function buildManualEditRuntimeModule(): PreviewRuntimeModuleSource {
+  return {
+    capabilities: ['edit'],
+    source: `${scriptBody(buildManualEditKeyboardGuard())}
+var editStyle=document.createElement('style');
+editStyle.setAttribute('data-od-edit-bridge-style','');
+editStyle.textContent=${JSON.stringify(styleBody(buildManualEditBridgeStyle()))};
+(document.head||document.documentElement).appendChild(editStyle);
+var editBridgeInstalled=false;
+function setEditMode(enabled){
+  if(!editBridgeInstalled&&enabled){editBridgeInstalled=true;
+${scriptBody(buildManualEditBridge(false))}
+  }
+  if(!editBridgeInstalled)return;
+  window.dispatchEvent(new MessageEvent('message',{data:{type:'od-edit-mode',enabled:!!enabled},source:parent}));
+}
+register('edit',function(){return {
+  enable:function(){setEditMode(true);},
+  disable:function(){setEditMode(false);}
+};});`,
   };
 }
 

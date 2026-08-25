@@ -5,6 +5,7 @@ import { buildPreviewRuntimeBootstrap } from '../../src/http/preview-runtime-boo
 import {
   buildInstalledScriptRuntimeModule,
   buildLazyScriptRuntimeModule,
+  buildManualEditRuntimeModule,
   buildDeckRuntimeModule,
   buildPaletteRuntimeModule,
   buildScrollAndMeasurementRuntimeModule,
@@ -286,6 +287,31 @@ describe('preview runtime modules', () => {
       });
     }
     expect(context.sharedInstalls).toBe(1);
+  });
+
+  it('installs the edit bridge once and toggles edit mode through capability negotiation', () => {
+    const dom = new JSDOM(
+      '<!doctype html><html><head></head><body><h1 data-od-source-path="source-0">Title</h1></body></html>',
+      { runScripts: 'outside-only', url: 'http://n-scope.localhost/index.html' },
+    );
+    let hooks: { enable: () => void; disable: () => void } | null = null;
+    const context = dom.getInternalVMContext() as vm.Context & Record<string, any>;
+    context.parent = dom.window;
+    context.register = (_capability: string, create: () => typeof hooks) => { hooks = create(); };
+
+    vm.runInContext(buildManualEditRuntimeModule().source, context);
+    expect(dom.window.document.querySelectorAll('[data-od-edit-bridge-style]')).toHaveLength(1);
+    expect(dom.window.document.documentElement.hasAttribute('data-od-edit-mode')).toBe(false);
+
+    hooks!.enable();
+    expect(dom.window.document.documentElement.hasAttribute('data-od-edit-mode')).toBe(true);
+    expect(dom.window.document.querySelectorAll('[data-od-edit-bridge]')).toHaveLength(0);
+
+    hooks!.disable();
+    expect(dom.window.document.documentElement.hasAttribute('data-od-edit-mode')).toBe(false);
+    hooks!.enable();
+    expect(dom.window.document.querySelectorAll('[data-od-edit-bridge-style]')).toHaveLength(1);
+    dom.window.close();
   });
 
   it('keeps scroll and measurement dormant until independently enabled', () => {
