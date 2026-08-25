@@ -130,6 +130,15 @@ async function main(): Promise<void> {
     namespace,
     source: convergedArgvStamp?.source ?? SIDECAR_SOURCES.PACKAGED,
   };
+  const oppositeDesktop = await inspectExistingDesktopForLauncher(launchStamp, {
+    deeplinkUrl: findPackagedDeeplinkArg(process.argv),
+    logger: console,
+    modes: [headlessRequest.headless ? SIDECAR_MODES.RUNTIME : "headless"],
+    paths: initialPaths,
+  });
+  if (exitPackagedLauncherForExistingDesktop(oppositeDesktop, (code) => app.exit(code))) {
+    return;
+  }
   if (await bootstrapSidecarProcess(launchStamp, {
     dataRoot: initialPaths.dataRoot,
     ownerPid: null,
@@ -139,12 +148,7 @@ async function main(): Promise<void> {
     app.exit(0);
     return;
   }
-  if (headlessRequest.headless) {
-    const { runPackagedHeadless } = await import("./headless-runtime.js");
-    await runPackagedHeadless(config, headlessRequest);
-    return;
-  }
-  if (!await waitForLauncherAfterQuit(afterQuit, initialPaths)) {
+  if (!headlessRequest.headless && !await waitForLauncherAfterQuit(afterQuit, initialPaths)) {
     app.exit(1);
     return;
   }
@@ -155,6 +159,11 @@ async function main(): Promise<void> {
     paths: initialPaths,
   });
   if (exitPackagedLauncherForExistingDesktop(existingDesktop, (code) => app.exit(code))) {
+    return;
+  }
+  if (headlessRequest.headless) {
+    const { runPackagedHeadless } = await import("./headless-runtime.js");
+    await runPackagedHeadless(config, headlessRequest);
     return;
   }
   const launcherRuntime = await resolvePackagedLauncherRuntime(namespaceConfig, initialPaths, {

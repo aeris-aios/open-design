@@ -8,7 +8,11 @@ import {
   stopProcesses,
 } from "@open-design/platform";
 
-import { SIDECAR_GENERATION_PID_ENV, SIDECAR_SUPERVISOR_TARGET_ENV } from "./client.js";
+import {
+  readSidecarLaunchResources,
+  SIDECAR_GENERATION_PID_ENV,
+  SIDECAR_SUPERVISOR_TARGET_ENV,
+} from "./client.js";
 import { collectSidecarGenerationPids } from "./process-tree.js";
 import { readCurrentSidecarStamp, SIDECAR_STAMP_CONTRACT } from "./stamp.js";
 
@@ -49,17 +53,7 @@ const child = spawn(target.command, [
   windowsHide: true,
 });
 
-const serializedResources = process.env.OD_SIDECAR_RESOURCES;
-const ownerPid = serializedResources == null
-  ? null
-  : (() => {
-      try {
-        const value = Number((JSON.parse(serializedResources) as { ownerPid?: unknown }).ownerPid);
-        return Number.isSafeInteger(value) && value > 0 ? value : null;
-      } catch {
-        return null;
-      }
-    })();
+const ownerPid = readSidecarLaunchResources().ownerPid;
 let ownerShutdownTask: Promise<void> | null = null;
 async function stopTargetAfterOwnerDeath(): Promise<void> {
   if (child.pid == null) return;

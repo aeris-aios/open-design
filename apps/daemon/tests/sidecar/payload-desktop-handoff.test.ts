@@ -23,7 +23,8 @@ async function fixture() {
   const runtimeRoot = join(root, "namespaces", namespace, "runtime");
   const launcherPaths = resolveLauncherPaths({ channel: "beta", namespace, root });
   const versionPaths = resolveLauncherVersionPaths({ channel: "beta", namespace, root, version });
-  const outerExecutablePath = join(root, "installed", "Open Design Beta.app", "Contents", "MacOS", "Open Design Beta");
+  const outerBundlePath = join(root, "installed", "Open Design Beta.local.app");
+  const outerExecutablePath = join(outerBundlePath, "Contents", "MacOS", "Open Design Beta");
   const payloadExecutablePath = join(versionPaths.payloadRoot, "Open Design Beta.app", "Contents", "MacOS", "Open Design Beta");
   await mkdir(join(outerExecutablePath, ".."), { recursive: true });
   await mkdir(join(payloadExecutablePath, ".."), { recursive: true });
@@ -55,7 +56,7 @@ async function fixture() {
   }));
   await writeFile(launcherPaths.installPath, JSON.stringify({
     channel: "beta",
-    launchPath: join(root, "installed", "Open Design Beta.app"),
+    launchPath: outerBundlePath,
     namespace,
     schemaVersion: LAUNCHER_SCHEMA_VERSION,
   }));
@@ -224,7 +225,7 @@ describe("legacy payload desktop handoff", () => {
       await symlink(value.root, aliasRoot, "dir");
       await writeFile(value.launcherPaths.installPath, JSON.stringify({
         channel: "beta",
-        launchPath: join(aliasRoot, "installed", "Open Design Beta.app"),
+        launchPath: join(aliasRoot, "installed", "Open Design Beta.local.app"),
         namespace: value.namespace,
         schemaVersion: LAUNCHER_SCHEMA_VERSION,
       }));

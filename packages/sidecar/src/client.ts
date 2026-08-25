@@ -69,7 +69,7 @@ type ControlEnvelope =
   | { targetPid: number | null; type: typeof CONTROL_STATUS }
   | { targetPids: readonly number[] | null; type: typeof CONTROL_STOP };
 
-function normalizeResources(input: unknown): SidecarResources {
+export function normalizeSidecarLaunchResources(input: unknown): Omit<SidecarResources, "pid"> {
   if (typeof input !== "object" || input == null || Array.isArray(input)) {
     throw new Error(`${RESOURCES_ENV} must contain a resource object`);
   }
@@ -88,22 +88,27 @@ function normalizeResources(input: unknown): SidecarResources {
   if (ownerPid != null && (!Number.isSafeInteger(ownerPid) || ownerPid <= 0)) {
     throw new Error("sidecar ownerPid must be null or a positive safe integer");
   }
-  const generationPid = Number(process.env[SIDECAR_GENERATION_PID_ENV] ?? process.pid);
-  if (!Number.isSafeInteger(generationPid) || generationPid <= 0) {
-    throw new Error(`${SIDECAR_GENERATION_PID_ENV} must be a positive safe integer`);
-  }
-  return Object.freeze({ dataRoot: value.dataRoot, ownerPid, pid: generationPid, port, runtimeRoot: value.runtimeRoot });
+  return Object.freeze({ dataRoot: value.dataRoot, ownerPid, port, runtimeRoot: value.runtimeRoot });
 }
 
-function readCurrentResources(): SidecarResources {
-  const serialized = process.env[RESOURCES_ENV];
+export function readSidecarLaunchResources(env: NodeJS.ProcessEnv = process.env): Omit<SidecarResources, "pid"> {
+  const serialized = env[RESOURCES_ENV];
   if (serialized == null) throw new Error(`${RESOURCES_ENV} is required`);
   try {
-    return normalizeResources(JSON.parse(serialized));
+    return normalizeSidecarLaunchResources(JSON.parse(serialized));
   } catch (error) {
     if (error instanceof SyntaxError) throw new Error(`${RESOURCES_ENV} must contain valid JSON`, { cause: error });
     throw error;
   }
+}
+
+function readCurrentResources(): SidecarResources {
+  const resources = readSidecarLaunchResources();
+  const generationPid = Number(process.env[SIDECAR_GENERATION_PID_ENV] ?? process.pid);
+  if (!Number.isSafeInteger(generationPid) || generationPid <= 0) {
+    throw new Error(`${SIDECAR_GENERATION_PID_ENV} must be a positive safe integer`);
+  }
+  return Object.freeze({ ...resources, pid: generationPid });
 }
 
 function assertEnvelope(message: unknown): InvokeEnvelope | ControlEnvelope {
@@ -203,7 +208,11 @@ export class SidecarClient<TRuntime> {
       runtimeStarted = true;
       this.#runtime = runtime;
       for (const signal of ["SIGINT", "SIGTERM"] as const) process.on(signal, this.#signalHandler);
-      if (this.resources.ownerPid != null) {
+      // Supervised generations delegate owner liveness to the durable process
+      // root, which signals this client for graceful lifecycle shutdown and
+      // force-retires it if necessary. Direct registered processes retain the
+      // compatibility monitor because they have no external watchdog.
+      if (this.resources.ownerPid != null && process.env[SIDECAR_GENERATION_PID_ENV] == null) {
         this.#ownerTimer = setInterval(() => {
           try {
             process.kill(this.resources.ownerPid as number, 0);

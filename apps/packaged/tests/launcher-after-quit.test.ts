@@ -107,6 +107,32 @@ describe("inspectExistingDesktopForLauncher", () => {
       await rm(root, { force: true, recursive: true });
     }
   });
+
+  it("discovers a headless owner while keeping its daemon and web peers on runtime mode", async () => {
+    const root = await mkdtemp(join(tmpdir(), "od-launcher-headless-owner-"));
+    const getStatus = vi.fn(async (target: SidecarStamp) => {
+      if (target.app === APP_KEYS.DESKTOP && target.mode === "runtime") throw new Error("runtime desktop absent");
+      if (target.app === APP_KEYS.DESKTOP && target.mode === "headless") {
+        return { pid: 4321, state: "running", updatedAt: new Date().toISOString(), windowVisible: false };
+      }
+      if (target.mode !== "runtime") throw new Error("peer used the desktop owner mode");
+      return { state: "running", url: "http://127.0.0.1:1234" };
+    });
+    const stop = vi.fn(async () => sidecarStop(4321));
+    try {
+      await expect(inspectExistingDesktopForLauncher(stamp(), {
+        getStatus: getStatus as never,
+        paths: fakePaths(root),
+        stopSidecar: stop,
+      })).resolves.toEqual({ action: "continue", reason: "headless-owner" });
+      expect(getStatus).toHaveBeenCalledWith({ ...stamp(), mode: "headless" }, { timeoutMs: 350 });
+      expect(getStatus).toHaveBeenCalledWith({ ...stamp(), app: APP_KEYS.DAEMON }, { timeoutMs: 350 });
+      expect(getStatus).toHaveBeenCalledWith({ ...stamp(), app: APP_KEYS.WEB }, { timeoutMs: 350 });
+      expect(stop).toHaveBeenCalledWith({ ...stamp(), mode: "headless" });
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  });
 });
 
 it("exits Electron only for an existing desktop result", () => {

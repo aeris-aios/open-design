@@ -6,6 +6,7 @@ import { compareLauncherVersions, type LauncherAfterQuitRequest } from "@open-de
 import {
   APP_KEYS,
   SIDECAR_MESSAGES,
+  SIDECAR_MODES,
   type AppKey,
   type DesktopStatusSnapshot,
 } from "@open-design/sidecar-proto";
@@ -19,6 +20,7 @@ import {
 import type { PackagedNamespacePaths } from "./paths.js";
 
 type LauncherAfterQuitLogger = Pick<Console, "warn"> & Partial<Pick<Console, "info">>;
+const HEADLESS_SIDECAR_MODE = "headless";
 
 export type LauncherExistingDesktopGateResult =
   | { action: "continue"; reason: "headless-owner" | "inspect-failed" | "not-running" | "stale-sidecar" | "superseded-version" }
@@ -161,6 +163,7 @@ export async function inspectExistingDesktopForLauncher(
     paths: PackagedNamespacePaths;
     getStatus?: typeof getSidecarStatus;
     invoke?: typeof invokeSidecar;
+    modes?: readonly SidecarStamp["mode"][];
     stopSidecar?: typeof stopSidecar;
   },
 ): Promise<LauncherExistingDesktopGateResult> {
@@ -170,23 +173,45 @@ export async function inspectExistingDesktopForLauncher(
   const invoke = options.invoke ?? invokeSidecar;
   const stop = options.stopSidecar ?? stopSidecar;
   let status: DesktopStatusSnapshot | null = null;
-  try {
-    status = await getStatus<DesktopStatusSnapshot>(stamp, { timeoutMs: 350 });
-  } catch (error) {
-    const message = `inspect-unavailable namespace=${namespace} action=continue error=${error instanceof Error ? error.message : String(error)}`;
+  let inspectedStamp: SidecarStamp | null = null;
+  let lastError: unknown = null;
+  let observedNotRunning: DesktopStatusSnapshot | null = null;
+  const modes = options.modes ?? [
+    stamp.mode,
+    stamp.mode === HEADLESS_SIDECAR_MODE ? SIDECAR_MODES.RUNTIME : HEADLESS_SIDECAR_MODE,
+  ];
+  for (const mode of [...new Set(modes)]) {
+    const candidate = { ...stamp, mode };
+    try {
+      const candidateStatus = await getStatus<DesktopStatusSnapshot>(candidate, { timeoutMs: 350 });
+      if (candidateStatus.state !== "running") {
+        observedNotRunning ??= candidateStatus;
+        continue;
+      }
+      inspectedStamp = candidate;
+      status = candidateStatus;
+      break;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  if (status == null || inspectedStamp == null) {
+    if (observedNotRunning != null) {
+      await writeLauncherAfterQuitLog(options.paths, `inspect-not-running namespace=${namespace} state=${observedNotRunning.state}`);
+      return { action: "continue", reason: "not-running" };
+    }
+    const message = `inspect-unavailable namespace=${namespace} action=continue error=${lastError instanceof Error ? lastError.message : String(lastError)}`;
     await writeLauncherAfterQuitLog(options.paths, message);
     logger.info?.(`[open-design launcher] ${message}`);
     return { action: "continue", reason: "inspect-failed" };
   }
 
-  if (status.state !== "running") {
-    await writeLauncherAfterQuitLog(options.paths, `inspect-not-running namespace=${namespace} state=${status.state}`);
-    return { action: "continue", reason: "not-running" };
-  }
-
   const staleSidecars: AppKey[] = [];
   for (const app of [APP_KEYS.DAEMON, APP_KEYS.WEB]) {
-    const sidecarStatus = await getStatus<{ url?: unknown }>({ ...stamp, app }, { timeoutMs: 350 }).catch(() => null);
+    const sidecarStatus = await getStatus<{ url?: unknown }>(
+      { ...inspectedStamp, app, mode: SIDECAR_MODES.RUNTIME },
+      { timeoutMs: 350 },
+    ).catch(() => null);
     if (typeof sidecarStatus?.url !== "string" || sidecarStatus.url.length === 0) {
       staleSidecars.push(app);
     }
@@ -204,7 +229,7 @@ export async function inspectExistingDesktopForLauncher(
       paths: options.paths,
       pid,
       reason: "stale-sidecar",
-      stamp,
+      stamp: inspectedStamp,
       stopSidecar: stop,
     });
     if (!restarted) return { action: "exit", reason: "existing-focus-failed" };
@@ -224,7 +249,7 @@ export async function inspectExistingDesktopForLauncher(
       paths: options.paths,
       pid,
       reason: "superseded-version",
-      stamp,
+      stamp: inspectedStamp,
       stopSidecar: stop,
     });
     if (!restarted) return { action: "exit", reason: "existing-focus-failed" };
@@ -243,7 +268,7 @@ export async function inspectExistingDesktopForLauncher(
       paths: options.paths,
       pid,
       reason: "headless-owner",
-      stamp,
+      stamp: inspectedStamp,
       stopSidecar: stop,
     });
     if (!restarted) return { action: "exit", reason: "existing-focus-failed" };
@@ -252,7 +277,7 @@ export async function inspectExistingDesktopForLauncher(
 
   try {
     await invoke(
-      stamp,
+      inspectedStamp,
       SIDECAR_MESSAGES.SHOW,
       options.deeplinkUrl == null ? {} : { deeplinkUrl: options.deeplinkUrl },
       { timeoutMs: 800 },

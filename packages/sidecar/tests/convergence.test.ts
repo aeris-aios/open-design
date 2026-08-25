@@ -600,6 +600,35 @@ describe("server-side atomic operations", () => {
     }
   }, 10_000);
 
+  it("lets an owned generation handle retire its stale endpoint without discovering a replacement", async () => {
+    if (process.platform === "win32") return;
+    const fixture = fileURLToPath(new URL("./fixtures/unresponsive-sidecar.ts", import.meta.url));
+    const ownedStamp = { ...stamp, app: "web", namespace: `owned-endpoint-${process.pid}` };
+    const endpoint = resolvePrivateIpcPath(ownedStamp);
+    const spawned = await spawnSidecar({
+      args: [fixture],
+      command: process.execPath,
+      env: { ...process.env, OD_TEST_STALE_ENDPOINT: endpoint },
+      resources: {
+        dataRoot: "/tmp/open-design-owned-endpoint",
+        ownerPid: null,
+        port: 0,
+        runtimeRoot: "/tmp/open-design-owned-endpoint-runtime",
+      },
+      stamp: ownedStamp,
+    });
+
+    try {
+      await vi.waitFor(async () => expect((await lstat(endpoint)).isSocket()).toBe(true));
+      const result = await spawned.stop({ killGraceMs: 2_000, termGraceMs: 0 });
+      expect(result).toMatchObject({ remainingPids: [], staleEndpointRemoved: true });
+      await expect(lstat(endpoint)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await spawned.stop({ killGraceMs: 2_000, termGraceMs: 0 }).catch(() => undefined);
+      await stopSidecar(ownedStamp, { killGraceMs: 2_000, termGraceMs: 0 }).catch(() => undefined);
+    }
+  }, 10_000);
+
   it("removes a refused stale endpoint after its stamped generation is already gone", async () => {
     if (process.platform === "win32") return;
     const fixture = fileURLToPath(new URL("./fixtures/unresponsive-sidecar.ts", import.meta.url));

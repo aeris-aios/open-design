@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { lstat, mkdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
+import { lstat, mkdir, readFile, readdir, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import {
@@ -218,16 +218,20 @@ async function resolveInstalledOuterIdentity(options: {
     !isAbsolute(install.launchPath)
   ) return null;
   const executablePath = options.platform === "darwin" && install.launchPath.endsWith(".app")
-    ? join(
-      install.launchPath,
-      "Contents",
-      "MacOS",
-      basename(install.launchPath, ".app"),
-    )
+    ? await resolveMacBundleExecutable(install.launchPath)
     : install.launchPath;
+  if (executablePath == null) return null;
   const entry = await lstat(executablePath).catch(() => null);
   if (entry == null || !entry.isFile() || entry.isSymbolicLink()) return null;
   return { executablePath, pid: options.outerPid };
+}
+
+async function resolveMacBundleExecutable(bundlePath: string): Promise<string | null> {
+  const executableRoot = join(bundlePath, "Contents", "MacOS");
+  const entries = await readdir(executableRoot, { withFileTypes: true }).catch(() => []);
+  const executables = entries.filter((entry) => entry.isFile() && !entry.isSymbolicLink());
+  const executable = executables.length === 1 ? executables[0] : null;
+  return executable == null ? null : join(executableRoot, executable.name);
 }
 
 export async function prepareLegacyPayloadDesktopHandoff(options: {
