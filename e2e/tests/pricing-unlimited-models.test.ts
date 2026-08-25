@@ -1,10 +1,8 @@
-// The 「无限使用」 promise has to say the same thing in two places that cannot
-// import each other: the public Pricing page (`apps/landing-page`, display
-// names + its own art) and the workbench model switcher (`apps/web`, AMR model
-// ids). They drifted once already — Pricing listed MiniMax M2.7 as unlimited on
-// Pro and GLM-5.2 as metered, which is the reverse of what Pro actually
-// includes — so this guard pins the two tables together across the app
-// boundary. Editing one side alone fails here.
+// The limited-time 「Unlimited」 promise on the public Pricing page cannot
+// import the workbench's AMR model-id table. Keep the campaign's display names
+// mapped here and verify that each advertised model is actually unlimited for
+// every Individual tier. Pricing intentionally advertises only the active
+// campaign models, while the workbench may contain additional entitlements.
 //
 // The name ↔ id map below is the only translation layer; adding a popular model
 // means adding it here too.
@@ -77,28 +75,19 @@ async function pricingPopularModelNames(): Promise<string[]> {
   return captureAll(block, /name: '([^']+)'/g);
 }
 
-/** The page's per-tier unlimited sets, resolved to AMR model ids. */
-async function pricingUnlimitedIdsByTier(): Promise<Record<Tier, string[]>> {
+/** The page's campaign-only unlimited models, resolved to AMR model ids. */
+async function pricingCampaignUnlimitedIds(): Promise<string[]> {
   const source = stripLineComments(await readFile(PRICING_PAGE, 'utf8'));
-  const body = captureOne(
+  const block = captureOne(
     source,
-    /const unlimitedByTier: Record<TierId, Set<string>> = \{([\s\S]*?)\n\};/,
-    'unlimitedByTier on the Pricing page',
+    /const campaignUnlimitedModelNames = \[([\s\S]*?)\] as const;/,
+    'campaignUnlimitedModelNames on the Pricing page',
   );
-  const popular = await pricingPopularModelNames();
-
-  const out = {} as Record<Tier, string[]>;
-  for (const tier of TIERS) {
-    const raw = tierEntry(body, tier, 'unlimitedByTier');
-    // `max` is written as "every popular model" rather than a literal list.
-    const names = raw.includes('popularModels.map') ? popular : captureAll(raw, /'([^']+)'/g);
-    out[tier] = names.map((name) => {
-      const id = MODEL_ID_BY_DISPLAY_NAME[name];
-      expect(id, `no AMR model id mapped for the Pricing name "${name}"`).toBeTruthy();
-      return id ?? name;
-    });
-  }
-  return out;
+  return captureAll(block, /'([^']+)'/g).map((name) => {
+    const id = MODEL_ID_BY_DISPLAY_NAME[name];
+    expect(id, `no AMR model id mapped for the Pricing name "${name}"`).toBeTruthy();
+    return id ?? name;
+  });
 }
 
 /** The workbench's own table, read as source so this guard stays dependency-free. */
@@ -148,19 +137,18 @@ async function runtimeUnlimitedIdsByTier(): Promise<Record<Tier, string[]>> {
   return out;
 }
 
-describe('unlimited-model sets stay identical across Pricing and the workbench', () => {
-  it.each(TIERS)('matches on %s', async (tier) => {
-    const pricing = await pricingUnlimitedIdsByTier();
+describe('Pricing campaign models stay unlimited in the workbench', () => {
+  it.each(TIERS)('is available on %s', async (tier) => {
+    const pricing = await pricingCampaignUnlimitedIds();
     const runtime = await runtimeUnlimitedIdsByTier();
-    expect([...runtime[tier]].sort()).toEqual([...pricing[tier]].sort());
+    expect(runtime[tier]).toEqual(expect.arrayContaining(pricing));
   });
 
-  it('keeps the advertised model counts (4 / 5 / 6 / 9)', async () => {
-    const pricing = await pricingUnlimitedIdsByTier();
-    expect(pricing.go).toHaveLength(4);
-    expect(pricing.plus).toHaveLength(5);
-    expect(pricing.pro).toHaveLength(6);
-    expect(pricing.max).toHaveLength(9);
+  it('advertises only the two active DeepSeek campaign models', async () => {
+    expect(await pricingCampaignUnlimitedIds()).toEqual([
+      'deepseek-v4-pro',
+      'deepseek-v4-flash',
+    ]);
   });
 
   it('puts DeepSeek V4 Flash Vision Exp first in the popular-model list', async () => {
