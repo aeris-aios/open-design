@@ -233,13 +233,13 @@ describe('authenticated Pricing compatibility browser wiring', { concurrency: fa
     );
   });
 
-  it('renders monthly first without an interval swap for a signed-out visitor', async (t) => {
+  it('renders yearly first without an interval swap for a signed-out visitor', async (t) => {
     const html = await (await fetch(`${baseUrl}/zh/pricing/`)).text();
     const pricingRootTag = html.match(/<article[^>]*data-pricing-root[^>]*>/)?.[0];
-    assert.match(pricingRootTag ?? '', /data-interval="monthly"/);
+    assert.match(pricingRootTag ?? '', /data-interval="yearly"/);
     assert.match(
       html,
-      /data-interval-btn="monthly"[^>]*aria-selected="true"/,
+      /data-interval-btn="yearly"[^>]*aria-selected="true"/,
     );
 
     const { page } = await openPricing({
@@ -252,10 +252,10 @@ describe('authenticated Pricing compatibility browser wiring', { concurrency: fa
 
     assert.equal(
       await page.locator('[data-pricing-root]').getAttribute('data-interval'),
-      'monthly',
+      'yearly',
     );
     assert.equal(
-      await page.locator('[data-interval-btn="monthly"]').getAttribute('aria-selected'),
+      await page.locator('[data-interval-btn="yearly"]').getAttribute('aria-selected'),
       'true',
     );
   });
@@ -336,6 +336,37 @@ describe('authenticated Pricing compatibility browser wiring', { concurrency: fa
     assert.deepEqual(states, [
       { tier: 'go', text: '已停售', disabled: 'true' },
       { tier: 'plus', text: '升级 Plus', disabled: null },
+      { tier: 'pro', text: '升级 Pro', disabled: null },
+      { tier: 'max', text: '升级 Max', disabled: null },
+    ]);
+  });
+
+  it('ignores legacy demo_plan query and keeps live billing current plan', async (t) => {
+    // Regression: ?demo_plan=pro used to synthesize a Pro context and mark Pro
+    // as current even when live billing said otherwise. Public demo_plan is gone.
+    const { page } = await openPricing({
+      browserLocale: 'zh-CN',
+      targetHref: '/zh/pricing/?demo_plan=pro',
+      billing: { membershipTier: 'plus', billingInterval: 'yearly' },
+    });
+    t.after(() => page.context().close());
+    await page.waitForFunction(() =>
+      document.querySelector('[data-pricing-root]')?.getAttribute(
+        'data-personal-pricing-context-resolved',
+      ) === 'true',
+    );
+
+    assert.match(page.url(), /[?&]demo_plan=pro(?:&|$)/);
+    const states = await page.locator('[data-pricing-cta]').evaluateAll((ctas) =>
+      ctas.slice(0, 4).map((cta) => ({
+        tier: cta.getAttribute('data-tier'),
+        text: cta.textContent?.trim(),
+        disabled: cta.getAttribute('aria-disabled'),
+      })),
+    );
+    assert.deepEqual(states, [
+      { tier: 'go', text: '已停售', disabled: 'true' },
+      { tier: 'plus', text: '当前套餐', disabled: 'true' },
       { tier: 'pro', text: '升级 Pro', disabled: null },
       { tier: 'max', text: '升级 Max', disabled: null },
     ]);

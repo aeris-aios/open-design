@@ -170,6 +170,7 @@ export interface PersonalPricingCopy {
   customDomains: string;
   unlimitedCustomDomains: string;
   bringYourOwnApiKey: string;
+  publishAndShare: string;
   goConcurrency: string;
   creatorDeveloperSupport: string;
   popularModels: string;
@@ -311,6 +312,7 @@ const PERSONAL_EN: PersonalPricingCopy = {
   customDomains: '{count} domains',
   unlimitedCustomDomains: 'Unlimited domains',
   bringYourOwnApiKey: 'Supports third-party API keys',
+  publishAndShare: 'Publish artifacts online and share them',
   goConcurrency: '2 concurrent tasks',
   creatorDeveloperSupport: 'Creator / developer support',
   popularModels: 'Popular models',
@@ -358,6 +360,7 @@ const PERSONAL_ZH_CN: PersonalPricingCopy = {
   customDomains: '支持 {count} 个域名',
   unlimitedCustomDomains: '域名无限量',
   bringYourOwnApiKey: '支持接入第三方 API Key',
+  publishAndShare: '支持产物发布线上与分享',
   goConcurrency: '2 个并发任务',
   creatorDeveloperSupport: '创作者 / 开发者支持',
   popularModels: '热门模型',
@@ -405,6 +408,7 @@ const PERSONAL_ZH_TW: PersonalPricingCopy = {
   customDomains: '支援 {count} 個網域',
   unlimitedCustomDomains: '網域無限量',
   bringYourOwnApiKey: '支援接入第三方 API Key',
+  publishAndShare: '支援產物上線發佈與分享',
   goConcurrency: '2 個並行任務',
   creatorDeveloperSupport: '創作者 / 開發者支援',
   popularModels: '熱門模型',
@@ -452,6 +456,7 @@ const PERSONAL_ES: PersonalPricingCopy = {
   customDomains: '{count} dominios personalizados',
   unlimitedCustomDomains: 'Dominios personalizados ilimitados',
   bringYourOwnApiKey: 'Usa tu propia clave API',
+  publishAndShare: 'Publica entregables en línea y compártelos',
   goConcurrency: '2 tareas simultáneas',
   creatorDeveloperSupport: 'Soporte para creadores / desarrolladores',
   popularModels: 'Modelos populares',
@@ -499,6 +504,7 @@ const PERSONAL_PT_BR: PersonalPricingCopy = {
   customDomains: '{count} domínios personalizados',
   unlimitedCustomDomains: 'Domínios personalizados ilimitados',
   bringYourOwnApiKey: 'Use sua própria chave de API',
+  publishAndShare: 'Publique entregas online e compartilhe',
   goConcurrency: '2 tarefas simultâneas',
   creatorDeveloperSupport: 'Suporte para criadores / desenvolvedores',
   popularModels: 'Modelos populares',
@@ -546,6 +552,7 @@ const PERSONAL_RU: PersonalPricingCopy = {
   customDomains: '{count} пользовательских доменов',
   unlimitedCustomDomains: 'Неограниченные пользовательские домены',
   bringYourOwnApiKey: 'Подключение собственного API-ключа',
+  publishAndShare: 'Публикуйте результаты онлайн и делитесь ими',
   goConcurrency: '2 одновременные задачи',
   creatorDeveloperSupport: 'Поддержка авторов / разработчиков',
   popularModels: 'Популярные модели',
@@ -593,6 +600,7 @@ const PERSONAL_FR: PersonalPricingCopy = {
   customDomains: '{count} domaines personnalisés',
   unlimitedCustomDomains: 'Domaines personnalisés illimités',
   bringYourOwnApiKey: 'Utilisez votre propre clé API',
+  publishAndShare: 'Publiez les livrables en ligne et partagez-les',
   goConcurrency: '2 tâches simultanées',
   creatorDeveloperSupport: 'Support créateur / développeur',
   popularModels: 'Modèles populaires',
@@ -640,6 +648,7 @@ const PERSONAL_KO: PersonalPricingCopy = {
   customDomains: '사용자 지정 도메인 {count}개',
   unlimitedCustomDomains: '사용자 지정 도메인 무제한',
   bringYourOwnApiKey: '개인 API 키 사용',
+  publishAndShare: '산출물을 온라인에 게시하고 공유',
   goConcurrency: '동시 작업 2개',
   creatorDeveloperSupport: '크리에이터 / 개발자 지원',
   popularModels: '인기 모델',
@@ -687,6 +696,7 @@ const PERSONAL_DE: PersonalPricingCopy = {
   customDomains: '{count} benutzerdefinierte Domains',
   unlimitedCustomDomains: 'Unbegrenzte benutzerdefinierte Domains',
   bringYourOwnApiKey: 'Eigenen API-Schlüssel verwenden',
+  publishAndShare: 'Artefakte online veröffentlichen und teilen',
   goConcurrency: '2 gleichzeitige Aufgaben',
   creatorDeveloperSupport: 'Support für Kreative / Entwickler',
   popularModels: 'Beliebte Modelle',
@@ -734,6 +744,7 @@ const PERSONAL_JA: PersonalPricingCopy = {
   customDomains: 'カスタムドメイン {count} 件',
   unlimitedCustomDomains: 'カスタムドメイン無制限',
   bringYourOwnApiKey: '自分の API キーを使用',
+  publishAndShare: '成果物をオンラインで公開して共有',
   goConcurrency: '同時実行タスク 2 件',
   creatorDeveloperSupport: 'クリエイター / 開発者サポート',
   popularModels: '人気モデル',
@@ -911,7 +922,7 @@ const ZH_CN: PricingContent = {
       features: [
         '零配置专业设计 Agent',
         '{skillsCount}+ Skills 工作流',
-        '{systemsCount}+ Design Systems',
+        '{systemsCount}+ 设计系统',
         '邮件支持',
       ],
     },
@@ -922,7 +933,7 @@ const ZH_CN: PricingContent = {
       features: [
         '零配置专业设计 Agent',
         '{skillsCount}+ Skills 工作流',
-        '{systemsCount}+ Design Systems',
+        '{systemsCount}+ 设计系统',
         '优先邮件支持',
       ],
     },
@@ -933,7 +944,7 @@ const ZH_CN: PricingContent = {
       features: [
         '零配置专业设计 Agent',
         '{skillsCount}+ Skills 工作流',
-        '{systemsCount}+ Design Systems',
+        '{systemsCount}+ 设计系统',
         '高峰优先算力 · 更低时延',
         '专属客户成功',
       ],
@@ -993,7 +1004,7 @@ const ZH_TW: PricingContent = {
       features: [
         '零配置專業設計 Agent',
         '{skillsCount}+ Skills 工作流',
-        '{systemsCount}+ Design Systems',
+        '{systemsCount}+ 設計系統',
         '郵件支援',
       ],
     },
@@ -1004,7 +1015,7 @@ const ZH_TW: PricingContent = {
       features: [
         '零配置專業設計 Agent',
         '{skillsCount}+ Skills 工作流',
-        '{systemsCount}+ Design Systems',
+        '{systemsCount}+ 設計系統',
         '優先郵件支援',
       ],
     },
@@ -1015,7 +1026,7 @@ const ZH_TW: PricingContent = {
       features: [
         '零配置專業設計 Agent',
         '{skillsCount}+ Skills 工作流',
-        '{systemsCount}+ Design Systems',
+        '{systemsCount}+ 設計系統',
         '高峰優先算力 · 更低時延',
         '專屬客戶成功',
       ],
@@ -1075,7 +1086,7 @@ const ES: PricingContent = {
       features: [
         'Agent de diseño profesional sin configuración',
         '{skillsCount}+ flujos de Skills',
-        '{systemsCount}+ Design Systems',
+        '{systemsCount}+ sistemas de diseño',
         'Soporte por email',
       ],
     },
@@ -1086,7 +1097,7 @@ const ES: PricingContent = {
       features: [
         'Agent de diseño profesional sin configuración',
         '{skillsCount}+ flujos de Skills',
-        '{systemsCount}+ Design Systems',
+        '{systemsCount}+ sistemas de diseño',
         'Soporte prioritario por email',
       ],
     },
@@ -1097,7 +1108,7 @@ const ES: PricingContent = {
       features: [
         'Agent de diseño profesional sin configuración',
         '{skillsCount}+ flujos de Skills',
-        '{systemsCount}+ Design Systems',
+        '{systemsCount}+ sistemas de diseño',
         'Cómputo prioritario en horas pico · menor latencia',
         'Customer success dedicado',
       ],
@@ -1157,7 +1168,7 @@ const PT_BR: PricingContent = {
       features: [
         'Agent de design profissional sem configuração',
         '{skillsCount}+ fluxos de Skills',
-        '{systemsCount}+ Design Systems',
+        '{systemsCount}+ sistemas de design',
         'Suporte por email',
       ],
     },
@@ -1168,7 +1179,7 @@ const PT_BR: PricingContent = {
       features: [
         'Agent de design profissional sem configuração',
         '{skillsCount}+ fluxos de Skills',
-        '{systemsCount}+ Design Systems',
+        '{systemsCount}+ sistemas de design',
         'Suporte prioritário por email',
       ],
     },
@@ -1179,7 +1190,7 @@ const PT_BR: PricingContent = {
       features: [
         'Agent de design profissional sem configuração',
         '{skillsCount}+ fluxos de Skills',
-        '{systemsCount}+ Design Systems',
+        '{systemsCount}+ sistemas de design',
         'Computação prioritária em horários de pico · menor latência',
         'Customer success dedicado',
       ],
@@ -1239,7 +1250,7 @@ const RU: PricingContent = {
       features: [
         'Профессиональный design agent без настройки',
         '{skillsCount}+ рабочих процессов Skills',
-        '{systemsCount}+ Design Systems',
+        '{systemsCount}+ дизайн-систем',
         'Поддержка по email',
       ],
     },
@@ -1250,7 +1261,7 @@ const RU: PricingContent = {
       features: [
         'Профессиональный design agent без настройки',
         '{skillsCount}+ рабочих процессов Skills',
-        '{systemsCount}+ Design Systems',
+        '{systemsCount}+ дизайн-систем',
         'Приоритетная поддержка по email',
       ],
     },
@@ -1261,7 +1272,7 @@ const RU: PricingContent = {
       features: [
         'Профессиональный design agent без настройки',
         '{skillsCount}+ рабочих процессов Skills',
-        '{systemsCount}+ Design Systems',
+        '{systemsCount}+ дизайн-систем',
         'Приоритетные вычисления в пик · меньше задержек',
         'Выделенный customer success',
       ],
@@ -1321,7 +1332,7 @@ const FR: PricingContent = {
       features: [
         'Agent de design professionnel sans configuration',
         '{skillsCount}+ workflows Skills',
-        '{systemsCount}+ Design Systems',
+        '{systemsCount}+ systèmes de design',
         'Support par email',
       ],
     },
@@ -1332,7 +1343,7 @@ const FR: PricingContent = {
       features: [
         'Agent de design professionnel sans configuration',
         '{skillsCount}+ workflows Skills',
-        '{systemsCount}+ Design Systems',
+        '{systemsCount}+ systèmes de design',
         'Support email prioritaire',
       ],
     },
@@ -1343,7 +1354,7 @@ const FR: PricingContent = {
       features: [
         'Agent de design professionnel sans configuration',
         '{skillsCount}+ workflows Skills',
-        '{systemsCount}+ Design Systems',
+        '{systemsCount}+ systèmes de design',
         'Calcul prioritaire en heures de pointe · latence réduite',
         'Customer success dédié',
       ],
@@ -1403,7 +1414,7 @@ const KO: PricingContent = {
       features: [
         '무설정 전문 디자인 Agent',
         '{skillsCount}+ Skills 워크플로',
-        '{systemsCount}+ Design Systems',
+        '{systemsCount}+ 디자인 시스템',
         '이메일 지원',
       ],
     },
@@ -1414,7 +1425,7 @@ const KO: PricingContent = {
       features: [
         '무설정 전문 디자인 Agent',
         '{skillsCount}+ Skills 워크플로',
-        '{systemsCount}+ Design Systems',
+        '{systemsCount}+ 디자인 시스템',
         '우선 이메일 지원',
       ],
     },
@@ -1425,7 +1436,7 @@ const KO: PricingContent = {
       features: [
         '무설정 전문 디자인 Agent',
         '{skillsCount}+ Skills 워크플로',
-        '{systemsCount}+ Design Systems',
+        '{systemsCount}+ 디자인 시스템',
         '피크 시간 우선 연산 · 더 낮은 지연',
         '전담 고객 성공 지원',
       ],
@@ -1485,7 +1496,7 @@ const DE: PricingContent = {
       features: [
         'Professioneller Design-Agent ohne Einrichtung',
         '{skillsCount}+ Skills-Workflows',
-        '{systemsCount}+ Design Systems',
+        '{systemsCount}+ Designsysteme',
         'E-Mail-Support',
       ],
     },
@@ -1496,7 +1507,7 @@ const DE: PricingContent = {
       features: [
         'Professioneller Design-Agent ohne Einrichtung',
         '{skillsCount}+ Skills-Workflows',
-        '{systemsCount}+ Design Systems',
+        '{systemsCount}+ Designsysteme',
         'Priorisierter E-Mail-Support',
       ],
     },
@@ -1507,7 +1518,7 @@ const DE: PricingContent = {
       features: [
         'Professioneller Design-Agent ohne Einrichtung',
         '{skillsCount}+ Skills-Workflows',
-        '{systemsCount}+ Design Systems',
+        '{systemsCount}+ Designsysteme',
         'Priorisierte Rechenleistung zu Spitzenzeiten · geringere Latenz',
         'Dedizierter Customer Success',
       ],
@@ -1567,7 +1578,7 @@ const JA: PricingContent = {
       features: [
         '設定不要のプロ向けデザイン Agent',
         '{skillsCount}+ Skills ワークフロー',
-        '{systemsCount}+ Design Systems',
+        '{systemsCount}+ デザインシステム',
         'メールサポート',
       ],
     },
@@ -1578,7 +1589,7 @@ const JA: PricingContent = {
       features: [
         '設定不要のプロ向けデザイン Agent',
         '{skillsCount}+ Skills ワークフロー',
-        '{systemsCount}+ Design Systems',
+        '{systemsCount}+ デザインシステム',
         '優先メールサポート',
       ],
     },
@@ -1589,7 +1600,7 @@ const JA: PricingContent = {
       features: [
         '設定不要のプロ向けデザイン Agent',
         '{skillsCount}+ Skills ワークフロー',
-        '{systemsCount}+ Design Systems',
+        '{systemsCount}+ デザインシステム',
         'ピーク時優先コンピュート · 低レイテンシ',
         '専任カスタマーサクセス',
       ],

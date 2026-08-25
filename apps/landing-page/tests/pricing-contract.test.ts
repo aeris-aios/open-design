@@ -244,6 +244,10 @@ describe("pricing contract", () => {
     assert.match(individualPlans, /class="benefit-help-trigger"/);
     assert.match(individualPlans, /class="benefit-help-tooltip"/);
     assert.match(individualPlans, /role="tooltip"/);
+    assert.match(
+      individualPlans,
+      /\.pricing-card:has\(\.benefit-help:hover\),\s*\.pricing-card:has\(\.benefit-help:focus-within\)/,
+    );
   });
 
   it("animates billing-price changes and compact-card View all reveals", async () => {
@@ -364,6 +368,16 @@ describe("pricing contract", () => {
     assert.match(individualPlans, /data-pricing-cta\s+data-tier=\{tier\}/);
     assert.match(individualPlans, /go:\s*content\.go/);
     assert.match(individualPlans, /GO_PLAN_SOLD_OUT/);
+    assert.match(individualPlans, /`plan-\$\{tier\}`/);
+    assert.match(
+      individualPlans,
+      /\.plan-model-module\.unavailable-model-module\s*\{[^}]*background:\s*#f1f2ee;/,
+    );
+    assert.doesNotMatch(
+      individualPlans,
+      /\.plan-(?:go|free) \.plan-model-module\.unavailable-model-module/,
+    );
+    assert.doesNotMatch(individualPlans, /\.plan-free /);
     assert.match(
       individualPlans,
       /tier !== 'go' && <em class="multimodal-status">\{fillTemplate\(P\.upToResolution/,
@@ -382,6 +396,13 @@ describe("pricing contract", () => {
     assert.equal(getPricingContent("ja").plans.pro.ctaLabel, "Pro にアップグレード");
     assert.equal(getPricingContent("de").personal.upToResolution, "Bis zu {resolution}");
     assert.equal(getPricingContent("fr").personal.viewMoreBenefits, "Voir plus d’avantages");
+    assert.equal(getPricingContent("en").personal.publishAndShare, "Publish artifacts online and share them");
+    assert.equal(getPricingContent("zh").personal.publishAndShare, "支持产物发布线上与分享");
+    assert.equal(getPricingContent("ja").personal.publishAndShare, "成果物をオンラインで公開して共有");
+    assert.equal(getPricingContent("en").plans.plus.features[2], "{systemsCount}+ Design Systems");
+    assert.equal(getPricingContent("zh").plans.plus.features[2], "{systemsCount}+ 设计系统");
+    assert.equal(getPricingContent("ja").plans.plus.features[2], "{systemsCount}+ デザインシステム");
+    assert.equal(getPricingContent("de").plans.plus.features[2], "{systemsCount}+ Designsysteme");
     assert.match(individualPlans, /const P = content\.personal;/);
     assert.match(individualPlans, /ctaLabel/);
     assert.match(individualPlans, /P\.upToResolution/);
@@ -517,7 +538,7 @@ describe("pricing contract", () => {
       /<li>\s*<b>✓<\/b>\s*<span>\s*\{benefit\}\s*\{bonusPct != null && index === 0 && \(\s*<span class="bonus-benefit">/s,
     );
     assert.doesNotMatch(individualPlans, /<li class="bonus-benefit">/);
-    assert.match(individualPlans, /publishAndShareBenefit/);
+    assert.match(individualPlans, /P\.publishAndShare/);
     assert.doesNotMatch(individualPlans, /data-benefits-expanded=/);
   });
 
@@ -676,7 +697,7 @@ describe("pricing contract", () => {
     );
     assert.match(
       page,
-      /\.pr-multimodal\s*\{[\s\S]*?left:\s*50%;[\s\S]*?width:\s*min\(1160px, calc\(100vw - 48px\)\);[\s\S]*?max-width:\s*none;[\s\S]*?transform:\s*translateX\(-50%\);/,
+      /\.pr-multimodal\s*\{[\s\S]*?left:\s*50%;[\s\S]*?width:\s*min\(1200px, 96vw\);[\s\S]*?max-width:\s*none;[\s\S]*?transform:\s*translateX\(-50%\);/,
       "the Cloud capability card must share the comparison table width",
     );
   });
@@ -875,6 +896,8 @@ describe("pricing contract", () => {
     assert.match(page, /authenticated:\s*true/);
     assert.match(page, /if \(!context\) return/);
     assert.doesNotMatch(page, /liveContext \?\?/);
+    assert.doesNotMatch(page, /demo_plan/);
+    assert.doesNotMatch(page, /demoContext/);
     assert.doesNotMatch(page, /pricingCompatibilityAttribution/);
     assert.doesNotMatch(page, /tiers:\s*PRICING_SNAPSHOT\.tiers/);
     assert.match(page, /resolvePersonalPlanAction\(pricingContext/);
@@ -1147,6 +1170,8 @@ describe("pricing contract", () => {
       /\.pr-audience-toggle\s*\{[^}]*grid-column:\s*3;[^}]*justify-self:\s*end;[^}]*margin-right:\s*24px;/s,
     );
     assert.match(page, /<span class="pr-audience-separator" aria-hidden="true">\/<\/span>/);
+    assert.match(page, /data-interval="yearly"/);
+    assert.match(page, /data-interval-btn="yearly"[^>]*aria-selected="true"/);
     assert.match(page, /<span class="pr-toggle-save">\{L\.yearlySave\}<\/span>/);
     assert.doesNotMatch(page, /class="pr-toggle-separator"/);
     assert.doesNotMatch(page, /billingToggle\.hidden = audience === 'team'/);

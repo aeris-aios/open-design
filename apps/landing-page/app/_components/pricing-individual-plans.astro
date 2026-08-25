@@ -82,12 +82,6 @@ const cardPopularModels = [
   'GLM-5.1',
 ].map((name) => popularModels.find((model) => model.name === name)!);
 
-const publishAndShareBenefit = locale === 'zh'
-  ? '支持产物发布线上与分享'
-  : locale === 'zh-tw'
-    ? '支援產物上線發佈與分享'
-    : 'Publish artifacts online and share them';
-
 const renderCatalogLabel = (label: string) => fillTemplate(label, {
   skillsCount,
   systemsCount,
@@ -119,7 +113,7 @@ const paidTierBenefits = (tier: PlanTierId) => {
     plan.concurrency,
     P.bringYourOwnApiKey,
     plan.features[0]!,
-    publishAndShareBenefit,
+    P.publishAndShare,
     ...plan.features.slice(1),
     ...(tier === 'max' ? [P.creatorDeveloperSupport] : []),
   ].map(renderCatalogLabel);
@@ -453,7 +447,9 @@ const cardData = [
 
   .pricing-card:has(.plan-model-help[open]),
   .pricing-card:has(.plan-model-help:hover),
-  .pricing-card:has(.plan-model-help:focus-within) {
+  .pricing-card:has(.plan-model-help:focus-within),
+  .pricing-card:has(.benefit-help:hover),
+  .pricing-card:has(.benefit-help:focus-within) {
     z-index: 20;
   }
 
@@ -771,10 +767,6 @@ const cardData = [
   .plan-model-module.unavailable-model-module {
     opacity: 0.62;
     background: #f1f2ee;
-  }
-
-  .plan-free .plan-model-module.unavailable-model-module {
-    background: transparent;
   }
 
   .plan-model-module header {

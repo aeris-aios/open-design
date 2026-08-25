@@ -194,7 +194,7 @@ const jsonLd = [
     data-pricing-root
     data-pricing-locale={locale}
     data-audience="creator"
-    data-interval="monthly"
+    data-interval="yearly"
     data-cloud-console-environment="production"
     data-billing-api-origin={apiOrigin}
     data-current-plan-label={planActionLabels.current}
@@ -216,10 +216,10 @@ const jsonLd = [
       <h1 class="pr-hero-heading">{isZh ? '零配置，只为结果付费' : locale === 'en' ? 'Zero setup. Pay only for results.' : L.heroTitle}</h1>
       <div class="pr-controls-row">
         <div class="pr-toggle" role="tablist" aria-label={teamContent.billingIntervalLabel}>
-          <button type="button" class="pr-toggle-btn is-active" role="tab" data-interval-btn="monthly" aria-selected="true">
+          <button type="button" class="pr-toggle-btn" role="tab" data-interval-btn="monthly" aria-selected="false">
             {L.monthly}
           </button>
-          <button type="button" class="pr-toggle-btn" role="tab" data-interval-btn="yearly" aria-selected="false">
+          <button type="button" class="pr-toggle-btn is-active" role="tab" data-interval-btn="yearly" aria-selected="true">
             <span>{L.yearly}</span>
             <span class="pr-toggle-save">{L.yearlySave}</span>
           </button>
@@ -439,19 +439,19 @@ const jsonLd = [
     </div>
 
     <p class="pr-foot" set:html={footnoteHtml} />
-  </article>
 
-  <section class="pr-faq" aria-label={faqTitle}>
-    <h2 class="pr-faq-title">{faqTitle}</h2>
-    <div class="pr-faq-list">
-      {faqs.map((faq) => (
-        <details class="pr-faq-item">
-          <summary class="pr-faq-q">{faq.q}</summary>
-          <div class="pr-faq-a">{faq.a}</div>
-        </details>
-      ))}
-    </div>
-  </section>
+    <section class="pr-faq" aria-label={faqTitle}>
+      <h2 class="pr-faq-title">{faqTitle}</h2>
+      <div class="pr-faq-list">
+        {faqs.map((faq) => (
+          <details class="pr-faq-item">
+            <summary class="pr-faq-q">{faq.q}</summary>
+            <div class="pr-faq-a">{faq.a}</div>
+          </details>
+        ))}
+      </div>
+    </section>
+  </article>
 
   {/* Enterprise lead-capture modal — opened by the Enterprise card CTA.
       Renders the SAME shared lead form as /enterprise
@@ -1113,21 +1113,6 @@ const jsonLd = [
         template: string,
         values: Record<string, string>,
       ) => template.replace(/\{(\w+)\}/g, (_, key) => values[key] ?? `{${key}}`);
-      const demoPlan = new URL(window.location.href).searchParams.get('demo_plan')?.toLowerCase();
-      const demoTier = demoPlan && personalTiers.has(demoPlan)
-        ? demoPlan as PersonalPlanTier
-        : null;
-      const demoContext = (tier: PersonalPlanTier): PersonalPricingContext => ({
-        current: {
-          tier,
-          interval: 'yearly',
-        },
-        checkoutAllowed: true,
-        firstMonthIntroEligible: false,
-        cancelAtPeriodEnd: false,
-        pendingChange: null,
-        billingPortalAvailable: true,
-      });
       let pricingContext: PersonalPricingContext | null = null;
 
       const applyIntroEligibility = () => {
@@ -1218,8 +1203,7 @@ const jsonLd = [
       };
 
       pricingRoot.addEventListener('pricing:interval-changed', applyPersonalActions);
-      void loadPersonalPricingContext(apiOrigin).then((liveContext) => {
-        const context = demoTier ? demoContext(demoTier) : liveContext;
+      void loadPersonalPricingContext(apiOrigin).then((context) => {
         if (!context) return;
         pricingContext = context;
         applyIntroEligibility();
@@ -1491,9 +1475,9 @@ const jsonLd = [
     grid-template-columns: minmax(0, 1.35fr) minmax(420px, 1fr);
     gap: 36px;
     align-items: center;
-    width: min(1160px, calc(100vw - 48px));
+    width: min(1200px, 96vw);
     max-width: none;
-    margin: 28px auto 0;
+    margin: 64px 0 0;
     padding: 30px 34px;
     overflow: hidden;
     transform: translateX(-50%);
@@ -1514,7 +1498,7 @@ const jsonLd = [
     border-radius: 50%;
     pointer-events: none;
   }
-  .pr-multimodal-copy { position: relative; z-index: 1; }
+  .pr-multimodal-copy { position: relative; z-index: 1; text-align: center; }
   .pr-multimodal-kicker {
     display: block;
     margin-bottom: 8px;
@@ -1534,7 +1518,7 @@ const jsonLd = [
   }
   .pr-multimodal-copy p {
     max-width: 700px;
-    margin: 10px 0 0;
+    margin: 10px auto 0;
     color: var(--ink-soft, #666);
     font-size: 0.84rem;
     line-height: 1.65;
@@ -1903,7 +1887,12 @@ const jsonLd = [
   }
 
   /* ---- FAQ ---- */
-  .pr-faq { max-width: 760px; margin: 72px auto 0; }
+  .pr-faq {
+    width: 100%;
+    max-width: 760px;
+    margin: 72px auto 0;
+    padding: 0;
+  }
   .pr-faq-title {
     margin: 0 0 28px;
     text-align: center;
