@@ -1096,6 +1096,56 @@ describe('EntryShell onboarding OpenDesign AMR runtime', () => {
     expect(screen.queryByRole('button', { name: /^Sign in$/i })).toBeNull();
   });
 
+  it('keeps direct Local CLI setup active when delayed status discovers a Cloud login', async () => {
+    let releaseInitialStatus!: (response: Response) => void;
+    const initialStatus = new Promise<Response>((resolve) => {
+      releaseInitialStatus = resolve;
+    });
+    let statusCalls = 0;
+    globalThis.fetch = vi.fn(async (input) => {
+      const url = String(input);
+      if (url.endsWith('/api/integrations/vela/status')) {
+        statusCalls += 1;
+        if (statusCalls === 1) return initialStatus;
+        return jsonResponse({
+          loggedIn: false,
+          loginInFlight: true,
+          authAttemptId: '11111111-1111-4111-8111-111111111111',
+          profile: 'prod',
+          user: null,
+          configPath: '/x',
+        });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as typeof fetch;
+    renderOnboarding({
+      config: baseConfig({
+        agentId: 'claude-code',
+        agentModels: { 'claude-code': { model: 'sonnet' } },
+      }),
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /Local Agent/i }));
+    expect(await screen.findByText('Local CLI')).toBeTruthy();
+
+    await act(async () => {
+      releaseInitialStatus(jsonResponse({
+        loggedIn: false,
+        loginInFlight: true,
+        authAttemptId: '11111111-1111-4111-8111-111111111111',
+        profile: 'prod',
+        user: null,
+        configPath: '/x',
+      }));
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText('Local CLI')).toBeTruthy();
+    expect(
+      (screen.getByRole('button', { name: /^Continue$/i }) as HTMLButtonElement).disabled,
+    ).toBe(false);
+  });
+
   it('excludes AMR from the Local CLI agent list', async () => {
     globalThis.fetch = vi.fn(async () =>
       jsonResponse({

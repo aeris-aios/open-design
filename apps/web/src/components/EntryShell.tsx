@@ -2237,6 +2237,10 @@ function OnboardingView({
     agentTestInputKey,
     providerTestInputKey,
   };
+  const cloudLandingIntentStillCurrent = () => {
+    const intent = onboardingIntentRef.current;
+    return intent.step === 0 && intent.runtime === null;
+  };
   const connectGateReason: 'no_runtime' | 'local_agent_unavailable' | 'byok_unverified' | null =
     !runtimeSetupStep
       ? null
@@ -2313,7 +2317,7 @@ function OnboardingView({
       .then((next) => {
         if (!cancelled && next) {
           setAmrStatus(next);
-          if (next.loginInFlight) {
+          if (next.loginInFlight && cloudLandingIntentStillCurrent()) {
             setAmrLoginPending(true);
             if (next.authAttemptId) {
               amrAuthAttemptIdRef.current = next.authAttemptId;
@@ -2323,7 +2327,11 @@ function OnboardingView({
               amrLoginPollCancelledRef.current = false;
               void pollAmrLoginCompletion()
                 .then((completed) => {
-                  if (completed && onboardingMountedRef.current) {
+                  if (
+                    completed
+                    && onboardingMountedRef.current
+                    && cloudLandingIntentStillCurrent()
+                  ) {
                     continueAfterCloudSignIn();
                   }
                 })
