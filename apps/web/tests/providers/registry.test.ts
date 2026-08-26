@@ -437,6 +437,61 @@ describe('design-system Workspace scope', () => {
     ]);
   });
 
+  it('collapses a concurrent burst of identical catalog reads into one request', async () => {
+    // Entering a project mounts several surfaces that each want the catalog
+    // (ProjectView's design-system rail, the switch picker, Home's grid). With
+    // ~6 connections per host, three identical in-flight reads do not just cost
+    // three round trips — the daemon answers them serially, so each one holds a
+    // connection that the project's own reads are queued behind.
+    const context = {
+      ...teamWorkspaceContext(),
+      workspaceId: 'ws-team-burst',
+      workspaceMemberId: 'wm-team-burst',
+    };
+    let catalogReads = 0;
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) === '/api/workspace/design-systems/team') {
+        return new Response(JSON.stringify({ ids: [] }), { status: 200 });
+      }
+      catalogReads += 1;
+      return new Response(JSON.stringify({ designSystems: [] }), { status: 200 });
+    }));
+
+    await Promise.all([
+      fetchDesignSystemsResult(context),
+      fetchDesignSystemsResult(context),
+      fetchDesignSystemsResult(context),
+    ]);
+
+    expect(catalogReads).toBe(1);
+  });
+
+  it('never lets a forced catalog read join a coalesced snapshot', async () => {
+    // Guards the invariant documented on `forceTeamMaterialization`: a read
+    // fired BY a mutation must observe that mutation, so it can never be
+    // answered by a snapshot that was already in flight before it.
+    const context = {
+      ...teamWorkspaceContext(),
+      workspaceId: 'ws-team-forced-no-join',
+      workspaceMemberId: 'wm-team-forced-no-join',
+    };
+    let catalogReads = 0;
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) === '/api/workspace/design-systems/team') {
+        return new Response(JSON.stringify({ ids: [] }), { status: 200 });
+      }
+      catalogReads += 1;
+      return new Response(JSON.stringify({ designSystems: [] }), { status: 200 });
+    }));
+
+    await Promise.all([
+      fetchDesignSystemsResult(context),
+      fetchDesignSystemsResult(context, { forceTeamMaterialization: true }),
+    ]);
+
+    expect(catalogReads).toBe(2);
+  });
+
   it('attaches the same identity to design-system creation', async () => {
     const fetchMock = vi.fn(async () =>
       new Response(JSON.stringify({

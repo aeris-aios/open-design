@@ -640,6 +640,38 @@ export async function fetchDesignSystemsResult(
   workspaceContext?: WorkspaceCollabContext | null,
   options?: FetchDesignSystemsOptions,
 ): Promise<DesignSystemsResult> {
+  // Entering a project mounts several independent catalog readers in the same
+  // tick. Identical concurrent reads are not merely redundant: the daemon
+  // answers them serially, so each duplicate holds one of the browser's ~6
+  // per-host connections for seconds while this project's own reads queue
+  // behind it. Measured on project entry, three concurrent catalog reads took
+  // 1.8s / 3.1s / 3.7s while the project's `/files` read — 17ms when
+  // uncontended — waited 1.2s for a connection.
+  //
+  // Partition by identity so one Workspace can never be answered with
+  // another's catalog, and by the caller-supplied Team witness so a read that
+  // already knows its Team ids never shares with one that does not.
+  const catalogCacheKey = `design-systems:${workspaceIdentityCacheKey(workspaceContext)}`
+    + `:${options?.materializedTeamIds?.join(',') ?? ''}`;
+  // Same rule the Team index applies one function above: a read fired BY a
+  // mutation must observe that mutation, so it replaces any snapshot already
+  // in flight instead of joining it.
+  if (options?.forceTeamMaterialization) evictCoalescedGet(catalogCacheKey);
+  const result = await coalescedGet(
+    catalogCacheKey,
+    () => readDesignSystemsCatalog(workspaceContext, options),
+  );
+  // `coalescedGet` declines to cache a REJECTION, but this reader reports
+  // failure as a resolved `{ ok: false }`. Drop it so the next caller retries
+  // instead of being handed the failure for the rest of the share window.
+  if (!result.ok) evictCoalescedGet(catalogCacheKey);
+  return result;
+}
+
+async function readDesignSystemsCatalog(
+  workspaceContext?: WorkspaceCollabContext | null,
+  options?: FetchDesignSystemsOptions,
+): Promise<DesignSystemsResult> {
   try {
     const teamSharedIds = await materializeTeamDesignSystems(workspaceContext, options);
     const resp = await fetch('/api/design-systems', {
