@@ -10,6 +10,8 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { flushSync } from 'react-dom';
+
 import { I18nProvider, useI18n } from '../../src/i18n';
 import { MessageCenter, resetMessageCenterSnapshot } from '../../src/components/MessageCenter';
 import { advanceWorkspaceAccountGeneration } from '../../src/collab/workspace-identity';
@@ -431,6 +433,65 @@ describe('MessageCenter remount snapshot', () => {
     advanceWorkspaceAccountGeneration('mounted-host-account-switch');
     await waitFor(() => expect(messageCalls).toBeGreaterThan(before));
     await waitFor(() => expect(counts[counts.length - 1]).toBe(0));
+  });
+
+  it('shows nothing from the previous account on the boundary render itself', async () => {
+    // Clearing in an effect is too late: `useSyncExternalStore` re-renders with
+    // the new generation while the state still holds the previous account's
+    // rows, and the effect runs only after that render is committed — so the
+    // panel and badge painted the old account's data for the new one. This
+    // asserts at the boundary, before any refetch has had a chance to resolve.
+    // A holder object rather than a bare `let`: TS narrows the latter to
+    // `null` because the only assignment is inside a callback it cannot prove
+    // runs, which makes the optional call below uncallable.
+    const held: { release: (() => void) | null } = { release: null };
+    let pulls = 0;
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/integrations/vela/status')) {
+        statusCalls += 1;
+        return Response.json({ loggedIn: false });
+      }
+      if (url.includes('/message-center') && url.includes('/messages')) {
+        messageCalls += 1;
+        pulls += 1;
+        if (pulls >= 2) {
+          // The post-boundary refetch never resolves for this test, so the only
+          // thing that can empty the view is the render-time derivation.
+          await new Promise<void>((resolve) => {
+            held.release = resolve;
+          });
+        }
+        return Response.json({
+          messages: [row('prior-tenant-row', null)],
+          nextCursor: null,
+          unreadCount: 1,
+        });
+      }
+      return Response.json({});
+    }));
+
+    const counts: number[] = [];
+    render(
+      <I18nProvider initial="zh-CN">
+        <MessageCenter onUnreadCountChange={(n) => counts.push(n)} />
+      </I18nProvider>,
+    );
+    await waitFor(() => expect(counts[counts.length - 1]).toBe(1));
+    fireEvent.click(screen.getByTestId('message-center-trigger'));
+    expect(await screen.findByRole('button', { name: /prior-tenant-row/ })).toBeTruthy();
+
+    // `flushSync` runs the boundary render and its layout effects but NOT the
+    // passive effects, which is exactly the gap being pinned: waiting with
+    // `waitFor` would let the clearing effect run and pass either way (it did,
+    // the first time this spec was written).
+    flushSync(() => {
+      advanceWorkspaceAccountGeneration('boundary-render-paint');
+    });
+
+    expect(screen.queryByRole('button', { name: /prior-tenant-row/ })).toBeNull();
+    expect(counts[counts.length - 1]).toBe(0);
+    held.release?.();
   });
 
   it('does not re-sync when it is remounted straight away', async () => {

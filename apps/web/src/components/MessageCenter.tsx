@@ -119,6 +119,9 @@ export function resetMessageCenterSnapshot(): void {
  */
 let snapshotWriteToken = 0;
 
+/** Stable identity for the empty view, so deriving it never churns children. */
+const EMPTY_MESSAGES: MessageCenterMessage[] = [];
+
 function adoptableSnapshot(locale: string): typeof lastSyncSnapshot {
   const snapshot = lastSyncSnapshot;
   if (!snapshot) return null;
@@ -150,6 +153,15 @@ export function MessageCenter({
     [onOpenChange],
   );
   const [messages, setMessages] = useState<MessageCenterMessage[]>([]);
+  /**
+   * The account the rows in `messages` were fetched for. Kept in state rather
+   * than a ref because the answer is needed while RENDERING: clearing in an
+   * effect happens after React has already committed, so the boundary render
+   * still paints the previous account's rows and unread badge.
+   */
+  const [stateAccountGeneration, setStateAccountGeneration] = useState(
+    currentWorkspaceAccountGeneration,
+  );
   const [readIds, setReadIds] = useState<Set<string>>(new Set());
   const [loggedIn, setLoggedIn] = useState(false);
   const [syncState, setSyncState] = useState<SyncState>('loading');
@@ -179,6 +191,7 @@ export function MessageCenter({
       readIdsRef.current = nextReadIds;
       setMessages(nextMessages);
       setReadIds(nextReadIds);
+      setStateAccountGeneration(currentWorkspaceAccountGeneration());
       if (options?.persistAnonymous) writeAnonymousState(window.localStorage, nextMessages, nextReadIds);
     },
     [],
@@ -352,7 +365,15 @@ export function MessageCenter({
     if (open) retrySync();
   }, [open, retrySync]);
 
-  const unreadCount = messages.filter((message) => !message.readAt).length;
+  // Fail closed DURING the boundary render, not after it. `useSyncExternalStore`
+  // re-renders this component with the new generation while `messages` still
+  // holds the previous account's rows; the effect that clears them runs only
+  // after that render is committed. Deriving the view here means the previous
+  // account's rows and badge are never rendered for the new one, and the effect
+  // below is left to do the refetch rather than the hiding.
+  const rowsBelongToThisAccount = stateAccountGeneration === accountGeneration;
+  const visibleMessages = rowsBelongToThisAccount ? messages : EMPTY_MESSAGES;
+  const unreadCount = visibleMessages.filter((message) => !message.readAt).length;
 
   useEffect(() => {
     onUnreadCountChange?.(unreadCount);
@@ -469,7 +490,7 @@ export function MessageCenter({
     {open ? createPortal(<div className={styles.backdrop} data-testid="message-center-backdrop"><aside ref={panelRef} className={styles.panel} role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1} data-testid="message-center-dialog">
       <header className={styles.header}><div className={styles.headerCopy}><h2 id={titleId}>{t('messageCenter.title')}</h2><p>{t('messageCenter.subtitle')}</p></div><Button size="icon" className={styles.close} onClick={closePanel} aria-label={t('messageCenter.close')}><Icon name="close" size={18} strokeWidth={2}/></Button></header>
       <div className={styles.list} aria-live="polite">
-        {syncState === 'error' && messages.length > 0 ? (
+        {syncState === 'error' && visibleMessages.length > 0 ? (
           <div className={styles.syncStatus} role="status">
             <span>{t('settings.updateStatusFailed')}</span>
             <button type="button" onClick={retrySync}>
@@ -477,12 +498,12 @@ export function MessageCenter({
             </button>
           </div>
         ) : null}
-        {syncState === 'loading' && messages.length === 0 ? (
+        {syncState === 'loading' && visibleMessages.length === 0 ? (
           <div className={styles.empty} role="status">
             <Icon name="spinner" size={20} className="icon-spin" />
             <strong>{t('settings.updateStatusChecking')}</strong>
           </div>
-        ) : syncState === 'error' && messages.length === 0 ? (
+        ) : syncState === 'error' && visibleMessages.length === 0 ? (
           <div className={styles.empty}>
             <Icon name="bell" size={20}/>
             <div className={styles.emptyError} role="status">
@@ -492,7 +513,7 @@ export function MessageCenter({
               </button>
             </div>
           </div>
-        ) : messages.length === 0 ? <div className={styles.empty}><Icon name="bell" size={20}/><strong>{t('messageCenter.emptyAllTitle')}</strong><p>{t('messageCenter.emptyBody')}</p></div> : messages.map((message) => <MessageItem key={message.id} locale={locale} message={message} onRead={markRead} onError={() => setSyncState('error')}/>)}
+        ) : visibleMessages.length === 0 ? <div className={styles.empty}><Icon name="bell" size={20}/><strong>{t('messageCenter.emptyAllTitle')}</strong><p>{t('messageCenter.emptyBody')}</p></div> : visibleMessages.map((message) => <MessageItem key={message.id} locale={locale} message={message} onRead={markRead} onError={() => setSyncState('error')}/>)}
       </div>
       <footer className={styles.footer}><p>{t('messageCenter.desktopSettingsHint')}</p>{onOpenNotificationSettings ? <Button variant="ghost" onClick={() => { closePanel(); onOpenNotificationSettings(); }}>{t('messageCenter.desktopSettings')}</Button> : null}</footer>
     </aside></div>, document.body) : null}
