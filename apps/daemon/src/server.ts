@@ -2374,6 +2374,33 @@ function createProjectPreviewScopeRegistry() {
       });
       return scope;
     },
+    // Reuse the live scope for this exact (project, workspace) instead of
+    // minting a new one, renewing its TTL. The preview transport injects the
+    // scope into a `<base href>`, so a fresh id per request makes the SAME
+    // artifact serve different bytes every read: the web client rebuilds its
+    // srcDoc, React assigns a new string, and the iframe reloads -- the
+    // artifact visibly disappears and comes back (OPEND-2283).
+    //
+    // Deliberately NOT folded into `mint`: export flows mint a scope and
+    // `revoke` it when the render finishes, and sharing one id with a live
+    // preview would revoke the preview out from under it.
+    acquire(projectId, workspace = null, options = {}) {
+      pruneExpired();
+      const wantedProject = String(projectId);
+      const wantedWorkspace = workspace
+        ? `${workspace.workspaceId}\u0000${workspace.workspaceMemberId}`
+        : '';
+      for (const [scope, entry] of scopes) {
+        if (entry.projectId !== wantedProject) continue;
+        const entryWorkspace = entry.workspace
+          ? `${entry.workspace.workspaceId}\u0000${entry.workspace.workspaceMemberId}`
+          : '';
+        if (entryWorkspace !== wantedWorkspace) continue;
+        entry.expiresAt = Date.now() + (options.ttlMs ?? PROJECT_PREVIEW_SCOPE_TTL_MS);
+        return scope;
+      }
+      return this.mint(projectId, workspace, options);
+    },
     revoke(scope) {
       scopes.delete(String(scope || ''));
     },

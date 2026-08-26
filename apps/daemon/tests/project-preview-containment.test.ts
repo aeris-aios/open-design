@@ -92,6 +92,33 @@ describe('project preview containment routes', () => {
     cleanupWorkspaceHeaders.set(projectId, workspaceHeaders(workspaceId, workspaceMemberId));
   }
 
+  // OPEND-2283. The web client builds its srcDoc preview from this response.
+  // Minting a fresh scope per request makes the SAME artifact serve different
+  // bytes every time, so any refetch produces a different srcDoc string, React
+  // assigns it, and the iframe reloads -- the artifact visibly disappears and
+  // comes back. Measured 1-4 reloads on a single project entry.
+  it('serves the same preview base for repeated reads of one artifact', async () => {
+    const projectId = await createProject();
+    await writeProjectFile(projectId, 'index.html', '<html><head></head><body>hi</body></html>');
+
+    const read = async () => {
+      // `odPreviewBridge` is what marks this as the FileViewer preview transport;
+      // a plain raw read deliberately returns the untouched bytes.
+      const res = await fetch(
+        `${baseUrl}/api/projects/${projectId}/raw/index.html?odPreviewBridge=scroll`,
+      );
+      expect(res.ok).toBe(true);
+      const html = await res.text();
+      return /<base\b[^>]*href="([^"]+)"/i.exec(html)?.[1] ?? null;
+    };
+
+    const first = await read();
+    const second = await read();
+
+    expect(first).toBeTruthy();
+    expect(second).toBe(first);
+  });
+
   it('returns a scoped preview URL with sandbox guidance and serves it with an opaque-origin CSP', async () => {
     const projectId = await createProject({ entryFile: 'pages/index.html' });
     await writeProjectFile(
