@@ -1301,6 +1301,78 @@ describe('MessageCenter remount snapshot', () => {
     await waitFor(() => expect(counts[counts.length - 1]).toBe(0));
   });
 
+  it('keeps the announcement dismissible after an outage', async () => {
+    // `markRead` returning normally on `unavailable` reads as SUCCESS to
+    // `GoPlanSunsetDialog`, which sets `dismissing` before awaiting. The notice
+    // therefore stayed mounted with every control disabled, and recovering the
+    // runtime did not help: without an error the dialog never re-enabled
+    // itself, so there was no way to acknowledge short of a remount.
+    let mode: 'up' | 'down' = 'down';
+    let readPosts = 0;
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/integrations/vela/status')) {
+        statusCalls += 1;
+        if (mode === 'down') {
+          return new Response(JSON.stringify({ error: 'amr-runtime-unavailable' }), {
+            status: 503,
+            headers: { 'content-type': 'application/json' },
+          });
+        }
+        return Response.json({ loggedIn: true });
+      }
+      if (url.includes('/read') && init?.method === 'POST') {
+        readPosts += 1;
+        return Response.json({ read: true, markedCount: 1 });
+      }
+      if (url.includes('/message-center') && url.includes('/messages')) {
+        messageCalls += 1;
+        return Response.json({
+          messages: [{
+            ...row('go-plan-sunset', null),
+            audienceType: 'targeted',
+            messageKey: 'go-plan-sunset-2026-08',
+          }],
+          nextCursor: null,
+          unreadCount: 1,
+        });
+      }
+      return Response.json({});
+    }));
+
+    // Seed the announcement while the runtime is up, then take it away.
+    mode = 'up';
+    const pending: boolean[] = [];
+    render(
+      <I18nProvider initial="zh-CN">
+        <MessageCenter
+          hideTrigger
+          open={false}
+          onOpenChange={() => {}}
+          priorityAnnouncementActive
+          onPriorityAnnouncementPendingChange={(v) => pending.push(v)}
+        />
+      </I18nProvider>,
+    );
+    await waitFor(() => expect(pending[pending.length - 1]).toBe(true));
+
+    mode = 'down';
+    const acknowledge = await screen.findByRole('button', { name: /我知道了/ });
+    fireEvent.click(acknowledge);
+
+    // The failure must come back to the dialog so it re-enables itself.
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /我知道了/ })).not.toBeDisabled();
+    });
+    expect(readPosts).toBe(0);
+
+    // With the runtime back, the same control works.
+    mode = 'up';
+    fireEvent.click(screen.getByRole('button', { name: /我知道了/ }));
+    await waitFor(() => expect(readPosts).toBe(1));
+    await waitFor(() => expect(pending[pending.length - 1]).toBe(false));
+  });
+
   it('does not re-sync when it is remounted straight away', async () => {
     const first = await mountAndSettle();
     const afterFirst = { status: statusCalls, messages: messageCalls };

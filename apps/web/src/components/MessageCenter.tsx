@@ -539,10 +539,21 @@ export function MessageCenter({
     const writeAuthMode = await resolveAuthModeForWrite();
     // `unavailable` is not an answer about the user, and every branch below
     // needs one: the account path would skip its POST, and the anonymous path
-    // would write a signed-in user's read into shared anonymous state. The
-    // click is dropped rather than guessed at; a later attempt, once the
-    // runtime answers, records it properly.
-    if (writeAuthMode === 'unavailable') return;
+    // would write a signed-in user's read into shared anonymous state.
+    //
+    // How it declines depends on who asked. An ordinary row click is dropped —
+    // a later click, once the runtime answers, records it properly. The
+    // announcement path cannot be dropped silently: `GoPlanSunsetDialog` sets
+    // `dismissing` before awaiting and reads a resolved promise as success, so
+    // returning normally left the notice mounted with every control disabled
+    // and no way back short of a remount. Its `catch` clears `dismissing` and
+    // surfaces a retry, which is exactly the signal a non-answer should send.
+    if (writeAuthMode === 'unavailable') {
+      if (options?.requireAccount) {
+        throw new Error('The AMR runtime is unavailable; the announcement could not be acknowledged');
+      }
+      return;
+    }
     const account = writeAuthMode === 'signed-in';
     // Published only once the boundary is confirmed, below.
     if (options?.requireAccount && !account) {
