@@ -1319,6 +1319,16 @@
   place-items: center;
   background: var(--bg-panel);
 }
+.preview-runtime-navigation-error {
+  align-content: center;
+  gap: 12px;
+  color: var(--text-muted);
+  text-align: center;
+}
+.preview-runtime-navigation-error p {
+  margin: 0;
+  font-size: 13px;
+}
 .preview-asset-warning {
   position: absolute;
   left: 12px;

@@ -17333,6 +17333,21 @@ function HtmlViewer({
                               previewRuntimeStandbyIframeRef.current = frame;
                             }}
                           />
+                        ) : previewRuntimeNavigation.unavailable ? (
+                          <div
+                            className="artifact-preview-first-load preview-runtime-navigation-error"
+                            role="alert"
+                            data-testid="preview-runtime-navigation-error"
+                          >
+                            <p>{t('fileViewer.previewUnavailable')}</p>
+                            <Button
+                              variant="ghost"
+                              data-testid="preview-runtime-navigation-retry"
+                              onClick={reloadHtmlPreview}
+                            >
+                              {`${t('fileViewer.reload')} ${t('fileViewer.preview')}`}
+                            </Button>
+                          </div>
                         ) : (
                           <div
                             className="artifact-preview-first-load"

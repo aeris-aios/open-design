@@ -9037,6 +9037,72 @@ describe('FileViewer tweaks toolbar', () => {
     );
   });
 
+  it('surfaces an initial converged navigation failure and recovers on explicit reload', async () => {
+    const file = htmlPreviewFile({ name: 'mint-retry.html', path: 'mint-retry.html' });
+    let mintAttempt = 0;
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = typeof input === 'string'
+        ? input
+        : input instanceof Request
+          ? input.url
+          : String(input);
+      if (url.startsWith('/api/projects/project-1/raw/mint-retry.html')) {
+        return new Response('<!doctype html><html><body><main>Retry mint</main></body></html>', {
+          status: 200,
+          headers: { 'Content-Type': 'text/html' },
+        });
+      }
+      if (url === '/api/projects/project-1/files') {
+        return new Response(JSON.stringify({ files: [file] }), { status: 200 });
+      }
+      if (url.includes('/api/projects/project-1/preview-url')) {
+        mintAttempt += 1;
+        if (mintAttempt === 1) {
+          return new Response(JSON.stringify({ error: 'temporarily unavailable' }), {
+            status: 503,
+          });
+        }
+        return new Response(JSON.stringify({
+          url: '/api/projects/project-1/preview/legacy-scope/mint-retry.html',
+          file: 'mint-retry.html',
+          expiresAt: Date.now() + 60 * 60 * 1000,
+          scopedOrigin: {
+            normalUrl: 'http://n-scope-retry.localhost:43111/mint-retry.html',
+            poweredUrl: 'http://p-scope-retry.localhost:43111/mint-retry.html',
+            documentVersion: 'mint-retry-v1',
+          },
+        }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ deployments: [] }), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(
+      <FileViewer
+        projectId="project-1"
+        projectKind="prototype"
+        file={file}
+        previewRuntimeConvergence
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText(/Preview unavailable/)).toBeTruthy();
+      expect(screen.queryByTestId('artifact-preview-first-load')).toBeNull();
+      expect(screen.queryByTestId('preview-runtime-frame-standby')).toBeNull();
+    });
+
+    fireEvent.click(screen.getByTestId('preview-runtime-navigation-retry'));
+    await waitFor(() => {
+      expect(screen.getByTestId('preview-runtime-frame-standby')).toHaveAttribute(
+        'src',
+        'http://n-scope-retry.localhost:43111/mint-retry.html',
+      );
+    });
+    expect(mintAttempt).toBe(2);
+    expect(screen.queryByText(/Preview unavailable/)).toBeNull();
+  });
+
   it('gates converged Team navigation on exact project authority', async () => {
     const file = htmlPreviewFile({ name: 'team-gated.html', path: 'team-gated.html' });
     const rawReads: Array<{ init?: RequestInit; url: string }> = [];
