@@ -207,6 +207,64 @@ describe('MessageCenter remount snapshot', () => {
     await waitFor(() => expect(counts[counts.length - 1]).toBe(1));
   });
 
+  it('records both of two concurrent reads in the shared snapshot', async () => {
+    // Two clicks land before either account POST resolves, so both capture the
+    // same snapshot. Patching by wholesale replacement guarded on snapshot
+    // identity meant the first completion replaced it and the second found the
+    // identity no longer matching, committed only host-local state, and left
+    // its row unread in the snapshot — so the badge came back on the next
+    // remount.
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/integrations/vela/status')) {
+        statusCalls += 1;
+        return Response.json({ loggedIn: true });
+      }
+      if (url.includes('/read') && init?.method === 'POST') {
+        return Response.json({ read: true, markedCount: 1 });
+      }
+      if (url.includes('/message-center') && url.includes('/messages')) {
+        messageCalls += 1;
+        return Response.json({
+          messages: [row('alpha-notice', null), row('beta-notice', null)],
+          nextCursor: null,
+          unreadCount: 2,
+        });
+      }
+      return Response.json({});
+    }));
+
+    const host = render(
+      <I18nProvider initial="zh-CN">
+        <MessageCenter />
+      </I18nProvider>,
+    );
+    await waitFor(() => expect(messageCalls).toBeGreaterThan(0));
+    fireEvent.click(screen.getByTestId('message-center-trigger'));
+    const alpha = await screen.findByRole('button', { name: /alpha-notice/ });
+    const beta = await screen.findByRole('button', { name: /beta-notice/ });
+
+    // Back-to-back: neither POST has resolved when the second one starts.
+    fireEvent.click(alpha);
+    fireEvent.click(beta);
+    await new Promise((r) => setTimeout(r, 40));
+    host.unmount();
+
+    const counts: number[] = [];
+    render(
+      <I18nProvider initial="zh-CN">
+        <MessageCenter
+          hideTrigger
+          open={false}
+          onOpenChange={() => {}}
+          onUnreadCountChange={(n) => counts.push(n)}
+        />
+      </I18nProvider>,
+    );
+    await waitFor(() => expect(counts.length).toBeGreaterThan(0));
+    expect(counts[counts.length - 1]).toBe(0);
+  });
+
   it('does not re-sync when it is remounted straight away', async () => {
     const first = await mountAndSettle();
     const afterFirst = { status: statusCalls, messages: messageCalls };

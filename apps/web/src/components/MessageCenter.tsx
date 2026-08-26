@@ -169,6 +169,11 @@ export function MessageCenter({
     const writeToken = ++snapshotWriteToken;
     if (messagesRef.current.length === 0) setSyncState('loading');
     const account = await isAmrLoggedIn();
+    // Before the writes, not after them. `account` describes the authority the
+    // request was issued under; publishing it into component state once the
+    // boundary has moved shows the previous account's signed-in state, and
+    // nothing re-syncs on a generation change to correct it.
+    if (currentWorkspaceAccountGeneration() !== issuedAccountGeneration) return;
     const wasAccount = loggedInRef.current;
     loggedInRef.current = account;
     setLoggedIn(account);
@@ -178,6 +183,9 @@ export function MessageCenter({
     }
     const pulled = await pullMessageCenter({ locale, loggedIn: account });
     if (requestId !== syncRequestIdRef.current) return;
+    // Same rule again: `serverReadIds` below is the OLD authority's view of
+    // what is read, and the filter it feeds mutates `pendingReadIdsRef`.
+    if (currentWorkspaceAccountGeneration() !== issuedAccountGeneration) return;
     const serverReadIds = new Set(pulled.filter((message) => Boolean(message.readAt)).map((message) => message.id));
     if (account) {
       pendingReadIdsRef.current = new Set(
@@ -348,7 +356,6 @@ export function MessageCenter({
     const account = await resolveLoggedInForWrite();
     if (currentWorkspaceAccountGeneration() !== issuedAccountGeneration) return;
     const readAt = new Date().toISOString();
-    const snapshotAtIssue = lastSyncSnapshot;
     if (account) await markAccountMessageRead(messageId);
     // Immediately after the await, before ANY mutation. Bailing out further
     // down was too late: `pendingReadIdsRef` had already taken the old
@@ -372,16 +379,36 @@ export function MessageCenter({
     // Matched against the CAPTURED generation, not the current one, so this can
     // only ever update a snapshot belonging to the same account this read began
     // under — never one a newer account published while the write was pending.
-    // Identity, not just shape: `nextMessages` is derived from the rows this
-    // read began on, so patching a snapshot some sync published in the
-    // meantime would drop that sync's newer rows.
+    // A durable read outranks every pull that was issued before it. Patching
+    // the snapshot is not enough on its own: `invalidateSyncResponses` only
+    // bumps THIS component's request id, so a pull started by a host that has
+    // since unmounted still holds a globally current write token and would
+    // republish the pre-read rows straight over this patch — and the next
+    // remount would restore the unread badge. Taking the next token bars every
+    // run issued before the read; a run issued after it takes a higher one and
+    // may still publish, which is correct because the server knows the read by
+    // then.
+    snapshotWriteToken += 1;
+    // Apply the read as a DELTA to whatever snapshot is current, rather than
+    // writing this host's whole row set over it. Writing `nextMessages`
+    // wholesale drops rows a sync published in the meantime; guarding that
+    // with snapshot identity instead made concurrent reads lose each other —
+    // two quick clicks both capture the same snapshot, the first replaces it,
+    // and the second finds the identity no longer matching and records
+    // nothing, so its badge came back on the next remount. A delta needs
+    // neither guard: it only ever adds this one id.
     if (
       lastSyncSnapshot
-      && lastSyncSnapshot === snapshotAtIssue
       && lastSyncSnapshot.accountGeneration === issuedAccountGeneration
       && lastSyncSnapshot.locale === locale
     ) {
-      lastSyncSnapshot = { ...lastSyncSnapshot, messages: nextMessages, readIds: nextIds };
+      lastSyncSnapshot = {
+        ...lastSyncSnapshot,
+        messages: lastSyncSnapshot.messages.map((item) => (
+          item.id === messageId ? { ...item, readAt: item.readAt ?? readAt } : item
+        )),
+        readIds: new Set(lastSyncSnapshot.readIds).add(messageId),
+      };
     }
   };
 
