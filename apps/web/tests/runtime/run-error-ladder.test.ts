@@ -9,6 +9,31 @@
 //   - S19(进程异常退出,每月 20,868 次、第二大类)三张表里一档都没有,整个落兜底;
 //   - `account_suspended`(封号)没有分类,落兜底 → 拿到一颗必然白点的〔重试〕。
 import { describe, expect, it } from 'vitest';
+import { readdirSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+
+/**
+ * 19 个语言包的路径 —— 从磁盘数,不写死清单。
+ *
+ * 不用 `import.meta.glob`:那是 Vite 的编译期语法,`tsc` 不认(`apps/web` 的
+ * typecheck 里 `ImportMeta` 上没有 `glob`),会在 CI 上红成类型错。读目录既能
+ * 通过类型检查,也保留了「新增一个语种自动进覆盖」的性质。
+ */
+const LOCALES_DIR = join(dirname(fileURLToPath(import.meta.url)), '../../src/i18n/locales');
+
+function localeModulePaths(): string[] {
+  return readdirSync(LOCALES_DIR)
+    .filter((name) => name.endsWith('.ts'))
+    .sort()
+    .map((name) => join(LOCALES_DIR, name));
+}
+
+async function loadLocaleDict(path: string): Promise<Record<string, string>> {
+  const mod = (await import(/* @vite-ignore */ path)) as Record<string, unknown>;
+  return (mod.default ?? Object.values(mod)[0]) as Record<string, string>;
+}
+
 import {
   isReconnectOwnedFailure,
   primaryActionForFailure,
@@ -144,12 +169,10 @@ describe('新文案进了 19 个语言包', () => {
   // 显式给宽超时:这一条要现场 transform 19 个 locale 文件,机器忙的时候
   // 会逼近 vitest 默认的 5s —— 那种红是环境噪音,不是回归。
   it('每个语种都有这五条,且都不是空串', { timeout: 30_000 }, async () => {
-    const modules = import.meta.glob('../../src/i18n/locales/*.ts');
-    const paths = Object.keys(modules);
+    const paths = localeModulePaths();
     expect(paths).toHaveLength(19);
     for (const path of paths) {
-      const mod = (await modules[path]!()) as Record<string, unknown>;
-      const dict = (mod.default ?? Object.values(mod)[0]) as Record<string, string>;
+      const dict = await loadLocaleDict(path);
       for (const key of NEW_KEYS) {
         expect(typeof dict[key], `${path} → ${key}`).toBe('string');
         expect(dict[key]!.trim().length, `${path} → ${key}`).toBeGreaterThan(0);
@@ -159,10 +182,8 @@ describe('新文案进了 19 个语言包', () => {
 
   // 稿子里 S19 那句是「{智能体} 意外退出了」—— 插值位不能在翻译里掉。
   it('S19 文案每个语种都保留了 {agent} 插值位', { timeout: 30_000 }, async () => {
-    const modules = import.meta.glob('../../src/i18n/locales/*.ts');
-    for (const path of Object.keys(modules)) {
-      const mod = (await modules[path]!()) as Record<string, unknown>;
-      const dict = (mod.default ?? Object.values(mod)[0]) as Record<string, string>;
+    for (const path of localeModulePaths()) {
+      const dict = await loadLocaleDict(path);
       expect(dict['chat.runError.agentCrashedMessage'], path).toContain('{agent}');
     }
   });
