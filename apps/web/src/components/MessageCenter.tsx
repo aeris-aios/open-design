@@ -310,7 +310,14 @@ export function MessageCenter({
   const markRead = async (messageId: string) => {
     const message = messagesRef.current.find((item) => item.id === messageId);
     if (!message || message.readAt) return;
+    // Same rule as `sync`: capture the boundary this action began under. Two
+    // awaits follow, and if a sign-out/sign-in lands across them this write
+    // describes an account that is no longer current — it may not reach
+    // component state, and it certainly may not stamp its rows over a snapshot
+    // the new account has already published.
+    const issuedAccountGeneration = currentWorkspaceAccountGeneration();
     const account = await resolveLoggedInForWrite();
+    if (currentWorkspaceAccountGeneration() !== issuedAccountGeneration) return;
     const readAt = new Date().toISOString();
     if (account) await markAccountMessageRead(messageId);
     const nextIds = new Set(readIdsRef.current).add(messageId);
@@ -319,13 +326,18 @@ export function MessageCenter({
       pendingReadIdsRef.current = new Set(pendingReadIdsRef.current).add(messageId);
       clearAnonymousState(window.localStorage);
     }
+    if (currentWorkspaceAccountGeneration() !== issuedAccountGeneration) return;
     invalidateSyncResponses();
     commitState(nextMessages, nextIds, { persistAnonymous: !account });
     // Keep the cross-mount snapshot consistent with what the user just did.
     // Without this a remount inside the window adopts the pre-read rows and the
     // unread count comes back until the next network sync. The timestamp is
     // deliberately left alone: the underlying fetch is no fresher than it was.
-    if (lastSyncSnapshot && lastSyncSnapshot.accountGeneration === currentWorkspaceAccountGeneration()) {
+    //
+    // Matched against the CAPTURED generation, not the current one, so this can
+    // only ever update a snapshot belonging to the same account this read began
+    // under — never one a newer account published while the write was pending.
+    if (lastSyncSnapshot && lastSyncSnapshot.accountGeneration === issuedAccountGeneration) {
       lastSyncSnapshot = { ...lastSyncSnapshot, messages: nextMessages, readIds: nextIds };
     }
   };
