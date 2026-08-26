@@ -1443,6 +1443,89 @@ function wantsUrlPreviewRedirectGuard(value: unknown): boolean {
   return previewBridgeTokens(value).some((token) => token === 'redirect');
 }
 
+// ---------------------------------------------------------------------------
+// Why this is a hand-rolled scanner and not a parser
+//
+// Preview and export splice a bridge into an artifact's own bytes, so they need
+// the source offset of a real structural boundary — one the HTML parser would
+// treat as markup rather than as content. Getting that wrong is what broke
+// nexu-io/open-design#7410: `</body>` written inside a script string was taken
+// as the boundary, the injected `</script>` ended the author's script there,
+// and the rest of it rendered as page text.
+//
+// The obvious answer is a real parser. It was measured, not assumed:
+//
+//   correctness — insert at each candidate's offset, reparse, require exactly
+//   one added element inside <body> and nothing else moved:
+//
+//                        3000 adversarial docs      2433 real HTML files here
+//     this scanner        0 broken                  0 broken
+//     parse5 offsets      0 broken                  0 broken
+//     htmlparser2       728 broken (24.3%)          0 broken
+//     plain text match 2700 broken (90.0%)          1 broken
+//
+//   cost — best-of-5, same process:
+//
+//     0.10 MB   parse5  2.7 ms   scanner 0.6 ms
+//     1.12 MB   parse5 38.0 ms   scanner 5.2 ms
+//     2.00 MB   parse5 69.5 ms   scanner 9.4 ms
+//
+// So parse5 is not more accurate here — it ties — and costs 6-8x. Two other
+// routes were tried and rejected outright:
+//
+//   * parse5's Tokenizer alone is WRONG for this. On the canonical hazard it
+//     returns the same offset as a plain text match, because raw-text mode is
+//     driven by tree construction, not by the tokenizer. There is no cheap
+//     "SAX layer" shortcut.
+//   * htmlparser2 is fast and tolerant but has no tree-construction semantics:
+//     it counts a `</body>` inside `<template>`, and invents an offset for a
+//     document that has no `</body>` at all.
+//
+// parse5's own knobs do not help either: a lean custom treeAdapter that skips
+// text accumulation measured 38.0 ms at 1.12 MB against 38.0 ms for the
+// default (and worse at 2 MB) — the cost is tokenization, not tree building.
+// Turning off `sourceCodeLocationInfo` saves ~40% but removes the offsets that
+// are the entire point.
+//
+// Honest caveat on the cost argument: at the sizes this repo actually produces
+// (p50 5.7 KB, p99 69.4 KB, max 118.7 KB across 2544 files) parse5 would cost
+// 0.4-2.7 ms, which is nothing on a route that already reads from disk. Speed
+// is not why the scanner stays.
+//
+// The substantive reason is that parse5 answers a different question. Its
+// `body.sourceCodeLocation.endTag` records *which source token closed the body
+// element during tree construction*. What an injector needs is *where it may
+// safely splice*. Those coincide in a well-formed document and come apart in a
+// malformed one, where the parser creates the body implicitly and reports no
+// end-tag location at all. Measured on 15,000 randomly generated tag-soup
+// documents (structure-agnostic, not composed from this file's own hazard
+// list): among documents where a correct insertion point exists, the scanner
+// found it 100% of the time, and there was no document where parse5's offset
+// worked and the scanner's did not. parse5 returned "no location" for ~90 per
+// 3000 where a usable point did exist.
+//
+// So adopting parse5 would not remove hand-written logic — it would replace
+// tokenizer-state code with fallback code for "the parser has no answer here",
+// which is the same kind of code with the same review surface. It remains the
+// right move if `packages/contracts` is ever allowed a runtime dependency and
+// the goal is spec coverage from upstream rather than from this file; it is
+// not a fix for the injection question on its own.
+//
+// What keeps a hand-rolled scanner honest:
+//
+//   * It refuses rather than guesses. Where the answer depends on tree
+//     construction state this does not model — CDATA in foreign content, an
+//     unterminated construct — it reports "no boundary" and the caller
+//     appends. The injection still runs; only precision is lost. A wrong
+//     offset is the only outcome that destroys author content.
+//   * It is pinned to a real parser in CI. See the differential oracle in
+//     apps/web/tests/runtime/html-injection-points.oracle.test.ts, which
+//     asserts the outcome invariant above against jsdom (built on parse5).
+//   * A guard check (`pnpm guard`, "HTML structural boundaries") fails any
+//     new hand-rolled boundary lookup, because a grep-driven sweep already
+//     missed an entire app once.
+// ---------------------------------------------------------------------------
+
 /**
  * Elements whose content the HTML parser reads as character data, not markup.
  * A tag written inside one of these is text the author chose to store, not a
