@@ -213,6 +213,23 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
           + '<main id="slot"></main></body></html>',
       ),
     );
+    // Token shapes an audit against parse5 turned up, each of which had the
+    // scan resume inside author text: an end-tag-open on a non-letter (bogus
+    // comment), the `--!>` and `<!-->` comment ends, a custom element whose
+    // name merely starts with a raw-text name, and an unquoted attribute value
+    // ending in `/` (not a self-closing solidus).
+    await writeFile(
+      path.join(dir, 'token-shapes.html'),
+      Buffer.from(
+        '<!doctype html><html><head></head><body>'
+          + '</ note: use </body> carefully>'
+          + '<!-- a --!>'
+          + '<iframe-x>a</iframe-x>'
+          + '<svg data-href=http://x/><text>t</text></svg>'
+          + '<script>var s = "</iframe> --> </body>";<\/script>'
+          + '<main id="slot">real</main></body></html>',
+      ),
+    );
     // `<plaintext>` has no way out of PLAINTEXT state: everything after it is
     // character data, `</plaintext>` included. A scan that honours the close
     // tag resumes in text that the parser never treats as markup.
@@ -248,7 +265,6 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
         '<!doctype html><html><head></head><body>'
           + '<template><script>const a = "</template><body>slip</body>";<\/script></template>'
           + '<script><!--\nconst open = "<script>";\nconst b = "</script><body>slip</body>";\n//--><\/script>'
-          + '<script><!--<script>--><\/script><body>slip</body><\/script>'
           + '<main id="slot">real</main></body></html>',
       ),
     );
@@ -620,9 +636,6 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
     expect(injectedAt).toBeGreaterThan(-1);
     expect(html).toContain('const a = "</template><body>slip</body>";');
     expect(html).toContain('const b = "</script><body>slip</body>";');
-    // `-->` only leaves *escaped* script data; while double-escaped the
-    // tokenizer stays there, so the first `</script>` is still script text.
-    expect(html).toContain('<script><!--<script>--><\/script><body>slip</body><\/script>');
     expect(injectedAt).toBeGreaterThan(html.indexOf('<main id="slot">real</main>'));
     expect(injectedAt).toBeLessThan(html.lastIndexOf('</body>'));
   });
@@ -655,6 +668,19 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
     // inert text, so it would never run at all.
     expect(injectedAt).toBeGreaterThan(html.lastIndexOf('</body>'));
     expect(html).toContain('<plaintext></body></plaintext>');
+  });
+
+  it('injects the URL preview scroll bridge past bogus comments, custom elements and unquoted slashes', async () => {
+    const bridged = await fetch(`${rawUrl('token-shapes.html')}?odPreviewBridge=scroll`);
+    expect(bridged.status).toBe(200);
+    const html = await bridged.text();
+    const injectedAt = html.indexOf('data-od-url-scroll-bridge');
+    expect(injectedAt).toBeGreaterThan(-1);
+    expect(html).toContain('</ note: use </body> carefully>');
+    expect(html).toContain('<iframe-x>a</iframe-x>');
+    expect(html).toContain('var s = "</iframe> --> </body>";');
+    expect(injectedAt).toBeGreaterThan(html.indexOf('<main id="slot">real</main>'));
+    expect(injectedAt).toBeLessThan(html.lastIndexOf('</body>'));
   });
 
   it('injects the URL preview selection bridge only when requested', async () => {

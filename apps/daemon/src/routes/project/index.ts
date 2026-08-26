@@ -1470,6 +1470,62 @@ const PREVIEW_RAW_TEXT_ELEMENTS = [
  * a value when it directly follows `=`; anywhere else it is a literal
  * character of an unquoted value.
  */
+/**
+ * Offset just past the comment starting at `from` (which points at `<!--`), or
+ * -1 when it never closes.
+ *
+ * A comment closes on a run of dashes followed by `>` or `!>`, and `<!-->` /
+ * `<!--->` are already closed at the start. A plain `indexOf('-->')` misses
+ * `--!>` and the abrupt forms, and then resumes scanning inside author text —
+ * where the next `-->` it finds may well be in a script string.
+ */
+/**
+ * Whether the tag whose `>` sits at `tagEnd` is self-closing.
+ *
+ * `html[tagEnd - 1] === '/'` is not enough: an unquoted attribute value may
+ * end in one (`<svg data-href=http://x/>`), and reading that as self-closing
+ * makes the scan step into a foreign subtree it should have skipped. Re-walk
+ * the tag so the solidus is only counted when it is not part of a value.
+ */
+function isSelfClosingTag(html: string, from: number, tagEnd: number): boolean {
+  if (html.charCodeAt(tagEnd - 1) !== 47 /* / */) return false;
+  let i = from;
+  let lastSignificant = 0;
+  let inUnquotedValue = false;
+  while (i < tagEnd) {
+    const ch = html.charCodeAt(i);
+    if ((ch === 34 /* " */ || ch === 39 /* ' */) && lastSignificant === 61 /* = */) {
+      const close = html.indexOf(String.fromCharCode(ch), i + 1);
+      if (close < 0 || close > tagEnd) return false;
+      i = close + 1;
+      lastSignificant = 0;
+      inUnquotedValue = false;
+      continue;
+    }
+    if (ch === 61 /* = */) inUnquotedValue = true;
+    else if (ch <= 32) inUnquotedValue = false;
+    if (ch > 32) lastSignificant = ch;
+    i += 1;
+  }
+  return !inUnquotedValue;
+}
+
+function endOfComment(html: string, from: number): number {
+  let i = from + 4;
+  if (html.startsWith('>', i)) return i + 1;
+  if (html.startsWith('->', i)) return i + 2;
+  while (i < html.length) {
+    const dash = html.indexOf('--', i);
+    if (dash < 0) return -1;
+    let j = dash;
+    while (html.charCodeAt(j) === 45 /* - */) j += 1;
+    if (html.startsWith('>', j)) return j + 1;
+    if (html.startsWith('!>', j)) return j + 2;
+    i = j > dash ? j : dash + 2;
+  }
+  return -1;
+}
+
 function endOfTag(html: string, from: number): number {
   let i = from;
   let lastSignificant = 0;
@@ -1556,10 +1612,11 @@ function findScriptClose(lowerHtml: string, from: number): number {
   let doubleEscaped = false;
   while (i < lowerHtml.length) {
     if (!escaped && lowerHtml.startsWith('<!--', i)) { escaped = true; i += 4; continue; }
-    // `-->` only returns *escaped* script data to normal script data. While
-    // double-escaped the tokenizer stays there, so clearing both flags here
-    // would accept the next `</script>` as the element close.
-    if (escaped && !doubleEscaped && lowerHtml.startsWith('-->', i)) { escaped = false; i += 3; continue; }
+    // `>` in the script-data-double-escaped-dash-dash state switches to the
+    // plain script data state, so `-->` leaves *both* escape levels. Keeping
+    // double-escaped here runs the scan past the element's real close and into
+    // whatever follows it.
+    if (escaped && lowerHtml.startsWith('-->', i)) { escaped = false; doubleEscaped = false; i += 3; continue; }
     if (escaped && !doubleEscaped && lowerHtml.startsWith('<script', i) && isEndTagBoundary(lowerHtml.charCodeAt(i + 7))) {
       doubleEscaped = true;
       i += 7;
@@ -1583,15 +1640,21 @@ function findScriptClose(lowerHtml: string, from: number): number {
  * would end the template early and drop the scan back into author text.
  */
 function skipTemplateContent(html: string, lowerHtml: string, from: number): number {
-  const tagOpen = /<(\/?)([a-z][a-z0-9]*)/iy;
+  const tagOpen = /<(\/?)([a-z][^\t\n\f \/>]*)/iy;
   let depth = 1;
   let i = from;
   while (i < html.length && depth > 0) {
     if (html.charCodeAt(i) !== 60 /* < */) { i += 1; continue; }
     if (html.startsWith('<!--', i)) {
-      const end = html.indexOf('-->', i + 4);
+      const end = endOfComment(html, i);
       if (end < 0) return -1;
-      i = end + 3;
+      i = end;
+      continue;
+    }
+    if (html.startsWith('</', i) && !/[a-z]/i.test(html.charAt(i + 2))) {
+      const end = html.indexOf('>', i + 2);
+      if (end < 0) return -1;
+      i = end + 1;
       continue;
     }
     if (html.startsWith('<!', i) || html.startsWith('<?', i)) {
@@ -1612,7 +1675,7 @@ function skipTemplateContent(html: string, lowerHtml: string, from: number): num
       i = contentEnd;
       continue;
     }
-    if (!open[1] && (tagName === 'svg' || tagName === 'math') && html.charCodeAt(tagEnd - 1) !== 47 /* / */) {
+    if (!open[1] && (tagName === 'svg' || tagName === 'math') && !isSelfClosingTag(html, i, tagEnd)) {
       // Foreign content inside a template follows the same rules, CDATA
       // included, so it has to go through the same skip.
       const contentEnd = skipForeignContent(html, lowerHtml, tagName, tagEnd + 1);
@@ -1642,7 +1705,7 @@ function skipTemplateContent(html: string, lowerHtml: string, from: number): num
  * inside `<svg>` or `<math>`.
  */
 function skipForeignContent(html: string, lowerHtml: string, rootName: string, from: number): number {
-  const tagOpen = /<(\/?)([a-z][a-z0-9-]*)/iy;
+  const tagOpen = /<(\/?)([a-z][^\t\n\f \/>]*)/iy;
   let depth = 1;
   let i = from;
   while (i < html.length && depth > 0) {
@@ -1651,9 +1714,15 @@ function skipForeignContent(html: string, lowerHtml: string, rootName: string, f
       continue;
     }
     if (html.startsWith('<!--', i)) {
-      const end = html.indexOf('-->', i + 4);
+      const end = endOfComment(html, i);
       if (end < 0) return -1;
-      i = end + 3;
+      i = end;
+      continue;
+    }
+    if (html.startsWith('</', i) && !/[a-z]/i.test(html.charAt(i + 2))) {
+      const end = html.indexOf('>', i + 2);
+      if (end < 0) return -1;
+      i = end + 1;
       continue;
     }
     if (lowerHtml.startsWith('<![cdata[', i)) {
@@ -1680,7 +1749,7 @@ function skipForeignContent(html: string, lowerHtml: string, rootName: string, f
     const tagEnd = endOfTag(html, i + open[0].length);
     if (tagEnd < 0) return -1;
     const tagName = (open[2] ?? '').toLowerCase();
-    const selfClosing = html.charCodeAt(tagEnd - 1) === 47 /* / */;
+    const selfClosing = isSelfClosingTag(html, i, tagEnd);
     if (!open[1] && !selfClosing && (PREVIEW_RAW_TEXT_ELEMENTS as readonly string[]).includes(tagName)) {
       const contentEnd = findRawTextClose(lowerHtml, tagName, tagEnd + 1);
       if (contentEnd < 0) return -1;
@@ -1695,7 +1764,7 @@ function skipForeignContent(html: string, lowerHtml: string, rootName: string, f
 
 function findRealTagOffset(html: string, pattern: RegExp): number {
   const anchored = new RegExp(pattern.source, `${pattern.flags.replace(/[gy]/g, '')}y`);
-  const tagOpen = /<(\/?)([a-z][a-z0-9]*)/iy;
+  const tagOpen = /<(\/?)([a-z][^\t\n\f \/>]*)/iy;
   const lower = html.toLowerCase();
   let i = 0;
   while (i < html.length) {
@@ -1704,11 +1773,20 @@ function findRealTagOffset(html: string, pattern: RegExp): number {
       continue;
     }
     if (html.startsWith('<!--', i)) {
-      const end = html.indexOf('-->', i + 4);
+      const end = endOfComment(html, i);
       // An unterminated comment swallows the rest of the document, so there is
       // no real tag left to find.
       if (end < 0) return -1;
-      i = end + 3;
+      i = end;
+      continue;
+    }
+    if (html.startsWith('</', i) && !/[a-z]/i.test(html.charAt(i + 2))) {
+      // End-tag-open on anything that is not an ASCII letter is a bogus
+      // comment running to the next `>`; scanning inside it treats author
+      // prose as markup.
+      const end = html.indexOf('>', i + 2);
+      if (end < 0) return -1;
+      i = end + 1;
       continue;
     }
     if (html.startsWith('<!', i) || html.startsWith('<?', i)) {
@@ -1737,7 +1815,7 @@ function findRealTagOffset(html: string, pattern: RegExp): number {
       i = contentEnd;
       continue;
     }
-    if (!open[1] && (tagName === 'svg' || tagName === 'math') && html.charCodeAt(tagEnd - 1) !== 47 /* / */) {
+    if (!open[1] && (tagName === 'svg' || tagName === 'math') && !isSelfClosingTag(html, i, tagEnd)) {
       const contentEnd = skipForeignContent(html, lower, tagName, tagEnd + 1);
       if (contentEnd < 0) return -1;
       i = contentEnd;
@@ -1755,6 +1833,19 @@ function findRealTagOffset(html: string, pattern: RegExp): number {
     i = tagEnd + 1;
   }
   return -1;
+}
+
+/**
+ * Prepend `payload` to `html`, but after a leading DOCTYPE if there is one.
+ *
+ * A `<script>` token before the DOCTYPE puts the parser in quirks mode and the
+ * DOCTYPE is then dropped, silently changing the page's box model — a bridge
+ * must never do that to an artifact.
+ */
+function prependAfterDoctype(html: string, payload: string): string {
+  const match = /^\s*<!doctype[^>]*>/i.exec(html);
+  if (!match) return payload + html;
+  return html.slice(0, match[0].length) + payload + html.slice(match[0].length);
 }
 
 function injectBeforeBodyClose(html: string, marker: string, injection: string): string {
@@ -1782,7 +1873,7 @@ function injectAfterHeadOpen(html: string, marker: string, injection: string): s
       return `${html.slice(0, openTagEnd + 1)}<head>${injection}</head>${html.slice(openTagEnd + 1)}`;
     }
   }
-  return `${injection}${html}`;
+  return prependAfterDoctype(html, injection);
 }
 
 function injectUrlPreviewBridge(
@@ -6274,7 +6365,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
         return `${html.slice(0, openTagEnd + 1)}${baseTag}${bridge}${html.slice(openTagEnd + 1)}`;
       }
     }
-    return `${baseTag}${bridge}${html}`;
+    return prependAfterDoctype(html, `${baseTag}${bridge}`);
   }
 
   function rewriteWorkspaceScopedHtmlAssetUrls(
