@@ -4936,6 +4936,15 @@ function AppInner() {
     setSettingsOpen(false);
     settingsDraftConfigRef.current = null;
     setSettingsHighlight(null);
+    // Signing out IS an account boundary, and every account-scoped cache in the
+    // app is keyed on the generation this advances. Sign-IN has called this
+    // since AmrLoginPill stopped waiting for a tab reset to happen along; the
+    // sign-out half was never wired the same way, so caches from the previous
+    // account stayed 'current' — the message center's short-lived snapshot most
+    // visibly, since a signed-out host mounting inside its window adopted the
+    // previous account's rows, unread count and priority announcement without
+    // ever rechecking the auth status.
+    notifyWorkspaceContextRefresh();
     navigate({ kind: 'home', view: 'onboarding' });
     await syncConfigToDaemon(next, { allowOnboardingReset: true });
   }, []);
