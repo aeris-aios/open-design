@@ -21,6 +21,8 @@ export interface UseProjectPreviewSessionNavigationOptions
   extends ProjectPreviewNavigationRequest {
   policy: PreviewSessionNavigationPolicy;
   enabled?: boolean;
+  /** Keep the same owner's last-good document visible while minting is paused. */
+  retainLastGoodWhenDisabled?: boolean;
   /** Optional stable test/provider override. Do not recreate it during render. */
   cache?: ProjectPreviewNavigationSource;
   now?: () => number;
@@ -83,6 +85,7 @@ export function useProjectPreviewSessionNavigation({
   authorizationKey,
   policy,
   enabled = true,
+  retainLastGoodWhenDisabled = false,
   cache = projectPreviewNavigationCache,
   now = Date.now,
   refreshAheadMs = PROJECT_PREVIEW_NAVIGATION_REFRESH_AHEAD_MS,
@@ -259,7 +262,17 @@ export function useProjectPreviewSessionNavigation({
     return () => window.clearTimeout(timer);
   }, [cache, enabled, loadKey, now, ownerKey, refreshAheadMs, request, stablePolicy, state]);
 
-  if (!enabled) return EMPTY_STATE;
+  if (!enabled) {
+    if (retainLastGoodWhenDisabled && state.ownerKey === ownerKey) {
+      return {
+        navigation: state.navigation,
+        loading: false,
+        unavailable: false,
+        expiresAt: state.expiresAt,
+      };
+    }
+    return EMPTY_STATE;
+  }
   if (state.ownerKey !== ownerKey) {
     return { navigation: null, loading: true, unavailable: false, expiresAt: null };
   }

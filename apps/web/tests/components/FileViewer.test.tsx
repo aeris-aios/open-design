@@ -109,6 +109,10 @@ import {
   buildWorkspaceSeatSummary,
   type WorkspaceCollabContext,
 } from '@open-design/contracts';
+import {
+  PREVIEW_RUNTIME_PROTOCOL_VERSION,
+  type PreviewRuntimeCapability,
+} from '@open-design/contracts/runtime/preview-runtime';
 
 /** A team workspace context — the only state that can address the resource hub,
  *  and therefore the only one where the public "Publish file" entry is offered. */
@@ -8431,6 +8435,151 @@ describe('FileViewer tweaks toolbar', () => {
       ...overrides,
     });
   }
+
+  it('promotes the converged real-URL runtime and changes tools without replacing its frame', async () => {
+    const file = htmlPreviewFile();
+    const sessionId = 'scope-0001';
+    const documentVersion = 'preview-v1';
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = typeof input === 'string'
+        ? input
+        : input instanceof Request
+          ? input.url
+          : String(input);
+      if (url.startsWith('/api/projects/project-1/raw/preview.html')) {
+        return new Response(
+          '<!doctype html><html><body><main data-od-id="hero">Hero</main></body></html>',
+          { status: 200, headers: { 'Content-Type': 'text/html' } },
+        );
+      }
+      if (url === '/api/projects/project-1/files') {
+        return new Response(JSON.stringify({ files: [file] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      if (url.includes('/api/projects/project-1/preview-url')) {
+        return new Response(JSON.stringify({
+          url: '/api/projects/project-1/preview/legacy-scope/preview.html',
+          file: 'preview.html',
+          expiresAt: Date.now() + 60 * 60 * 1000,
+          scopedOrigin: {
+            normalUrl: `http://n-${sessionId}.localhost:43111/preview.html`,
+            poweredUrl: `http://p-${sessionId}.localhost:43111/preview.html`,
+            documentVersion,
+          },
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      return new Response(JSON.stringify({ deployments: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const renderViewer = (liveHtml?: string) => (
+      <FileViewer
+        projectId="project-1"
+        projectKind="prototype"
+        file={file}
+        liveHtml={liveHtml}
+        previewRuntimeConvergence
+      />
+    );
+    const { rerender } = render(renderViewer());
+
+    const frame = await waitFor(() => (
+      screen.getByTestId('preview-runtime-frame-standby') as HTMLIFrameElement
+    ));
+    const initialSrc = frame.getAttribute('src');
+    expect(initialSrc).toBe(`http://n-${sessionId}.localhost:43111/preview.html`);
+    const postMessage = vi.spyOn(frame.contentWindow!, 'postMessage');
+    const baseCapabilities: PreviewRuntimeCapability[] = [
+      'content_measurement',
+      'scroll',
+      'snapshot',
+      'observability',
+      'selection',
+      'tweaks',
+      'palette',
+    ];
+    const signal = (
+      type: 'od:preview:hello' | 'od:preview:capabilities-applied' | 'od:preview:visible-paint',
+      capabilities: readonly PreviewRuntimeCapability[],
+    ) => {
+      act(() => {
+        window.dispatchEvent(new MessageEvent('message', {
+          source: frame.contentWindow,
+          data: {
+            type,
+            protocolVersion: PREVIEW_RUNTIME_PROTOCOL_VERSION,
+            sessionId,
+            documentVersion,
+            ...(type === 'od:preview:hello' ? { availableCapabilities: capabilities } : {}),
+            ...(type === 'od:preview:capabilities-applied'
+              ? { enabledCapabilities: capabilities }
+              : {}),
+          },
+        }));
+      });
+    };
+
+    signal('od:preview:hello', [...baseCapabilities, 'comment']);
+    signal('od:preview:capabilities-applied', baseCapabilities);
+    signal('od:preview:visible-paint', baseCapabilities);
+    expect(screen.getByTestId('preview-runtime-frame-current')).toBe(frame);
+
+    postMessage.mockClear();
+    fireEvent.click(screen.getByTestId('board-mode-toggle'));
+    expect(screen.getByTestId('preview-runtime-frame-current')).toBe(frame);
+    expect(frame.getAttribute('src')).toBe(initialSrc);
+    expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'od:preview:set-capabilities',
+      enabledCapabilities: [
+        'content_measurement',
+        'scroll',
+        'snapshot',
+        'observability',
+        'selection',
+        'comment',
+        'tweaks',
+        'palette',
+      ],
+    }), '*');
+    expect(postMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'od:comment-mode' }),
+      '*',
+    );
+
+    signal('od:preview:capabilities-applied', [
+      'content_measurement',
+      'scroll',
+      'snapshot',
+      'observability',
+      'selection',
+      'comment',
+      'tweaks',
+      'palette',
+    ]);
+    expect(frame.getAttribute('src')).toBe(initialSrc);
+    expect(postMessage).toHaveBeenCalledWith({
+      type: 'od:comment-mode',
+      enabled: true,
+      mode: 'inspect',
+    }, '*');
+
+    const mintCount = fetchMock.mock.calls.filter(([input]) => (
+      String(input).includes('/api/projects/project-1/preview-url')
+    )).length;
+    rerender(renderViewer(
+      '<!doctype html><html><body><main data-od-id="hero">Streaming update</main></body></html>',
+    ));
+    expect(screen.getByTestId('preview-runtime-frame-current')).toBe(frame);
+    expect(frame.getAttribute('src')).toBe(initialSrc);
+    expect(fetchMock.mock.calls.filter(([input]) => (
+      String(input).includes('/api/projects/project-1/preview-url')
+    ))).toHaveLength(mintCount);
+  });
 
   it('renders Annotation, Edit, and Draw as the primary preview tools', async () => {
     render(

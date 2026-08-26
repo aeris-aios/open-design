@@ -75,9 +75,9 @@ function documentKeepAliveKey(
  * paints in a hidden standby iframe. The component never assigns about:blank
  * and never mutates the URL of an existing browsing context.
  *
- * FileViewer does not consume this component yet. It is the isolated adapter
- * used to prove the final transport lifecycle before replacing the legacy
- * URL/srcDoc stack.
+ * FileViewer consumes this adapter through its internal convergence harness,
+ * while the default path stays unchanged until the legacy URL/srcDoc stack can
+ * be replaced atomically.
  */
 export function PreviewSessionFrames({
   projectId,

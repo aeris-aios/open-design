@@ -202,4 +202,29 @@ describe('useProjectPreviewSessionNavigation', () => {
     expect(get).not.toHaveBeenCalled();
     expect(hook.result.current).toMatchObject({ navigation: null, loading: false });
   });
+
+  it('can retain the same owner last-good document while new minting is paused', async () => {
+    const get = vi.fn().mockResolvedValue(navigation('scope-0001', 'v1'));
+    const options = {
+      projectId: 'project-1',
+      fileName: 'index.html',
+      revisionKey: 'v1',
+      authorizationKey: 'local',
+      policy: normalPolicy,
+      cache: { get },
+      now: () => 1_000,
+      retainLastGoodWhenDisabled: true,
+    };
+    const hook = renderHook(
+      ({ enabled }) => useProjectPreviewSessionNavigation({ ...options, enabled }),
+      { initialProps: { enabled: true } },
+    );
+    await flushMicrotasks();
+    const lastGood = hook.result.current.navigation;
+
+    hook.rerender({ enabled: false });
+
+    expect(hook.result.current.navigation).toBe(lastGood);
+    expect(get).toHaveBeenCalledTimes(1);
+  });
 });

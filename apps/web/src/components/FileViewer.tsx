@@ -26,7 +26,11 @@ import {
   type WorkspaceCollabContext,
 } from '@open-design/contracts';
 import { PREVIEW_OBSERVABILITY_HOST_STATE_MESSAGE_TYPE } from '@open-design/contracts/runtime/preview-observability';
-import { replayPreviewBridgeModes as replayPreviewBridgeModeState } from '../runtime/replay-preview-bridge-modes';
+import {
+  replayPreviewBridgeModes as replayPreviewBridgeModeState,
+  type PreviewBridgeModeState,
+} from '../runtime/replay-preview-bridge-modes';
+import { useProjectPreviewSessionNavigation } from '../runtime/use-project-preview-session-navigation';
 import {
   appendResourceQuery,
   workspaceIdentityCacheKey,
@@ -270,6 +274,7 @@ import {
   previewIframeKeepAliveKey,
   useIframeKeepAlivePool,
 } from './IframeKeepAlivePool';
+import { PreviewRuntimeTransport } from './PreviewRuntimeTransport';
 
 import type {
   ChatCommentAttachment,
@@ -1840,6 +1845,8 @@ interface Props {
   ) => void;
   /** Prevent a second retained viewer from entering Manual Edit. */
   manualEditEntryAllowed?: boolean;
+  /** Internal convergence harness; removed when the real-URL runtime becomes the only transport. */
+  previewRuntimeConvergence?: boolean;
 }
 
 function FileViewerLoadingSkeleton() {
@@ -1917,6 +1924,7 @@ export const FileViewer = memo(function FileViewer({
   onRetainActivityChange,
   onManualEditExitHandlerChange,
   manualEditEntryAllowed = true,
+  previewRuntimeConvergence = false,
 }: Props) {
   const t = useT();
   const projectCollabContext = useProjectCollabContext();
@@ -2006,6 +2014,7 @@ export const FileViewer = memo(function FileViewer({
         onRetainActivityChange={onRetainActivityChange}
         onManualEditExitHandlerChange={onManualEditExitHandlerChange}
         manualEditEntryAllowed={manualEditEntryAllowed}
+        previewRuntimeConvergence={previewRuntimeConvergence}
       />
     );
   }
@@ -7398,6 +7407,7 @@ function HtmlViewer({
   onRetainActivityChange,
   onManualEditExitHandlerChange,
   manualEditEntryAllowed = true,
+  previewRuntimeConvergence = false,
 }: {
   projectId: string;
   projectKind: TrackingProjectKind;
@@ -7437,6 +7447,7 @@ function HtmlViewer({
     handler: (() => Promise<boolean>) | null,
   ) => void;
   manualEditEntryAllowed?: boolean;
+  previewRuntimeConvergence?: boolean;
 }) {
   const { locale, t } = useI18n();
   const iframeKeepAlivePool = useIframeKeepAlivePool();
@@ -10125,6 +10136,66 @@ function HtmlViewer({
     const s = routingHtmlSource;
     return s != null && htmlNeedsPoweredPreview(s);
   }, [routingHtmlSource, serverPoweredPreviewRequired]);
+  const previewRuntimePolicy = {
+    sandboxProfile: needsPowered ? 'powered' as const : 'normal' as const,
+    guards: {
+      storage: needsSandboxShim && !needsPowered,
+      focus: needsFocusGuard && !needsPowered,
+      redirect: needsRedirectGuard && !needsPowered,
+    },
+    deck: effectiveDeck,
+  };
+  // The convergence transport must never mint from a previous file's retained
+  // source classification. It also cannot represent an in-memory agent/edit
+  // snapshot: the real URL is the settled daemon-owned document, so retain the
+  // last good frame until those bytes land rather than navigating to stale
+  // disk content.
+  const previewRuntimeNavigationEnabled =
+    previewRuntimeConvergence
+    && sourceAuthorizationScopeKey !== null
+    && liveHtml === undefined
+    && routingSourceIdentity === currentSourceIdentity
+    && routingHtmlSource !== null;
+  const previewRuntimeNavigation = useProjectPreviewSessionNavigation({
+    projectId,
+    fileName: file.name,
+    revisionKey: `${sourceSnapshotRefreshKey}:${reloadKey}`,
+    authorizationKey: sourceAuthorizationScopeKey ?? 'pending',
+    policy: previewRuntimePolicy,
+    enabled: previewRuntimeNavigationEnabled,
+    retainLastGoodWhenDisabled: true,
+  });
+  const previewRuntimeViewerState = {
+    deck: effectiveDeck,
+    comment: boardMode,
+    inspect: inspectMode,
+    draw: drawOverlayOpen,
+    edit: manualEditMode,
+  };
+  const previewRuntimeBridgeModeState: PreviewBridgeModeState = {
+    active: workspaceActive && mode === 'preview',
+    workspaceActive,
+    commentEnabled: boardMode,
+    commentMode: boardTool,
+    editEnabled: manualEditMode,
+    selectedEditTargetId: selectedManualEditTarget?.id ?? null,
+    editLiveStyles: Array.from(manualEditLiveStylesRef.current, ([id, preview]) => ({
+      id,
+      styles: preview.styles,
+      version: preview.version,
+    })),
+    inspectEnabled: inspectMode,
+    commentActiveTarget: boardMode
+      && activeCommentTarget
+      && activeCommentTarget.selectionKind !== 'pod'
+      ? {
+          elementId: activeCommentTarget.elementId,
+          selector: activeCommentTarget.selector,
+        }
+      : null,
+    inspectOverrides,
+    deckSlideIndex: effectiveDeck ? activeDeckSlideIndex : null,
+  };
   const previewBridgeQuery = useMemo(() => {
     const query = [BASE_PREVIEW_BRIDGE_QUERY];
     // Preserve the old URL-load behavior for ordinary passive documents. Only
@@ -17107,6 +17178,45 @@ function HtmlViewer({
                     toolbarHost={manualEditMode ? null : commentComposerHost}
                   >
                     <div className="artifact-preview-transport-stack">
+                      {previewRuntimeConvergence ? (
+                        previewRuntimeNavigation.navigation ? (
+                          <PreviewRuntimeTransport
+                            projectId={projectId}
+                            fileName={file.name}
+                            navigation={previewRuntimeNavigation.navigation}
+                            viewerState={previewRuntimeViewerState}
+                            bridgeModeState={previewRuntimeBridgeModeState}
+                            active={workspaceActive && mode === 'preview'}
+                            title={file.name}
+                            data-od-powered={needsPowered ? 'true' : undefined}
+                            sandbox={urlFrameSandbox}
+                            allow={urlFrameAllow}
+                            onCurrentFrameChange={(frame) => {
+                              iframeRef.current = frame;
+                              if (!frame) return;
+                              beginDesktopPreviewContentMeasurementGeneration(frame);
+                              dcViewportRestoreAtRef.current = Date.now();
+                              frame.contentWindow?.postMessage({
+                                type: '__dc_set_viewport',
+                                ...dcViewportRef.current,
+                              }, '*');
+                              restorePreviewScrollPosition();
+                              scheduleDesktopPreviewContentMeasure(frame);
+                            }}
+                          />
+                        ) : (
+                          <div
+                            className="artifact-preview-first-load"
+                            role="status"
+                            aria-busy="true"
+                            aria-label={t('fileViewer.loading')}
+                            data-testid="artifact-preview-first-load"
+                          >
+                            <CenteredLoader label={t('fileViewer.loading')} />
+                          </div>
+                        )
+                      ) : (
+                        <>
                       {OD_PREVIEW_KEEP_ALIVE ? (
                         <PooledIframe
                           ref={urlPreviewIframeRef}
@@ -17339,6 +17449,8 @@ function HtmlViewer({
                           <CenteredLoader label={t('fileViewer.loading')} />
                         </div>
                       ) : null}
+                        </>
+                      )}
                     </div>
                   </PreviewDrawOverlay>
                   {previewAssetWarning ? (

@@ -36,9 +36,9 @@ export interface PreviewRuntimeTransportProps extends Omit<
  * any matching mode payload is replayed; later mode changes only post messages
  * to the retained current frame and never mutate its URL.
  *
- * FileViewer does not consume this component yet. Keeping this boundary
- * isolated lets the terminal transport prove feature parity before the legacy
- * URL/srcDoc stack is removed in one cutover.
+ * FileViewer consumes this boundary through its internal convergence harness.
+ * The default product path remains legacy until terminal feature parity is
+ * proven and the URL/srcDoc stack can be removed in one cutover.
  */
 export function PreviewRuntimeTransport({
   viewerState,
