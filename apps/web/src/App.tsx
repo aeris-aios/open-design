@@ -390,9 +390,10 @@ function clearStaleAmrModelChoiceOnProfileChange(
 }
 
 /**
- * Active Cloud sign-out is an account boundary. Remove every saved execution
- * choice that could leak account A's Hosted/Local/BYOK setup into account B,
- * while preserving unrelated product preferences and authored content.
+ * Active Cloud sign-out is an account boundary for Cloud-owned execution
+ * state. Local BYOK credentials and provider choices belong to this install,
+ * not the signed-in Cloud account, so keep them available when onboarding asks
+ * the user to choose an execution path again.
  */
 export function resetExecutionConfigAfterSignOut(config: AppConfig): AppConfig {
   return {
@@ -403,20 +404,6 @@ export function resetExecutionConfigAfterSignOut(config: AppConfig): AppConfig {
     agentModels: {},
     agentCliEnv: {},
     agentCliEnvIntent: {},
-    apiProtocol: DEFAULT_CONFIG.apiProtocol,
-    apiKey: DEFAULT_CONFIG.apiKey,
-    apiVersion: DEFAULT_CONFIG.apiVersion,
-    baseUrl: DEFAULT_CONFIG.baseUrl,
-    model: DEFAULT_CONFIG.model,
-    byokImageModel: DEFAULT_CONFIG.byokImageModel,
-    byokVideoModel: DEFAULT_CONFIG.byokVideoModel,
-    byokSpeechModel: DEFAULT_CONFIG.byokSpeechModel,
-    byokSpeechVoice: DEFAULT_CONFIG.byokSpeechVoice,
-    byokProviderConfigDrafts: {},
-    byokPendingProviderKey: undefined,
-    maxTokens: DEFAULT_CONFIG.maxTokens,
-    apiProviderBaseUrl: DEFAULT_CONFIG.apiProviderBaseUrl,
-    apiProtocolConfigs: {},
   };
 }
 

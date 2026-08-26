@@ -65,6 +65,11 @@
  *                                   alive, modelling a CLI (or a wrapper shim)
  *                                   that is slow to die or never honours the
  *                                   signal at all
+ *   FAKE_VELA_DESCENDANT_ACTIVITY_FILE – when set, spawn a SIGTERM-ignoring
+ *                                   descendant that appends activity ticks to
+ *                                   this file while the ACP prompt is stalled
+ *   FAKE_VELA_DESCENDANT_PID_FILE – optional file that receives that
+ *                                   descendant's pid for leak-safe test cleanup
  *   FAKE_VELA_PROMPT_RESULT_DELAY_MS – delay the terminal session/prompt result
  *                                      after streaming substantive output
  *   FAKE_VELA_MODELS             – newline-separated `vela models` stdout
@@ -106,6 +111,8 @@ const TEXT_BEFORE_STALL = env.FAKE_VELA_TEXT_BEFORE_STALL === '1';
 const OPEN_TOOL_BEFORE_STALL = env.FAKE_VELA_OPEN_TOOL_BEFORE_STALL === '1';
 const STDERR_ON_SIGTERM = env.FAKE_VELA_STDERR_ON_SIGTERM === '1';
 const IGNORE_SIGTERM = env.FAKE_VELA_IGNORE_SIGTERM === '1';
+const DESCENDANT_ACTIVITY_FILE = env.FAKE_VELA_DESCENDANT_ACTIVITY_FILE || '';
+const DESCENDANT_PID_FILE = env.FAKE_VELA_DESCENDANT_PID_FILE || '';
 const PROMPT_RESULT_DELAY_MS = Number(env.FAKE_VELA_PROMPT_RESULT_DELAY_MS) || 0;
 const OMIT_PROMPT_USAGE = env.FAKE_VELA_OMIT_PROMPT_USAGE === '1';
 const STAY_ALIVE_AFTER_PROMPT_MS = Number(env.FAKE_VELA_STAY_ALIVE_AFTER_PROMPT_MS) || 0;
@@ -353,6 +360,18 @@ function handleMessage(msg) {
       }
       if (STALL_AFTER_PROMPT) {
         if (TEXT_BEFORE_STALL) emitSessionUpdates(sessionId);
+        if (DESCENDANT_ACTIVITY_FILE) {
+          const descendant = spawnChild(process.execPath, [
+            '-e',
+            `const fs = require('node:fs');
+const activityFile = ${JSON.stringify(DESCENDANT_ACTIVITY_FILE)};
+process.on('SIGTERM', () => {});
+const tick = () => fs.appendFileSync(activityFile, String(Date.now()) + '\\n');
+tick();
+setInterval(tick, 25);`,
+          ], { stdio: 'ignore' });
+          if (DESCENDANT_PID_FILE) writeFileSync(DESCENDANT_PID_FILE, String(descendant.pid));
+        }
         // A concrete tool the agent never closes. `kind: 'read'` is a
         // recognized non-think, non-write family, and `in_progress` is not a
         // terminal status, so the host keeps this call open in
