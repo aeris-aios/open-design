@@ -5328,4 +5328,5 @@ export const fa: Dict = {
   'chat.record.imageCount': "{count} تصویر",
   'chat.record.retry': "تلاش دوباره",
   'chat.record.viewImage': "دیدن تصویر {index}",
+  'chat.record.imagePending': "در حال تولید تصویر…",
 };

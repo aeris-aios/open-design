@@ -5789,4 +5789,5 @@ export const zhTW: Dict = {
   'chat.record.imageCount': "{count} 張",
   'chat.record.retry': "重試",
   'chat.record.viewImage': "查看第 {index} 張大圖",
+  'chat.record.imagePending': "配圖生成中",
 };

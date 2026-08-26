@@ -5512,4 +5512,5 @@ export interface Dict {
   'chat.record.imageCount': string;
   'chat.record.retry': string;
   'chat.record.viewImage': string;
+  'chat.record.imagePending': string;
 }

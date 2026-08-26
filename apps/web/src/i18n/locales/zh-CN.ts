@@ -5782,4 +5782,5 @@ export const zhCN: Dict = {
   'chat.record.imageCount': "{count} 张",
   'chat.record.retry': "重试",
   'chat.record.viewImage': "查看第 {index} 张大图",
+  'chat.record.imagePending': "配图生成中",
 };

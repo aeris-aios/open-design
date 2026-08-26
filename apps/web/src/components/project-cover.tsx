@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import type { WorkspaceCollabContext } from '@open-design/contracts';
 import { projectFileUrl } from '../providers/registry';
 import type { ProjectFile } from '../types';
@@ -63,6 +63,7 @@ export function HtmlProjectCoverFrame({
   iframeClassName,
   glyphClassName,
   diagnostic,
+  pendingContent,
   ungated = false,
 }: {
   src: string | undefined;
@@ -70,6 +71,15 @@ export function HtmlProjectCoverFrame({
   iframeClassName: string;
   glyphClassName: string;
   diagnostic: string;
+  /**
+   * 「封面还在路上」时放什么。不传就沿用 `initial`(首字母)—— 首页项目网格是
+   * 几十张卡,不能一人一块画布,所以那边一直是首字母 + 底色。
+   *
+   * 传了的地方(产物卡)要满足两条:数量有界,且它就是当前路由的前台内容。
+   * **只在「还没加载出来」时用**,加载失败落回 `initial`:失败不是 loading,
+   * 拿一个还在流动的东西去演一个永远不会来的封面,是在骗人。
+   */
+  pendingContent?: ReactNode;
   /**
    * 跳过全局缩略图加载闸。**只给「前台主内容」用**。
    *
@@ -136,10 +146,21 @@ export function HtmlProjectCoverFrame({
     !ungated && Boolean(src) && inView && verified && !failed,
   );
 
-  if (!src || failed || !verified || (!ungated && !canLoad)) {
+  if (!src || failed) {
     return (
       <span ref={inViewRef} className={glyphClassName}>
         {initial}
+      </span>
+    );
+  }
+
+  if (!verified || (!ungated && !canLoad)) {
+    return (
+      <span
+        ref={inViewRef}
+        className={pendingContent ? `${glyphClassName} is-loading` : glyphClassName}
+      >
+        {pendingContent ?? initial}
       </span>
     );
   }

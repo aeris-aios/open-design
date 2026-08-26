@@ -27,6 +27,7 @@ import {
   type FileOpKind,
 } from '../runtime/file-ops';
 import { Icon, type IconName } from './Icon';
+import { PixelLiquid } from './PixelLiquid';
 import { HtmlProjectCoverFrame } from './project-cover';
 
 interface Props {
@@ -399,13 +400,20 @@ function ArtifactCard({
     >
       <span className="artifact-card-thumb">
         {pending ? (
-          <span className="artifact-card-mini" />
+          /* 还在写:占位不是一块灰,是像素液体(产品 2026-08-26)。
+             壳子仍是 `.artifact-card-mini`,竖片卡的 9/16 letterbox 才不会走样。 */
+          <span className="artifact-card-mini is-loading">
+            <PixelLiquid />
+          </span>
         ) : item.kind === 'html' ? (
           <HtmlProjectCoverFrame
             src={src}
             initial=""
             iframeClassName="artifact-card-frame"
             glyphClassName="artifact-card-mini"
+            /* 封面还在验、还没挂上 iframe 的那几百毫秒也是 loading —— 同样不许是灰的。
+               只有产物卡传这个:首页项目网格是几十张卡,不能一人一块画布。 */
+            pendingContent={<PixelLiquid />}
             diagnostic={`${projectId}:${item.name}`}
             /* 产物卡是这条回答的主角,不是背景封面 —— 不受「进项目就挂起」那道闸约束,
                否则卡面永远是一块灰(见 project-cover.tsx 的 `ungated` 注释) */

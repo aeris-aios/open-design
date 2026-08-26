@@ -226,16 +226,17 @@
 }
 /* D37 — NOT in the design sheet. Product asked for it on 2026-08-21: while a
    file is still being written the turn otherwise sits silent and then pops an
-   artifact out of nowhere. Grey placeholder breathing, no actions yet. */
-.artifact-card.is-pending .artifact-card-mini {
-  animation: artifact-card-pulse 1.3s var(--ease-out) infinite;
-}
-@keyframes artifact-card-pulse {
-  0%, 100% { opacity: 0.45; }
-  50% { opacity: 1; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .artifact-card.is-pending .artifact-card-mini { animation: none; }
+   artifact out of nowhere. No actions yet, and — product, 2026-08-26 — the
+   placeholder is NOT a grey card: "任何产物卡片加载期间不能用灰色卡片代替".
+   The pixel-liquid canvas (`PixelLiquid`) lives inside the same `-mini` box so
+   the video card's 9/16 letterbox still holds; the box itself drops its grey
+   fill so the liquid's transparent gaps read as the thumb's own tone, exactly
+   as the sheet has it (upstream `bgColor.a = 0`).
+   The old `artifact-card-pulse` keyframes are gone with it — reduced-motion
+   degradation now lives in the canvas (one static frame, no rAF). */
+.artifact-card-mini.is-loading {
+  position: relative;
+  background: none;
 }
 
 .produced-files {

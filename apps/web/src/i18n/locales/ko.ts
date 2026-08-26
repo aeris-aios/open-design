@@ -5333,4 +5333,5 @@ export const ko: Dict = {
   'chat.record.imageCount': "{count}장",
   'chat.record.retry': "재시도",
   'chat.record.viewImage': "{index}번째 이미지 보기",
+  'chat.record.imagePending': "이미지 생성 중…",
 };

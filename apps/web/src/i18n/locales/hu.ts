@@ -5333,4 +5333,5 @@ export const hu: Dict = {
   'chat.record.imageCount': "{count} kép",
   'chat.record.retry': "Újra",
   'chat.record.viewImage': "{index}. kép megtekintése",
+  'chat.record.imagePending': "Illusztráció készül…",
 };

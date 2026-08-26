@@ -5333,4 +5333,5 @@ export const ja: Dict = {
   'chat.record.imageCount': "{count} 枚",
   'chat.record.retry': "再試行",
   'chat.record.viewImage': "{index} 枚目を表示",
+  'chat.record.imagePending': "画像を生成中…",
 };
