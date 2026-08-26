@@ -1981,14 +1981,20 @@ function foreignChildNamespace(
  */
 function skipForeignContent(html: string, lowerHtml: string, rootName: string, from: number): number {
   const tagOpen = /<(\/?)([a-z][^\t\n\f\r \/>]*)/iy;
-  let depth = 1;
+  // The stack is the element's whole lifetime — there is no parallel counter.
+  // A name counter cannot survive an unwind: in `<svg><foreignObject><svg>` the
+  // inner `<svg>` shares the root's name but is an ordinary element, and when
+  // `</foreignObject>` truncates the stack past it the counter is left holding
+  // a frame that no longer exists. The walk then never returns and reads the
+  // rest of the document as foreign content.
+  //
   // Frame 0 is the already-open root; `childNs` is the namespace its contents
   // are parsed in, which for `<svg>` / `<math>` is that namespace itself.
   const nsStack: { name: string; childNs: string; mathmlText: boolean }[] = [
     { name: rootName, childNs: rootName, mathmlText: false },
   ];
   let i = from;
-  while (i < html.length && depth > 0) {
+  while (i < html.length && nsStack.length > 0) {
     if (html.charCodeAt(i) !== 60 /* < */) {
       i += 1;
       continue;
@@ -2029,18 +2035,19 @@ function skipForeignContent(html: string, lowerHtml: string, rootName: string, f
     if (tagEnd < 0) return -1;
     const tagName = (open[2] ?? '').toLowerCase();
     if (open[1]) {
-      // Unwind to the matching open element. An end tag that matches nothing is
+      // Unwind to the matching open element, frame 0 included: an end tag that
+      // matches the root closes the subtree. An end tag that matches nothing is
       // walked down to the first HTML-namespace ancestor and reprocessed in the
       // current insertion mode, where it meets a `special` element and is
       // ignored — so it closes nothing here either.
-      for (let frame = nsStack.length - 1; frame >= 1; frame -= 1) {
+      for (let frame = nsStack.length - 1; frame >= 0; frame -= 1) {
         if (nsStack[frame]?.name === tagName) {
           nsStack.length = frame;
           break;
         }
       }
-      if (tagName === rootName) depth -= 1;
       i = tagEnd + 1;
+      if (nsStack.length === 0) return i;
       continue;
     }
     if (currentNs !== 'html' && isForeignBreakoutTag(tagName, tag.attrs)) {
@@ -2048,10 +2055,9 @@ function skipForeignContent(html: string, lowerHtml: string, rootName: string, f
       // so the scan does not consume it — it only leaves foreign content and
       // lets the next pass read the same tag under HTML rules.
       while (nsStack.length > 0 && nsStack[nsStack.length - 1]!.childNs !== 'html') {
-        const popped = nsStack.pop()!;
-        if (popped.name === rootName) depth -= 1;
+        nsStack.pop();
       }
-      if (nsStack.length === 0 || depth <= 0) return i;
+      if (nsStack.length === 0) return i;
       continue;
     }
     // A solidus really does close the element in foreign content; in HTML it
@@ -2083,11 +2089,10 @@ function skipForeignContent(html: string, lowerHtml: string, rootName: string, f
         childNs: foreignChildNamespace(tagName, elementNs, tag.attrs),
         mathmlText: elementNs === 'math' && MATHML_TEXT_INTEGRATION_POINTS.includes(tagName),
       });
-      if (tagName === rootName) depth += 1;
     }
     i = tagEnd + 1;
   }
-  return depth === 0 ? i : -1;
+  return -1;
 }
 
 function findRealTagOffset(html: string, pattern: RegExp): number {
@@ -2097,7 +2102,7 @@ function findRealTagOffset(html: string, pattern: RegExp): number {
   // toLowerCase() is not length-preserving (U+0130 lowercases to two code
   // units), and every offset taken from the shadow is used against `html`.
   const lower = asciiLower(html);
-  let selectDepth = 0;
+  let inSelect = false;
   let i = 0;
   while (i < html.length) {
     if (html.charCodeAt(i) !== 60 /* < */) {
@@ -2154,9 +2159,12 @@ function findRealTagOffset(html: string, pattern: RegExp): number {
     // still ordinary HTML. Walking them as foreign content is how
     // `<select><svg></select><script>…` ended up reading a script string as
     // markup. Everything else about insertion modes stays unmodelled.
-    if (!open[1] && tagName === 'select') selectDepth += 1;
-    else if (open[1] && tagName === 'select' && selectDepth > 0) selectDepth -= 1;
-    if (!open[1] && selectDepth === 0 && (tagName === 'svg' || tagName === 'math') && !tag.selfClosing) {
+    // A `<select>` start tag while a select is already open *closes* it rather
+    // than nesting — the tree builder treats it as the end tag — so this is a
+    // flag, not a counter. Counting it left the guard asserted after the
+    // select had actually ended.
+    if (tagName === 'select') inSelect = !open[1] && !inSelect;
+    if (!open[1] && !inSelect && (tagName === 'svg' || tagName === 'math') && !tag.selfClosing) {
       const contentEnd = skipForeignContent(html, lower, tagName, tagEnd + 1);
       if (contentEnd < 0) return -1;
       i = contentEnd;

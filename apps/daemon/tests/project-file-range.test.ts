@@ -399,6 +399,40 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
           + '<main id="slot">real</main></body></html>',
       ),
     );
+    // A nested `<svg>` beneath `<foreignObject>` shares the root's name but is
+    // an ordinary element. Tracking the subtree with a name counter alongside
+    // the stack lets the two disagree the moment `</foreignObject>` unwinds
+    // past that inner element, and the walk then never ends.
+    await writeFile(
+      path.join(dir, 'nested-svg-foreignobject.html'),
+      Buffer.from(
+        '<!doctype html><html><head></head><body>'
+          + '<svg><foreignObject><svg></foreignObject></svg>'
+          + '<script>const x = "<table><\/body>";<\/script>'
+          + '<main id="slot">real</main></body></html>',
+      ),
+    );
+    // Same shape in MathML.
+    await writeFile(
+      path.join(dir, 'nested-math-mi.html'),
+      Buffer.from(
+        '<!doctype html><html><head></head><body>'
+          + '<math><mi><math></mi></math>'
+          + '<script>var y = "<p><\/body>";<\/script>'
+          + '<main id="slot">real</main></body></html>',
+      ),
+    );
+    // A `<select>` start tag while a select is open closes it rather than
+    // nesting, so the SVG that follows really is foreign content.
+    await writeFile(
+      path.join(dir, 'nested-select.html'),
+      Buffer.from(
+        '<!doctype html><html><head></head><body>'
+          + '<select><select></select>'
+          + '<svg><![CDATA[x > <\/body>]]></svg>'
+          + '<main id="slot">real</main></body></html>',
+      ),
+    );
     // A leading BOM is the encoding signature and only counts at byte zero, so
     // the no-boundary fallback has to insert after it rather than in front of
     // it — otherwise the doctype stops applying and the artifact silently
@@ -1063,6 +1097,31 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
     expect(page('body > [data-od-url-scroll-bridge]').length).toBe(1);
     expect(page('#slot').text()).toBe('real');
     expect(html).toContain('const x = "<table></body>";');
+  });
+
+  it('ends a foreign subtree by its stack, not by a name counter', async () => {
+    for (const [fixture, authored] of [
+      ['nested-svg-foreignobject.html', 'const x = "<table></body>";'],
+      ['nested-math-mi.html', 'var y = "<p></body>";'],
+    ] as const) {
+      const bridged = await fetch(`${rawUrl(fixture)}?odPreviewBridge=scroll`);
+      expect(bridged.status).toBe(200);
+      const html = await bridged.text();
+      const page = load(html);
+      expect(page('body > [data-od-url-scroll-bridge]').length).toBe(1);
+      expect(page('#slot').text()).toBe('real');
+      expect(html).toContain(authored);
+    }
+  });
+
+  it('treats a second select start tag as closing the first', async () => {
+    const bridged = await fetch(`${rawUrl('nested-select.html')}?odPreviewBridge=scroll`);
+    expect(bridged.status).toBe(200);
+    const html = await bridged.text();
+    const page = load(html);
+    expect(page('body > [data-od-url-scroll-bridge]').length).toBe(1);
+    expect(page('#slot').text()).toBe('real');
+    expect(html).toContain('<![CDATA[x > </body>]]>');
   });
 
   it('keeps a leading BOM at byte zero when there is no boundary', async () => {
