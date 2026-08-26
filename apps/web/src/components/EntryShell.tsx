@@ -2317,11 +2317,11 @@ function OnboardingView({
       .then((next) => {
         if (!cancelled && next) {
           setAmrStatus(next);
+          if (next.authAttemptId) {
+            amrAuthAttemptIdRef.current = next.authAttemptId;
+          }
           if (next.loginInFlight && cloudLandingIntentStillCurrent()) {
             setAmrLoginPending(true);
-            if (next.authAttemptId) {
-              amrAuthAttemptIdRef.current = next.authAttemptId;
-            }
             if (!amrHydratedLoginPollStartedRef.current) {
               amrHydratedLoginPollStartedRef.current = true;
               amrLoginPollCancelledRef.current = false;
