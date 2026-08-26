@@ -1783,6 +1783,14 @@ function skipTemplateContent(html: string, lowerHtml: string, from: number): num
 }
 
 /**
+ * SVG/MathML elements whose children the parser reads as ordinary HTML again.
+ * `annotation-xml` is deliberately absent: it only qualifies with an
+ * `encoding` of `text/html` or `application/xhtml+xml`, and the scan refuses
+ * on CDATA anyway rather than model that.
+ */
+const HTML_INTEGRATION_POINTS: readonly string[] = ['foreignobject', 'desc', 'title'];
+
+/**
  * Offset just past the `</svg>` / `</math>` that closes the foreign element
  * opened before `from`, or -1.
  *
@@ -1800,6 +1808,7 @@ function skipTemplateContent(html: string, lowerHtml: string, from: number): num
 function skipForeignContent(html: string, lowerHtml: string, rootName: string, from: number): number {
   const tagOpen = /<(\/?)([a-z][^\t\n\f\r \/>]*)/iy;
   let depth = 1;
+  let integrationDepth = 0;
   let i = from;
   while (i < html.length && depth > 0) {
     if (html.charCodeAt(i) !== 60 /* < */) {
@@ -1843,11 +1852,20 @@ function skipForeignContent(html: string, lowerHtml: string, rootName: string, f
     if (tagEnd < 0) return -1;
     const tagName = (open[2] ?? '').toLowerCase();
     const selfClosing = isSelfClosingTag(html, i, tagEnd);
-    // Deliberately no raw-text handling here: inside foreign content a
-    // `<script>`/`<style>`/`<title>` is an ordinary SVG or MathML element, so
-    // `<` in it is markup and a CDATA section inside it is still a section.
-    // Treating it as HTML raw text hides that CDATA and lets the scan resume
-    // inside it.
+    // Inside foreign content a `<script>`/`<style>`/`<title>` is an ordinary
+    // SVG or MathML element, so `<` in it is markup — the HTML raw-text list
+    // must not be applied. The exception is a child of an HTML integration
+    // point (`<foreignObject>`, `<desc>`, `<title>`), where the parser is back
+    // in HTML and those elements really are raw text again.
+    if (!open[1] && !selfClosing && integrationDepth > 0
+        && (PREVIEW_RAW_TEXT_ELEMENTS as readonly string[]).includes(tagName)) {
+      const contentEnd = findRawTextClose(lowerHtml, tagName, tagEnd + 1);
+      if (contentEnd < 0) return -1;
+      i = contentEnd;
+      continue;
+    }
+    if (!open[1] && !selfClosing && HTML_INTEGRATION_POINTS.includes(tagName)) integrationDepth += 1;
+    else if (open[1] && HTML_INTEGRATION_POINTS.includes(tagName) && integrationDepth > 0) integrationDepth -= 1;
     if (!selfClosing && tagName === rootName) depth += open[1] ? -1 : 1;
     i = tagEnd + 1;
   }
@@ -1939,10 +1957,21 @@ function findRealTagOffset(html: string, pattern: RegExp): number {
  */
 function prependAfterDoctype(html: string, payload: string): string {
   // Comments (and whitespace) may legally precede the doctype, and a script
-  // token before it still forces quirks mode — so skip past them too.
-  const match = /^(?:\s|<!--[\s\S]*?-->)*<!doctype[^>]*>/i.exec(html);
-  if (!match) return payload + html;
-  return html.slice(0, match[0].length) + payload + html.slice(match[0].length);
+  // token before it still forces quirks mode — so skip past them too. The
+  // comments are walked with `endOfComment` rather than a `-->`-only regex,
+  // since `--!>` and the abrupt forms close a comment just as well.
+  let i = 0;
+  for (;;) {
+    while (i < html.length && html.charCodeAt(i) <= 32) i += 1;
+    if (!html.startsWith('<!--', i)) break;
+    const end = endOfComment(html, i);
+    if (end < 0) return payload + html;
+    i = end;
+  }
+  if (!/^<!doctype/i.test(html.slice(i))) return payload + html;
+  const doctypeEnd = html.indexOf('>', i);
+  if (doctypeEnd < 0) return payload + html;
+  return html.slice(0, doctypeEnd + 1) + payload + html.slice(doctypeEnd + 1);
 }
 
 function injectBeforeBodyClose(html: string, marker: string, injection: string): string {
@@ -1951,7 +1980,19 @@ function injectBeforeBodyClose(html: string, marker: string, injection: string):
   if (bodyCloseIndex >= 0) {
     return `${html.slice(0, bodyCloseIndex)}${injection}${html.slice(bodyCloseIndex)}`;
   }
-  return `${html}${injection}`;
+  // No boundary: appending is not a safe fallback, because the reason there is
+  // no boundary is often that the document ends inside a construct that
+  // swallows whatever follows — `<plaintext>` never leaves PLAINTEXT, an
+  // unterminated comment or script runs to EOF. Appended markup would become
+  // text there and the bridge would never run. Going in near the top instead
+  // costs the "end of body" placement but keeps the bridge live.
+  const headStart = findRealTagOffset(html, /<head(?=[\t\n\f\r />])/i);
+  const headEnd = headStart >= 0 ? endOfTag(html, headStart) : -1;
+  if (headEnd >= 0) return `${html.slice(0, headEnd + 1)}${injection}${html.slice(headEnd + 1)}`;
+  const htmlStart = findRealTagOffset(html, /<html(?=[\t\n\f\r />])/i);
+  const htmlEnd = htmlStart >= 0 ? endOfTag(html, htmlStart) : -1;
+  if (htmlEnd >= 0) return `${html.slice(0, htmlEnd + 1)}<head>${injection}</head>${html.slice(htmlEnd + 1)}`;
+  return prependAfterDoctype(html, injection);
 }
 
 function injectAfterHeadOpen(html: string, marker: string, injection: string): string {

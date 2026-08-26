@@ -7,6 +7,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 
 import { parseByteRange, resolveProjectFilePath } from '../src/projects.js';
 import { startServer } from '../src/server.js';
+import { load } from 'cheerio';
 
 // ---------------------------------------------------------------------------
 // parseByteRange — RFC 7233 unit tests
@@ -673,7 +674,10 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
     expect(html).toContain('<![CDATA[x > </svg><body>slip</body>]]>');
     expect(html).toContain('<![CDATA[x > </template><body>slip</body>]]>');
     expect(html).toContain('<![CDATA[x > </math><body>slip</body>]]>');
-    expect(injectedAt).toBeGreaterThan(html.lastIndexOf('</body>'));
+    // No boundary is picked here, so the bridge goes in at the top of the
+    // document rather than at the end of body — it still exists as an element,
+    // which is what actually matters, and every authored section is untouched.
+    expect(load(html)('[data-od-url-scroll-bridge]').length).toBe(1);
   });
 
   it('appends the URL preview scroll bridge rather than splicing into plaintext', async () => {
@@ -683,11 +687,14 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
     const injectedAt = html.indexOf('data-od-url-scroll-bridge');
     expect(injectedAt).toBeGreaterThan(-1);
     // Everything after `<plaintext>` is character data — both `</body>` copies
-    // included — so there is no boundary to splice at and the bridge is
-    // appended, where it still runs. Splicing at either copy would bury it in
-    // inert text, so it would never run at all.
-    expect(injectedAt).toBeGreaterThan(html.lastIndexOf('</body>'));
+    // included — so there is no boundary to splice at. Appending would not
+    // work either: PLAINTEXT never exits, so appended markup is text and the
+    // bridge would not exist as an element at all. The fallback therefore goes
+    // in at the top of the document, which costs the end-of-body placement but
+    // keeps the bridge live. Asserting the parsed result, not just the bytes.
     expect(html).toContain('<plaintext></body></plaintext>');
+    expect(injectedAt).toBeLessThan(html.indexOf('<plaintext>'));
+    expect(load(html)('[data-od-url-scroll-bridge]').length).toBe(1);
   });
 
   it('injects the URL preview scroll bridge past bogus comments, custom elements and unquoted slashes', async () => {
@@ -714,7 +721,10 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
     // self-closing solidus. Both sections survive byte for byte.
     expect(html).toContain('<![CDATA[x > <\/script></svg><body>slip</body>]]>');
     expect(html).toContain('<![CDATA[x > </svg><body>slip</body>]]>');
-    expect(injectedAt).toBeGreaterThan(html.lastIndexOf('</body>'));
+    // No boundary is picked here, so the bridge goes in at the top of the
+    // document rather than at the end of body — it still exists as an element,
+    // which is what actually matters, and every authored section is untouched.
+    expect(load(html)('[data-od-url-scroll-bridge]').length).toBe(1);
   });
 
   it('treats a carriage return as a tag-name delimiter', async () => {
