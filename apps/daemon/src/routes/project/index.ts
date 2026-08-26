@@ -1808,6 +1808,19 @@ const PREVIEW_VOID_ELEMENTS: readonly string[] = [
  */
 const HTML_INTEGRATION_POINTS: readonly string[] = ['foreignobject', 'desc', 'title'];
 const MATHML_TEXT_INTEGRATION_POINTS: readonly string[] = ['mi', 'mo', 'mn', 'ms', 'mtext'];
+// Beneath a MathML text integration point the parser is in HTML — except for
+// these two, which the dispatcher keeps in MathML.
+const MATHML_TEXT_INTEGRATION_EXCEPTIONS: readonly string[] = ['mglyph', 'malignmark'];
+// A start tag on this list inside `<svg>` / `<math>` is a parse error that pops
+// the foreign element and is then reprocessed as HTML, so the foreign subtree
+// ends at the tag rather than at a matching close.
+const FOREIGN_BREAKOUT_TAGS: readonly string[] = [
+  'b', 'big', 'blockquote', 'body', 'br', 'center', 'code', 'dd', 'div', 'dl',
+  'dt', 'em', 'embed', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'head', 'hr', 'i',
+  'img', 'li', 'listing', 'menu', 'meta', 'nobr', 'ol', 'p', 'pre', 'ruby', 's',
+  'small', 'span', 'strong', 'strike', 'sub', 'sup', 'table', 'tt', 'u', 'ul',
+  'var',
+];
 const HTML_ANNOTATION_ENCODINGS: readonly string[] = ['text/html', 'application/xhtml+xml'];
 
 /**
@@ -1822,6 +1835,25 @@ function tagAttributeValue(html: string, from: number, tagEnd: number, name: str
   const match = attr.exec(html.slice(from, tagEnd + 1));
   if (!match) return '';
   return asciiLower((match[2] ?? match[3] ?? match[4] ?? '').trim());
+}
+
+/** Whether the tag spanning `[from, tagEnd]` carries attribute `name` at all. */
+function tagHasAttribute(html: string, from: number, tagEnd: number, name: string): boolean {
+  return new RegExp(`[\\t\\n\\f\\r /]${name}(?=[\\t\\n\\f\\r /=>])`, 'i')
+    .test(html.slice(from, tagEnd + 1));
+}
+
+/**
+ * Whether this start tag breaks out of foreign content. `font` only does so
+ * when it carries a presentational attribute; everything else is by name.
+ */
+function isForeignBreakoutTag(html: string, from: number, tagEnd: number, tagName: string): boolean {
+  if (tagName === 'font') {
+    return tagHasAttribute(html, from, tagEnd, 'color')
+      || tagHasAttribute(html, from, tagEnd, 'face')
+      || tagHasAttribute(html, from, tagEnd, 'size');
+  }
+  return FOREIGN_BREAKOUT_TAGS.includes(tagName);
 }
 
 /**
@@ -1873,7 +1905,9 @@ function skipForeignContent(html: string, lowerHtml: string, rootName: string, f
   let depth = 1;
   // Frame 0 is the already-open root; `childNs` is the namespace its contents
   // are parsed in, which for `<svg>` / `<math>` is that namespace itself.
-  const nsStack: { name: string; childNs: string }[] = [{ name: rootName, childNs: rootName }];
+  const nsStack: { name: string; childNs: string; mathmlText: boolean }[] = [
+    { name: rootName, childNs: rootName, mathmlText: false },
+  ];
   let i = from;
   while (i < html.length && depth > 0) {
     if (html.charCodeAt(i) !== 60 /* < */) {
@@ -1926,6 +1960,17 @@ function skipForeignContent(html: string, lowerHtml: string, rootName: string, f
       i = tagEnd + 1;
       continue;
     }
+    if (currentNs !== 'html' && isForeignBreakoutTag(html, i, tagEnd, tagName)) {
+      // The tag is reprocessed as HTML after the foreign elements are popped,
+      // so the scan does not consume it — it only leaves foreign content and
+      // lets the next pass read the same tag under HTML rules.
+      while (nsStack.length > 0 && nsStack[nsStack.length - 1]!.childNs !== 'html') {
+        const popped = nsStack.pop()!;
+        if (popped.name === rootName) depth -= 1;
+      }
+      if (nsStack.length === 0 || depth <= 0) return i;
+      continue;
+    }
     // A solidus really does close the element in foreign content; in HTML it
     // is ignored on anything that is not void, so it must not pop a frame.
     const selfClosing = isSelfClosingTag(html, i, tagEnd)
@@ -1938,12 +1983,15 @@ function skipForeignContent(html: string, lowerHtml: string, rootName: string, f
       continue;
     }
     if (!selfClosing && !PREVIEW_VOID_ELEMENTS.includes(tagName)) {
+      const underMathmlText = nsStack[nsStack.length - 1]?.mathmlText ?? false;
       const elementNs = currentNs === 'html'
-        ? (tagName === 'svg' ? 'svg' : tagName === 'math' ? 'math' : 'html')
+        ? (underMathmlText && MATHML_TEXT_INTEGRATION_EXCEPTIONS.includes(tagName) ? 'math'
+          : tagName === 'svg' ? 'svg' : tagName === 'math' ? 'math' : 'html')
         : currentNs;
       nsStack.push({
         name: tagName,
         childNs: foreignChildNamespace(html, i, tagEnd, elementNs, tagName),
+        mathmlText: elementNs === 'math' && MATHML_TEXT_INTEGRATION_POINTS.includes(tagName),
       });
       if (tagName === rootName) depth += 1;
     }
@@ -2036,21 +2084,28 @@ function findRealTagOffset(html: string, pattern: RegExp): number {
  * must never do that to an artifact.
  */
 function prependAfterDoctype(html: string, payload: string): string {
+  // A leading U+FEFF is the encoding signature, and it only counts at byte
+  // zero. Putting anything in front of it demotes it to an ordinary character
+  // token, which in turn puts a character before the doctype — so the doctype
+  // stops applying and the document silently drops to quirks mode. The BOM
+  // therefore stays put, and every offset here is measured after it.
+  const bom = html.charCodeAt(0) === 0xfeff ? 1 : 0;
+  const atTop = (): string => html.slice(0, bom) + payload + html.slice(bom);
   // Comments (and whitespace) may legally precede the doctype, and a script
   // token before it still forces quirks mode — so skip past them too. The
   // comments are walked with `endOfComment` rather than a `-->`-only regex,
   // since `--!>` and the abrupt forms close a comment just as well.
-  let i = 0;
+  let i = bom;
   for (;;) {
     while (i < html.length && html.charCodeAt(i) <= 32) i += 1;
     if (!html.startsWith('<!--', i)) break;
     const end = endOfComment(html, i);
-    if (end < 0) return payload + html;
+    if (end < 0) return atTop();
     i = end;
   }
-  if (!/^<!doctype/i.test(html.slice(i))) return payload + html;
+  if (!/^<!doctype/i.test(html.slice(i))) return atTop();
   const doctypeEnd = html.indexOf('>', i);
-  if (doctypeEnd < 0) return payload + html;
+  if (doctypeEnd < 0) return atTop();
   return html.slice(0, doctypeEnd + 1) + payload + html.slice(doctypeEnd + 1);
 }
 

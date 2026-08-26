@@ -248,6 +248,34 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
           + '<main id="slot">real</main></body></html>',
       ),
     );
+    // The foreign-content dispatcher has exceptions that depend on the token
+    // as well as the namespace: a breakout tag (`<p>`, `<font color>`, …) pops
+    // the foreign element and is reprocessed as HTML, while `<mglyph>` and
+    // `<malignmark>` stay in MathML beneath a text integration point. Read by
+    // namespace alone, each of these puts the scan back inside author content.
+    await writeFile(
+      path.join(dir, 'foreign-breakout.html'),
+      Buffer.from(
+        '<!doctype html><html><head></head><body>'
+          + '<svg><p><script>const x = "<\/svg><body>slip</body>";<\/script></p></svg>'
+          + '<svg><font color="red"><script>const y = "<\/svg><body>slip</body>";<\/script></font></svg>'
+          + '<math><mi><mglyph><![CDATA[x > </math><body>slip</body>]]></mglyph></mi></math>'
+          + '<math><mtext><malignmark><![CDATA[q > </math><body>slip</body>]]></malignmark></mtext></math>'
+          + '<main id="slot">real</main></body></html>',
+      ),
+    );
+    // A leading BOM is the encoding signature and only counts at byte zero, so
+    // the no-boundary fallback has to insert after it rather than in front of
+    // it — otherwise the doctype stops applying and the artifact silently
+    // renders in quirks mode. `<plaintext>` is what removes the boundary here.
+    await writeFile(
+      path.join(dir, 'bom-plaintext.html'),
+      Buffer.from(
+        // No `<head>` and no `<html>`: the head/html anchors must miss so the
+        // doctype fallback is the branch under test.
+        '\uFEFF<!doctype html><plaintext>tail</body></html>',
+      ),
+    );
     await writeFile(
       path.join(dir, 'cr-delimiter.html'),
       Buffer.from(
@@ -766,6 +794,39 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
     // None of the six `</body>` spellings above may be read as a boundary.
     expect(html.indexOf('data-od-url-scroll-bridge'))
       .toBeGreaterThan(html.indexOf('<main id="slot">real</main>'));
+  });
+
+  it('leaves foreign content on a breakout tag and keeps mglyph foreign', async () => {
+    const bridged = await fetch(`${rawUrl('foreign-breakout.html')}?odPreviewBridge=scroll`);
+    expect(bridged.status).toBe(200);
+    const html = await bridged.text();
+    const page = load(html);
+    expect(page('body > [data-od-url-scroll-bridge]').length).toBe(1);
+    expect(page('#slot').text()).toBe('real');
+    // None of the four authored `</body>` spellings may be read as a boundary.
+    expect(html).toContain('const x = "</svg><body>slip</body>";');
+    expect(html).toContain('const y = "</svg><body>slip</body>";');
+    expect(html).toContain('<![CDATA[x > </math><body>slip</body>]]>');
+    expect(html).toContain('<![CDATA[q > </math><body>slip</body>]]>');
+  });
+
+  it('keeps a leading BOM at byte zero when there is no boundary', async () => {
+    const bridged = await fetch(`${rawUrl('bom-plaintext.html')}?odPreviewBridge=scroll`);
+    expect(bridged.status).toBe(200);
+    // `Response.text()` runs a UTF-8 decode, which *removes* a leading BOM —
+    // reading the body that way would assert nothing about the byte this spec
+    // exists for. Decode the bytes with the BOM preserved instead.
+    const html = new TextDecoder('utf-8', { ignoreBOM: true })
+      .decode(await bridged.arrayBuffer());
+    // The BOM stays the first code unit, and the doctype still precedes every
+    // injected token — the two conditions the browser needs to stay out of
+    // quirks mode.
+    expect(html.charCodeAt(0)).toBe(0xfeff);
+    const doctypeAt = html.toLowerCase().indexOf('<!doctype');
+    const injectedAt = html.indexOf('data-od-url-scroll-bridge');
+    expect(doctypeAt).toBe(1);
+    expect(injectedAt).toBeGreaterThan(doctypeAt);
+    expect(load(html)('[data-od-url-scroll-bridge]').length).toBe(1);
   });
 
   it('treats a carriage return as a tag-name delimiter', async () => {
