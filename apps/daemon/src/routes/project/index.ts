@@ -1824,23 +1824,62 @@ const FOREIGN_BREAKOUT_TAGS: readonly string[] = [
 const HTML_ANNOTATION_ENCODINGS: readonly string[] = ['text/html', 'application/xhtml+xml'];
 
 /**
- * The value of attribute `name` on the tag spanning `[from, tagEnd]`, ASCII
- * lowercased and trimmed, or `''` when the tag does not carry it.
+ * The attributes of the tag spanning `[from, tagEnd]`, names ASCII lowercased
+ * and mapped to their ASCII lowercased values.
+ *
+ * This walks the tag once with the tokenizer's own quote/value states rather
+ * than running a regex over the raw text, because a value may contain anything
+ * — including something that reads like another attribute. `<font
+ * data-note=" color=red">` carries one attribute, not two, and a scanner that
+ * matched textually would apply the `<font color>` breakout rule and resume
+ * inside the SVG subtree. That is the same "text read as structure" mistake
+ * this whole file exists to avoid, one level down.
+ *
+ * Duplicate names keep the first occurrence, as the parser does.
  */
-function tagAttributeValue(html: string, from: number, tagEnd: number, name: string): string {
-  const attr = new RegExp(
-    `[\\t\\n\\f\\r /]${name}[\\t\\n\\f\\r ]*=[\\t\\n\\f\\r ]*("([^"]*)"|'([^']*)'|([^\\t\\n\\f\\r >]*))`,
-    'i',
-  );
-  const match = attr.exec(html.slice(from, tagEnd + 1));
-  if (!match) return '';
-  return asciiLower((match[2] ?? match[3] ?? match[4] ?? '').trim());
-}
-
-/** Whether the tag spanning `[from, tagEnd]` carries attribute `name` at all. */
-function tagHasAttribute(html: string, from: number, tagEnd: number, name: string): boolean {
-  return new RegExp(`[\\t\\n\\f\\r /]${name}(?=[\\t\\n\\f\\r /=>])`, 'i')
-    .test(html.slice(from, tagEnd + 1));
+function parseTagAttributes(html: string, from: number, tagEnd: number): Map<string, string> {
+  const attrs = new Map<string, string>();
+  // Skip `<`, an optional `/`, and the tag name.
+  let i = from + 1;
+  while (i < tagEnd && html.charCodeAt(i) === 47 /* / */) i += 1;
+  while (i < tagEnd && !isEndTagBoundary(html.charCodeAt(i))) i += 1;
+  while (i < tagEnd) {
+    const ch = html.charCodeAt(i);
+    if (ch <= 32 || ch === 47 /* / */) { i += 1; continue; }
+    const nameStart = i;
+    while (i < tagEnd) {
+      const c = html.charCodeAt(i);
+      if (c <= 32 || c === 47 || c === 61 /* = */ || c === 62 /* > */) break;
+      i += 1;
+    }
+    if (i === nameStart) { i += 1; continue; }
+    const name = asciiLower(html.slice(nameStart, i));
+    while (i < tagEnd && html.charCodeAt(i) <= 32) i += 1;
+    let value = '';
+    if (i < tagEnd && html.charCodeAt(i) === 61 /* = */) {
+      i += 1;
+      while (i < tagEnd && html.charCodeAt(i) <= 32) i += 1;
+      const quote = html.charCodeAt(i);
+      if (quote === 34 /* " */ || quote === 39 /* ' */) {
+        const close = html.indexOf(String.fromCharCode(quote), i + 1);
+        const stop = close < 0 || close > tagEnd ? tagEnd : close;
+        value = html.slice(i + 1, stop);
+        i = stop + 1;
+      } else {
+        const valueStart = i;
+        while (i < tagEnd) {
+          const c = html.charCodeAt(i);
+          if (c <= 32 || c === 62 /* > */) break;
+          i += 1;
+        }
+        value = html.slice(valueStart, i);
+      }
+    }
+    // Not trimmed: the parser compares `encoding` against `text/html` exactly,
+    // so a padded value is not a match and must not be smoothed into one.
+    if (!attrs.has(name)) attrs.set(name, asciiLower(value));
+  }
+  return attrs;
 }
 
 /**
@@ -1849,9 +1888,8 @@ function tagHasAttribute(html: string, from: number, tagEnd: number, name: strin
  */
 function isForeignBreakoutTag(html: string, from: number, tagEnd: number, tagName: string): boolean {
   if (tagName === 'font') {
-    return tagHasAttribute(html, from, tagEnd, 'color')
-      || tagHasAttribute(html, from, tagEnd, 'face')
-      || tagHasAttribute(html, from, tagEnd, 'size');
+    const attrs = parseTagAttributes(html, from, tagEnd);
+    return attrs.has('color') || attrs.has('face') || attrs.has('size');
   }
   return FOREIGN_BREAKOUT_TAGS.includes(tagName);
 }
@@ -1872,9 +1910,9 @@ function foreignChildNamespace(
   if (elementNs === 'svg' && HTML_INTEGRATION_POINTS.includes(tagName)) return 'html';
   if (elementNs === 'math') {
     if (MATHML_TEXT_INTEGRATION_POINTS.includes(tagName)) return 'html';
-    if (tagName === 'annotation-xml'
-        && HTML_ANNOTATION_ENCODINGS.includes(tagAttributeValue(html, from, tagEnd, 'encoding'))) {
-      return 'html';
+    if (tagName === 'annotation-xml') {
+      const encoding = parseTagAttributes(html, from, tagEnd).get('encoding') ?? '';
+      if (HTML_ANNOTATION_ENCODINGS.includes(encoding)) return 'html';
     }
   }
   return elementNs;

@@ -264,6 +264,20 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
           + '<main id="slot">real</main></body></html>',
       ),
     );
+    // The two attribute-driven rules above (`<font color>` breaking out of
+    // foreign content, `annotation-xml encoding` becoming an integration
+    // point) must read parsed attributes, not tag text: a value may contain
+    // anything, including something spelled like another attribute.
+    await writeFile(
+      path.join(dir, 'quoted-fake-attrs.html'),
+      Buffer.from(
+        '<!doctype html><html><head></head><body>'
+          + '<svg><font data-note=" color=red"><![CDATA[x > <\/svg><body>slip</body>]]></font></svg>'
+          + '<math><annotation-xml data-note=" encoding=text/html">'
+          + '<![CDATA[x > <\/math><body>slip</body>]]></annotation-xml></math>'
+          + '<main id="slot">real</main></body></html>',
+      ),
+    );
     // A leading BOM is the encoding signature and only counts at byte zero, so
     // the no-boundary fallback has to insert after it rather than in front of
     // it — otherwise the doctype stops applying and the artifact silently
@@ -808,6 +822,19 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
     expect(html).toContain('const y = "</svg><body>slip</body>";');
     expect(html).toContain('<![CDATA[x > </math><body>slip</body>]]>');
     expect(html).toContain('<![CDATA[q > </math><body>slip</body>]]>');
+  });
+
+  it('reads parsed attributes, not attribute-like text in a quoted value', async () => {
+    const bridged = await fetch(`${rawUrl('quoted-fake-attrs.html')}?odPreviewBridge=scroll`);
+    expect(bridged.status).toBe(200);
+    const html = await bridged.text();
+    const page = load(html);
+    expect(page('body > [data-od-url-scroll-bridge]').length).toBe(1);
+    expect(page('#slot').text()).toBe('real');
+    // Neither section carries a real `color` or `encoding`, so both stay
+    // foreign and the `</body>` inside each is character data.
+    expect(html).toContain('<![CDATA[x > </svg><body>slip</body>]]>');
+    expect(html).toContain('<![CDATA[x > </math><body>slip</body>]]>');
   });
 
   it('keeps a leading BOM at byte zero when there is no boundary', async () => {
