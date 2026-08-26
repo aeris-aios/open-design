@@ -4,6 +4,7 @@
   "name": "example-skill-swiss-design",
   "title": "Swiss Editorial Grid",
   "version": "0.1.0",
+  "publishedAt": "2026-08-25T11:36:48Z",
   "description": "Swiss International Style editorial page: rigorous 12-column grid, grotesque typography with light-weight display headings, stone-neutral palette with a single Swiss-red accent, opacity-based hierarchy, uppercase tracked captions, and generous whitespace. Use when the brief mentions \"swiss design\", \"international style\", \"grid system\", \"helvetica\", \"editorial layout\", \"modernist\", \"magazine homepage\". Based on zeke's swiss-design skill.",
   "license": "MIT",
   "author": {

@@ -4,6 +4,7 @@
   "name": "example-skill-brutalist",
   "title": "Industrial Brutalist Terminal",
   "version": "0.1.0",
+  "publishedAt": "2026-08-25T11:36:48Z",
   "description": "Raw mechanical landing page in the industrial-brutalist / tactical-terminal style: dark CRT substrate, monospace telemetry, massive clamped uppercase headers, hazard-red accent, visible 1px grid compartments, ASCII framing marks, and scanline texture. Use when the brief mentions \"brutalist\", \"terminal\", \"industrial\", \"tactical\", \"CRT\", \"monospace UI\", \"developer tool landing\", \"blueprint aesthetic\". Based on Leonxlnx's brutalist-skill.",
   "license": "MIT",
   "author": {

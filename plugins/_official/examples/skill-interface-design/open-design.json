@@ -4,6 +4,7 @@
   "name": "example-skill-interface-design",
   "title": "Craft-First SaaS Dashboard",
   "version": "0.1.0",
+  "publishedAt": "2026-08-25T11:36:48Z",
   "description": "Product-interface dashboard built with design-team craft: decided visual hierarchy (one focal point, weight-over-size type tiers, tabular numerals), whisper-quiet surface elevation, low-opacity rgba borders, sidebar on the canvas background, inset inputs, domain-derived palette and token names, and a signature data element instead of generic metric boxes. Use when the brief mentions \"dashboard\", \"admin panel\", \"SaaS app\", \"ops console\", \"monitoring UI\", \"data interface\", \"settings page\". Based on Dammyjay93's interface-design skill.",
   "license": "MIT",
   "author": {

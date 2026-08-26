@@ -4,6 +4,7 @@
   "name": "example-skill-mengto-landing",
   "title": "High-Conversion Landing Page",
   "version": "0.1.0",
+  "publishedAt": "2026-08-25T11:36:48Z",
   "description": "Conversion-structured landing page: above-the-fold headline (outcome + audience) with subheadline, one primary CTA and a proof signal, then problem-to-solution, outcome-driven benefits, a 3-step how-it-works, testimonial proof, objection-handling FAQ, risk reversal, and a final CTA mirroring the first. Use when the brief mentions \"landing page\", \"conversion\", \"high-converting\", \"single offer\", \"waitlist page\", \"trial signup\", \"sales page\". Based on MengTo's landing-page skill.",
   "license": "MIT",
   "author": {

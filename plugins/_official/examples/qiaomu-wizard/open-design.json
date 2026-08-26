@@ -4,6 +4,7 @@
   "name": "example-qiaomu-wizard",
   "title": "Booking Wizard",
   "version": "0.1.0",
+  "publishedAt": "2026-08-25T11:36:48Z",
   "description": "Light warm-paper multi-step flight booking wizard: numbered step indicator, selectable flight cards, passenger form with inline validation, payment review, and an animated success state. Use when the brief mentions \"wizard\", \"multi-step form\", \"booking flow\", \"checkout\", \"onboarding steps\". Based on joeseesun's qiaomu-design.",
   "license": "MIT",
   "author": {

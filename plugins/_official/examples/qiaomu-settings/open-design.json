@@ -4,6 +4,7 @@
   "name": "example-qiaomu-settings",
   "title": "Settings Center",
   "version": "0.1.0",
+  "publishedAt": "2026-08-25T11:36:48Z",
   "description": "Dark app settings center with full component coverage: sidebar navigation, profile form, tabs, toggles, and a danger zone whose destructive delete flow requires typing the workspace name to unlock, plus modal and toast feedback. Use when the brief mentions \"settings page\", \"account settings\", \"preferences\", \"danger zone\", \"admin console\". Based on joeseesun's qiaomu-design.",
   "license": "MIT",
   "author": {

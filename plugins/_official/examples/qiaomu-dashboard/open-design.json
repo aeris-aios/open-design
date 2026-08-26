@@ -4,6 +4,7 @@
   "name": "example-qiaomu-dashboard",
   "title": "E-commerce Ops Dashboard",
   "version": "0.1.0",
+  "publishedAt": "2026-08-25T11:36:48Z",
   "description": "Dark cold-grey e-commerce operations dashboard: fixed sidebar navigation, KPI stat cards with delta badges, hand-tuned pure-SVG bar and donut charts, channel breakdown, and a dense recent-orders table with status pills. Use when the brief mentions \"dashboard\", \"analytics\", \"admin panel\", \"data overview\". Based on joeseesun's qiaomu-design.",
   "license": "MIT",
   "author": {

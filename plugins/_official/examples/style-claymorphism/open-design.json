@@ -4,6 +4,7 @@
   "name": "example-style-claymorphism",
   "title": "Claymorphism Style",
   "version": "0.1.0",
+  "publishedAt": "2026-08-25T11:36:48Z",
   "description": "Claymorphism style showroom: soft 3D clay-like cards with chunky white borders (3-4px), double shadows (inner + outer), big 16-24px radii, pastel peach / baby blue / mint / lilac palette, bouncy press animations and a CSS-drawn mascot, shown as a kids learning-app home screen. Use when the brief mentions \"claymorphism\", \"clay UI\", \"soft 3D\", \"toy-like\", \"playful app\", \"kids app\". Based on nextlevelbuilder's UI UX Pro Max style library.",
   "license": "MIT",
   "author": {

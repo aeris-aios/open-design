@@ -4,6 +4,7 @@
   "name": "example-qiaomu-coming-soon",
   "title": "Coming Soon Page",
   "version": "0.1.0",
+  "publishedAt": "2026-08-25T11:36:48Z",
   "description": "Cinematic space-voyage coming-soon page: CSS starfield with drifting planet, rotating SVG coordinate ring, mouse-follow glow, giant ghosted backdrop word, launch-countdown HUD, and an email waitlist with a Notify-me CTA. Use when the brief mentions \"coming soon\", \"launching soon\", \"waitlist\", \"pre-launch page\", \"teaser page\". Based on joeseesun's qiaomu-design.",
   "license": "MIT",
   "author": {

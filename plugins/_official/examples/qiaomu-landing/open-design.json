@@ -4,6 +4,7 @@
   "name": "example-qiaomu-landing",
   "title": "AI SaaS Landing Page",
   "version": "0.1.0",
+  "publishedAt": "2026-08-25T11:36:48Z",
   "description": "Dark Linear-style SaaS landing page for an AI meeting-notes product: split hero with a layered high-fidelity product mockup (window shell, floating cards, animated waveform), feature grid, three-tier pricing, testimonials, and CTA footer. Use when the brief mentions \"landing page\", \"marketing page\", \"SaaS homepage\", \"product website\". Based on joeseesun's qiaomu-design.",
   "license": "MIT",
   "author": {
