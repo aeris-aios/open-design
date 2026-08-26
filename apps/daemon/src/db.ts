@@ -9,6 +9,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import type {
+  ChatMessage,
   CollabCloudComment,
   ProjectBrowserWorkspaceTab,
   ProjectTabsState,
@@ -453,6 +454,14 @@ function migrate(db: SqliteDb): void {
   // honest if it is still there after a reload.
   if (!messageCols.some((c: DbRow) => c.name === 'forked_into_json')) {
     db.exec(`ALTER TABLE messages ADD COLUMN forked_into_json TEXT`);
+  }
+  // Who stopped this turn (delivered design, cell 81). `runStatus: 'canceled'`
+  // alone cannot tell a user's Stop from a daemon shutdown / project cleanup,
+  // so the pause line would lie after a daemon restart. The origin has to be a
+  // stored column for the same reason the fork divider is: the line is only
+  // honest if it still says the same thing after a reload.
+  if (!messageCols.some((c: DbRow) => c.name === 'cancel_origin')) {
+    db.exec(`ALTER TABLE messages ADD COLUMN cancel_origin TEXT`);
   }
   const routineRunCols = db.prepare(`PRAGMA table_info(routine_runs)`).all() as DbRow[];
   if (!routineRunCols.some((c: DbRow) => c.name === 'error_code')) {
@@ -2605,6 +2614,7 @@ export function listMessages(db: SqliteDb, conversationId: string) {
               task_analytics_json AS taskAnalyticsJson,
               applied_plugin_snapshot_json AS appliedPluginSnapshotJson,
               forked_into_json AS forkedIntoJson,
+              cancel_origin AS cancelOrigin,
               created_at AS createdAt, started_at AS startedAt, ended_at AS endedAt,
               position
          FROM messages
@@ -2638,6 +2648,7 @@ export function getMessage(db: SqliteDb, id: string, conversationId?: string) {
               run_context_json AS runContextJson,
               applied_plugin_snapshot_json AS appliedPluginSnapshotJson,
               forked_into_json AS forkedIntoJson,
+              cancel_origin AS cancelOrigin,
               created_at AS createdAt, started_at AS startedAt, ended_at AS endedAt,
               position
          FROM messages
@@ -2723,6 +2734,7 @@ export function upsertMessage(db: SqliteDb, conversationId: string, m: DbRow) {
               pre_turn_file_names_json = ?,
               session_mode = ?, run_context_json = ?, task_analytics_json = ?,
               applied_plugin_snapshot_json = ?, forked_into_json = ?,
+              cancel_origin = ?,
               telemetry_finalized_at = CASE
                 WHEN ? THEN COALESCE(telemetry_finalized_at, ?)
                 ELSE telemetry_finalized_at
@@ -2750,6 +2762,7 @@ export function upsertMessage(db: SqliteDb, conversationId: string, m: DbRow) {
       m.taskAnalytics ? JSON.stringify(m.taskAnalytics) : null,
       m.appliedPluginSnapshot ? JSON.stringify(m.appliedPluginSnapshot) : null,
       normalizeForkedIntoForStorage(m.forkedInto),
+      normalizeCancelOriginForStorage(m.cancelOrigin),
       m.telemetryFinalized === true ? 1 : 0,
       now,
       m.startedAt ?? null,
@@ -2766,12 +2779,13 @@ export function upsertMessage(db: SqliteDb, conversationId: string, m: DbRow) {
     const createdAt = typeof m.createdAt === 'number' && Number.isFinite(m.createdAt)
       ? m.createdAt
       : now;
-    // 27 values: id, conversation_id, role, content, agent_id, agent_name,
+    // 28 values: id, conversation_id, role, content, agent_id, agent_name,
     // run_id, run_status, result_delivery_state, last_run_event_id, events_json, attachments_json,
     // comment_attachments_json, produced_files_json, trace_object_files_json,
     // feedback_json, pre_turn_file_names_json, session_mode, run_context_json,
     // task_analytics_json, applied_plugin_snapshot_json, forked_into_json,
-    // telemetry_finalized_at, started_at, ended_at, position, created_at.
+    // cancel_origin, telemetry_finalized_at, started_at, ended_at, position,
+    // created_at.
     db.prepare(
       `INSERT INTO messages
          (id, conversation_id, role, content, agent_id, agent_name,
@@ -2779,9 +2793,9 @@ export function upsertMessage(db: SqliteDb, conversationId: string, m: DbRow) {
           attachments_json, comment_attachments_json, produced_files_json,
           trace_object_files_json, feedback_json, pre_turn_file_names_json,
           session_mode, run_context_json, task_analytics_json,
-          applied_plugin_snapshot_json, forked_into_json,
+          applied_plugin_snapshot_json, forked_into_json, cancel_origin,
           telemetry_finalized_at, started_at, ended_at, position, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       m.id,
       conversationId,
@@ -2805,6 +2819,7 @@ export function upsertMessage(db: SqliteDb, conversationId: string, m: DbRow) {
       m.taskAnalytics ? JSON.stringify(m.taskAnalytics) : null,
       m.appliedPluginSnapshot ? JSON.stringify(m.appliedPluginSnapshot) : null,
       normalizeForkedIntoForStorage(m.forkedInto),
+      normalizeCancelOriginForStorage(m.cancelOrigin),
       m.telemetryFinalized === true ? now : null,
       m.startedAt ?? null,
       m.endedAt ?? null,
@@ -2835,6 +2850,7 @@ export function upsertMessage(db: SqliteDb, conversationId: string, m: DbRow) {
               task_analytics_json AS taskAnalyticsJson,
               applied_plugin_snapshot_json AS appliedPluginSnapshotJson,
               forked_into_json AS forkedIntoJson,
+              cancel_origin AS cancelOrigin,
               created_at AS createdAt, started_at AS startedAt, ended_at AS endedAt,
               position
          FROM messages WHERE id = ?`,
@@ -4168,6 +4184,7 @@ function normalizeMessage(db: SqliteDb, row: DbRow, eventBatches?: DbRow[][]) {
     taskAnalytics: parseJsonOrUndef(row.taskAnalyticsJson),
     appliedPluginSnapshot: parseJsonOrUndef(row.appliedPluginSnapshotJson),
     forkedInto: normalizeForkedInto(parseJsonOrUndef(row.forkedIntoJson)),
+    cancelOrigin: normalizeCancelOrigin(row.cancelOrigin),
     createdAt: row.createdAt ?? undefined,
     startedAt: row.startedAt ?? undefined,
     endedAt: row.endedAt ?? undefined,
@@ -4218,6 +4235,29 @@ function normalizeForkedInto(
 function normalizeForkedIntoForStorage(value: unknown): string | null {
   const normalized = normalizeForkedInto(value);
   return normalized ? JSON.stringify(normalized) : null;
+}
+
+/**
+ * Who cancelled this turn. Enum mirrors `RunCancelOrigin`; anything else is
+ * dropped rather than stored verbatim, because the UI reads this field as
+ * PROOF ("the user pressed Stop") and an unrecognized value must not be able
+ * to masquerade as one of the four known origins.
+ */
+const CANCEL_ORIGINS = new Set([
+  'user_stop',
+  'project_cleanup',
+  'daemon_shutdown',
+  'unknown',
+]);
+
+function normalizeCancelOrigin(value: unknown): ChatMessage['cancelOrigin'] {
+  return typeof value === 'string' && CANCEL_ORIGINS.has(value)
+    ? (value as NonNullable<ChatMessage['cancelOrigin']>)
+    : undefined;
+}
+
+function normalizeCancelOriginForStorage(value: unknown): string | null {
+  return normalizeCancelOrigin(value) ?? null;
 }
 
 function parseJsonOrUndef(s: unknown): any {

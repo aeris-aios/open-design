@@ -57,7 +57,7 @@ export function SupportDialog({ channels, onClose, inline }: SupportDialogProps)
         </div>
         <div className={styles.body}>
           {channels.map((channel) => (
-            <div className={styles.channel} key={channel.id}>
+            <div className={styles.channel} key={channel.id} data-support-channel={channel.id}>
               <span className={styles.channelIcon}>{channel.icon}</span>
               <span className={styles.channelName}>{channel.name}</span>
               <Button

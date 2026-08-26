@@ -164,6 +164,12 @@ const PROMOTE_AMR_CODES = new Set<string>([
 //                                  for the auth code), so OD spawns a
 //                                  system Terminal running `agy` and
 //                                  the user finishes OAuth there.
+//   - switch-model:                the selected model is gone/disabled, so a
+//                                  retry reproduces the same answer. Opens the
+//                                  model picker (Settings → Execution) instead
+//                                  of offering a dead Retry. Design principle
+//                                  4: a retry button only appears where a retry
+//                                  can actually work.
 //   - launch-terminal-switch-model: Antigravity-specific. agy has no
 //                                  `--model` flag (upstream #35), so
 //                                  switching to a model with available
@@ -181,6 +187,7 @@ export type RunFailurePrimaryAction =
   | 'authorize'
   | 'recharge'
   | 'upgrade'
+  | 'switch-model'
   | 'launch-terminal-auth'
   | 'launch-terminal-switch-model'
   // No self-contained recovery button. Used when retrying is futile (e.g. a
@@ -338,6 +345,25 @@ function retryWithGuidance(
   };
 }
 
+/**
+ * The selected model cannot serve this run at all — it is missing, disabled, or
+ * no longer in the catalogue. Retrying re-picks the same model and reproduces
+ * the same answer, so the card offers the one thing that changes the outcome:
+ * picking a different model.
+ */
+function switchModelWithGuidance(
+  titleKey: RunFailureTitleKey,
+  messageKey: RunFailureMessageKey,
+): RunFailureUi {
+  return {
+    primaryAction: 'switch-model',
+    titleKey,
+    messageKey,
+    secondaryRetry: false,
+    showSwitchCard: false,
+  };
+}
+
 // Agent-agnostic failure codes that carry a clear root cause and a concrete
 // fix, mapped the same way regardless of which agent produced them. The daemon
 // already classifies these into failure_category / user_action
@@ -361,8 +387,10 @@ const AGENT_AGNOSTIC_FAILURE_UI: Record<string, RunFailureUi> = {
     'chat.runError.title.promptTooLarge',
     'chat.runError.promptTooLargeMessage',
   ),
-  // Selected model is missing/disabled (user_action: switch_model).
-  AMR_MODEL_UNAVAILABLE: retryWithGuidance(
+  // Selected model is missing/disabled (user_action: switch_model). The daemon
+  // already names the fix — offer it as the button instead of a Retry that is
+  // guaranteed to fail the same way.
+  AMR_MODEL_UNAVAILABLE: switchModelWithGuidance(
     'chat.runError.title.modelUnavailable',
     'chat.runError.modelUnavailableMessage',
   ),

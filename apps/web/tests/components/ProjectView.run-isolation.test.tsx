@@ -1452,7 +1452,10 @@ describe('ProjectView conversation run isolation', () => {
     expect(streamViaDaemon).not.toHaveBeenCalled();
   });
 
-  it('soft-warns on a low AMR wallet and proceeds with the same send on confirmation', async () => {
+  // 产品 2026-08-26 裁决:「告警可继续的不弹窗,只有卡片;余额不足再弹窗」。
+  // 这一条原来断言的是「软提醒**吊住**这次发送,点『仍然开始』才跑」——
+  // 那正是被撤掉的形态。现在告警档不弹窗、不挡发送,余额改由流水里的升级卡说。
+  it('does not block a low-balance send behind a dialog any more (warn tier is a card)', async () => {
     conversationAMessages = [];
     fetchAmrWalletSnapshot.mockResolvedValue({
       status: 'available',
@@ -1484,16 +1487,12 @@ describe('ProjectView conversation run isolation', () => {
 
     fireEvent.click(screen.getByTestId('send-message'));
 
-    // The reminder holds the send: no run yet.
-    await waitFor(() => expect(screen.getByTestId('amr-low-balance-dialog')).toBeTruthy());
-    expect(streamViaDaemon).not.toHaveBeenCalled();
-
-    // "Start anyway" resolves the pending send — the run starts without a re-submit.
-    fireEvent.click(screen.getByTestId('amr-low-balance-dialog-proceed'));
+    // 不再有中途的确认步骤:这一次发送直接跑完。
     await waitFor(() => expect(streamViaDaemon).toHaveBeenCalledTimes(1));
     expect(streamViaDaemon).toHaveBeenCalledWith(
       expect.objectContaining({ agentId: 'amr' }),
     );
+    expect(screen.queryByTestId('amr-low-balance-dialog')).toBeNull();
   });
 
   it('does not soft-block a Free user with a low AMR wallet', async () => {

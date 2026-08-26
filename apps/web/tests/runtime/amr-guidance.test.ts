@@ -288,7 +288,6 @@ describe('resolveRunFailureUi', () => {
       ['ARTIFACT_NOT_FOUND', 'chat.runError.title.artifactMissing', null],
       ['AGENT_UNAVAILABLE', 'chat.runError.title.cliMissing', 'chat.runError.cliMissingMessage'],
       ['AGENT_PROMPT_TOO_LARGE', 'chat.runError.title.promptTooLarge', 'chat.runError.promptTooLargeMessage'],
-      ['AMR_MODEL_UNAVAILABLE', 'chat.runError.title.modelUnavailable', 'chat.runError.modelUnavailableMessage'],
       ['TOOL_LOOP_DETECTED', 'chat.runError.title.toolLoop', 'chat.runError.toolLoopMessage'],
       ['ROLE_MARKER_HALLUCINATION', 'chat.runError.title.outputInvalid', 'chat.runError.outputInvalidMessage'],
       ['AGENT_RUNTIME_DEF_INVALID', 'chat.runError.title.runtimeConfig', 'chat.runError.runtimeConfigMessage'],
@@ -304,6 +303,27 @@ describe('resolveRunFailureUi', () => {
           showSwitchCard: false,
         });
       }
+    }
+  });
+
+  /*
+   * 设计原则四:「重试只在有用时出现」。模型已经下线 / 不在套餐里,重试会用同一个
+   * 模型再跑一次,结果必然一样 —— 那颗按钮是假的。产品 2026-08-26 裁决:这一档
+   * 改成「换个模型」。
+   *
+   * 这一条从上面那张「一律 retry」的表里摘出来单列,就是为了让它不能被悄悄挪回去。
+   */
+  it('offers switch-model (never a dead retry) when the model itself is unavailable', () => {
+    for (const agent of ['claude', 'codex', 'amr', 'antigravity', null]) {
+      const ui = resolveRunFailureUi('AMR_MODEL_UNAVAILABLE', null, agent);
+      expect(ui).toMatchObject({
+        primaryAction: 'switch-model',
+        titleKey: 'chat.runError.title.modelUnavailable',
+        messageKey: 'chat.runError.modelUnavailableMessage',
+        secondaryRetry: false,
+        showSwitchCard: false,
+      });
+      expect(ui.primaryAction).not.toBe('retry');
     }
   });
 

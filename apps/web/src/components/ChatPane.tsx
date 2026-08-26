@@ -124,7 +124,13 @@ import { listDesignArtifactCandidates } from './design-files/designArtifacts';
 import type { PluginFolderAgentAction } from './design-files/pluginFolderActions';
 import { Icon, type IconName } from './Icon';
 import { UserActionCard, type UserActionCardTone } from './UserActionCard';
+import { Button } from '@open-design/components';
 import { RunErrorCard } from './chat/RunErrorCard';
+import { UpgradeCard } from './chat/UpgradeCard';
+import { SupportDialog } from './chat/SupportDialog';
+import { supportChannels } from './chat/support-channels';
+import { ExportLogsAction } from './chat/ExportLogsAction';
+import { PauseLine } from './chat/PauseLine';
 import { repoConnectCopy } from './design-system-github-evidence';
 import { isRenderableSketchJson, SketchPreview } from './SketchPreview';
 import type { SettingsSection } from './SettingsDialog';
@@ -676,6 +682,14 @@ interface Props {
   // Composer settings/CLI button forwards to here. The dialog lives in App
   // (it owns the AppConfig lifecycle) so we just pass the open trigger.
   onOpenSettings?: (section?: SettingsSection) => void;
+  /**
+   * 钱包余额提示(交付稿第 75 / 76 格的升级卡),`null` = 不提示。
+   *
+   * 单位美元,两档由余额自己决定:`> 0` 是「撑不完下一个任务」的暖橙档,
+   * `= 0` 是「现在无法开始新任务」的红档。判定在 `runtime/amr-balance-gate.ts`,
+   * 这里只负责**呈现** —— 卡在流水里,不挡发送(D4)。
+   */
+  amrBalanceCardUsd?: number | null;
   showByokRecoveryAction?: boolean;
   onSwitchToLocalCli?: () => void;
   onOpenAmrSettings?: () => void;
@@ -975,6 +989,7 @@ export function ChatPane({
   onSelectConversation,
   onDeleteConversation,
   onOpenSettings,
+  amrBalanceCardUsd = null,
   showByokRecoveryAction = false,
   onSwitchToLocalCli,
   onOpenAmrSettings,
@@ -1680,10 +1695,58 @@ export function ChatPane({
     showByokRecoveryAction && Boolean(onSwitchToLocalCli) && !runFailureHasAction;
   const showErrorActions = showByokRecoveryCta || runFailureHasAction;
   const showAmrGuidance = Boolean(amrSwitchPayload);
+  /**
+   * 报错卡上那两颗**常驻**次级(交付稿第 78 格的前两颗)。
+   *
+   * 它们和 `showErrorActions` 无关 —— 那个旗标问的是「这一档有没有可用的恢复动作」,
+   * 而「联系支持」「导出日志」在任何一档都成立:恰恰是**没有恢复动作**的那几档
+   * (CPU 不支持、运行时定义非法)最需要它们,今天那些卡上一颗按钮都没有。
+   */
+  const [supportDialogOpen, setSupportDialogOpen] = useState(false);
+  /**
+   * 升级卡与报错卡上的「升级套餐」共用一条出站链路:同一个 plans URL、同一份归因、
+   * 同样的 device id 传递规则(仅在同意指标上报时带)。入口来源分开记,
+   * 这样漏斗能读出「卡」和「弹窗」各自带来多少升级。
+   */
+  const openAmrPlans = useCallback((entrySource: 'chat_error_upgrade' | 'chat_upgrade_card') => {
+    const attribution = recordAmrEntry(analytics.track, entrySource, new Date(), {
+      metricsConsent: config?.telemetry?.metrics === true,
+    });
+    const deviceId = amrHandoffDeviceId({
+      metricsConsent: config?.telemetry?.metrics === true,
+      resolvedDeviceId: getResolvedDeviceId(),
+      installationId: config?.installationId,
+    });
+    window.open(
+      attributedAmrUrl(amrPlansUrlForProfile(amrProfile), attribution, deviceId),
+      '_blank',
+      'noopener,noreferrer',
+    );
+  }, [amrProfile, analytics.track, config?.installationId, config?.telemetry?.metrics]);
+  /**
+   * 「这一轮是你自己按停的」——交付稿第 81 格那一行灰字的**唯一**判据。
+   *
+   * 只认最后一轮(和报错卡同一个取法):后面又跑了一轮,上一轮的暂停就不该再挂在
+   * 流水末尾。`cancelOrigin === 'user_stop'` 是 daemon 给的证据,证不出就不说 ——
+   * 缺字段(旧 daemon)或 daemon 关机 / 项目清理杀掉的,一律不画,否则 daemon
+   * 重启后这一行会谎报(盘点 R8)。
+   *
+   * 还在跑 / 还在重连的一轮不是 `canceled`,所以这一行和「重连」结构上不会同时出现。
+   */
+  const userStoppedTurn = useMemo(() => {
+    if (streaming) return null;
+    const last = displayMessages[displayMessages.length - 1];
+    if (!last || last.role !== 'assistant' || last.id !== lastAssistantId) return null;
+    if (last.runStatus !== 'canceled' || last.cancelOrigin !== 'user_stop') return null;
+    // 一步不剩就不出这一行:那一轮已经跑完,「这轮被你停了」由回合状态行去报。
+    const remainingSteps = unfinishedTodosFromEvents(last.events).length;
+    return remainingSteps > 0 ? { remainingSteps } : null;
+  }, [displayMessages, lastAssistantId, streaming]);
   const visibleRecoveryActionTypes = useMemo(() => {
     const actions: TrackingRunRecoveryActionType[] = [];
     if (!retryAssistant || !onRetry || !runFailureUi) return actions;
     if (runFailureUi.primaryAction === 'authorize') actions.push('authorize_and_retry');
+    if (runFailureUi.primaryAction === 'switch-model') actions.push('switch_model_retry');
     if (canResumeFailedRun) actions.push('resume_run');
     else if (runFailureUi.primaryAction === 'retry' || runFailureUi.secondaryRetry) {
       actions.push('manual_retry');
@@ -2865,8 +2928,26 @@ export function ChatPane({
                         : t('chat.runError.title.generic')
                     }
                     description={displayError}
-                    actions={showErrorActions ? (
+                    actions={(
                       <>
+                        {/*
+                          * 稿子第 78 格那一排是〔联系支持〕〔导出日志〕〔从失败处重试〕——
+                          * 前两颗次级、第三颗主。前两颗**不挑失败类型**(产品原话
+                          * 「好多都应该得有导出日志这个按钮」),所以它们排在
+                          * `showErrorActions` 之外:一张一颗按钮都没有的卡
+                          * (CPU 不支持、运行时定义非法)照样有这两条出路。
+                          */}
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="sm"
+                          data-testid="chat-error-contact-support"
+                          onClick={() => setSupportDialogOpen(true)}
+                        >
+                          <Icon name="headset" size={11} />
+                          {t('chat.runError.contactSupportCta')}
+                        </Button>
+                        <ExportLogsAction />
                         {showByokRecoveryCta ? (
                           <button
                             type="button"
@@ -2938,6 +3019,23 @@ export function ChatPane({
                                 }}
                               >
                                 {t('chat.antigravityError.launchSwitchModelCta')}
+                              </button>
+                            ) : runFailureUi.primaryAction === 'switch-model' ? (
+                              /*
+                               * 模型下线 / 不在套餐里 —— 重试必然同样结果,所以这一档
+                               * 不给重试(设计原则四)。真实落点是设置的「执行」段,
+                               * 也就是 composer 那颗齿轮通向的同一个模型选择面板。
+                               */
+                              <button
+                                type="button"
+                                className="chat-error-action"
+                                data-testid="chat-error-switch-model"
+                                onClick={() => {
+                                  trackRecoveryClick(retryAssistant, 'switch_model_retry');
+                                  onOpenSettings?.('execution');
+                                }}
+                              >
+                                {t('chat.runError.switchModelCta')}
                               </button>
                             ) : runFailureUi.primaryAction === 'recharge' ? (
                               <button
@@ -3050,7 +3148,7 @@ export function ChatPane({
                           </>
                         ) : null}
                       </>
-                    ) : null}
+                    )}
                   >
                     {errorDiagnosticText ? (
                       <div className="run-error__source">
@@ -3106,6 +3204,25 @@ export function ChatPane({
                         onOpenAmrSettings?.();
                       }
                     }}
+                  />
+                ) : null}
+                {/*
+                  * 升级卡(交付稿第 75 / 76 格)。**流水里的一张卡,不是弹窗** ——
+                  * 产品 2026-08-26 裁决「告警可继续的不弹窗,只有卡片;余额不足再弹窗」。
+                  * 它落在最后一轮之后、输入框之前,不挡发送(D4)。
+                  * 和 `PlanPill` 不同:那枚是钉在 composer 上方的,这张在流水里随内容滚。
+                  */}
+                {amrBalanceCardUsd != null ? (
+                  <UpgradeCard
+                    balanceUsd={amrBalanceCardUsd}
+                    onUpgrade={() => openAmrPlans('chat_upgrade_card')}
+                  />
+                ) : null}
+                {/* 「已手动暂停任务」那一行(交付稿第 81 格)。判据见 `userStoppedTurn`。 */}
+                {userStoppedTurn ? (
+                  <PauseLine
+                    cancelOrigin="user_stop"
+                    remainingSteps={userStoppedTurn.remainingSteps}
                   />
                 ) : null}
                 {/* Dynamic spacer: when a turn is anchored to the top, this
@@ -3228,6 +3345,17 @@ export function ChatPane({
               : null}
           </>
         ) : null}
+      {/*
+        * 联系支持弹窗(交付稿第 80 格)。**压在整个应用上**,不是报错卡里的一块 ——
+        * 组件自己走 portal 到 body,所以挂在这里不受聊天区滚动 / 层叠上下文影响。
+        * 渠道由调用方给,单一出处在 `chat/support-channels.tsx`。
+        */}
+      {supportDialogOpen ? (
+        <SupportDialog
+          channels={supportChannels(t)}
+          onClose={() => setSupportDialogOpen(false)}
+        />
+      ) : null}
     </div>
   );
 }

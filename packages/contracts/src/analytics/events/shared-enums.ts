@@ -72,6 +72,10 @@ export type TrackingAmrEntrySource =
   | 'chat_error_recharge'
   | 'chat_error_upgrade'
   | 'chat_balance_gate_upgrade'
+  // 流水里的升级卡(交付稿第 75 / 76 格)。与 `chat_balance_gate_upgrade` 分开:
+  // 告警档现在**只出卡不弹窗**,两者是不同的出站面,合并会让漏斗读不出
+  // 「卡带来的升级」和「弹窗带来的升级」哪个在起作用。
+  | 'chat_upgrade_card'
   | 'home_balance_gate_upgrade'
   | 'chat_low_balance_warn_recharge'
   | 'home_low_balance_warn_recharge'
