@@ -54,7 +54,11 @@ export function RunErrorCard({ title, description, actions, children, dataKind }
         <AlertIcon />
         {title}
       </div>
-      <div className={styles.description}>{description}</div>
+      {/* `data-testid` 是稳定钩子:测试要能只看「给用户的那句话」,
+          不被下面折叠着的诊断原文串味 —— E2 钉的正是这两者不许混。 */}
+      <div className={styles.description} data-testid="chat-run-error-description">
+        {description}
+      </div>
       {children}
       {actions ? (
         /* `data-user-action-footer` 同样是保留下来的稳定钩子:测试与 e2e 用它

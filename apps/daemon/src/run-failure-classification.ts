@@ -547,6 +547,22 @@ function isProcessCrashText(text: string): boolean {
 // mislabeled as a processor limitation and lose its retry. The same binary on
 // the same CPU fails deterministically, so cpu_unsupported must never be
 // auto-retried.
+/**
+ * Risk control has suspended the account.
+ *
+ * vela answers with JSON-RPC `-32600`, message "Account temporarily
+ * suspended\nWe detected abnormal payment risk on this account…", and
+ * `data: {"kind":"account_suspended","retryable":false}`. Both are matched: the
+ * ACP bridge does not always surface `data` to the host, and matching only the
+ * structured kind would lose the classification on the paths that carry the
+ * sentence alone (which is exactly how this failure went unnamed until now).
+ */
+function isAccountSuspendedText(text: string): boolean {
+  if (/\baccount_suspended\b/i.test(text)) return true;
+  if (/\baccount temporarily suspended\b/i.test(text)) return true;
+  return /\btemporarily suspended account access\b/i.test(text);
+}
+
 function isCpuUnsupportedCrashText(text: string): boolean {
   if (/\bno_avx2\b/i.test(text)) return true;
   return (
@@ -678,6 +694,25 @@ function classifyRunFailureBase(
     input.agentId,
     text,
   );
+
+  // Risk control suspended the account. Claimed first because nothing further
+  // down can improve on it and several branches would happily swallow it: the
+  // sentence carries no code any existing pattern matches, so today it falls
+  // through to `fatal_rpc_error` / `execution_failed` and the chat card offers a
+  // Retry that can only fail identically (catalogue R-064; design principle 4).
+  if (isAccountSuspendedText(text)) {
+    return classification(
+      // The account is refused access, so this belongs with the authorization
+      // failures rather than in the opaque process-exit bucket — but unlike the
+      // rest of that bucket there is no sign-in that fixes it, hence
+      // `user_action: 'none'` and a non-retryable verdict.
+      'auth',
+      'account_suspended',
+      inferFailureStageFromEvents(events, 'session_init'),
+      false,
+      'none',
+    );
+  }
 
   if (
     errorCode === 'AMR_INSUFFICIENT_BALANCE' ||

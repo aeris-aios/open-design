@@ -306,6 +306,11 @@ export type TrackingRunFailureDetail =
   | 'signal_killed'
   | 'process_crashed'
   | 'cpu_unsupported'
+  // Risk control suspended the account (vela returns JSON-RPC -32600 with
+  // `data.kind: "account_suspended"`, `retryable: false`). Named because
+  // retrying is guaranteed to fail the same way: without this it lands in
+  // `fatal_rpc_error` and the card offers a Retry the user can only burn on.
+  | 'account_suspended'
   | 'interrupted'
   | 'exit_code'
   | 'terminated_unknown'

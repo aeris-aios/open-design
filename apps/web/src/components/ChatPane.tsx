@@ -103,7 +103,9 @@ import {
   amrPlansUrlForProfile,
   amrRechargeUrlForProfile,
   formatModelWindowRetryAt,
+  hasSelfContainedRecovery,
   resolveRunFailureUi,
+  RUN_FAILURE_FALLBACK_MESSAGE_KEY,
 } from '../runtime/amr-guidance';
 import {
   fetchVelaLoginStatus,
@@ -1625,9 +1627,18 @@ export function ChatPane({
         retryAt: formatModelWindowRetryAt(runFailureUi.messageVars.retryAt, locale),
       }
     : runFailureUi?.messageVars;
+  // 卡面上只放人话。命中映射表的用它自己的文案;没命中的用兜底那一句 ——
+  // **不再把上游原文摊在卡上**(设计原则五)。原文没有丢:它仍旧进
+  // `errorDiagnosticText`,收在下面折叠的「诊断原文」里,那段是给工程看的。
+  //
+  // 兜底只在「确实有一次失败要说」时接手(`runFailureUi` = 这条助手消息是终态
+  // 失败)。面板级的临时错误(发送失败之类)没有 `runFailureUi`,照旧原样显示,
+  // 也不会因此凭空多出一张报错卡。
   const displayError = runFailureUi?.messageKey
     ? t(runFailureUi.messageKey, { agent: failedAgentLabel, ...runFailureMessageVars })
-    : rawError;
+    : runFailureUi && rawError
+      ? t(RUN_FAILURE_FALLBACK_MESSAGE_KEY)
+      : rawError;
   const errorDiagnosticText = displayError
     ? buildRunErrorDiagnosticText({
         message: displayError,
@@ -1651,6 +1662,8 @@ export function ChatPane({
       : failedRunErrorEvent?.code === 'AGENT_CONNECTION_DROPPED'
         ? 'warning'
         : 'danger';
+  // 阶梯第 4 档的唯一外显:常驻次级的〔联系支持〕升格成主按钮。
+  const contactSupportIsPrimary = runFailureUi?.primaryAction === 'contact-support';
   const [copiedErrorDiagnostic, setCopiedErrorDiagnostic] = useState(false);
   // Collapsed by default: the error source area shows one line until expanded.
   const [errorSourceOpen, setErrorSourceOpen] = useState(false);
@@ -1695,17 +1708,14 @@ export function ChatPane({
           runId: retryAssistant.runId ?? null,
         }
       : null;
-  // A `primaryAction: 'none'` failure (e.g. a hard quota where retrying is
-  // futile) contributes no button of its own — it relies on the AMR switch card
-  // below. Only claim the actions row when a real control will render, so a
-  // no-action card doesn't leave an empty flex row (and a dangling column gap).
+  // 阶梯第 3 / 4 档的卡自己画不出「能把这次失败推进下去」的按钮:第 3 档那颗
+  // 在下面那张切换卡上,第 4 档给的是〔联系支持〕(开对话,不是恢复)。判据抽成
+  // `hasSelfContainedRecovery`,免得这里跟着阶梯的档位一档档手写。
   const runFailureHasAction = Boolean(
     retryAssistant &&
       onRetry &&
       runFailureUi &&
-      (runFailureUi.primaryAction !== 'none' ||
-        runFailureUi.secondaryRetry ||
-        canResumeFailedRun),
+      (hasSelfContainedRecovery(runFailureUi) || canResumeFailedRun),
   );
   // The generic local-CLI escape hatch is only used when the failure card has
   // no direct recovery action. AMR guidance remains visible whenever the
@@ -2956,11 +2966,18 @@ export function ChatPane({
                           * `showErrorActions` 之外:一张一颗按钮都没有的卡
                           * (CPU 不支持、运行时定义非法)照样有这两条出路。
                           */}
+                        {/*
+                          * 第 4 档(§6.Z):重试无效、我们也没别的出路时,这颗
+                          * **从次级提为主** —— 不是新增一颗按钮,是同一颗换个分量。
+                          * 位置不动:那一排在 274px 窄面板里的排布是量过的,
+                          * 重排会把 e2e 的溢出判据一起动掉。
+                          */}
                         <Button
                           type="button"
-                          variant="secondary"
+                          variant={contactSupportIsPrimary ? 'primary' : 'secondary'}
                           size="sm"
                           data-testid="chat-error-contact-support"
+                          {...(contactSupportIsPrimary ? { 'data-primary': 'true' } : {})}
                           onClick={() => setSupportDialogOpen(true)}
                         >
                           <Icon name="headset" size={11} />
