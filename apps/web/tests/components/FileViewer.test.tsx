@@ -8465,7 +8465,8 @@ describe('FileViewer tweaks toolbar', () => {
       }
       if (url.startsWith('/api/projects/project-1/raw/preview.html')) {
         return new Response(
-          '<!doctype html><html><body><main data-od-id="hero">Hero</main></body></html>',
+          savedSources.at(-1)
+            ?? '<!doctype html><html><body><main data-od-id="hero">Hero</main></body></html>',
           { status: 200, headers: { 'Content-Type': 'text/html' } },
         );
       }
@@ -8726,6 +8727,57 @@ describe('FileViewer tweaks toolbar', () => {
     }, '*');
     expect(screen.getByTestId('preview-runtime-frame-current')).toBe(frame);
     expect(frame.getAttribute('src')).toBe(initialSrc);
+
+    act(() => {
+      window.dispatchEvent(new MessageEvent('message', {
+        source: frame.contentWindow,
+        data: {
+          type: 'od-edit-select',
+          target: {
+            ...manualEditTarget('hero', 'Edited Hero', 20),
+            kind: 'text',
+            tagName: 'main',
+            text: 'Edited Hero',
+            fields: { text: 'Edited Hero' },
+            isLayoutContainer: false,
+            outerHtml: '<main data-od-id="hero">Edited Hero</main>',
+          },
+        },
+      }));
+    });
+    await screen.findByLabelText('Text');
+    postMessage.mockClear();
+    fireEvent.click(screen.getByRole('button', { name: 'Pick Text color' }));
+    fireEvent.click(screen.getByRole('button', { name: '#3b82f6' }));
+    expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'od-edit-preview-style',
+      id: 'hero',
+      styles: { color: '#3b82f6' },
+      version: expect.any(Number),
+    }), '*');
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => {
+      expect(savedSources.at(-1)).toContain('Edited Hero');
+      expect(savedSources.at(-1)).toContain('color: rgb(59, 130, 246)');
+    });
+    expect(screen.getByTestId('preview-runtime-frame-current')).toBe(frame);
+    expect(frame.getAttribute('src')).toBe(initialSrc);
+
+    const mintCountBeforeEditReentry = fetchMock.mock.calls.filter(([input]) => (
+      String(input).includes('/api/projects/project-1/preview-url')
+    )).length;
+    postMessage.mockClear();
+    fireEvent.click(screen.getByTestId('manual-edit-mode-toggle'));
+    signal('od:preview:capabilities-applied', baseCapabilities);
+    expect(screen.getByTestId('preview-runtime-frame-current')).toBe(frame);
+    expect(frame.getAttribute('src')).toBe(initialSrc);
+    fireEvent.click(screen.getByTestId('manual-edit-mode-toggle'));
+    signal('od:preview:capabilities-applied', [...baseCapabilities, 'edit']);
+    expect(screen.getByTestId('preview-runtime-frame-current')).toBe(frame);
+    expect(frame.getAttribute('src')).toBe(initialSrc);
+    expect(fetchMock.mock.calls.filter(([input]) => (
+      String(input).includes('/api/projects/project-1/preview-url')
+    ))).toHaveLength(mintCountBeforeEditReentry);
 
     const mintCount = fetchMock.mock.calls.filter(([input]) => (
       String(input).includes('/api/projects/project-1/preview-url')
