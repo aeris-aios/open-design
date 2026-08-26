@@ -26,6 +26,17 @@ const PROJECT_SCOPE_RETRY_MS = 5_000;
  * still settles into a cheap poll rather than hammering the daemon.
  */
 const PROJECT_SCOPE_FIRST_RETRY_MS = 500;
+/**
+ * How long "the daemon has not materialized this project yet" stays worth
+ * re-asking.
+ *
+ * That answer can only become true while materialization is actually running.
+ * A project that is simply gone returns the same 404 forever, so without a
+ * deadline a stale tab pointed at a deleted project polls for as long as it
+ * stays open. A transient backend outage deliberately keeps its unbounded
+ * poll — that one can start succeeding at any moment.
+ */
+const PROJECT_SCOPE_MATERIALIZATION_WINDOW_MS = 120_000;
 
 interface ProjectWorkspaceAuthority {
   workspaceId: string;
@@ -533,7 +544,16 @@ export function useProjectWorkspaceScope(
     // Scoped to this effect run, so a project / authority change restarts the
     // tight probe instead of inheriting the previous run's relaxed delay.
     let retryAttempt = 0;
-    const scheduleRetry = () => {
+    let retryDeadline: number | null = null;
+    /**
+     * `windowMs` bounds how long this condition is worth re-asking; `null`
+     * means it can succeed at any time and keeps the unbounded poll.
+     */
+    const scheduleRetry = (windowMs: number | null) => {
+      if (windowMs !== null) {
+        if (retryDeadline === null) retryDeadline = Date.now() + windowMs;
+        if (Date.now() >= retryDeadline) return;
+      }
       const delay = Math.min(
         PROJECT_SCOPE_RETRY_MS,
         PROJECT_SCOPE_FIRST_RETRY_MS * 2 ** retryAttempt,
@@ -628,7 +648,7 @@ export function useProjectWorkspaceScope(
                   resolvedCallerIdentityKey: callerIdentityKey,
                 };
           });
-          scheduleRetry();
+          scheduleRetry(null);
         } else {
           setState({
             loading: false,
@@ -680,7 +700,13 @@ export function useProjectWorkspaceScope(
         const retryable = error instanceof ProjectWorkspaceScopeFetchError
           ? error.retryable
           : true;
-        if (retryable) scheduleRetry();
+        if (retryable) {
+          // Only the materialization case is time-boxed; an outage keeps the
+          // unbounded poll it has always had.
+          scheduleRetry(
+            failure === 'unsupported' ? PROJECT_SCOPE_MATERIALIZATION_WINDOW_MS : null,
+          );
+        }
       }
     };
 

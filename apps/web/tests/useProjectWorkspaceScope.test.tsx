@@ -506,6 +506,38 @@ describe('useProjectWorkspaceScope', () => {
     view.unmount();
   });
 
+  // "Not materialized yet" is only worth re-asking while it can still become
+  // true. A project that is simply gone answers the same 404 forever, and a
+  // stale tab pointed at a deleted project would otherwise poll for as long as
+  // it stays open. Give the materialization window a deadline; a transient
+  // backend outage keeps its existing unbounded poll because that one can
+  // still start succeeding at any moment.
+  it('stops polling a project that never materializes', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(async () => new Response(
+      JSON.stringify({ error: { code: 'PROJECT_NOT_FOUND', message: 'not found' } }),
+      { status: 404 },
+    ));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const view = renderHook(() => useProjectWorkspaceScope('project-never-arrives'));
+    await act(async () => {
+      for (let turn = 0; turn < 10; turn += 1) await Promise.resolve();
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(150_000);
+    });
+    const settled = fetchMock.mock.calls.length;
+    expect(settled).toBeGreaterThan(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(120_000);
+    });
+    expect(fetchMock.mock.calls.length).toBe(settled);
+    view.unmount();
+  });
+
   it('does not poll a settled forbidden scope on the retry timer', async () => {
     vi.useFakeTimers();
     const fetchMock = vi.fn(async () => new Response('{}', { status: 403 }));
