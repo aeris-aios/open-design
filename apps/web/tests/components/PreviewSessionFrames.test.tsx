@@ -201,7 +201,7 @@ describe('PreviewSessionFrames', () => {
     expect(screen.getByTestId('preview-runtime-frame-current')).toBe(firstFrame);
   });
 
-  it('drops the previous file session when one component instance changes projects', () => {
+  it('suspends the previous file session and reuses its exact frame when switching back', () => {
     const first = navigation('v1');
     const second = { ...navigation('v1'), sessionId: 'scope-0002' };
     const view = (projectId: string, fileName: string, next: PreviewSessionNavigation) => (
@@ -221,9 +221,19 @@ describe('PreviewSessionFrames', () => {
     rerender(view('project-2', 'other.html', second));
 
     expect(screen.queryByTestId('preview-runtime-frame-current')).toBeNull();
-    const standby = screen.getByTestId('preview-runtime-frame-standby');
+    const standby = screen.getByTestId('preview-runtime-frame-standby') as HTMLIFrameElement;
     expect(standby).not.toBe(oldFrame);
     expect(standby).toHaveAttribute('src', second.url);
+    settle(standby, second);
+
+    rerender(view('project-1', 'index.html', first));
+
+    expect(screen.queryByTestId('preview-runtime-frame-current')).toBeNull();
+    const restored = screen.getByTestId('preview-runtime-frame-standby') as HTMLIFrameElement;
+    expect(restored).toBe(oldFrame);
+    expect(restored).toHaveAttribute('src', first.url);
+    settle(restored, first);
+    expect(screen.getByTestId('preview-runtime-frame-current')).toBe(oldFrame);
   });
 
   it('reports exact capability application for standby and retained current frames', async () => {

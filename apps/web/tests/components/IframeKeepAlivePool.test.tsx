@@ -41,4 +41,37 @@ describe('PooledIframe', () => {
     expect(firstRef).toHaveBeenLastCalledWith(null);
     expect(secondRef).toHaveBeenLastCalledWith(frame);
   });
+
+  it('evicts the least-recently-used suspended file frame at the retention limit', () => {
+    function Harness({ fileName }: { fileName: string }) {
+      return (
+        <IframeKeepAliveProvider maxEntries={2}>
+          <PooledIframe
+            cacheKey={previewIframeKeepAliveKey('project-1', fileName)}
+            src={`http://n-scope-0001.localhost:17456/${fileName}`}
+            title={fileName}
+            data-testid="pooled-frame"
+          />
+        </IframeKeepAliveProvider>
+      );
+    }
+
+    const { rerender } = render(<Harness fileName="a.html" />);
+    const frameA = screen.getByTestId('pooled-frame');
+    rerender(<Harness fileName="b.html" />);
+    const frameB = screen.getByTestId('pooled-frame');
+    expect(frameB).not.toBe(frameA);
+
+    // Touch A again so B becomes the least-recently-used suspended session.
+    rerender(<Harness fileName="a.html" />);
+    expect(screen.getByTestId('pooled-frame')).toBe(frameA);
+    rerender(<Harness fileName="c.html" />);
+    const frameC = screen.getByTestId('pooled-frame');
+    expect(frameC).not.toBe(frameA);
+    expect(frameC).not.toBe(frameB);
+    expect(frameB.isConnected).toBe(false);
+
+    rerender(<Harness fileName="b.html" />);
+    expect(screen.getByTestId('pooled-frame')).not.toBe(frameB);
+  });
 });
