@@ -1610,6 +1610,80 @@ function skipTemplateContent(html: string, lowerHtml: string, from: number): num
   return depth === 0 ? i : -1;
 }
 
+/** SVG/MathML elements whose content the parser reads as ordinary HTML again. */
+const HTML_INTEGRATION_POINTS: readonly string[] = [
+  'foreignobject', 'desc', 'title', 'annotation-xml', 'mtext', 'mi', 'mo', 'mn', 'ms',
+];
+
+/**
+ * Offset just past the `</svg>` / `</math>` that closes the foreign element
+ * opened before `from`, or -1.
+ *
+ * Foreign content is the one place `<![CDATA[ … ]]>` is real markup rather than
+ * a bogus comment, so the generic "a declaration ends at the next `>`" rule is
+ * wrong inside it: in `<svg><![CDATA[label > </body>]]></svg>` that first `>`
+ * is still CDATA text, and stopping there resumes the scan inside the section
+ * and hands back the `</body>` it contains. Inside an HTML integration point
+ * (`<foreignObject>`, `<desc>`, …) the parser is back in HTML, where `<![CDATA[`
+ * *is* a bogus comment again — so the two rules are tracked separately.
+ *
+ * The whole subtree is skipped either way: no document-level boundary can live
+ * inside `<svg>` or `<math>`.
+ */
+function skipForeignContent(html: string, lowerHtml: string, rootName: string, from: number): number {
+  const tagOpen = /<(\/?)([a-z][a-z0-9-]*)/iy;
+  let depth = 1;
+  let integrationDepth = 0;
+  let i = from;
+  while (i < html.length && depth > 0) {
+    if (html.charCodeAt(i) !== 60 /* < */) {
+      i += 1;
+      continue;
+    }
+    if (html.startsWith('<!--', i)) {
+      const end = html.indexOf('-->', i + 4);
+      if (end < 0) return -1;
+      i = end + 3;
+      continue;
+    }
+    if (integrationDepth === 0 && lowerHtml.startsWith('<![cdata[', i)) {
+      const end = html.indexOf(']]>', i + 9);
+      if (end < 0) return -1;
+      i = end + 3;
+      continue;
+    }
+    if (html.startsWith('<!', i) || html.startsWith('<?', i)) {
+      const end = html.indexOf('>', i + 2);
+      if (end < 0) return -1;
+      i = end + 1;
+      continue;
+    }
+    tagOpen.lastIndex = i;
+    const open = tagOpen.exec(html);
+    if (!open) {
+      i += 1;
+      continue;
+    }
+    const tagEnd = endOfTag(html, i + open[0].length);
+    if (tagEnd < 0) return -1;
+    const tagName = (open[2] ?? '').toLowerCase();
+    const selfClosing = html.charCodeAt(tagEnd - 1) === 47 /* / */;
+    if (!open[1] && !selfClosing && (PREVIEW_RAW_TEXT_ELEMENTS as readonly string[]).includes(tagName)) {
+      const contentEnd = findRawTextClose(lowerHtml, tagName, tagEnd + 1);
+      if (contentEnd < 0) return -1;
+      i = contentEnd;
+      continue;
+    }
+    if (!selfClosing && HTML_INTEGRATION_POINTS.includes(tagName)) {
+      integrationDepth += open[1] ? -1 : 1;
+      if (integrationDepth < 0) integrationDepth = 0;
+    }
+    if (!selfClosing && tagName === rootName) depth += open[1] ? -1 : 1;
+    i = tagEnd + 1;
+  }
+  return depth === 0 ? i : -1;
+}
+
 function findRealTagOffset(html: string, pattern: RegExp): number {
   const anchored = new RegExp(pattern.source, `${pattern.flags.replace(/[gy]/g, '')}y`);
   const tagOpen = /<(\/?)([a-z][a-z0-9]*)/iy;
@@ -1650,6 +1724,12 @@ function findRealTagOffset(html: string, pattern: RegExp): number {
     if (!open[1] && (PREVIEW_RAW_TEXT_ELEMENTS as readonly string[]).includes(tagName)) {
       const contentEnd = findRawTextClose(lower, tagName, tagEnd + 1);
       // Unclosed raw text runs to the end of the document — same as above.
+      if (contentEnd < 0) return -1;
+      i = contentEnd;
+      continue;
+    }
+    if (!open[1] && (tagName === 'svg' || tagName === 'math') && html.charCodeAt(tagEnd - 1) !== 47 /* / */) {
+      const contentEnd = skipForeignContent(html, lower, tagName, tagEnd + 1);
       if (contentEnd < 0) return -1;
       i = contentEnd;
       continue;

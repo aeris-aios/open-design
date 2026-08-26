@@ -213,6 +213,21 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
           + '<main id="slot"></main></body></html>',
       ),
     );
+    // Foreign content is the one place `<![CDATA[ … ]]>` is real markup. The
+    // `>` inside the section is still text, so a scan that ends declarations at
+    // the next `>` resumes inside it and returns the `</body>` it holds. Inside
+    // an HTML integration point the parser is back in HTML, where `<![CDATA[`
+    // is a bogus comment again.
+    await writeFile(
+      path.join(dir, 'foreign-content.html'),
+      Buffer.from(
+        '<!doctype html><html><head></head><body>'
+          + '<svg><![CDATA[label > </body>]]></svg>'
+          + '<svg><foreignObject><![CDATA[x > ]]></foreignObject></svg>'
+          + '<math><![CDATA[a > </body>]]></math>'
+          + '<main id="slot">real</main></body></html>',
+      ),
+    );
     // Tokenizer states the scan has to follow, not just tag text: a
     // `</template>` inside a nested script is content, and after `<!--` a
     // nested `<script` puts script data in double-escaped state, where
@@ -594,6 +609,18 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
     expect(injectedAt).toBeGreaterThan(-1);
     expect(html).toContain('const a = "</template><body>slip</body>";');
     expect(html).toContain('const b = "</script><body>slip</body>";');
+    expect(injectedAt).toBeGreaterThan(html.indexOf('<main id="slot">real</main>'));
+    expect(injectedAt).toBeLessThan(html.lastIndexOf('</body>'));
+  });
+
+  it('injects the URL preview scroll bridge after CDATA in foreign content', async () => {
+    const bridged = await fetch(`${rawUrl('foreign-content.html')}?odPreviewBridge=scroll`);
+    expect(bridged.status).toBe(200);
+    const html = await bridged.text();
+    const injectedAt = html.indexOf('data-od-url-scroll-bridge');
+    expect(injectedAt).toBeGreaterThan(-1);
+    expect(html).toContain('<![CDATA[label > </body>]]>');
+    expect(html).toContain('<![CDATA[a > </body>]]>');
     expect(injectedAt).toBeGreaterThan(html.indexOf('<main id="slot">real</main>'));
     expect(injectedAt).toBeLessThan(html.lastIndexOf('</body>'));
   });
