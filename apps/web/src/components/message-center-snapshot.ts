@@ -60,10 +60,11 @@ export interface MessageCenterInFlightSync {
  * account's rows, unread count and targeted announcement to a signed-out
  * reader.
  *
- * Kept only as the last observation; admission does not consult it. Comparing
- * at admission time is redundant with dropping the snapshot when the answer
- * changes, and two mechanisms for one rule means a test can pass with either
- * one deleted — so there is one.
+ * Two moments consult it, and they are not redundant: dropping the cache when
+ * the answer changes handles what is already stored, and refusing a
+ * disagreeing PUBLICATION handles a run that was in flight when it changed.
+ * Neither reaches the other's case. Admission does not consult it — that would
+ * be the redundant third.
  */
 let lastAuthoritativeLoggedIn: boolean | null = null;
 
@@ -149,6 +150,13 @@ export function supersedeEarlierSnapshotWrites(): void {
 }
 
 export function publishSnapshot(next: MessageCenterSnapshot): void {
+  // Validated at the moment of WRITING, which is a different moment from
+  // dropping the cache. Dropping removes what is there and the joinable
+  // pointer; it cannot reach a run that is already in flight, and that run
+  // still holds a publication token that was valid when it was issued. So a
+  // pull that started while signed in, and resolves after an authoritative
+  // sign-out, would write the previous account's rows straight back.
+  if (lastAuthoritativeLoggedIn !== null && next.loggedIn !== lastAuthoritativeLoggedIn) return;
   lastSyncSnapshot = next;
 }
 

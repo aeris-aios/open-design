@@ -74,6 +74,27 @@ describe('snapshot admission across an auth-mode change', () => {
     expect(adoptableSnapshot('zh-CN')).not.toBeNull();
   });
 
+  it('refuses a publication from a run that started under the other authority', () => {
+    // Dropping the cache reaches what is STORED and the joinable pointer. It
+    // cannot reach a pull that is already on the wire, and that pull still holds
+    // a publication token that was valid when it was issued — so it would write
+    // the previous account's rows straight back over the sign-out.
+    publishSnapshot(snapshot(true));
+    noteAuthoritativeAuthMode(false);
+    expect(adoptableSnapshot('zh-CN')).toBeNull();
+
+    // The signed-in pull finally resolves and tries to publish.
+    publishSnapshot(snapshot(true));
+
+    expect(adoptableSnapshot('zh-CN')).toBeNull();
+  });
+
+  it('still accepts a publication that agrees with the authority', () => {
+    noteAuthoritativeAuthMode(false);
+    publishSnapshot(snapshot(false));
+    expect(adoptableSnapshot('zh-CN')).not.toBeNull();
+  });
+
   it('refuses a read recorded under the other authority', () => {
     publishSnapshot(snapshot(true));
 
