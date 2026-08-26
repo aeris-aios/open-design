@@ -1168,6 +1168,81 @@ describe('MessageCenter remount snapshot', () => {
     expect(messageCalls).toBe(pullsBeforeSuccessor);
   });
 
+  it('retires a successor\'s announcement when the predecessor\'s acknowledgement lands', async () => {
+    // The successor adopted an UNREAD targeted notice, so `adopt` put the modal
+    // up. The predecessor's acknowledgement then succeeds and reaches the read
+    // subscriber, which updated the rows and read ids but not the announcement
+    // — leaving the successor holding a modal for something already
+    // acknowledged, so the user had to confirm it twice.
+    const hold = { armed: false, release: null as (() => void) | null };
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/integrations/vela/status')) {
+        statusCalls += 1;
+        return Response.json({ loggedIn: true });
+      }
+      if (url.includes('/read') && init?.method === 'POST') {
+        if (hold.armed) {
+          hold.armed = false;
+          await new Promise<void>((resolve) => {
+            hold.release = resolve;
+          });
+        }
+        return Response.json({ read: true, markedCount: 1 });
+      }
+      if (url.includes('/message-center') && url.includes('/messages')) {
+        messageCalls += 1;
+        return Response.json({
+          messages: [{
+            ...row('go-plan-sunset', null),
+            audienceType: 'targeted',
+            messageKey: 'go-plan-sunset-2026-08',
+          }],
+          nextCursor: null,
+          unreadCount: 1,
+        });
+      }
+      return Response.json({});
+    }));
+
+    const first = render(
+      <I18nProvider initial="zh-CN">
+        <MessageCenter />
+      </I18nProvider>,
+    );
+    await waitFor(() => expect(messageCalls).toBeGreaterThan(0));
+    fireEvent.click(screen.getByTestId('message-center-trigger'));
+    const target = await screen.findByRole('button', { name: /go-plan-sunset/ });
+    await new Promise((r) => setTimeout(r, 30));
+
+    // Acknowledge it; the POST is held.
+    hold.armed = true;
+    fireEvent.click(target);
+    await waitFor(() => expect(hold.release).not.toBeNull());
+
+    // Navigate away mid-flight; the successor adopts the still-unread notice.
+    first.unmount();
+    const pending: boolean[] = [];
+    render(
+      <I18nProvider initial="zh-CN">
+        <MessageCenter
+          hideTrigger
+          open={false}
+          onOpenChange={() => {}}
+          priorityAnnouncementActive
+          onPriorityAnnouncementPendingChange={(v) => pending.push(v)}
+        />
+      </I18nProvider>,
+    );
+    await waitFor(() => expect(pending[pending.length - 1]).toBe(true));
+
+    // The predecessor's acknowledgement lands.
+    hold.release!();
+
+    // The successor must retire the notice rather than ask again.
+    await waitFor(() => expect(pending[pending.length - 1]).toBe(false));
+  });
+
   it('does not re-sync when it is remounted straight away', async () => {
     const first = await mountAndSettle();
     const afterFirst = { status: statusCalls, messages: messageCalls };

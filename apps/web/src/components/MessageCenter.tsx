@@ -438,14 +438,19 @@ export function MessageCenter({
     if (delta.account) {
       pendingReadIdsRef.current = new Set(pendingReadIdsRef.current).add(delta.messageId);
     }
+    const nextRows = rows.map((item) => (
+      item.id === delta.messageId ? { ...item, readAt: item.readAt ?? delta.readAt } : item
+    ));
     // Component state only: whoever recorded the delta already wrote both
     // shared sinks, and persisting again here would race their write.
-    commitState(
-      rows.map((item) => (
-        item.id === delta.messageId ? { ...item, readAt: item.readAt ?? delta.readAt } : item
-      )),
-      new Set(readIdsRef.current).add(delta.messageId),
-    );
+    commitState(nextRows, new Set(readIdsRef.current).add(delta.messageId));
+    // The announcement is derived state, like it is in `sync` and `adopt`, and
+    // it is the fourth piece of read state this delta has to reach. Updating
+    // the rows without it left a successor holding a modal for a notice the
+    // predecessor's acknowledgement had already recorded, so the user had to
+    // confirm the same thing twice. Deriving rather than comparing ids also
+    // keeps a DIFFERENT unread targeted row on screen.
+    if (loggedInRef.current) setPriorityMessage(findGoPlanSunsetMessage(nextRows));
   }), [commitState, locale]);
 
   useEffect(() => {
