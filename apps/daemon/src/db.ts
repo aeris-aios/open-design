@@ -15,6 +15,7 @@ import type {
 } from '@open-design/contracts';
 import {
   eventsEndedWithUnfinishedWork,
+  latestTodoWriteInputFromEvents,
   stripDoneMarkers,
   stripNextStepMarkers,
 } from '@open-design/contracts';
@@ -2545,6 +2546,49 @@ export function latestCompletedAssistantMessageId(
     )
     .get(conversationId, excludeMessageId, resumableMessageId) as DbRow | undefined;
   return row && typeof row.id === 'string' ? row.id : null;
+}
+
+/**
+ * How far back a run start looks for the conversation's last declared task
+ * list. A plan is recalled from the RECENT past, not from the whole
+ * conversation — and the bound is also the cost ceiling: 21 of the 27 runtimes
+ * never emit a task list at all, so without it every one of their run starts
+ * would read every assistant message's `events_json` blob in the conversation.
+ */
+const TODO_RECALL_MESSAGE_LOOKBACK = 8;
+
+/**
+ * The conversation's most recently declared task list — the raw TodoWrite
+ * `input` — walking back from the newest assistant turn, or `null` when none of
+ * the recent turns declared one.
+ *
+ * Deliberately NOT `latestCompletedAssistantMessageId`'s `run_status =
+ * 'succeeded'` filter: a turn that was interrupted or failed is precisely the
+ * turn most likely to have left work open, and it is the one we most want to
+ * hand back. Only `excludeMessageId` — the current run's own in-flight
+ * placeholder — is skipped.
+ *
+ * Walking PAST a turn that declared no list is intentional: an unrelated
+ * question answered in between does not close the outstanding plan.
+ */
+export function latestTodoWriteInputForConversation(
+  db: SqliteDb,
+  conversationId: string,
+  excludeMessageId: string,
+): unknown | null {
+  const rows = db
+    .prepare(
+      `SELECT id, events_json AS eventsJson FROM messages
+        WHERE conversation_id = ? AND role = 'assistant' AND id != ?
+        ORDER BY position DESC LIMIT ?`,
+    )
+    .all(conversationId, excludeMessageId, TODO_RECALL_MESSAGE_LOOKBACK) as DbRow[];
+  for (const row of rows) {
+    const events = materializeMessageAgentEvents(db, String(row.id), row.eventsJson).events;
+    const input = latestTodoWriteInputFromEvents(events);
+    if (input != null) return input;
+  }
+  return null;
 }
 
 export function updateAgentSessionStableHash(

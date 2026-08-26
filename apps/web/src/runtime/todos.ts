@@ -124,6 +124,37 @@ export function latestTodoWriteInputForPinnedCard<
   return null;
 }
 
+/**
+ * For each assistant message, the task list this conversation had already
+ * declared BEFORE it — the input `buildTurnBlocks` needs to answer "was this
+ * item on screen in an earlier turn?" (D17: recall is decided by content
+ * intersection, nothing semantic, no turn limit).
+ *
+ * Two properties matter and both are deliberate:
+ *  · a turn that declared no list does NOT clear the carry — an unrelated
+ *    question answered in between leaves the outstanding plan outstanding;
+ *  · COMPLETED items stay in the carry. Recall is matched on content, never on
+ *    status, so "召回 · 上一轮就完成的" (spec §5.2) still reads as recall when the
+ *    agent re-lists it.
+ *
+ * Mirrors the daemon's `latestTodoWriteInputForConversation`, which walks the
+ * same way when it decides what to hand back to the agent.
+ */
+export function previousTodosByAssistantMessageId(
+  messages: ReadonlyArray<{ id: string; role: string; events?: AgentEvent[] | undefined }> | undefined,
+): Map<string, TodoItem[]> {
+  const byId = new Map<string, TodoItem[]>();
+  if (!messages || messages.length === 0) return byId;
+  let carried: TodoItem[] | null = null;
+  for (const message of messages) {
+    if (message.role !== 'assistant') continue;
+    if (carried) byId.set(message.id, carried);
+    const declared = latestTodosFromEvents(message.events);
+    if (declared.length > 0) carried = declared;
+  }
+  return byId;
+}
+
 export function isTodoWriteToolName(name: string): boolean {
   return (
     name === 'TodoWrite' ||
