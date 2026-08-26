@@ -297,6 +297,13 @@ function makeSegment(todo: RawTodo, recalled: boolean): TodoSegment {
 
 export function buildTurnBlocks(input: BuildTurnInput): TurnBlock[] {
   const events = input.events ?? [];
+  /*
+   * D10:**跑起来那一刻就该有壳**,不等 agent 的第一条事件。
+   * 原来 `ensureShell()` 只挂在事件上,于是第二、三轮每次都要空等一会儿
+   * 才看到「进行中」(用户 2026-08-26 真机量到)。
+   */
+  const turnIsLive = (input.runStatus ?? 'running') === 'running'
+    || input.runStatus === 'queued';
   const blocks: TurnBlock[] = [];
   const previous = new Set((input.previousTodos ?? []).map((t) => t.content));
   /**
@@ -588,8 +595,26 @@ export function buildTurnBlocks(input: BuildTurnInput): TurnBlock[] {
     sink().push(row);
   }
 
+  if (turnIsLive) ensureShell();
   finishTurn();
-  return blocks;
+  /*
+   * 空壳不留(B47):跑完之后壳里一件东西都没有,那一行孤零零的「已完成」
+   * 不告诉任何人任何事。**还在跑的空壳要留** —— 它就是「进行中」那一行本身。
+   */
+  const turnStatus = input.runStatus ?? 'running';
+  const kept = blocks.filter((b) => {
+    if (b.kind !== 'shell') return true;
+    if (b.items.length > 0 || b.segments.length > 0) return true;
+    // 还在跑:空壳就是「进行中」那一行本身,必须留
+    if (turnIsLive) return true;
+    /*
+     * 失败 / 手动停止:壳头是这一轮唯一说得出「出事了」的地方(D10 + B18) ——
+     * opencode 起手就 401 那种轮次,壳里确实一件事都没有,但那一行「运行失败」
+     * 不能跟着消失。只有**成功且什么都没干**的那种空壳才丢掉。
+     */
+    return turnStatus !== 'succeeded';
+  });
+  return kept;
 
   /* ── 清单 ─────────────────────────────────────────────────── */
 
@@ -660,12 +685,15 @@ export function buildTurnBlocks(input: BuildTurnInput): TurnBlock[] {
       const next = incoming === 'pending' && seg.implicit && seg.status === 'in_progress'
         ? 'in_progress'
         : incoming;
-      if (seg.status === 'pending' && next !== 'pending') {
-        seg.status = next;
-        todoCard.items.push({ kind: 'todo', segment: seg });
-      } else {
-        seg.status = next;
-      }
+      /*
+       * **只更新状态,不再补一行**。
+       *
+       * 从前「还没开始的不出行」,所以一条 todo 从 pending 转成 in_progress 时
+       * 要在这里补推一行。现在清单一到就把每条都推成行了(见上面那段注释),
+       * 再推就是同一条出现两次 —— 内容和秒数一模一样,用户真机撞到过。
+       * 行早就在了,状态是**同一个 segment 对象**上的字段,改它就够。
+       */
+      seg.status = next;
     }
     const plan = todoCard.items.find((x): x is Extract<ShellItem, { kind: 'plan' }> => x.kind === 'plan');
     if (plan) plan.steps = list.map((t) => t.content);
@@ -696,7 +724,7 @@ export function buildTurnBlocks(input: BuildTurnInput): TurnBlock[] {
       if (first) {
         first.status = 'in_progress';
         first.implicit = true;
-        todoCard.items.push({ kind: 'todo', segment: first });
+        // 行在清单落下时就推过了,这里**只点亮状态**;再推一次就是同一条出现两次
         current = first;
       }
     }
@@ -717,7 +745,17 @@ export function buildTurnBlocks(input: BuildTurnInput): TurnBlock[] {
     if (doneSeen) return;
     const shell = todoCard ?? top;
     if (!shell) return;
-    const arr = current ? current.items : shell.items;
+    /*
+     * **只从 todo 里提**。
+     *
+     * 2026-08-26 裁决之后,没有 todo 的阶段正文本来就在壳外 —— 壳里剩下的文本
+     * 只可能是 **thinking**,那是过程不是结论,提出来会把「想什么」当成「答什么」
+     * (踩过:整轮只有一句 thinking 时,它被提到壳外、壳空掉后整张壳被丢,
+     *  「思考中」那一格直接没了)。
+     * 有 todo 时这条兜底仍然要:结论会被收进最后那条 todo 的抽屉里,得捞出来。
+     */
+    if (!current) return;
+    const arr = current.items;
     const last = arr[arr.length - 1];
     if (!last || last.kind !== 'text' || !last.text.trim()) return;
     arr.pop();

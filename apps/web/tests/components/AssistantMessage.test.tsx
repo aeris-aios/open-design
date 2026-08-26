@@ -237,7 +237,15 @@ describe('AssistantMessage feedback gate', () => {
     }
   });
 
-  it('recvqacy887jsF — shows the copy button mid-stream once there is partial text', () => {
+  /*
+   * ⚠️ **这条规格被产品覆盖了**(2026-08-26,用户真机两次指认「运行中最下面这一行不显示」)。
+   *
+   * 原来的意图见下面保留的注释:让人不必等整轮跑完就能复制已出的文字。
+   * 现在回合状态行整行在运行中不出,复制按钮随之也不出 —— 想恢复这条能力,
+   * 得把复制挪到别处(比如壳头或悬浮),不能靠这一行。记在
+   * `specs/current/chat-panel-feedback.md` 的 B50。
+   */
+  it('recvqacy887jsF — 运行中整行不出,所以复制也不出(产品覆盖)', () => {
     // The copy affordance is gated on "is there any non-whitespace text yet"
     // (copyMarkdown in AssistantMessage.tsx), not on the turn having ended —
     // so a user can copy what has streamed in so far instead of waiting for
@@ -258,7 +266,7 @@ describe('AssistantMessage feedback gate', () => {
         projectId="proj-1"
       />,
     );
-    expect(screen.getByRole('button', { name: 'Copy response markdown' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Copy response markdown' })).toBeNull();
   });
 
   it('recvqacy887jsF — hides the copy button while streaming has not produced any text yet', () => {

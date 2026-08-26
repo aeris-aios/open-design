@@ -873,16 +873,24 @@ function AssistantMessageImpl({
       hasEmptyResponse,
       hasUnfinishedTodos: unfinishedTodos.length > 0,
     });
+  /*
+   * 回合状态行(稿子组件 15)是**跑完之后**才出的一行 —— 运行中整行不出。
+   *
+   * 用户 2026-08-26 两次真机指认(「运行中没有这个了,干掉」/「不是说运行中时
+   * 最下面这一行不显示吗?」)。这覆盖了一条带单号的能力 `recvqacy887jsF`
+   * (流式中途就能复制已出的文字)—— 产品拍板整行不出,那条能力随之关掉,
+   * 记在 `specs/current/chat-panel-feedback.md` 的 B50。
+   */
   const showCompletionRow =
-    showFeedback ||
-    streaming ||
+    !streaming &&
+    (showFeedback ||
     !!message.startedAt ||
     !!message.endedAt ||
     !!usage ||
     unfinishedTodos.length > 0 ||
     hasEmptyResponse ||
     !!copyMarkdown ||
-    canFork;
+    canFork);
   const canShowOpenDesignSubmission = !!onShareToOpenDesign && showFeedback && runSucceeded;
   const showOpenDesignSubmission =
     canShowOpenDesignSubmission && (!!isLast || shareToOpenDesignBusy);
@@ -1047,6 +1055,14 @@ function AssistantMessageImpl({
             // The pre-output "initializing" status is surfaced by the footer's
             // shimmering "Preparing…" label instead of its own pill.
             if (b.label === "initializing") return null;
+            /*
+             * `warning` 这一档**不在对话里出**(产品裁决 2026-08-26:「这个 warning 也不要显示了」)。
+             *
+             * 真机上撞到的那条是「Skill descriptions were shortened to fit the skills
+             * context budget…」—— 这是**内部预算提示**,对用户既不可操作也看不懂,
+             * 却顶着一整块橙色戳在回答中间。`error` 那一档留着:那是真出事了。
+             */
+            if (b.label === "warning") return null;
             return <StatusPill key={i} label={b.label} detail={b.detail} />;
           }
           return null;
@@ -1168,7 +1184,7 @@ function AssistantMessageImpl({
                    * 运行中的去重已经由 `showCompletionRow` 整行不出来解决。
                    * 只在报错卡那一轮仍然让位:原因和下一步由报错卡说。
                    */
-                  hideRunStatus: streaming || message.id === errorCardOwnerId,
+                  hideRunStatus: message.id === errorCardOwnerId,
                 }}
               />
             ) : (
@@ -1184,7 +1200,7 @@ function AssistantMessageImpl({
                 forking={forking}
                 isLast={!!isLast}
                 createdAt={message.createdAt}
-                hideRunStatus={streaming || message.id === errorCardOwnerId}
+                hideRunStatus={message.id === errorCardOwnerId}
               />
             )}
           </div>

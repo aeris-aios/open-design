@@ -62,14 +62,27 @@ describe('执行记录永远出现(D10)', () => {
     expect(nth(shells(blocks), 0).status).toBe('running');
   });
 
-  it('没有任何事件时不凭空造壳', () => {
-    expect(buildTurnBlocks({ events: [] })).toEqual([]);
+  /*
+   * D10 原话是「空态先出来,不等任何 agent 信号」。
+   * 2026-08-26 用户真机量到:第二、三轮每次都要空等一会儿才看到「进行中」——
+   * 因为壳原来只挂在**第一条事件**上。现在跑起来那一刻就有壳。
+   * 反过来,**跑完了还是空壳**就不留(B47:一行孤零零的「已完成」不说明任何事)。
+   */
+  it('还没有任何事件、但 run 在跑 → 立刻出一张空壳', () => {
+    const out = buildTurnBlocks({ events: [], runStatus: 'running' });
+    expect(shells(out)).toHaveLength(1);
+    expect(nth(shells(out), 0).status).toBe('running');
   });
 
-  it('plain 系整轮只有文本:壳仍然出现(结束后是一张空壳,T6 的默认)', () => {
+  it('跑完了还是空壳 → 不留', () => {
+    expect(buildTurnBlocks({ events: [], ...done() })).toEqual([]);
+  });
+
+  it('plain 系整轮只有文本:话在壳外,空壳不留(2026-08-26 裁决 + B47)', () => {
     const blocks = buildTurnBlocks({ events: [text('好的,我来分析这个页面。')], ...done() });
-    expect(shells(blocks)).toHaveLength(1);
-    expect(nth(shells(blocks), 0).status).toBe('done');
+    // 正文在壳外(落块裁决),壳里因此空着 —— 空壳跑完就不留
+    expect(shells(blocks)).toHaveLength(0);
+    expect(prose(blocks).map((p) => p.text)).toEqual(['好的,我来分析这个页面。']);
   });
 });
 
@@ -159,7 +172,9 @@ describe('没有 todo 时正文一律在壳外(2026-08-26 裁决)', () => {
   it('没发 done 也一样:正文在壳外,壳里只剩工具调用', () => {
     const blocks = buildTurnBlocks({ events: [text('我先看一下工作区里的规格文件。'), ...call('t1', 'Read', { file_path: 'a.md' })] });
     expect(prose(blocks).map((p) => p.text)).toEqual(['我先看一下工作区里的规格文件。']);
+    // 壳里有那次工具调用,所以壳留着;里面没有正文
     expect(texts(nth(shells(blocks), 0).items)).toEqual([]);
+    expect(nth(shells(blocks), 0).items.some((i) => i.kind === 'tool')).toBe(true);
   });
 
   it('`<done/>` 仍然分段:两侧各自成块,不粘成一段', () => {
@@ -168,13 +183,15 @@ describe('没有 todo 时正文一律在壳外(2026-08-26 裁决)', () => {
       ...done(),
     });
     expect(prose(blocks).map((p) => p.text)).toEqual(['先看目录。', '两页都好了,商品卡已抽成组件。']);
-    expect(texts(nth(shells(blocks), 0).items)).toEqual([]);
+    // 壳里什么都没有 + 轮次成功 → 整张壳不留(B47)
+    expect(shells(blocks)).toHaveLength(0);
   });
 
   it('标记被流式切成两半也认得出来,且不会闪出半截标签', () => {
     const blocks = buildTurnBlocks({ events: [text('先看目录。<do'), text('ne/>结论在这里。')], ...done() });
     expect(prose(blocks).map((p) => p.text)).toEqual(['先看目录。', '结论在这里。']);
-    expect(texts(nth(shells(blocks), 0).items)).toEqual([]);
+    // 壳里什么都没有 + 轮次成功 → 整张壳不留(B47)
+    expect(shells(blocks)).toHaveLength(0);
   });
 
   it('意图澄清表单:表单整段留在壳外,交给消息层剥卡', () => {
@@ -182,7 +199,8 @@ describe('没有 todo 时正文一律在壳外(2026-08-26 裁决)', () => {
       events: [text('我先确认两个关键点。'), text('<question-form title="确认">{}</question-form>')],
       ...done(),
     });
-    expect(texts(nth(shells(blocks), 0).items)).toEqual([]);
+    // 壳里什么都没有 + 轮次成功 → 整张壳不留(B47)
+    expect(shells(blocks)).toHaveLength(0);
     expect(prose(blocks).some((b) => b.text.includes('<question-form'))).toBe(true);
   });
 
@@ -221,6 +239,7 @@ describe('没有 todo 时正文一律在壳外(2026-08-26 裁决)', () => {
   it('运行中同样是这个落点 —— 不等轮次结束才搬家', () => {
     const blocks = buildTurnBlocks({ events: [text('先看目录。')], runStatus: 'running' });
     expect(prose(blocks).map((p) => p.text)).toEqual(['先看目录。']);
+    // 还在跑:空壳就是「进行中」那一行本身,留着;里面没有正文
     expect(texts(nth(shells(blocks), 0).items)).toEqual([]);
   });
 });
