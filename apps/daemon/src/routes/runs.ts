@@ -20,6 +20,7 @@ import {
   buildRunCreatedV4Aliases,
   buildRunFinishedV4Aliases,
   deriveConfigureGlobals,
+  harnessAnalyticsFromRolloutDecision,
   modelIdForTracking,
   sessionModeToTracking,
   type TrackingDesignSystemSource,
@@ -3534,6 +3535,10 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
             }
           : {}),
       };
+      // Read off the run rather than the local decision variable: the run is
+      // what `run_finished` and the crash-recovery replay both see, so stamping
+      // it here is the only place this dimension has to be added.
+      Object.assign(baseProps, harnessAnalyticsFromRolloutDecision(run.strategyRolloutDecision));
       Object.assign(baseProps, buildRunCreatedV4Aliases(baseProps, taskLineage));
       design.runs.setAnalyticsRecovery?.(run, {
         context: analyticsContext,

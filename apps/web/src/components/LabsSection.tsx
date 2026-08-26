@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import type { OdNextRolloutControlResponse, OdNextRolloutMode } from '@open-design/contracts';
 
+import { trackLabsItemToggled } from '../analytics/events';
+import { useAnalytics } from '../analytics/provider';
 import { useT } from '../i18n';
 import { Icon } from './Icon';
 import styles from './LabsSection.module.css';
@@ -100,6 +102,7 @@ export interface LabsSectionProps {
 
 export function LabsSection({ onAutosaveStatus }: LabsSectionProps) {
   const t = useT();
+  const analytics = useAnalytics();
   const [state, setState] = useState<LabsHarnessState | null>(LOADING);
   const [busy, setBusy] = useState(false);
   const noticeId = useId();
@@ -152,6 +155,14 @@ export function LabsSection({ onAutosaveStatus }: LabsSectionProps) {
         // "never touched", and the two are worth telling apart later.
         await writeHarnessMode(next ? 'active' : 'off');
         if (token !== writeTokenRef.current || !mountedRef.current) return;
+        // After the write, not on click: a failed write rolls the switch back,
+        // and an event for a preference the machine does not hold is worse
+        // than a missing one.
+        trackLabsItemToggled(analytics.track, {
+          item_id: 'design_harness',
+          to: next ? 'on' : 'off',
+          source: 'settings',
+        });
         onAutosaveStatus?.('saved');
       } catch {
         if (token !== writeTokenRef.current || !mountedRef.current) return;
@@ -164,7 +175,7 @@ export function LabsSection({ onAutosaveStatus }: LabsSectionProps) {
         }
       }
     })();
-  }, [onAutosaveStatus, state]);
+  }, [analytics.track, onAutosaveStatus, state]);
 
   const lockNoticeKey = state?.lock === 'latched'
     ? 'labs.latchedNotice'

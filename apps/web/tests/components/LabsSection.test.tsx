@@ -12,6 +12,11 @@ import type {
 import { LabsSection } from '../../src/components/LabsSection';
 import { I18nProvider } from '../../src/i18n';
 
+const track = vi.fn();
+vi.mock('../../src/analytics/provider', () => ({
+  useAnalytics: () => ({ track }),
+}));
+
 function status(overrides: {
   requestedMode?: OdNextRolloutMode;
   requestedModeSource?: OdNextRolloutModeSource;
@@ -76,6 +81,7 @@ describe('LabsSection', () => {
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
+    track.mockClear();
   });
 
   it('renders the harness row off and operable on a machine that never configured it', async () => {
@@ -178,6 +184,48 @@ describe('LabsSection', () => {
       { odNextStrategyMode: 'off' },
     ]));
     expect(switchEl().getAttribute('aria-checked')).toBe('false');
+  });
+
+  it('reports the toggle only after the preference is persisted', async () => {
+    const { writes } = stubFetch();
+    renderSection();
+    await waitFor(() => expect(switchEl().getAttribute('aria-disabled')).toBe('false'));
+
+    fireEvent.click(switchEl());
+
+    await waitFor(() => expect(writes).toHaveLength(1));
+    await waitFor(() => expect(track).toHaveBeenCalledTimes(1));
+    expect(track.mock.calls[0]?.[0]).toBe('labs_item_toggled');
+    expect(track.mock.calls[0]?.[1]).toEqual({
+      item_id: 'design_harness',
+      to: 'on',
+      source: 'settings',
+    });
+  });
+
+  it('reports the opt-out direction on the way back off', async () => {
+    stubFetch({ rolloutStatus: status({ requestedMode: 'active', requestedModeSource: 'app_config' }) });
+    renderSection();
+    await waitFor(() => expect(switchEl().getAttribute('aria-checked')).toBe('true'));
+
+    fireEvent.click(switchEl());
+
+    await waitFor(() => expect(track).toHaveBeenCalledTimes(1));
+    expect(track.mock.calls[0]?.[1]).toMatchObject({ to: 'off', source: 'settings' });
+  });
+
+  it('reports nothing when the write fails', async () => {
+    // The switch rolls back, so the install does not hold the preference the
+    // event would have asserted.
+    stubFetch({ writeFails: true });
+    const onAutosaveStatus = vi.fn();
+    renderSection(onAutosaveStatus);
+    await waitFor(() => expect(switchEl().getAttribute('aria-disabled')).toBe('false'));
+
+    fireEvent.click(switchEl());
+
+    await waitFor(() => expect(onAutosaveStatus).toHaveBeenCalledWith('error'));
+    expect(track).not.toHaveBeenCalled();
   });
 
   it('locks the switch and explains when an environment variable owns the mode', async () => {
