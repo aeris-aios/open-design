@@ -1502,13 +1502,27 @@
 }
 /* 左右两枚翻页箭头压在这一沓的垂直中线上；整条不吃指针事件，
    只有两枚按钮自己吃，免得它挡住中间那张卡的点击和拖拽。 */
+/*
+ * 左右箭头**距两侧各 11px**,不是贴边(稿子 `.opts.mod-visual .vnav` 就是
+ * `inset-inline: 11px`)。
+ *
+ * 原来写的是 `inset: 0` —— 箭头因此压在这一沓的左右边缘上,和卡片描边叠在一起,
+ * 用户真机截图圈出来过。11px 和「换一批 / 随机」那一行的左右内距是同一个数,
+ * 三者的竖向边界因此对齐;贴边之后这条对齐就没了。
+ *
+ * 竖向仍由 `.qf-visual-stage` 承担(它的高度就是这一沓的高度 `--qf-fan-h`),
+ * 所以这里只写横向,不照搬稿子的 `bottom: 10px; height: var(--fan-h)` ——
+ * 稿子那两条是因为它把 `.vnav` 挂在更高的 `.opts` 上、要自己把盒子压回这一沓,
+ * 我们的定位祖先已经正好是这一沓了,再写一遍反而会错开 10px。
+ */
 .qf-visual-nav {
   position: absolute;
   z-index: 6;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  inset: 0;
+  inset-block: 0;
+  inset-inline: 11px;
   pointer-events: none;
 }
 /* 稿子 `.vnav-b { display:grid; place-items:center; width:26px; height:26px;
@@ -3861,16 +3875,16 @@ body.entry-resizing { cursor: col-resize; user-select: none; }
   font-size: 12px;
   color: var(--text-faint);
   width: fit-content;
-  opacity: 0;
-  transition: opacity 150ms var(--ease-out);
 }
-.msg.assistant:hover .assistant-footer,
-.msg.assistant:focus-within .assistant-footer,
-.assistant-footer[data-streaming="true"],
-.assistant-footer[data-last="true"] { opacity: 1; }
-@media (hover: none) {
-  .assistant-footer { opacity: 1; }
-}
+/*
+ * 这里**没有** opacity / hover 门控 —— 出不出由渲染层决定。
+ *
+ * 产品裁决(2026-08-26):这一行**只在最后一轮**出,之前轮次不显示、hover 也不显示。
+ * 判据写在 `AssistantMessage` 的 `showCompletionRow` 上(那儿有完整理由)。
+ * 原来这一档是 `opacity: 0` + hover 显形,而**同一份门控在 `routines.css` 里
+ * 还有一份**靠 `.app` 拔到 (0,2,0) 且排在最后 —— 两头都赢,只改这里不生效。
+ * 现在两处都删干净了:别再往任一处加回 opacity 门控。
+ */
 .assistant-footer .dot {
   width: 5px;
   height: 5px;

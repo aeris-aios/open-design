@@ -209,7 +209,14 @@ describe('chat assistant feedback', () => {
     expect(screen.getByRole('group', { name: 'Feedback' })).toBeTruthy();
   });
 
-  it('keeps every artifact turn feedback control visible and independent', () => {
+  /*
+   * 回合状态行(反馈按钮所在那一行)**只在最后一轮出** —— 2026-08-26 产品裁决:
+   * 「应该只有最后一轮底部才会显示,之前轮次不要显示,hover 也不显示」。
+   *
+   * 这条原来钉的是「每一轮都有一组反馈控件」,正是被裁掉的行为。改成钉新口径,
+   * 并保留原来那一半意图:出来的那一组必须**指向它自己那条消息**。
+   */
+  it('only the last artifact turn carries feedback controls, and they target that turn', () => {
     const { onAssistantFeedback } = renderChatPane({
       messages: [
         completedArtifactAssistant({ id: 'assistant-1' }),
@@ -224,15 +231,9 @@ describe('chat assistant feedback', () => {
     });
 
     const groups = screen.getAllByRole('group', { name: 'Feedback' });
-    expect(groups).toHaveLength(2);
+    expect(groups).toHaveLength(1);
 
-    fireEvent.click(within(groups[0]!).getByRole('button', { name: 'Helpful' }));
-    expect(onAssistantFeedback).toHaveBeenLastCalledWith(
-      expect.objectContaining({ id: 'assistant-1' }),
-      { rating: 'positive' },
-    );
-
-    fireEvent.click(within(groups[1]!).getByRole('button', { name: 'Not helpful' }));
+    fireEvent.click(within(groups[0]!).getByRole('button', { name: 'Not helpful' }));
     expect(onAssistantFeedback).toHaveBeenLastCalledWith(
       expect.objectContaining({ id: 'assistant-2' }),
       { rating: 'negative' },

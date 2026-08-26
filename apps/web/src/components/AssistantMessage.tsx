@@ -882,8 +882,23 @@ function AssistantMessageImpl({
    * (流式中途就能复制已出的文字)—— 产品拍板整行不出,那条能力随之关掉,
    * 记在 `specs/current/chat-panel-feedback.md` 的 B50。
    */
+  /*
+   * 回合状态行**只在最后一轮出**(2026-08-26 产品裁决,用户转述:
+   * 「应该只有最后一轮底部才会显示,之前轮次不要显示,hover 也不显示」)。
+   *
+   * 判据放在**渲染层**而不是 CSS:早先它是 `opacity: 0` + hover 显形,同一份门控
+   * 在 `composio.css` 和 `routines.css` 各写了一遍,而旧皮肤那份靠 `.app` 拔到
+   * (0,2,0) 且排在最后,两头都赢 —— 想改行为得同时删两处。直接不渲染就没有这场
+   * 层叠仗,读起来也说得清:这一行属于「这一轮」,而只有最后一轮还是「这一轮」。
+   *
+   * `!streaming` 那一半仍然要:跑的过程中壳头已经在报状态,底下再报一遍是重复。
+   *
+   * **代价说清楚**:复制 / 反馈 / 分叉这几个动作在历史轮次上因此够不着了。
+   * 这是产品明确要的取舍,不是疏漏 —— 要给历史轮次留入口得另想落点。
+   */
   const showCompletionRow =
     !streaming &&
+    !!isLast &&
     (showFeedback ||
     !!message.startedAt ||
     !!message.endedAt ||

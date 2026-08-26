@@ -1802,16 +1802,10 @@
 .app .assistant-footer {
   font-size: 12px;
   color: var(--text-faint);
-  opacity: 0;
-  transition: opacity 150ms var(--ease-out);
 }
-.app .msg.assistant:hover .assistant-footer,
-.app .msg.assistant:focus-within .assistant-footer,
-.app .assistant-footer[data-streaming="true"],
-.app .assistant-footer[data-last="true"] { opacity: 1; }
-@media (hover: none) {
-  .app .assistant-footer { opacity: 1; }
-}
+/* 「hover 才显形」那几条已删 —— 稿子的 `.fb` 常驻,理由见 composio.css 里同名规则。
+   这一层原来靠 `.app` 拔到 (0,2,0) 且排在最后,是产品里真正生效的那份;
+   只删 composio 那份不够,两处必须一起删。 */
 .app .assistant-footer .dot {
   width: 5px;
   height: 5px;
