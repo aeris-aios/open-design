@@ -3,6 +3,7 @@ import type { ProjectScopedPreviewNavigation } from '../providers/registry';
 
 export interface PreviewSessionNavigation extends PreviewRuntimeDocumentIdentity {
   url: string;
+  sandboxProfile: 'normal' | 'powered';
 }
 
 export interface PreviewSessionNavigationPolicy {
@@ -26,14 +27,16 @@ export function buildPreviewSessionNavigation(
   scoped: ProjectScopedPreviewNavigation,
   policy: PreviewSessionNavigationPolicy,
 ): PreviewSessionNavigation {
+  const sandboxProfile = scoped.previewPolicy?.sandboxProfile ?? policy.sandboxProfile;
+  const guards = scoped.previewPolicy?.guards ?? policy.guards;
   const url = new URL(
-    policy.sandboxProfile === 'powered' ? scoped.poweredUrl : scoped.normalUrl,
+    sandboxProfile === 'powered' ? scoped.poweredUrl : scoped.normalUrl,
   );
 
-  if (policy.sandboxProfile === 'normal') {
-    if (policy.guards.storage) url.searchParams.append('odPreviewBridge', 'sandbox');
-    if (policy.guards.focus) url.searchParams.append('odPreviewBridge', 'focus');
-    if (policy.guards.redirect) url.searchParams.append('odPreviewBridge', 'redirect');
+  if (sandboxProfile === 'normal') {
+    if (guards.storage) url.searchParams.append('odPreviewBridge', 'sandbox');
+    if (guards.focus) url.searchParams.append('odPreviewBridge', 'focus');
+    if (guards.redirect) url.searchParams.append('odPreviewBridge', 'redirect');
   }
   if (policy.deck) url.searchParams.append('odPreviewRuntime', 'deck');
 
@@ -41,5 +44,6 @@ export function buildPreviewSessionNavigation(
     sessionId: scoped.sessionId,
     documentVersion: scoped.documentVersion,
     url: url.href,
+    sandboxProfile,
   };
 }

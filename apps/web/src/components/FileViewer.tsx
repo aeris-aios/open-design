@@ -11790,10 +11790,12 @@ function HtmlViewer({
   // decision. The legacy powered-isolation probe belongs only to the legacy
   // URL route and can resolve later (or report unsupported) even though the
   // scoped `p-<session>.localhost` capability is already authoritative.
-  const previewRuntimeFrameSandbox = previewRuntimePolicy.sandboxProfile === 'powered'
+  const previewRuntimeSandboxProfile = previewRuntimeNavigation.navigation?.sandboxProfile
+    ?? previewRuntimePolicy.sandboxProfile;
+  const previewRuntimeFrameSandbox = previewRuntimeSandboxProfile === 'powered'
     ? POWERED_PREVIEW_SANDBOX
     : 'allow-scripts allow-downloads';
-  const previewRuntimeFrameAllow = previewRuntimePolicy.sandboxProfile === 'powered'
+  const previewRuntimeFrameAllow = previewRuntimeSandboxProfile === 'powered'
     ? POWERED_PREVIEW_ALLOW
     : undefined;
   // Arm the first-load overlay only for URL-load previews this pane has never
@@ -17325,7 +17327,11 @@ function HtmlViewer({
                             active={workspaceActive && mode === 'preview'}
                             navigationRetryToken={previewRuntimeNavigationRetryToken}
                             title={file.name}
-                            data-od-powered={needsPowered ? 'true' : undefined}
+                            data-od-powered={
+                              previewRuntimeNavigation.navigation.sandboxProfile === 'powered'
+                                ? 'true'
+                                : undefined
+                            }
                             sandbox={previewRuntimeFrameSandbox}
                             allow={previewRuntimeFrameAllow}
                             onCurrentFrameChange={(frame) => {

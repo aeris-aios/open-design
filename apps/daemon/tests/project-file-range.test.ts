@@ -725,6 +725,10 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
         normalUrl: string;
         poweredUrl: string;
         documentVersion: string;
+        previewPolicy: {
+          sandboxProfile: 'normal' | 'powered';
+          guards: { storage: boolean; focus: boolean; redirect: boolean };
+        };
       };
     };
     const scope = preview.url.match(/\/preview\/([^/]+)\//u)?.[1];
@@ -735,6 +739,10 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
       normalUrl: `http://n-${scope}.localhost:${port}/prototypes/booking/index.html`,
       poweredUrl: `http://p-${scope}.localhost:${port}/prototypes/booking/index.html`,
       documentVersion: expect.stringMatching(/^\d+:\d+(?:\.\d+)?$/u),
+      previewPolicy: {
+        sandboxProfile: 'normal',
+        guards: { storage: true, focus: true, redirect: false },
+      },
     });
     const normalHost = `n-${scope}.localhost:${port}`;
     const html = await scopedRequest(

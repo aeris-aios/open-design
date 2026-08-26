@@ -67,7 +67,8 @@ function sameNavigation(
 ): boolean {
   return left?.sessionId === right.sessionId
     && left.documentVersion === right.documentVersion
-    && left.url === right.url;
+    && left.url === right.url
+    && left.sandboxProfile === right.sandboxProfile;
 }
 
 /**

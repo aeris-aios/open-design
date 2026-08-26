@@ -25,6 +25,7 @@ import type {
   ProjectFileTextPreviewResponse,
   ProjectFileResponse,
   ProjectPreviewScopeRenewResponse,
+  ProjectPreviewPolicy,
   ProjectPreviewUrlResponse,
   ProjectFileVersion,
   ProjectFileVersionSource,
@@ -2363,6 +2364,8 @@ export interface ProjectScopedPreviewNavigation {
   normalUrl: string;
   poweredUrl: string;
   documentVersion: string;
+  /** Absent only when paired with an older daemon during rolling upgrades. */
+  previewPolicy?: ProjectPreviewPolicy;
   renewalScope: ProjectPreviewBaseScope;
 }
 
@@ -2436,6 +2439,13 @@ export async function fetchProjectScopedPreviewNavigation(
 
     const normal = new URL(body.scopedOrigin.normalUrl);
     const powered = new URL(body.scopedOrigin.poweredUrl);
+    const previewPolicy = body.scopedOrigin.previewPolicy;
+    const validPreviewPolicy = previewPolicy === undefined || (
+      (previewPolicy.sandboxProfile === 'normal' || previewPolicy.sandboxProfile === 'powered')
+      && typeof previewPolicy.guards?.storage === 'boolean'
+      && typeof previewPolicy.guards?.focus === 'boolean'
+      && typeof previewPolicy.guards?.redirect === 'boolean'
+    );
     const normalMatch = /^n-([A-Za-z0-9_-]{8,128})\.localhost$/u.exec(normal.hostname);
     const poweredMatch = /^p-([A-Za-z0-9_-]{8,128})\.localhost$/u.exec(powered.hostname);
     const sessionId = normalMatch?.[1];
@@ -2455,6 +2465,7 @@ export async function fetchProjectScopedPreviewNavigation(
       || typeof body.scopedOrigin.documentVersion !== 'string'
       || body.scopedOrigin.documentVersion.length === 0
       || body.scopedOrigin.documentVersion.length > 200
+      || !validPreviewPolicy
     ) return null;
 
     const legacy = new URL(body.url, 'http://open-design.local');
@@ -2471,6 +2482,7 @@ export async function fetchProjectScopedPreviewNavigation(
       normalUrl: normal.href,
       poweredUrl: powered.href,
       documentVersion: body.scopedOrigin.documentVersion,
+      ...(previewPolicy ? { previewPolicy } : {}),
       renewalScope: {
         href: previewCapabilityHref(legacy.pathname.slice(0, directoryEnd)),
         expiresAt,

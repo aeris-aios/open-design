@@ -7,6 +7,7 @@ function document(version: string): PreviewSessionDocument {
     sessionId: 'session-1',
     documentVersion: version,
     url: `http://n-session.localhost/index.html?v=${version}`,
+    sandboxProfile: 'normal',
     target: { postMessage: vi.fn() },
   };
 }

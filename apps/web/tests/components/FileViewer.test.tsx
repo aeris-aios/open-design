@@ -9031,10 +9031,12 @@ describe('FileViewer tweaks toolbar', () => {
         String(input).includes('/api/projects/project-1/preview-url')
       ))).toBe(true);
     });
-    expect(screen.getByTestId('preview-runtime-frame-standby')).toHaveAttribute(
-      'src',
-      'http://n-scope-0002.localhost:43111/gated.html',
-    );
+    await waitFor(() => {
+      expect(screen.getByTestId('preview-runtime-frame-standby')).toHaveAttribute(
+        'src',
+        'http://n-scope-0002.localhost:43111/gated.html',
+      );
+    });
   });
 
   it('surfaces an initial converged navigation failure and recovers on explicit reload', async () => {
@@ -9113,7 +9115,7 @@ describe('FileViewer tweaks toolbar', () => {
           : String(input);
       if (url.startsWith('/api/projects/project-1/raw/powered-runtime.html')) {
         return new Response(
-          '<!doctype html><script>const memory = new SharedArrayBuffer(8)</script>',
+          '<!doctype html><main>The daemon classified this document</main>',
           { status: 200, headers: { 'Content-Type': 'text/html' } },
         );
       }
@@ -9132,6 +9134,10 @@ describe('FileViewer tweaks toolbar', () => {
             normalUrl: 'http://n-scope-powered.localhost:43111/powered-runtime.html',
             poweredUrl: 'http://p-scope-powered.localhost:43111/powered-runtime.html',
             documentVersion: 'powered-runtime-v1',
+            previewPolicy: {
+              sandboxProfile: 'powered',
+              guards: { storage: false, focus: false, redirect: false },
+            },
           },
         }), { status: 200 });
       }

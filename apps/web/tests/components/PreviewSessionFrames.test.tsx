@@ -21,6 +21,7 @@ function navigation(version: string): PreviewSessionNavigation {
     sessionId: 'scope-0001',
     documentVersion: version,
     url: `http://n-scope-0001.localhost:17456/index.html?v=${version}`,
+    sandboxProfile: 'normal',
   };
 }
 

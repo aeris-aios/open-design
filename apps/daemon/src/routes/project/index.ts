@@ -6417,6 +6417,12 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
       const normalOrigin = buildProjectPreviewOrigin(scope, 'normal', daemonPort);
       const poweredOrigin = buildProjectPreviewOrigin(scope, 'powered', daemonPort);
       const encodedFilePath = encodeProjectPathForUrl(meta.name);
+      const previewPolicy = /^text\/html(?:;|$)/i.test(meta.mime)
+        ? await htmlPreviewPolicyIndex.get({
+            filePath: meta.filePath,
+            documentVersion: htmlPreviewDocumentVersion(meta),
+          })
+        : null;
       /** @type {import('@open-design/contracts').ProjectPreviewUrlResponse} */
       const body = {
         url: `/api/projects/${encodeURIComponent(project.id)}/preview/${scope}/${encodedFilePath}`,
@@ -6431,6 +6437,14 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
                 normalUrl: `${normalOrigin}/${encodedFilePath}`,
                 poweredUrl: `${poweredOrigin}/${encodedFilePath}`,
                 documentVersion: htmlPreviewDocumentVersion(meta),
+                ...(previewPolicy
+                  ? {
+                      previewPolicy: {
+                        sandboxProfile: previewPolicy.sandboxProfile,
+                        guards: previewPolicy.guards,
+                      },
+                    }
+                  : {}),
               },
             }
           : {}),

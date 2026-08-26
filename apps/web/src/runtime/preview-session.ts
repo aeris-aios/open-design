@@ -11,6 +11,7 @@ import {
 
 export interface PreviewSessionDocument extends PreviewRuntimeDocumentIdentity {
   url: string;
+  sandboxProfile: 'normal' | 'powered';
   target: PreviewRuntimeMessageTarget;
 }
 

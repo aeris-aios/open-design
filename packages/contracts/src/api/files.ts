@@ -200,6 +200,21 @@ export interface ProjectPreviewUrlResponse {
     normalUrl: string;
     poweredUrl: string;
     documentVersion: string;
+    /**
+     * Daemon-authoritative navigation policy for this exact document version.
+     * Optional while old daemons and new web bundles can be paired during a
+     * rolling desktop update.
+     */
+    previewPolicy?: ProjectPreviewPolicy;
+  };
+}
+
+export interface ProjectPreviewPolicy {
+  sandboxProfile: 'normal' | 'powered';
+  guards: {
+    storage: boolean;
+    focus: boolean;
+    redirect: boolean;
   };
 }
 

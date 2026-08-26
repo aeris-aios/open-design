@@ -265,5 +265,6 @@ function navigationOf(document: PreviewSessionDocument): PreviewSessionNavigatio
     sessionId: document.sessionId,
     documentVersion: document.documentVersion,
     url: document.url,
+    sandboxProfile: document.sandboxProfile,
   };
 }

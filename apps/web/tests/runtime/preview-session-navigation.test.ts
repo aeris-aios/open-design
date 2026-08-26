@@ -33,7 +33,25 @@ describe('buildPreviewSessionNavigation', () => {
       sessionId: 'scope-0001',
       documentVersion: '10:20',
       url: scoped.normalUrl,
+      sandboxProfile: 'normal',
     });
+  });
+
+  it('prefers the daemon policy over a stale host fallback', () => {
+    const authoritative = {
+      ...scoped,
+      previewPolicy: {
+        sandboxProfile: 'powered' as const,
+        guards: { storage: false, focus: false, redirect: false },
+      },
+    };
+    const result = buildPreviewSessionNavigation(authoritative, policy({
+      guards: { storage: true, focus: true, redirect: true },
+    }));
+
+    expect(new URL(result.url).origin).toBe('http://p-scope-0001.localhost:17456');
+    expect(new URL(result.url).searchParams.getAll('odPreviewBridge')).toEqual([]);
+    expect(result.sandboxProfile).toBe('powered');
   });
 
   it('adds passive guards and deck runtime without changing the file path', () => {

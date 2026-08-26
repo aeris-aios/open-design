@@ -179,6 +179,10 @@ describe('persisted project Workspace transport scope', () => {
         normalUrl: 'http://n-scope-0001.localhost:17456/pages/brand.html',
         poweredUrl: 'http://p-scope-0001.localhost:17456/pages/brand.html',
         documentVersion: '120:456.5',
+        previewPolicy: {
+          sandboxProfile: 'powered',
+          guards: { storage: false, focus: false, redirect: false },
+        },
       },
     })));
 
@@ -190,6 +194,10 @@ describe('persisted project Workspace transport scope', () => {
       normalUrl: 'http://n-scope-0001.localhost:17456/pages/brand.html',
       poweredUrl: 'http://p-scope-0001.localhost:17456/pages/brand.html',
       documentVersion: '120:456.5',
+      previewPolicy: {
+        sandboxProfile: 'powered',
+        guards: { storage: false, focus: false, redirect: false },
+      },
       renewalScope: {
         href: 'od://app/api/projects/project-1/preview/scope-0001/pages/',
         expiresAt,
