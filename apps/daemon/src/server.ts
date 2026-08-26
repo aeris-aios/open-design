@@ -11780,16 +11780,12 @@ export async function startServer({
       // the CAPTURED pgid — the SIGKILL escalation is bound to it, so it can
       // never hit the next attempt's group (the cross-generation kill fixed in
       // #5202). On win32 / no pgid, fall back to signalling the direct child.
-      const reaped = design.runs.reapProcessGroup(priorProcessGroupId);
-      if (
-        !reaped &&
-        priorChild &&
-        typeof priorChild.kill === 'function' &&
-        priorChild.exitCode === null &&
-        !priorChild.killed
-      ) {
-        try { priorChild.kill('SIGTERM'); } catch {}
-      }
+      const termination = design.runs.terminateProcessTree(
+        run,
+        priorChild,
+        priorProcessGroupId,
+        { reason: 'retry_generation_replaced' },
+      );
       run.status = 'queued';
       run.updatedAt = Date.now();
       run.child = null;
@@ -11818,6 +11814,7 @@ export async function startServer({
         ...run.analyticsTelemetry,
         startRequestedAt: run.analyticsTelemetry?.startRequestedAt ?? run.createdAt,
       };
+      return termination;
     };
     const spawnRetryAttempt = (retryChatBody = chatBody) => {
       void startChatRun(retryChatBody, run).catch((err) => {
@@ -11843,16 +11840,31 @@ export async function startServer({
     // and finalizes the queued run, and the callback re-checks cancel/terminal
     // state in case it fires first.
     const scheduleRetryRestart = (delayMs, retryChatBody = chatBody) => {
-      tearDownAttemptForRetry();
+      const termination = tearDownAttemptForRetry();
       const wait = Number.isFinite(delayMs) && delayMs > 0 ? delayMs : 0;
+      const spawnWhenQuiescent = () => {
+        void Promise.resolve(termination).then((result) => {
+          if (run.cancelRequested || design.runs.isTerminal(run.status)) return;
+          if (!result?.quiescent) {
+            send('error', createSseErrorPayload(
+              'AGENT_EXECUTION_FAILED',
+              'The previous agent process tree could not be terminated; the retry was stopped before another model request was started.',
+              { retryable: false },
+            ));
+            finishWithRetryDecision('failed', 1, null, { allowRetry: false });
+            return;
+          }
+          spawnRetryAttempt(retryChatBody);
+        });
+      };
       if (wait <= 0) {
-        spawnRetryAttempt(retryChatBody);
+        spawnWhenQuiescent();
         return;
       }
       run.retryRestartTimer = setTimeout(() => {
         run.retryRestartTimer = null;
         if (run.cancelRequested || design.runs.isTerminal(run.status)) return;
-        spawnRetryAttempt(retryChatBody);
+        spawnWhenQuiescent();
       }, wait);
     };
     const finalizeRetryTelemetry = (status, decision, failure, errorCode) => {
@@ -11937,7 +11949,12 @@ export async function startServer({
       const finished = finishRun(status, code, signal);
       return finished;
     };
-    const finishWithRetryDecision = (status, code = null, signal = null) => {
+    const finishWithRetryDecision = (
+      status,
+      code = null,
+      signal = null,
+      { allowRetry = true } = {},
+    ) => {
       lifecycle.mark('finalize_start');
       flushRunMessageEvents(run);
       // Persist the transport-level close mechanism before classifying this
@@ -12014,6 +12031,7 @@ export async function startServer({
         hasNativeSession: !!run.conversationId && !!liveSessionId,
       });
       if (
+        allowRetry &&
         postToolResumeDecision?.shouldRetry &&
         !design.runs.isTerminal(run.status) &&
         run.conversationId &&
@@ -12070,7 +12088,7 @@ export async function startServer({
         attemptCount: run.retryAttemptCount ?? 0,
         sideEffects,
       });
-      if (decision.shouldRetry && !design.runs.isTerminal(run.status)) {
+      if (allowRetry && decision.shouldRetry && !design.runs.isTerminal(run.status)) {
         run.retryOriginalFailure ??= failure ?? undefined;
         if ((run.retryAttemptCount ?? 0) === 0) {
           run.retryOriginFailure = failure ? { ...failure } : null;
@@ -12903,6 +12921,25 @@ export async function startServer({
       }
     };
     let forcedChildShutdownTimers = [];
+    let acpAttemptTermination = null;
+    const beginAcpAttemptTermination = (
+      reason = 'acp_terminal',
+      { gracefulWaitMs = 0 } = {},
+    ) => {
+      if (acpAttemptTermination) return acpAttemptTermination;
+      acpAttemptTermination = design.runs.terminateProcessTree(
+        run,
+        child,
+        run.processGroupId,
+        {
+          gracefulWaitMs,
+          termGraceMs: inactivityKillGraceMs,
+          killGraceMs: inactivityKillGraceMs,
+          reason,
+        },
+      );
+      return acpAttemptTermination;
+    };
     const clearForcedChildShutdown = () => {
       for (const timer of forcedChildShutdownTimers) clearTimeout(timer);
       forcedChildShutdownTimers = [];
@@ -12947,10 +12984,15 @@ export async function startServer({
         // only signals from this watchdog branch should be.
         artifactQuietShutdownRequested = true;
         if (acpSession?.abort) {
+          beginAcpAttemptTermination(
+            'acp_artifact_quiet_timeout',
+            { gracefulWaitMs: 100 },
+          );
           acpSession.abort();
+        } else {
+          if (child && !child.killed) design.runs.signalChild(run, 'SIGTERM');
+          scheduleForcedChildShutdown();
         }
-        if (child && !child.killed) design.runs.signalChild(run, 'SIGTERM');
-        scheduleForcedChildShutdown();
         return;
       }
       // OpenCode retries a 429 usage-limit silently and emits nothing on
@@ -12992,6 +13034,13 @@ export async function startServer({
         ? 'first_output_deadline'
         : 'inactivity_watchdog';
       send('error', stallPayload);
+      if (acpSession?.abort) {
+        beginAcpAttemptTermination(
+          `acp_${reason}_timeout`,
+          { gracefulWaitMs: 100 },
+        );
+        acpSession.abort();
+      }
       // A silent first-token hang is one of the safe transient failure shapes
       // this run is allowed to recover: classifyRunFailure maps the stall text
       // to a retryable `timeout` at `first_token_wait`, and decideSafeRunRetry
@@ -13003,11 +13052,10 @@ export async function startServer({
       if (retried) {
         watchdogRetryRestarted = true;
       }
-      if (acpSession?.abort) {
-        acpSession.abort();
+      if (!acpSession?.abort) {
+        if (child && !child.killed) design.runs.signalChild(run, 'SIGTERM');
+        scheduleForcedChildShutdown();
       }
-      if (child && !child.killed) design.runs.signalChild(run, 'SIGTERM');
-      scheduleForcedChildShutdown();
     };
     const armFirstOutputWatchdog = () => {
       if (firstOutputSeen || firstOutputTimer || firstOutputTimeoutMs <= 0) return;
@@ -13063,27 +13111,23 @@ export async function startServer({
       progressClockFrozen = true;
     };
     /**
-     * The ACP bridge has reached a terminal verdict for this attempt: it has
-     * already emitted the error and SIGTERMed the child. Hand the attempt over
-     * to the close handler under THAT verdict.
+     * The ACP bridge has reached a terminal verdict for this attempt. Hand the
+     * attempt over to the close handler under THAT verdict while the
+     * generation-bound process-tree terminator owns teardown.
      *
-     * Retiring the outer chat inactivity watchdog is the point. `fail()` issues
-     * one direct SIGTERM and nothing escalates it, while the outer watchdog is
-     * still armed from the agent's last real output — so a child that lingers
-     * past that ceiling lets `failForInactivity` fire on a run it does not yet
-     * consider terminal, overwrite `terminal_trigger` with `inactivity_watchdog`,
-     * and emit a second failure. The stall then reads as the wrong clock, which
-     * is the confusion `acp_stage_timeout` exists to remove.
+     * Retiring the outer chat inactivity watchdog is the point. Without that
+     * ownership transfer, a child that lingers past the ceiling lets
+     * `failForInactivity` overwrite `terminal_trigger` with
+     * `inactivity_watchdog` and emit a second failure.
      *
-     * Escalating the teardown is the other half: without it, retiring the
-     * watchdog would leave a SIGTERM-ignoring child with nothing to reap it.
-     * `scheduleForcedChildShutdown` captures this attempt's child, so a retry
-     * that swaps `run.child` inside the grace window is not affected.
+     * The terminator captures this attempt's child and process group, waits for
+     * quiescence, and escalates without ever consulting a retry's replacement
+     * `run.child`.
      */
     const retireAttemptOnAcpVerdict = () => {
       freezeProgressClock();
       clearInactivityWatchdog();
-      scheduleForcedChildShutdown();
+      beginAcpAttemptTermination('acp_verdict');
     };
     const noteAgentActivity = () => {
       // Once this attempt has a terminal verdict, nothing the child says may
@@ -14403,6 +14447,10 @@ export async function startServer({
         onCliReady: () => noteCliReadyAt(),
         onSessionInit: () => noteSessionInitDoneAt(),
         onPromptComplete: () => clearFirstOutputWatchdog(),
+        onTerminal: (kind) => beginAcpAttemptTermination(
+          `acp_${kind}`,
+          { gracefulWaitMs: kind === 'completed' ? 500 : 0 },
+        ),
         send: (event, data, meta) => {
           if (event === 'error') {
             clearFirstOutputWatchdog();
@@ -14704,7 +14752,9 @@ export async function startServer({
       revokeToolToken('child_exit');
       if (!attemptStillOwnsRun()) return;
       unregisterChatAgentEventSink();
+      if (run.pendingTerminalFinish) return;
       if (finishCanceledIfRequested(1, null)) return;
+      if (acpSession) beginAcpAttemptTermination('acp_child_error');
       send('error', createSseErrorPayload('AGENT_EXECUTION_FAILED', err.message));
       finishWithRetryDecision('failed', 1, null);
     });
@@ -14725,6 +14775,8 @@ export async function startServer({
       }
       revokeToolToken('child_exit');
       unregisterChatAgentEventSink();
+      if (run.pendingTerminalFinish) return;
+      if (acpSession) beginAcpAttemptTermination('acp_child_close');
       if (
         def.id === 'codex' &&
         strategyTaskAtStart &&
