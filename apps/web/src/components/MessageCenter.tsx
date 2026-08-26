@@ -93,7 +93,19 @@ let inFlightSync: { generation: number; locale: string; run: Promise<void> } | n
 export function resetMessageCenterSnapshot(): void {
   lastSyncSnapshot = null;
   inFlightSync = null;
+  snapshotWriteToken = 0;
 }
+
+/**
+ * Orders snapshot PUBLICATION across every host, which `syncRequestIdRef`
+ * cannot: that ref lives on one component, so a host which has since unmounted
+ * still matches its own counter forever. Rail and account cluster swap on a
+ * route change, so a slow pull issued by the host that went away resolves with
+ * its request id, account generation and locale all still valid — and would
+ * write its older rows over the snapshot its successor already published, which
+ * the next remount then adopts. Only the newest issued run may publish.
+ */
+let snapshotWriteToken = 0;
 
 function adoptableSnapshot(locale: string): typeof lastSyncSnapshot {
   const snapshot = lastSyncSnapshot;
@@ -154,6 +166,7 @@ export function MessageCenter({
     // account's generation, and a later mount would adopt the previous
     // account's messages as current.
     const issuedAccountGeneration = currentWorkspaceAccountGeneration();
+    const writeToken = ++snapshotWriteToken;
     if (messagesRef.current.length === 0) setSyncState('loading');
     const account = await isAmrLoggedIn();
     const wasAccount = loggedInRef.current;
@@ -186,14 +199,20 @@ export function MessageCenter({
     if (currentWorkspaceAccountGeneration() !== issuedAccountGeneration) return;
     if (account) clearAnonymousState(window.localStorage);
     commitState(merged, overlayReadIds, { persistAnonymous: !account });
-    lastSyncSnapshot = {
-      at: Date.now(),
-      accountGeneration: issuedAccountGeneration,
-      locale,
-      loggedIn: account,
-      messages: merged,
-      readIds: overlayReadIds,
-    };
+    // Component state above is this host's own business and its own request id
+    // already ordered it. The snapshot is shared, so it is published only by
+    // the newest run: a later run has strictly fresher rows, and if it fails
+    // the absent snapshot simply sends the next mount to the network.
+    if (writeToken === snapshotWriteToken) {
+      lastSyncSnapshot = {
+        at: Date.now(),
+        accountGeneration: issuedAccountGeneration,
+        locale,
+        loggedIn: account,
+        messages: merged,
+        readIds: overlayReadIds,
+      };
+    }
     setSyncState('ready');
   }, [commitState, locale]);
 
@@ -329,14 +348,20 @@ export function MessageCenter({
     const account = await resolveLoggedInForWrite();
     if (currentWorkspaceAccountGeneration() !== issuedAccountGeneration) return;
     const readAt = new Date().toISOString();
+    const snapshotAtIssue = lastSyncSnapshot;
     if (account) await markAccountMessageRead(messageId);
+    // Immediately after the await, before ANY mutation. Bailing out further
+    // down was too late: `pendingReadIdsRef` had already taken the old
+    // account's message id — which the next sync replays, marking a
+    // same-id message read for whoever signed in — and the anonymous cache
+    // had already been cleared on the way out of a signed-in session.
+    if (currentWorkspaceAccountGeneration() !== issuedAccountGeneration) return;
     const nextIds = new Set(readIdsRef.current).add(messageId);
     const nextMessages = messagesRef.current.map((item) => (item.id === messageId ? { ...item, readAt } : item));
     if (account) {
       pendingReadIdsRef.current = new Set(pendingReadIdsRef.current).add(messageId);
       clearAnonymousState(window.localStorage);
     }
-    if (currentWorkspaceAccountGeneration() !== issuedAccountGeneration) return;
     invalidateSyncResponses();
     commitState(nextMessages, nextIds, { persistAnonymous: !account });
     // Keep the cross-mount snapshot consistent with what the user just did.
@@ -347,8 +372,12 @@ export function MessageCenter({
     // Matched against the CAPTURED generation, not the current one, so this can
     // only ever update a snapshot belonging to the same account this read began
     // under — never one a newer account published while the write was pending.
+    // Identity, not just shape: `nextMessages` is derived from the rows this
+    // read began on, so patching a snapshot some sync published in the
+    // meantime would drop that sync's newer rows.
     if (
       lastSyncSnapshot
+      && lastSyncSnapshot === snapshotAtIssue
       && lastSyncSnapshot.accountGeneration === issuedAccountGeneration
       && lastSyncSnapshot.locale === locale
     ) {

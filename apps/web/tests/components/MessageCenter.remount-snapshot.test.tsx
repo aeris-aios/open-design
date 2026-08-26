@@ -63,7 +63,150 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+
+function row(id: string, readAt: string | null) {
+  return {
+    id,
+    audienceType: 'global',
+    typeName: 'Product update',
+    title: id,
+    body: id,
+    ctaLabel: null,
+    ctaUrl: null,
+    publishedAt: '2026-07-16T12:00:00.000Z',
+    readAt,
+  };
+}
+
+/** fetch stub whose FIRST message pull is held open until released. */
+function stubFetchWithGatedFirstPull(first: unknown[], later: unknown[]) {
+  let releaseFirst: (() => void) | null = null;
+  let pulls = 0;
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.includes('/integrations/vela/status')) {
+      statusCalls += 1;
+      return Response.json({ loggedIn: false });
+    }
+    if (url.includes('/message-center') && url.includes('/messages')) {
+      messageCalls += 1;
+      pulls += 1;
+      if (pulls === 1) {
+        await new Promise<void>((resolve) => {
+          releaseFirst = resolve;
+        });
+        return Response.json({ messages: first, nextCursor: null, unreadCount: first.length });
+      }
+      return Response.json({ messages: later, nextCursor: null, unreadCount: later.length });
+    }
+    return Response.json({});
+  }));
+  return { release: () => releaseFirst?.() };
+}
+
 describe('MessageCenter remount snapshot', () => {
+  it('does not let a host that already unmounted publish over a newer snapshot', async () => {
+    // `syncRequestIdRef` lives on ONE component, so it can only order that
+    // component's own runs. A host that unmounts mid-flight never bumps its
+    // ref again: when its slow pull finally lands, its request id, the account
+    // generation and the locale all still match, and it wrote its older rows
+    // straight over the snapshot its successor had already published. The next
+    // remount then adopted the stale rows and the unread count went backwards.
+    const gate = stubFetchWithGatedFirstPull(
+      [row('a', null), row('b', null)],   // stale: 2 unread
+      [row('a', '2026-07-16T13:00:00.000Z'), row('b', null)],   // fresh: 1 unread
+    );
+
+    const first = mount();
+    await waitFor(() => expect(messageCalls).toBe(1));
+    first.unmount();
+
+    // The successor joins the in-flight run rather than racing it, so a second
+    // run needs a refresh trigger — the same visibility refresh the component
+    // wires up in production.
+    const second = mount();
+    await Promise.resolve();
+    document.dispatchEvent(new Event('visibilitychange'));
+    await waitFor(() => expect(messageCalls).toBe(2));
+
+    // The fresh run has published. Now let the abandoned host land.
+    gate.release();
+    await new Promise((r) => setTimeout(r, 20));
+    second.unmount();
+
+    const counts: number[] = [];
+    render(
+      <I18nProvider initial="zh-CN">
+        <MessageCenter
+          hideTrigger
+          open={false}
+          onOpenChange={() => {}}
+          onUnreadCountChange={(n) => counts.push(n)}
+        />
+      </I18nProvider>,
+    );
+
+    // Adopted, not refetched — otherwise this asserts the network, not the
+    // snapshot the stale writer was supposed to have corrupted.
+    await waitFor(() => expect(counts.length).toBeGreaterThan(0));
+    expect(messageCalls).toBe(2);
+    expect(counts[counts.length - 1]).toBe(1);
+  });
+
+  it('does not replay the previous account\'s read after a boundary crosses mid-POST', async () => {
+    // `markAccountMessageRead` is an await, and the boundary re-check used to
+    // sit BELOW the mutations that follow it. A sign-out/sign-in landing across
+    // that POST therefore left the old account's message id sitting in
+    // `pendingReadIdsRef` (and the anonymous cache already cleared) before the
+    // function bailed out — and the next sync replays that overlay, so a
+    // same-id message belonging to whoever signed in came back already read.
+    let releaseRead: (() => void) | null = null;
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/integrations/vela/status')) {
+        statusCalls += 1;
+        return Response.json({ loggedIn: true });
+      }
+      if (url.includes('/read') && init?.method === 'POST') {
+        await new Promise<void>((resolve) => {
+          releaseRead = resolve;
+        });
+        return Response.json({ read: true, markedCount: 1 });
+      }
+      if (url.includes('/message-center') && url.includes('/messages')) {
+        messageCalls += 1;
+        return Response.json({
+          messages: [row('zeta-notice', null)],
+          nextCursor: null,
+          unreadCount: 1,
+        });
+      }
+      return Response.json({});
+    }));
+
+    const counts: number[] = [];
+    render(
+      <I18nProvider initial="zh-CN">
+        <MessageCenter onUnreadCountChange={(n) => counts.push(n)} />
+      </I18nProvider>,
+    );
+    await waitFor(() => expect(messageCalls).toBeGreaterThan(0));
+    fireEvent.click(screen.getByTestId('message-center-trigger'));
+    fireEvent.click(await screen.findByRole('button', { name: /zeta-notice/ }));
+    await waitFor(() => expect(releaseRead).not.toBeNull());
+
+    // The account changes underneath the pending write.
+    advanceWorkspaceAccountGeneration('mark-read-post-boundary');
+    releaseRead!();
+    await new Promise((r) => setTimeout(r, 20));
+
+    // The new account's sync must not inherit that read.
+    const before = messageCalls;
+    document.dispatchEvent(new Event('visibilitychange'));
+    await waitFor(() => expect(messageCalls).toBeGreaterThan(before));
+    await waitFor(() => expect(counts[counts.length - 1]).toBe(1));
+  });
+
   it('does not re-sync when it is remounted straight away', async () => {
     const first = await mountAndSettle();
     const afterFirst = { status: statusCalls, messages: messageCalls };

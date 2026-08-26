@@ -1837,6 +1837,14 @@ export function EntryNavRail({
               buttonRef={messageCenterRailRef}
               ariaHasPopup="dialog"
               ariaExpanded={messageCenterOpen}
+              // The panel below is suppressed while the workspace context is
+              // still resolving, so this opener has nothing to open. Leaving it
+              // live let a click set `messageCenterOpen` on a rail that is
+              // about to be replaced by the signed-in cluster — which starts
+              // its own `messageCenterOpen` at false — and the click vanished
+              // with no dialog and no feedback. An opener with no panel must
+              // not accept input.
+              disabled={workspaceContextResolving}
             >
               <Icon name="bell" size={16} />
               {messageUnreadCount > 0 ? (

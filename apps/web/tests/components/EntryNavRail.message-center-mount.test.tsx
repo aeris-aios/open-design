@@ -14,7 +14,7 @@
 // hidden behind an opener, and the count it would report belongs to an identity
 // that has not resolved yet.
 
-import { cleanup, render } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import type { WorkspaceCollabContext } from '@open-design/contracts';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -125,6 +125,41 @@ describe('EntryNavRail message-center mounting', () => {
       </I18nProvider>,
     );
 
+    expect(mountCounter.mounts).toBe(1);
+  });
+
+  it('does not accept a click on the opener while its panel is suppressed', async () => {
+    // The gate suppresses the panel but the rail's bell sits in the
+    // signed-out branch, which `context === null` keeps rendering throughout
+    // resolution. Left enabled, a click set the rail's own `messageCenterOpen`
+    // — and when the context resolved into a workspace, the signed-in cluster
+    // took over with its own state at false, so the click was swallowed with
+    // no dialog and no feedback. An opener with nothing to open must not take
+    // input.
+    const view = await renderRail();
+    const opener = screen.getByTestId('entry-nav-message-center');
+    expect(opener).toBeDisabled();
+
+    fireEvent.click(opener);
+    expect(mountCounter.mounts).toBe(0);
+
+    // Resolving as signed out hands the panel back, opener and all.
+    workspaceContextState.loading = false;
+    const { EntryNavRail } = await import('../../src/components/EntryNavRail');
+    view.rerender(
+      <I18nProvider initial="zh-CN">
+        <EntryNavRail
+          view="home"
+          onViewChange={() => {}}
+          onNewProject={() => {}}
+          open
+          context={null}
+          workspaceContextResolving={false}
+          billing={null}
+        />
+      </I18nProvider>,
+    );
+    expect(screen.getByTestId('entry-nav-message-center')).toBeEnabled();
     expect(mountCounter.mounts).toBe(1);
   });
 
