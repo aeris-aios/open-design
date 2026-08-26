@@ -1611,6 +1611,7 @@ export function EntryShell({
       >
         <EntryNavRail
           view={view}
+          workspaceContextResolving={workspaceLoading}
           onViewChange={changeView}
           onNewProject={() => {
             trackHomeNavClick(analytics.track, {

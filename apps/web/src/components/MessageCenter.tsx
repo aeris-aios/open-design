@@ -13,6 +13,7 @@ import {
   type MessageCenterMessage,
   writeAnonymousState,
 } from '../message-center-client';
+import { currentWorkspaceAccountGeneration } from '../collab/workspace-identity';
 import { Icon } from './Icon';
 import styles from './MessageCenter.module.css';
 
@@ -44,6 +45,60 @@ interface Props {
 }
 
 type SyncState = 'loading' | 'ready' | 'error';
+
+/**
+ * The last successful sync, shared across mounts.
+ *
+ * `EntryNavRail` and `App` own two mutually-exclusive hosts for this panel —
+ * the rail's cluster on the entry views, `WorkspaceTopRightAccountCluster` on a
+ * project route — so every project↔home navigation unmounts one and mounts the
+ * other. Without this, each of those remounts re-ran the whole sync:
+ * `isAmrLoggedIn` plus a paginated `pullMessageCenter`, for a panel the user
+ * has not opened and whose contents cannot have changed in the time it takes to
+ * switch routes.
+ *
+ * Only the MOUNT sync consults this. The 60s interval, the visibility listener
+ * and opening the panel all still fetch, so nothing that exists to observe a
+ * change is weakened — the snapshot only answers "did we just fetch this?".
+ *
+ * Keyed on the account boundary: a sign-out/sign-in makes the previous
+ * account's messages inadmissible no matter how recent they are.
+ */
+const MOUNT_SNAPSHOT_WINDOW_MS = 10_000;
+
+let lastSyncSnapshot: {
+  at: number;
+  accountGeneration: number;
+  loggedIn: boolean;
+  messages: MessageCenterMessage[];
+  readIds: Set<string>;
+} | null = null;
+
+/**
+ * The sync a mount is currently running, if any.
+ *
+ * The snapshot alone only dedupes SEQUENTIAL remounts: it is written when a
+ * sync finishes, so mounts that start while one is still in flight all miss it
+ * and stampede. A route switch produces exactly that shape — the outgoing host
+ * unmounts and the incoming one mounts within the same frame — so both halves
+ * are needed. A mount that finds a sync already running waits for it instead of
+ * starting its own.
+ */
+let inFlightSync: Promise<void> | null = null;
+
+/** Test hook: module state must not leak between cases. */
+export function resetMessageCenterSnapshot(): void {
+  lastSyncSnapshot = null;
+  inFlightSync = null;
+}
+
+function adoptableSnapshot(): typeof lastSyncSnapshot {
+  const snapshot = lastSyncSnapshot;
+  if (!snapshot) return null;
+  if (snapshot.accountGeneration !== currentWorkspaceAccountGeneration()) return null;
+  if (Date.now() - snapshot.at >= MOUNT_SNAPSHOT_WINDOW_MS) return null;
+  return snapshot;
+}
 
 export function MessageCenter({
   onOpenNotificationSettings,
@@ -118,6 +173,13 @@ export function MessageCenter({
     }));
     if (account) clearAnonymousState(window.localStorage);
     commitState(merged, overlayReadIds, { persistAnonymous: !account });
+    lastSyncSnapshot = {
+      at: Date.now(),
+      accountGeneration: currentWorkspaceAccountGeneration(),
+      loggedIn: account,
+      messages: merged,
+      readIds: overlayReadIds,
+    };
     setSyncState('ready');
   }, [commitState, locale]);
 
@@ -129,7 +191,15 @@ export function MessageCenter({
   }, []);
 
   const retrySync = useCallback(() => {
-    void sync().catch(() => setSyncState('error'));
+    // Publish the run so a mount that lands mid-flight can wait for it instead
+    // of starting a second identical sync.
+    const run = sync()
+      .catch(() => setSyncState('error'))
+      .finally(() => {
+        if (inFlightSync === run) inFlightSync = null;
+      });
+    inFlightSync = run;
+    void run;
   }, [sync]);
 
   const invalidateSyncResponses = useCallback(() => {
@@ -144,17 +214,42 @@ export function MessageCenter({
   }, [commitState]);
 
   useEffect(() => {
-    retrySync();
+    // A remount that lands within the window adopts what the previous mount
+    // already fetched; everything else below still goes to the network.
+    let cancelled = false;
+    const adopt = (snapshot: NonNullable<typeof lastSyncSnapshot>) => {
+      if (cancelled) return;
+      loggedInRef.current = snapshot.loggedIn;
+      setLoggedIn(snapshot.loggedIn);
+      commitState(snapshot.messages, snapshot.readIds);
+      setSyncState('ready');
+    };
+    const adopted = adoptableSnapshot();
+    if (adopted) {
+      adopt(adopted);
+    } else if (inFlightSync) {
+      // Someone else's sync is already on the wire for this same data; take its
+      // result rather than racing a second copy of it.
+      if (messagesRef.current.length === 0) setSyncState('loading');
+      void inFlightSync.then(() => {
+        const settled = adoptableSnapshot();
+        if (settled) adopt(settled);
+        else if (!cancelled) retrySync();
+      });
+    } else {
+      retrySync();
+    }
     const interval = window.setInterval(retrySync, 60_000);
     const onVisibility = () => {
       if (document.visibilityState === 'visible') retrySync();
     };
     document.addEventListener('visibilitychange', onVisibility);
     return () => {
+      cancelled = true;
       window.clearInterval(interval);
       document.removeEventListener('visibilitychange', onVisibility);
     };
-  }, [retrySync]);
+  }, [retrySync, commitState]);
 
   useEffect(() => {
     if (open) retrySync();

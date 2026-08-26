@@ -13,6 +13,8 @@ import { resetHtmlThumbnailSourceCache } from '../../src/components/html-thumbna
 import { resetProjectCoverSnapshots } from '../../src/lib/project-cover-cache';
 import { resetThumbnailLoadGateForTests } from '../../src/lib/thumbnail-load-gate';
 import { resetSharedCancellableGet } from '../../src/lib/shared-cancellable-get';
+import { resetMessageCenterSnapshot } from '../../src/components/MessageCenter';
+
 
 beforeEach(() => {
   resetCoalescedGet();
@@ -29,4 +31,8 @@ beforeEach(() => {
   resetProjectCoverSnapshots();
   resetThumbnailLoadGateForTests();
   resetSharedCancellableGet();
+  // MessageCenter keeps its last successful sync at module scope so a remount
+  // (project<->home swaps its host) does not refetch; clear it so one test's
+  // messages never satisfy the next test's mount.
+  resetMessageCenterSnapshot();
 });
