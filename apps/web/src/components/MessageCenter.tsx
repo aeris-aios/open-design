@@ -6,7 +6,6 @@ import { useI18n, type Locale } from '../i18n';
 import {
   clearAnonymousState,
   findGoPlanSunsetMessage,
-  isAmrLoggedIn,
   readAmrAuthMode,
   markAccountMessageRead,
   pullMessageCenter,
@@ -314,7 +313,16 @@ export function MessageCenter({
    * took the signed-out transition, and cleared read ids the new account had
    * already recorded.
    */
-  const resolveLoggedInForWrite = useCallback(async () => isAmrLoggedIn(), []);
+  /**
+   * Answers with the full three-valued mode, and does not publish.
+   *
+   * Returning a boolean here collapsed `unavailable` into `false`, so a
+   * signed-in click during an outage took the ANONYMOUS write path: no account
+   * POST, a write to the shared anonymous cache, and a snapshot delta recorded
+   * as `account: false`. Publishing is still the caller's job, after its
+   * boundary check.
+   */
+  const resolveAuthModeForWrite = useCallback(async () => readAmrAuthMode(), []);
 
   const retrySync = useCallback(() => {
     // Publish the run so a mount that lands mid-flight can wait for it instead
@@ -528,7 +536,14 @@ export function MessageCenter({
     // Claimed before the awaits so a sync issued while this read is in flight
     // outranks it for the shared-cache clear below.
     const readWriteToken = issueSnapshotWriteToken();
-    const account = await resolveLoggedInForWrite();
+    const writeAuthMode = await resolveAuthModeForWrite();
+    // `unavailable` is not an answer about the user, and every branch below
+    // needs one: the account path would skip its POST, and the anonymous path
+    // would write a signed-in user's read into shared anonymous state. The
+    // click is dropped rather than guessed at; a later attempt, once the
+    // runtime answers, records it properly.
+    if (writeAuthMode === 'unavailable') return;
+    const account = writeAuthMode === 'signed-in';
     // Published only once the boundary is confirmed, below.
     if (options?.requireAccount && !account) {
       throw new Error('A signed-in account is required to acknowledge this announcement');

@@ -1243,6 +1243,64 @@ describe('MessageCenter remount snapshot', () => {
     await waitFor(() => expect(pending[pending.length - 1]).toBe(false));
   });
 
+  it('does not write anonymous state for a signed-in click during an outage', async () => {
+    // `markRead` resolved a BOOLEAN, so a 503 collapsed to `false` and a
+    // signed-in click took the anonymous path: no account POST, a write to the
+    // shared anonymous cache, and a snapshot delta recorded as `account: false`.
+    let mode: 'up' | 'down' = 'up';
+    let readPosts = 0;
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/integrations/vela/status')) {
+        statusCalls += 1;
+        if (mode === 'down') {
+          return new Response(JSON.stringify({ error: 'amr-runtime-unavailable' }), {
+            status: 503,
+            headers: { 'content-type': 'application/json' },
+          });
+        }
+        return Response.json({ loggedIn: true });
+      }
+      if (url.includes('/read') && init?.method === 'POST') {
+        readPosts += 1;
+        return Response.json({ read: true, markedCount: 1 });
+      }
+      if (url.includes('/message-center') && url.includes('/messages')) {
+        messageCalls += 1;
+        return Response.json({ messages: [row('outage-click', null)], nextCursor: null, unreadCount: 1 });
+      }
+      return Response.json({});
+    }));
+
+    const counts: number[] = [];
+    render(
+      <I18nProvider initial="zh-CN">
+        <MessageCenter onUnreadCountChange={(n) => counts.push(n)} />
+      </I18nProvider>,
+    );
+    await waitFor(() => expect(messageCalls).toBeGreaterThan(0));
+    fireEvent.click(screen.getByTestId('message-center-trigger'));
+    const target = await screen.findByRole('button', { name: /outage-click/ });
+    await new Promise((r) => setTimeout(r, 30));
+
+    // The runtime drops, and the signed-in user clicks an unread row.
+    mode = 'down';
+    fireEvent.click(target);
+    await new Promise((r) => setTimeout(r, 40));
+
+    // Nothing may have been guessed at: no POST, no anonymous cache, and the
+    // shared snapshot untouched — a remount must not replay it either.
+    expect(readPosts).toBe(0);
+    expect(window.localStorage.getItem('open-design.message-center.anonymous-read-ids.v1') ?? '')
+      .not.toContain('outage-click');
+
+    // Once the runtime answers again, the same click records properly.
+    mode = 'up';
+    fireEvent.click(screen.getByRole('button', { name: /outage-click/ }));
+    await waitFor(() => expect(readPosts).toBe(1));
+    await waitFor(() => expect(counts[counts.length - 1]).toBe(0));
+  });
+
   it('does not re-sync when it is remounted straight away', async () => {
     const first = await mountAndSettle();
     const afterFirst = { status: statusCalls, messages: messageCalls };
