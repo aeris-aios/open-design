@@ -3517,6 +3517,7 @@ export const it: Dict = {
   'assistant.openFile': 'Apri',
   'assistant.downloadFile': 'Scarica',
   'nextStep.title': 'Passo successivo',
+  'nextStep.suggestionsLabel': 'Prossimi passi suggeriti',
   'nextStep.more': 'Altro',
   'nextStep.share': 'Condividi',
   'nextStep.download': 'Scarica',

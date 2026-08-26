@@ -14,6 +14,12 @@
  * Protocol markers are stable API: `<question-form>`, the
  * `pick_direction` / `brand_spec` / `reference_match` values, `data-od-id`,
  * and the pinned React script versions.
+ *
+ * The keyed per-turn markers — `<od-done key="…"/>` and the `<od-next key="…">`
+ * follow-up block — deliberately live OUTSIDE this document, in the per-turn
+ * instruction slice (`server.ts`). Their key is a fresh nonce every run, so
+ * putting them here would move the cached stable prefix on every turn of every
+ * conversation and guarantee a prompt-cache miss.
  */
 import type { ExecutionProfile } from '@open-design/contracts';
 

@@ -114,6 +114,19 @@ export type DaemonAgentPayload =
    * the `done_key` member of `PersistedAgentEvent` for the protocol rationale.
    */
   | { type: 'done_key'; key: string }
+  /**
+   * This turn's follow-up suggestions, already parsed and validated out of the
+   * agent's `<od-next key="…">` marker. Emitted once, after the marker closes.
+   *
+   * The raw marker never reaches the client: the daemon strips it from the
+   * visible text stream and checks its key against the turn's nonce, so a
+   * suggestion the client receives is one the model was authorised to make.
+   * A turn with no marker simply emits no event — which is also what every
+   * conversation recorded before this event existed looks like, and is why the
+   * client must render nothing at all rather than falling back to a default
+   * list.
+   */
+  | { type: 'next_steps'; suggestions: string[] }
   | { type: 'conversation_title'; title: string }
   | { type: 'thinking_delta'; delta: string }
   | { type: 'thinking_start' }

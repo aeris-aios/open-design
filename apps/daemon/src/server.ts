@@ -20,6 +20,7 @@ import net from 'node:net';
 import { executionProfileFromStreamFormat, PLUGIN_SHARE_ACTION_PLUGIN_IDS } from '@open-design/contracts';
 import { isTodoWriteToolName, stopReasonIsTruncation, todoItemsFromTodoWriteInput } from '@open-design/contracts';
 import { renderDoneMarker } from '@open-design/contracts';
+import { renderNextStepMarkerExample } from '@open-design/contracts';
 import type {
   CollabCloudMemberDirectoryEntry,
   TeamProject,
@@ -416,6 +417,7 @@ import { ingestRoutineConnectorEvolution } from './automation-routine-evolution.
 import { createClaudeStreamHandler } from './runtimes/claude-stream.js';
 import { createAgentTitleMarkerStripper } from './title-marker.js';
 import { createPanelGrammarStripper } from './panel-grammar-strip.js';
+import { createNextStepMarkerStripper } from './next-step-marker.js';
 import { createRoleMarkerGuard } from './role-marker-guard.js';
 import { createToolLoopGuard, resolveToolLoopMode, type ToolLoopVerdict } from './tool-loop-guard.js';
 import { diagnoseClaudeCliFailure } from './claude-diagnostics.js';
@@ -10572,6 +10574,38 @@ export async function startServer({
           'The marker is protocol, not prose: do not mention it, do not explain it, and do not wrap it in a code fence (a fenced marker is deliberately ignored).',
         ].join('\n')
       : '';
+    /*
+     * This turn's follow-up suggestions.
+     *
+     * Shares the per-turn nonce with the done marker above — see
+     * `packages/contracts/src/api/next-step-marker.ts` for why this marker is
+     * keyed at all (clicking a suggestion sends that exact sentence as the
+     * user's next message, so an unkeyed marker would let any text the agent
+     * read plant a sentence in the user's own composer path). Reusing the
+     * existing nonce keeps the cost at one prompt sentence: no second key to
+     * mint, no second event on the wire, and the model has already copied this
+     * exact string once in the same turn.
+     *
+     * Per-turn slice for the same cache reason as the done marker: a fresh
+     * nonce in the stable prefix would miss the prompt cache on every turn.
+     */
+    const nextStepPrompt = typeof run.doneKey === 'string' && run.doneKey
+      ? [
+          'Follow-up suggestions:',
+          'As the very last thing in this turn — after your summary, delivery note, or <artifact> block — emit exactly one block of follow-up suggestions:',
+          renderNextStepMarkerExample(run.doneKey, [
+            'Add an orders list page',
+            'Switch the product cards to a two-column layout',
+            'Add a dark mode',
+          ]),
+          'Rules: exactly three lines, one suggestion per line, no bullets, no numbering, no trailing punctuation.',
+          'Each line is a concrete next action on what THIS turn actually produced, worded so the user could send it verbatim as their next message — not a topic, not a question, not an offer of help.',
+          'Write them in the language the user is speaking, and keep each under 120 characters.',
+          `This turn's key is ${run.doneKey}: copy it verbatim, never reuse an earlier one, and never invent one.`,
+          'Skip the block entirely when the turn produced nothing to iterate on — a greeting, a plain answer, a turn ending in a <question-form> — or when you have no useful suggestion. Omitting it is fine; padding it with filler is not.',
+          'The block is protocol, not prose: do not mention it, do not explain it, and do not wrap it in a code fence.',
+        ].join('\n')
+      : '';
     // The connected-external-MCP directive reflects live OAuth token state,
     // which flips mid-conversation as Bearers expire/refresh. Keeping it out of
     // the cached stable prefix (daemonSystemPrompt) and re-sending it here in
@@ -10580,8 +10614,8 @@ export async function startServer({
     // giving the model the current MCP auth state on every turn.
     const mcpConnectedDirective = renderConnectedExternalMcpDirective(connectedExternalMcp);
     const clientInstructionParts = includeStableInstructions
-      ? [researchCommandContract, runContextPrompt, mcpConnectedDirective, browserUsePromptGuard, titleGenerationPrompt, doneMarkerPrompt, systemPrompt]
-      : [researchCommandContract, runContextPrompt, mcpConnectedDirective, browserUsePromptGuard, titleGenerationPrompt, doneMarkerPrompt];
+      ? [researchCommandContract, runContextPrompt, mcpConnectedDirective, browserUsePromptGuard, titleGenerationPrompt, doneMarkerPrompt, nextStepPrompt, systemPrompt]
+      : [researchCommandContract, runContextPrompt, mcpConnectedDirective, browserUsePromptGuard, titleGenerationPrompt, doneMarkerPrompt, nextStepPrompt];
     const clientInstructionPrompt = clientInstructionParts
       .map((part) => (typeof part === 'string' ? part.trim() : ''))
       .filter(Boolean)
@@ -12776,11 +12810,31 @@ export async function startServer({
      * 但两个都必须有各自的半截缓冲,否则会闪出半截标签。
      */
     const panelGrammarStripper = createPanelGrammarStripper();
+    /*
+     * 这一轮的「下一步建议」(`<od-next key="…">`,见 `next-step-marker.ts`)。
+     *
+     * 和上面两个剥离器串在同一条链上,理由一样:所有可见文本都要过这条链,
+     * 挂在这里就不会漏掉任何一个调用点。它排在最外层 —— 看到的正是客户端
+     * 将要看到的文本,判据和最终屏幕上的东西一致。
+     *
+     * key 只管**采纳**,不管**剥离**:key 不对、没写 key、这一轮压根没 key,
+     * 标记照样吃掉。这是 `<od-title>` 拿线上事故换来的规矩。
+     */
+    const nextStepMarkerStripper = createNextStepMarkerStripper({
+      key: typeof run.doneKey === 'string' && run.doneKey ? run.doneKey : null,
+      emit: (suggestions) => send('agent', { type: 'next_steps', suggestions }),
+    });
     const titleMarkerStripper = {
-      strip: (delta: string) => panelGrammarStripper.strip(rawTitleMarkerStripper.strip(delta)),
+      strip: (delta: string) =>
+        nextStepMarkerStripper.strip(
+          panelGrammarStripper.strip(rawTitleMarkerStripper.strip(delta)),
+        ),
       flush: () => {
-        const head = panelGrammarStripper.strip(rawTitleMarkerStripper.flush());
-        return head + panelGrammarStripper.flush();
+        const head = nextStepMarkerStripper.strip(
+          panelGrammarStripper.strip(rawTitleMarkerStripper.flush()),
+        );
+        const mid = nextStepMarkerStripper.strip(panelGrammarStripper.flush());
+        return head + mid + nextStepMarkerStripper.flush();
       },
     };
 

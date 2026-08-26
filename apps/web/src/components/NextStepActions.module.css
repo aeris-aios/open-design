@@ -35,6 +35,87 @@
   }
 }
 
+/*
+ * 稿子第 41 / 42 格 —— agent 现写的三条行为引导。
+ *
+ * 稿子 `.nexts button { display:flex; align-items:center; gap:8px; width:100%;
+ * padding: 9px 11px; border:none; background:none; font-size: var(--t-mini);
+ * color: var(--text); text-align:left }`。度量和下面那批工具箱行**是同一套** ——
+ * 行高 35px、`9px 11px` 内距、8px 间隙、12px 字、hover 只亮一行 —— 那部分
+ * 前一版已经对齐过稿子,这次换的是**内容来源和行的构成**,不是度量。
+ *
+ * 构成上的两处差别,都照稿子:
+ *   · 每行是**同一枚箭头** + 一句话,没有分类图标;
+ *   · **行尾没有 chevron** —— 点一条就是把那句话发出去,不展开任何东西,
+ *     一个指向别处的箭头会承诺一个并不存在的下一层。
+ */
+.suggestions {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.suggestionRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 11px;
+  font-size: 12px;
+  color: var(--text);
+  background: none;
+  border: 0;
+  border-radius: 0;
+  cursor: pointer;
+  text-align: left;
+  transition:
+    background-color var(--duration-faster) var(--ease-out),
+    color var(--duration-faster) var(--ease-out);
+}
+
+/*
+ * 祖先 `.suggestions` 不是可省的装饰,它在这里**承担层叠职责**:
+ * 全局 `button:hover:not(:disabled) { background: var(--bg-subtle) }` 是 (0,2,1)
+ * —— `:not()` 里的 `:disabled` 照样计入 b 档,再加元素名 `button` 的 c 档。
+ * 只写 `.suggestionRow:hover` 是 (0,2,0),会输给它,量出来的底色就成了
+ * `--bg-subtle` 而不是稿子要的 `--bg-panel`。补上祖先 = (0,3,0) 才是照抄。
+ * (工具箱那一族踩过同一个坑,注释见下面 `.toolboxList .toolboxRow:hover`。)
+ */
+.suggestions .suggestionRow:hover {
+  background: var(--bg-panel);
+  color: var(--text-strong);
+}
+
+.suggestionRow:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* 稿子 `.nexts button svg { flex:none; width:12px; height:12px;
+   color: var(--text-soft) }` —— 箭头是辅助信息,和正文同一条灰阶上的下一档,
+   不是品牌色的重音。 */
+.suggestions .suggestionRow svg {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  color: var(--text-soft);
+}
+
+/* 稿子 `.nexts button:hover svg { color: var(--text-strong) }` ——
+   指到哪一行,那一行的字**和箭头**一起转深,整条亮起来才算显出自己的形状。 */
+.suggestions .suggestionRow:hover svg {
+  color: var(--text-strong);
+}
+
+/* 一句话,一行装不下就截断 —— 稿子把这一行固定在 35px */
+.suggestionText {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* 容器按稿子去掉内距之后,这一行自己贴着行的内距走,才不会顶到边上。
    `9px 11px` 就是稿子 `.nexts button` 的内距 —— 用同一个值,不另发明一个。
    (稿子里没有这一行标题;它是我们多出来的,归属见 T12 那条) */

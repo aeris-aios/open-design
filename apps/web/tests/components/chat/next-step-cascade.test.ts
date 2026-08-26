@@ -184,3 +184,76 @@ describe('下一步引导 · 稿子的计算值', () => {
     expect(sizes.every((s) => s === 12), `行内 Icon 尺寸:${sizes.join(',')}`).toBe(true);
   });
 });
+
+/**
+ * 第 #41 / #42 格现在挂的是 **agent 现写的三条建议**(产品裁决 2026-08-26:
+ * 固定的工具箱目录不要了)。稿子 `.nexts` 那几条规则现在落在 `.suggestions`
+ * 这一族上,层叠的坑和上面那族一模一样,所以照样得钉。
+ */
+describe('下一步引导 · 三条建议', () => {
+  it('hover 底色必须压过全局 button:hover', () => {
+    const globalHover = findRule(
+      PRIMITIVES,
+      (r) => r.sel === 'button:hover:not(:disabled)' && /background:/.test(r.body),
+      'primitives.css 的 button:hover:not(:disabled)',
+    );
+    const ourHover = findRule(
+      MODULE,
+      (r) => /suggestionRow:hover$/.test(r.sel) && /background:\s*var\(--bg-panel\)/.test(r.body),
+      '把建议行刷成 --bg-panel 的那条 hover 规则',
+    );
+    expect(
+      gt(specificity(ourHover.sel), specificity(globalHover.sel)),
+      `我们的 ${ourHover.sel} = ${specificity(ourHover.sel)} 没压过全局 ${globalHover.sel} = ${specificity(globalHover.sel)}`,
+    ).toBe(true);
+  });
+
+  /** 稿子 `.nexts button { padding: 9px 11px; gap: 8px; font-size: var(--t-mini) }` */
+  it('行的度量逐值照抄稿子', () => {
+    const row = findRule(
+      MODULE,
+      (r) => /suggestionRow$/.test(r.sel) && /padding:/.test(r.body),
+      '建议行本体规则',
+    );
+    expect(row.body).toMatch(/padding:\s*9px 11px/);
+    expect(row.body).toMatch(/gap:\s*8px/);
+    expect(row.body).toMatch(/font-size:\s*12px/);
+    const transition = /transition:([^;]*)/.exec(row.body)?.[1] ?? '';
+    expect(transition).toMatch(/background-color\s+var\(--duration-faster\)\s+var\(--ease-out\)/);
+    expect(transition).toMatch(/\bcolor\s+var\(--duration-faster\)\s+var\(--ease-out\)/);
+    expect(transition).not.toMatch(/border-color/);
+  });
+
+  /** 稿子 `.nexts button svg { flex:none; width:12px; height:12px; color: var(--text-soft) }` */
+  it('箭头是 12px 且取 --text-soft,hover 时跟着字转 --text-strong', () => {
+    const icon = findRule(
+      MODULE,
+      (r) => /suggestions\b/.test(r.sel) && /suggestionRow svg$/.test(r.sel),
+      '建议行内 svg 的尺寸 / 颜色规则',
+    );
+    expect(icon.body).toMatch(/width:\s*12px/);
+    expect(icon.body).toMatch(/height:\s*12px/);
+    expect(icon.body).toMatch(/color:\s*var\(--text-soft\)/);
+    expect(icon.body).toMatch(/flex:\s*none/);
+
+    const hoverIcon = findRule(
+      MODULE,
+      (r) => /suggestionRow:hover svg$/.test(r.sel),
+      'hover 时建议行 svg 的颜色规则',
+    );
+    expect(hoverIcon.body).toMatch(/color:\s*var\(--text-strong\)/);
+  });
+
+  /**
+   * 稿子里每行只有**一枚箭头**,行尾没有 chevron —— 点一条是直接把那句话发出去,
+   * 没有下一层可展开。多画一个指向别处的箭头,是承诺一个不存在的东西。
+   */
+  it('行里只有一枚箭头,没有行尾 chevron', () => {
+    const start = COMPONENT_TSX.indexOf('styles.suggestions');
+    expect(start, '组件里找不到建议列表那一段').toBeGreaterThan(-1);
+    const section = COMPONENT_TSX.slice(start, COMPONENT_TSX.indexOf('styles.toolboxList'));
+    expect(section.match(/<svg/g) ?? []).toHaveLength(1);
+    expect(section).not.toMatch(/chevron-right/);
+    expect(section).not.toMatch(/<Icon\b/);
+  });
+});

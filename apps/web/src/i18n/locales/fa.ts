@@ -3517,6 +3517,7 @@ export const fa: Dict = {
   'assistant.openFile': 'باز کردن',
   'assistant.downloadFile': 'دانلود',
   'nextStep.title': 'گام بعدی',
+  'nextStep.suggestionsLabel': 'گام‌های بعدی پیشنهادی',
   'nextStep.more': 'بیشتر',
   'nextStep.share': 'اشتراک‌گذاری',
   'nextStep.download': 'دانلود',

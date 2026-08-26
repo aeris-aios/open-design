@@ -3723,6 +3723,7 @@ export const zhTW: Dict = {
   "assistant.openFile": "開啟",
   "assistant.downloadFile": "下載",
   "nextStep.title": "下一步",
+  "nextStep.suggestionsLabel": "下一步建議",
   "nextStep.more": "更多",
   "nextStep.share": "分享",
   "nextStep.download": "下載",

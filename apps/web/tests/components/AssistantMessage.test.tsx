@@ -310,29 +310,15 @@ describe('AssistantMessage feedback gate', () => {
     expect(onForkFromMessage).toHaveBeenCalledTimes(1);
   });
 
-  it('reaches Contribute (share to OpenDesign) through the More -> Share cascade', () => {
-    const onShare = vi.fn();
-
-    render(
-      <AssistantMessage
-        message={baseMessage({ producedFiles: [producedFile('landing.html')] })}
-        streaming={false}
-        projectId="proj-1"
-        isLast
-        onFeedback={vi.fn()}
-        onShareToOpenDesign={onShare}
-      />,
-    );
-
-    // Contribute lives behind the next-step card's More -> Share flyout; the busy
-    // guard in NextStepActions (and the menu closing on click) prevent a second
-    // submit, replacing the old always-visible disabled button.
-    fireEvent.mouseEnter(screen.getByTestId('next-step-toolbox-more'));
-    fireEvent.mouseEnter(screen.getByTestId('next-step-more-share'));
-    fireEvent.click(screen.getByTestId('next-step-share-contribute'));
-
-    expect(onShare).toHaveBeenCalledTimes(1);
-  });
+  /*
+   * 「贡献到 OpenDesign 社区」原来的用例住在这里,走的是下一步引导的
+   * 更多 → 分享 → 贡献 三级路径。产品裁决(2026-08-26)把 `default` 那一档
+   * 整档换成 agent 现写的三条行为引导,那条路径连同它的三级菜单一起没了,
+   * 这个入口因此**没有落点了**。
+   *
+   * 用例移到 `AssistantMessage.nextStep.test.tsx`,在那里连同「该给它找哪个
+   * 新家」一起记着 —— 不在这里再写一份「断言它不可达」,那等于把回归钉死。
+   */
 
   it('lands a fork divider carrying the inherited title plus the "context came with you" note', () => {
     // 设计稿第 38 格:Fork 不是跳走 —— 点完必须在这条回复下面**原地**留下痕迹,

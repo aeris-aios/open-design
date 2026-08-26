@@ -3517,6 +3517,7 @@ export const ptBR: Dict = {
   'assistant.openFile': 'Abrir',
   'assistant.downloadFile': 'Baixar',
   'nextStep.title': 'Próximo passo',
+  'nextStep.suggestionsLabel': 'Próximos passos sugeridos',
   'nextStep.more': 'Mais',
   'nextStep.share': 'Compartilhar',
   'nextStep.download': 'Baixar',

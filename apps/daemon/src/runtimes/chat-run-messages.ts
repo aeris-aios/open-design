@@ -1,6 +1,7 @@
 import { performance } from 'node:perf_hooks';
 import type Database from 'better-sqlite3';
 import type { PersistedAgentEvent } from '@open-design/contracts';
+import { MAX_NEXT_STEP_SUGGESTIONS } from '@open-design/contracts';
 import type { RunFinishedProps } from '@open-design/contracts/analytics';
 import {
   appendMessageAgentEvents,
@@ -407,6 +408,20 @@ export function daemonAgentPayloadToPersistedAgentEvent(data: unknown): Persiste
    */
   if (type === 'done_key' && typeof data.key === 'string' && data.key) {
     return { kind: 'done_key', key: data.key };
+  }
+  /**
+   * Persisted so a reloaded conversation shows the same three follow-up rows it
+   * showed live. A turn with no such event renders no row at all — that is what
+   * every conversation from before this event looks like, and the suggestions
+   * are about what that specific turn built, so there is nothing to fall back
+   * to.
+   */
+  if (type === 'next_steps' && Array.isArray(data.suggestions)) {
+    const suggestions = data.suggestions
+      .filter((s): s is string => typeof s === 'string' && s.trim().length > 0)
+      .slice(0, MAX_NEXT_STEP_SUGGESTIONS);
+    if (suggestions.length === 0) return null;
+    return { kind: 'next_steps', suggestions };
   }
   if (type === 'conversation_title' && typeof data.title === 'string') {
     return { kind: 'conversation_title', title: data.title };

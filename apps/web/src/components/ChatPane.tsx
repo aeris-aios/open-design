@@ -34,12 +34,7 @@ import { amrHandoffDeviceId, attributedAmrUrl, recordAmrEntry } from '../analyti
 import { useI18n, useT } from '../i18n';
 import { startersForProduct, type ProductType } from '../onboarding/recommendation';
 import { starterCopyFor } from '../onboarding/starter-copy';
-import {
-  FEATURED_DESIGN_TOOLBOX_ACTION_IDS,
-  findDesignToolboxSkill,
-  getDesignToolboxAction,
-  type DesignToolboxActionId,
-} from '../runtime/design-toolbox';
+import type { DesignToolboxActionId } from '../runtime/design-toolbox';
 import { isRetryableAssistantTerminalFailure } from '../runtime/design-delivery';
 import {
   formatAttachmentSize,
@@ -892,6 +887,9 @@ function hasVisibleBrandAssistantEvent(event: NonNullable<ChatMessage['events']>
     case 'conversation_title':
     // Protocol metadata for this turn's done marker — never user-visible.
     case 'done_key':
+    // The follow-up suggestions are an affordance under the answer, not
+    // content of the answer — a turn that produced only these is still empty.
+    case 'next_steps':
       return false;
   }
 }
@@ -1159,6 +1157,24 @@ export function ChatPane({
     });
   }, [onSessionModeChange, sessionMode]);
 
+  /**
+   * 点一条「下一步引导」= 把那句话当作用户的下一条消息**直接发出去**。
+   *
+   * 和上面几个 next-step 回调不一样:它们往输入框里塞草稿(动作背后还有参数
+   * 要人确认),而这三条本来就是**一句能直接发的话** —— 模型是照着「用户下一
+   * 条消息该怎么写」写的。塞进草稿再让人按一次回车,是凭空多一步。
+   *
+   * 走的是和「重试这张图」同一条正常发送路径(`onSend`),不是伪造事件。
+   */
+  const handleNextStepSuggestion = useCallback(
+    (text: string) => {
+      const prompt = text.trim();
+      if (!prompt) return;
+      void onSend(prompt, [], [], { entryFrom: 'next_step' });
+    },
+    [onSend],
+  );
+
   const handleChatRailNavigate = useCallback(
     (message: ChatMessage, messageIndex: number) => {
       const log = logRef.current;
@@ -1236,17 +1252,6 @@ export function ChatPane({
             : 'brand-ai-incomplete'
         : 'design-system'
       : 'default';
-  // The `@skill` shown in each featured row's hover detail — matched the same
-  // way the composer matches it, using the raw skill name (what gets inlined
-  // into the draft). Recomputed only when the skill list changes.
-  const featuredToolboxSkillNames = useMemo<Partial<Record<DesignToolboxActionId, string | null>>>(() => {
-    const map: Partial<Record<DesignToolboxActionId, string | null>> = {};
-    for (const id of FEATURED_DESIGN_TOOLBOX_ACTION_IDS) {
-      const action = getDesignToolboxAction(id);
-      map[id] = action ? (findDesignToolboxSkill(action, skills)?.name ?? null) : null;
-    }
-    return map;
-  }, [skills]);
   const blankProjectComposerScenarios = useMemo<PlaceholderScenario[]>(
     () => pickStarters(projectMetadata, t).map((starter, index) => ({
       id: `blank-${projectMetadata?.kind ?? 'prototype'}-${index}`,
@@ -2820,9 +2825,9 @@ export function ChatPane({
                   onNextStepCreateDesignSystem={onCreateDesignSystemFromProject}
                   nextStepCreateDesignSystemBusy={createDesignSystemFromProjectBusy}
                   onPickSkill={handlePickSkill}
+                  onNextStepSuggestion={handleNextStepSuggestion}
                   onArtifactDownload={onArtifactDownload}
                   nextStepSkills={skills}
-                  toolboxSkillNames={featuredToolboxSkillNames}
                   nextStepVariant={nextStepVariant}
                   onForkFromMessage={viewerOnly ? undefined : onForkFromMessage}
                   onAssistantFeedback={onAssistantFeedback}
@@ -3545,9 +3550,9 @@ function ChatRows({
   onNextStepCreateDesignSystem,
   nextStepCreateDesignSystemBusy,
   onPickSkill,
+  onNextStepSuggestion,
   onArtifactDownload,
   nextStepSkills,
-  toolboxSkillNames,
   nextStepVariant,
   onForkFromMessage,
   onAssistantFeedback,
@@ -3607,9 +3612,10 @@ function ChatRows({
   onNextStepCreateDesignSystem?: () => void;
   nextStepCreateDesignSystemBusy?: boolean;
   onPickSkill?: (skillId: string) => void;
+  /** 把一条「下一步引导」当作用户的下一条消息直接发出去 */
+  onNextStepSuggestion?: (text: string) => void;
   onArtifactDownload?: (fileName: string) => void;
   nextStepSkills?: SkillSummary[];
-  toolboxSkillNames?: Partial<Record<DesignToolboxActionId, string | null>>;
   nextStepVariant?: NextStepActionsVariant;
   onForkFromMessage?: (message: ChatMessage) => void;
   onAssistantFeedback?: (message: ChatMessage, change: ChatMessageFeedbackChange) => void;
@@ -3822,9 +3828,9 @@ function ChatRows({
         }
         nextStepCreateDesignSystemBusy={nextStepCreateDesignSystemBusy}
         onPickSkill={onPickSkill}
+        onNextStepSuggestion={onNextStepSuggestion}
         onArtifactDownload={onArtifactDownload}
         nextStepSkills={nextStepSkills}
-        toolboxSkillNames={toolboxSkillNames}
         nextStepVariant={nextStepVariant}
       />
     );

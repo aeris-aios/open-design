@@ -13,7 +13,11 @@ import type {
   ProjectBrowserWorkspaceTab,
   ProjectTabsState,
 } from '@open-design/contracts';
-import { eventsEndedWithUnfinishedWork, stripDoneMarkers } from '@open-design/contracts';
+import {
+  eventsEndedWithUnfinishedWork,
+  stripDoneMarkers,
+  stripNextStepMarkers,
+} from '@open-design/contracts';
 import { migrateCollabSyncSnapshots } from './collab/sync-snapshot-store.js';
 import { migrateCommentRelayOutbox } from './collab/comment-relay-outbox.js';
 import { migratePublicFilePublications } from './collab/public-file-publication-store.js';
@@ -3016,8 +3020,14 @@ function materializeMessageAgentEvents(
        * `<od-done key="…"/>` in any of those is a protocol tag on screen — the
        * exact failure `<od-title>` already shipped once.
        */
+      /*
+       * `<od-next key="…">…</od-next>` is stripped from the live stream before
+       * anything is persisted, so this is belt-and-braces: the body is the one
+       * surface a future path could reach without passing the stream stripper,
+       * and the cost of being wrong there is a protocol tag in an export.
+       */
       if (event?.kind === 'text' && typeof event.text === 'string') {
-        textDelta += stripDoneMarkers(event.text);
+        textDelta += stripNextStepMarkers(stripDoneMarkers(event.text));
       }
     }
     events = mergeMessageAgentEvents(events, batch);

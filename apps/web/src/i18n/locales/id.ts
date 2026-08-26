@@ -3517,6 +3517,7 @@ export const id: Dict = {
   'assistant.openFile': 'Buka file',
   'assistant.downloadFile': 'Unduh file',
   'nextStep.title': 'Langkah berikutnya',
+  'nextStep.suggestionsLabel': 'Saran langkah berikutnya',
   'nextStep.more': 'Lainnya',
   'nextStep.share': 'Bagikan',
   'nextStep.download': 'Unduh',
