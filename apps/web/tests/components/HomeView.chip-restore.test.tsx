@@ -272,6 +272,44 @@ describe('HomeView chip/plugin selection survives a real unmount+remount', () =>
     )).toBe(false);
   });
 
+  it('migrates the legacy top-level wireframe chip into its legacy-only scene', async () => {
+    // Wireframe is not one of the four rail types, but a draft persisted
+    // before the taxonomy change must still restore its lo-fi refinement
+    // instead of dying on the HOME_HERO_CHIPS lookup.
+    window.localStorage.setItem(
+      'open-design:home-composer:chip',
+      JSON.stringify({
+        chipId: 'wireframe',
+        pluginId: 'example-web-prototype',
+        projectKind: 'prototype',
+      }),
+    );
+    const fetchMock = fetchMockFor([WEB_PROTOTYPE_PLUGIN]);
+    vi.stubGlobal('fetch', fetchMock);
+    stubAnimationFrame();
+
+    render(
+      <HomeView
+        projects={[]}
+        onSubmit={() => undefined}
+        onOpenProject={() => undefined}
+        onViewAllProjects={() => undefined}
+      />,
+    );
+
+    await screen.findByTestId('home-hero-input');
+    await waitFor(() => {
+      expect(screen.getByTestId('home-hero-template-trigger').textContent).toContain('Prototype');
+      expect(JSON.parse(window.localStorage.getItem('open-design:home-composer:chip') ?? '{}'))
+        .toMatchObject({ chipId: 'prototype', prototypeSubtypeId: 'wireframe' });
+    });
+    // The legacy scene refines the brief without occupying a rail slot.
+    expect(screen.queryByTestId('home-hero-subtype-wireframe')).toBeNull();
+    expect(fetchMock.mock.calls.some(
+      ([url]) => typeof url === 'string' && url.includes('/api/plugins/example-web-prototype/apply'),
+    )).toBe(false);
+  });
+
   it('silently drops a persisted chip pointing at a since-uninstalled plugin', async () => {
     // Seed localStorage as if a prior mount had bound the Prototype chip,
     // then remount with a catalog that no longer has that plugin installed.

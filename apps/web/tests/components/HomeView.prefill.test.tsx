@@ -1273,11 +1273,11 @@ describe('HomeView prompt handoff', () => {
     expect(submittedLegacy.projectMetadata).toEqual(metadata);
   });
 
-  it("ignores a queued intent naming the retired 'wireframe' chip id instead of failing the lookup", async () => {
-    // 'wireframe' has no scene in the four-type prototype taxonomy: it folds
-    // to null, and a queued intent carrying it must be dropped quietly — the
-    // composer keeps whatever state it had rather than crashing on a chip id
-    // that no longer exists in HOME_HERO_CHIPS.
+  it("lands a queued intent naming the retired 'wireframe' chip id on its legacy-only scene", async () => {
+    // 'wireframe' is not one of the four rail types, but persisted intents
+    // predating the taxonomy still carry it. The hand-off must fold onto
+    // prototype with the wireframe-fidelity refinement — not fail the
+    // HOME_HERO_CHIPS lookup and silently drop the queued intent.
     const fetchMock = vi.fn<typeof fetch>(async (url) => {
       if (typeof url === 'string' && url === '/api/plugins') {
         return new Response(JSON.stringify({ plugins: [WEB_PROTOTYPE_PLUGIN] }), {
@@ -1308,12 +1308,29 @@ describe('HomeView prompt handoff', () => {
 
     await screen.findByTestId('home-hero-input');
     await clearActiveTypeChip();
-    const before = screen.getByTestId('home-hero-template-trigger').textContent;
     await clickHomeShortcut('wireframe');
 
-    // The intent neither binds a template nor selects a scene.
-    expect(screen.getByTestId('home-hero-template-trigger').textContent).toBe(before);
+    await waitFor(() => {
+      expect(screen.getByTestId('home-hero-template-trigger').textContent).toContain('Prototype');
+    });
+    // The legacy scene refines the brief without occupying a rail slot.
+    expect(screen.queryByTestId('home-hero-subtype-wireframe')).toBeNull();
     expect(findChip('wireframe')).toBeUndefined();
+
+    await setPromptAndSettle('Greybox the checkout flow.');
+    fireEvent.click(screen.getByTestId('home-hero-submit'));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    const [submittedWireframe] = onSubmit.mock.calls[0] as [Record<string, unknown>];
+    expect(submittedWireframe).toMatchObject({
+      pluginId: null,
+      automaticStrategyTaskProfile: 'prototype',
+      projectKind: 'prototype',
+    });
+    expect(submittedWireframe.projectMetadata).toEqual({
+      kind: 'prototype',
+      fidelity: 'wireframe',
+    });
   });
 
   it('keeps a Slide deck second-level scene on its own ppt route', async () => {

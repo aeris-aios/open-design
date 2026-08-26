@@ -144,12 +144,23 @@ describe('legacyPrototypeSceneForChipId', () => {
   it('folds the two retired top-level chip ids onto what they became', () => {
     // Persisted composer drafts and queued cross-surface intents still carry
     // these ids; neither is a chip anymore. 'mobile' became the mobile-apps
-    // scene of the four-type taxonomy; 'wireframe' has no scene in it, so it
-    // folds to null — callers treat that as "bare prototype, no scene".
+    // scene of the four-type taxonomy; 'wireframe' folds onto its legacy-only
+    // scene so the wireframe-fidelity refinement survives a draft restore.
     expect(legacyPrototypeSceneForChipId('mobile')?.slug).toBe('mobile-apps');
-    expect(legacyPrototypeSceneForChipId('wireframe')).toBeNull();
+    expect(legacyPrototypeSceneForChipId('wireframe')?.slug).toBe('wireframe');
+    expect(legacyPrototypeSceneForChipId('wireframe')?.projectMetadata)
+      .toEqual({ fidelity: 'wireframe' });
     expect(findChip('mobile')).toBeUndefined();
     expect(findChip('wireframe')).toBeUndefined();
+  });
+
+  it('resolves the legacy wireframe scene without surfacing it in the rail', () => {
+    // The curated rail stays exactly the four artifact types; the wireframe
+    // scene lives on only for state written before the four-type taxonomy.
+    expect(prototypeSubChipForSlug('wireframe')?.projectMetadata)
+      .toEqual({ fidelity: 'wireframe' });
+    const railSlugs = subChipsForChip('prototype', []).map((item) => item.slug);
+    expect(railSlugs).toEqual(['web-landing', 'web-tools', 'mobile-apps', 'dashboards']);
   });
 
   it('leaves every live chip id — and no id at all — alone', () => {

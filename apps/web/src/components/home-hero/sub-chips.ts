@@ -90,9 +90,30 @@ const PROTOTYPE_SUB_CHIPS: readonly HomeHeroSubChip[] = [
   { slug: 'dashboards', label: 'Dashboards', icon: 'grid' },
 ];
 
+// Scenes that no longer appear in the curated four-type rail but must keep
+// resolving for state that outlives a release: persisted composer drafts and
+// queued cross-surface intents can still name them. `subChipsForChip` renders
+// the rail from PROTOTYPE_SUB_CHIPS alone, so these stay invisible in the UI
+// while their refinement (e.g. wireframe fidelity) survives a restore.
+const LEGACY_ONLY_PROTOTYPE_SUB_CHIPS: readonly HomeHeroSubChip[] = [
+  {
+    slug: 'wireframe',
+    label: 'Wireframe',
+    icon: 'layout',
+    // Keeps the agent in structural/greybox territory instead of jumping to
+    // high-fidelity styling; the Prototype task profile downgrades its content
+    // and interaction-state requirements for exactly this fidelity.
+    projectMetadata: { fidelity: 'wireframe' },
+  },
+];
+
 export function prototypeSubChipForSlug(slug: string | null): HomeHeroSubChip | null {
   if (!slug) return null;
-  return PROTOTYPE_SUB_CHIPS.find((item) => item.slug === slug) ?? null;
+  return (
+    PROTOTYPE_SUB_CHIPS.find((item) => item.slug === slug) ??
+    LEGACY_ONLY_PROTOTYPE_SUB_CHIPS.find((item) => item.slug === slug) ??
+    null
+  );
 }
 
 export function isSubChipParent(chipId: string | null): chipId is SubChipParentId {
@@ -111,8 +132,8 @@ export function isSubChipParent(chipId: string | null): chipId is SubChipParentI
  */
 const LEGACY_TASK_TYPE_CHIP_SCENE_SLUGS: Readonly<Record<string, string>> = {
   // 'mobile' folds onto the mobile-apps scene of the four-type prototype
-  // taxonomy; 'wireframe' has no scene anymore and resolves to null below,
-  // which callers already treat as "bare prototype, no scene".
+  // taxonomy; 'wireframe' folds onto its legacy-only scene, which keeps the
+  // wireframe-fidelity refinement without occupying a slot in the rail.
   mobile: 'mobile-apps',
   wireframe: 'wireframe',
 };
