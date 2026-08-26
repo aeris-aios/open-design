@@ -99,16 +99,6 @@ export interface ProjectPreviewScopeDeps {
     workspace?: { workspaceId: string; workspaceMemberId: string } | null,
     options?: { readonly ttlMs?: number },
   ) => string;
-  /**
-   * Like `mint`, but returns the live scope for this exact (project, workspace)
-   * when one exists, renewing its TTL. Preview reads must be byte-stable across
-   * refetches; see the implementation comment.
-   */
-  acquire: (
-    projectId: string,
-    workspace?: { workspaceId: string; workspaceMemberId: string } | null,
-    options?: { readonly ttlMs?: number },
-  ) => string;
   revoke: (scope: string) => void;
   expiresAt: (projectId: string, scope: string) => number | undefined;
   renew: (

@@ -357,6 +357,7 @@ import {
   buildFinalizeRequest,
 } from '../lib/resolve-finalize-request';
 import type { CommentSendResult } from './comment-send-result';
+import { projectReadOnlyClaim } from './project-readonly-claim';
 
 type BrandBrowserSnapshot =
   | { status: 'ready'; html: string; css: string; baseUrl: string }
@@ -2077,11 +2078,11 @@ export function ProjectView({
   // also covers the status-unknown window, where naming this a shared project
   // would be a guess. `isSharedNonOwner` requires positive evidence (see its
   // docblock in useProjectCollab) -- exactly what a factual banner needs.
-  const readonlyNoticeText = projectCollab.isSharedNonOwner
-    ? projectCollab.ownerDisplayName
-      ? t('workspace.readonlyNoticeBy', { owner: projectCollab.ownerDisplayName })
-      : t('workspace.readonlyNotice')
-    : undefined;
+  const readonlyNoticeText = projectReadOnlyClaim({
+    isSharedNonOwner: projectCollab.isSharedNonOwner,
+    ownerDisplayName: projectCollab.ownerDisplayName,
+    t,
+  });
   // Team-share file-sync badge for the design-files tab bar + empty state
   // (recvqghymxqQQq). A member downloads (their local mirror trails the
   // published head); the owner uploads (a local edit hasn't published yet).
@@ -2105,7 +2106,7 @@ export function ProjectView({
     authoritativeProjectName,
   );
   let projectTitleTooltip = currentProject.name;
-  if (projectMutationReadOnly) projectTitleTooltip = t('workspace.readonlyNotice');
+  if (readonlyNoticeText) projectTitleTooltip = readonlyNoticeText;
   if (projectCollab.materializationPending) projectTitleTooltip = t('designFiles.syncing');
   const resolvedProjectDesignSystemId = resolveProjectDesignSystemId(currentProject);
   // A project can outlive a Design System being disabled in Settings. Keep the
@@ -11455,11 +11456,11 @@ export function ProjectView({
               composerPlaceholder={
                 projectCollab.materializationPending
                   ? t('designFiles.syncing')
-                  : projectMutationReadOnly
-                  ? (projectCollab.ownerDisplayName
-                      ? t('workspace.readonlyNoticeBy', { owner: projectCollab.ownerDisplayName })
-                      : t('workspace.readonlyNotice'))
-                  : undefined
+                  // Placeholder only EXPLAINS; `sendDisabled` above still keeps
+                  // the composer inert from the fail-closed flag. Undefined
+                  // here means "disabled, reason not yet known" -- the default
+                  // placeholder, not a claim about who owns this project.
+                  : readonlyNoticeText
               }
               queuedItems={currentConversationQueuedItems}
               error={conversationLoadError ?? error}
