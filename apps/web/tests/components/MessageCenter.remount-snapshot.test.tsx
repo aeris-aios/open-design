@@ -10,7 +10,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { I18nProvider } from '../../src/i18n';
+import { I18nProvider, useI18n } from '../../src/i18n';
 import { MessageCenter, resetMessageCenterSnapshot } from '../../src/components/MessageCenter';
 import { advanceWorkspaceAccountGeneration } from '../../src/collab/workspace-identity';
 
@@ -232,6 +232,70 @@ describe('MessageCenter remount snapshot', () => {
     await waitFor(() => expect(secondCounts.length).toBeGreaterThan(0));
     await new Promise((r) => setTimeout(r, 30));
     expect(secondCounts.at(-1)).toBe(0);
+  });
+
+  it('does not serve the previous locale\'s rows after a language switch', async () => {
+    // `pullMessageCenter` asks the server for locale-specific fields, so a
+    // snapshot is only valid for the language it was fetched under. Changing
+    // language re-runs the mount effect (via `sync`'s identity); without the
+    // locale in the key that re-run adopts the old language's rows and the
+    // panel stays in the wrong language until an open, a visibility refresh or
+    // the 60s poll.
+    const seen: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/integrations/vela/status')) {
+        statusCalls += 1;
+        return Response.json({ loggedIn: false });
+      }
+      if (url.includes('/message-center') && url.includes('/messages')) {
+        messageCalls += 1;
+        const locale = new URL(url, 'http://x').searchParams.get('locale') || '?';
+        seen.push(locale);
+        return Response.json({
+          messages: [{
+            id: 'm1',
+            title: `row for ${locale}`,
+            body: 'b',
+            typeName: 't',
+            publishedAt: '2026-08-01T00:00:00.000Z',
+            readAt: null,
+          }],
+          nextCursor: null,
+          unreadCount: 1,
+        });
+      }
+      return Response.json({});
+    }));
+
+    // `I18nProvider` seeds its locale from `initial` once, so switching has to
+    // go through the provider's own `setLocale`.
+    function Harness() {
+      const { setLocale } = useI18n();
+      return (
+        <>
+          <button type="button" data-testid="to-en" onClick={() => setLocale('en')}>en</button>
+          {/* Closed on purpose: the `open` effect re-runs on any `retrySync`
+              identity change and would fetch regardless of the snapshot logic,
+              hiding the defect this pins. */}
+          <MessageCenter hideTrigger open={false} onOpenChange={() => {}} />
+        </>
+      );
+    }
+
+    render(
+      <I18nProvider initial="zh-CN">
+        <Harness />
+      </I18nProvider>,
+    );
+    await waitFor(() => expect(seen.length).toBeGreaterThan(0));
+    const firstLocale = seen[0];
+
+    fireEvent.click(screen.getByTestId('to-en'));
+
+    // The mount effect must fetch for the new locale rather than adopt the
+    // previous language's snapshot.
+    await waitFor(() => expect(seen.some((l) => l !== firstLocale)).toBe(true));
   });
 
   it('still syncs when the panel is opened', async () => {

@@ -69,6 +69,9 @@ const MOUNT_SNAPSHOT_WINDOW_MS = 10_000;
 let lastSyncSnapshot: {
   at: number;
   accountGeneration: number;
+  /** `pullMessageCenter` asks for locale-specific fields, so a snapshot is only
+   *  valid for the language it was fetched under. */
+  locale: string;
   loggedIn: boolean;
   messages: MessageCenterMessage[];
   readIds: Set<string>;
@@ -84,7 +87,7 @@ let lastSyncSnapshot: {
  * are needed. A mount that finds a sync already running waits for it instead of
  * starting its own.
  */
-let inFlightSync: { generation: number; run: Promise<void> } | null = null;
+let inFlightSync: { generation: number; locale: string; run: Promise<void> } | null = null;
 
 /** Test hook: module state must not leak between cases. */
 export function resetMessageCenterSnapshot(): void {
@@ -92,10 +95,11 @@ export function resetMessageCenterSnapshot(): void {
   inFlightSync = null;
 }
 
-function adoptableSnapshot(): typeof lastSyncSnapshot {
+function adoptableSnapshot(locale: string): typeof lastSyncSnapshot {
   const snapshot = lastSyncSnapshot;
   if (!snapshot) return null;
   if (snapshot.accountGeneration !== currentWorkspaceAccountGeneration()) return null;
+  if (snapshot.locale !== locale) return null;
   if (Date.now() - snapshot.at >= MOUNT_SNAPSHOT_WINDOW_MS) return null;
   return snapshot;
 }
@@ -185,6 +189,7 @@ export function MessageCenter({
     lastSyncSnapshot = {
       at: Date.now(),
       accountGeneration: issuedAccountGeneration,
+      locale,
       loggedIn: account,
       messages: merged,
       readIds: overlayReadIds,
@@ -204,8 +209,9 @@ export function MessageCenter({
     // of starting a second identical sync. Keyed by the account boundary it was
     // started under, so a post-boundary mount never joins pre-boundary work.
     const generation = currentWorkspaceAccountGeneration();
-    const entry: { generation: number; run: Promise<void> } = {
+    const entry: { generation: number; locale: string; run: Promise<void> } = {
       generation,
+      locale,
       run: Promise.resolve(),
     };
     entry.run = sync()
@@ -239,15 +245,19 @@ export function MessageCenter({
       commitState(snapshot.messages, snapshot.readIds);
       setSyncState('ready');
     };
-    const adopted = adoptableSnapshot();
+    const adopted = adoptableSnapshot(locale);
     if (adopted) {
       adopt(adopted);
-    } else if (inFlightSync && inFlightSync.generation === currentWorkspaceAccountGeneration()) {
+    } else if (
+      inFlightSync
+      && inFlightSync.generation === currentWorkspaceAccountGeneration()
+      && inFlightSync.locale === locale
+    ) {
       // Someone else's sync is already on the wire for this same data and the
       // same account; take its result rather than racing a second copy of it.
       if (messagesRef.current.length === 0) setSyncState('loading');
       void inFlightSync.run.then(() => {
-        const settled = adoptableSnapshot();
+        const settled = adoptableSnapshot(locale);
         if (settled) adopt(settled);
         else if (!cancelled) retrySync();
       });
@@ -264,7 +274,7 @@ export function MessageCenter({
       window.clearInterval(interval);
       document.removeEventListener('visibilitychange', onVisibility);
     };
-  }, [retrySync, commitState]);
+  }, [retrySync, commitState, locale]);
 
   useEffect(() => {
     if (open) retrySync();
@@ -337,7 +347,11 @@ export function MessageCenter({
     // Matched against the CAPTURED generation, not the current one, so this can
     // only ever update a snapshot belonging to the same account this read began
     // under — never one a newer account published while the write was pending.
-    if (lastSyncSnapshot && lastSyncSnapshot.accountGeneration === issuedAccountGeneration) {
+    if (
+      lastSyncSnapshot
+      && lastSyncSnapshot.accountGeneration === issuedAccountGeneration
+      && lastSyncSnapshot.locale === locale
+    ) {
       lastSyncSnapshot = { ...lastSyncSnapshot, messages: nextMessages, readIds: nextIds };
     }
   };
