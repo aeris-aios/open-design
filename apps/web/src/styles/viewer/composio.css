@@ -1088,11 +1088,15 @@
 /* The collapsed custom field still occupies a slot in .qf-field's 6px
    column gap; cancel it so a closed accordion leaves no phantom spacing. */
 .qf-custom-collapsible:not(.open) { margin-top: -6px; }
+/* 稿子的选项文案是 `.opt` 的直接子 `<span>`,行高就是 `.opt` 的
+   `line-height: var(--lh-row)` = 1.5。我们为了容下第二行说明多包了这一层,
+   顺手写了 `line-height: 1.2` —— 于是文案的行内盒从 18px 缩到 14.5px,
+   每颗选项按钮跟着从 34px 矮成 32px,四颗下来整张卡短 6px。
+   说明那一行是产品自己加的,没有稿子依据去压行高;让它跟着 `.qf-chip` 走。 */
 .qf-chip-copy {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  line-height: 1.2;
 }
 .qf-chip-desc {
   color: var(--text-muted);
@@ -3991,8 +3995,16 @@ body.entry-resizing { cursor: col-resize; user-select: none; }
   min-width: 0;
   display: block;
 }
+/* 稿子这条是 `.opt .own-l { display: block; font-weight: 600 }` —— 祖先 `.own`
+   不是可有可无的修饰,它承担的是**作用域**:稿子的 `.own-l` 只存在于展开态
+   (`<span class="own"><span class="own-l">…</span><textarea class="own-ta">`),
+   收起态那一格写的是**没有类名的裸 `<span>自己填</span>`**,拿的是 400。
+   我们两态复用同一个 `qf-own-label`,把选择器搬成裸类名之后,收起态也被刷成 600。
+   把 `.qf-own` 补回来,600 就只落在稿子让它落的那一态。 */
 .qf-own-label {
   display: block;
+}
+.qf-own .qf-own-label {
   font-weight: 600;
 }
 .qf-own-input {
@@ -4005,7 +4017,20 @@ body.entry-resizing { cursor: col-resize; user-select: none; }
   border-radius: 0;
   background: none;
   color: var(--text-strong);
-  font: inherit;
+  /* 稿子 `.opt .own-ta { font-family: inherit; font-size: var(--t-mini);
+     line-height: var(--lh-row) }` —— 只继承**字族**这一条,字重不继承。
+     展开态那一整项是 `.opt.is-on`(字重 600),`font: inherit` 会把 600 一起
+     继承下来,用户自己打的字比选项标题还粗;`<textarea>` 本来就不继承字重,
+     稿子只点名 family / size / line-height,就是要让正文停在 400。
+     旁边 `.qf-custom .qf-input` 早就是这么写的,这一处是漏网的另一半。 */
+  font-family: inherit;
+  font-size: var(--font-size-12);
+  line-height: 1.5;
+  /* 稿子靠**不写**拿到 400(浏览器不给 textarea 继承字重);我们的全局
+     `input, textarea, select { font: inherit }`(styles/primitives.css)把继承
+     打开了,所以这里必须把 400 说出来才等价 —— 少这一条,`font-family` 那半条
+     还是压不住 `.opt.is-on` 的 600。 */
+  font-weight: 400;
   resize: none;
   field-sizing: content;
 }
