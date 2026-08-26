@@ -213,6 +213,26 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
           + '<main id="slot"></main></body></html>',
       ),
     );
+    // Three more from review: a raw-text *name* under SVG is a foreign
+    // element (its CDATA is still a section), `=` may be followed by
+    // whitespace before an unquoted value, and CR is a tag-name delimiter.
+    await writeFile(
+      path.join(dir, 'foreign-and-delimiters.html'),
+      Buffer.from(
+        '<!doctype html><html><head></head><body>'
+          + '<svg><script><![CDATA[x > <\/script></svg><body>slip</body>]]><\/script></svg>'
+          + '<svg data= http://x/><![CDATA[x > </svg><body>slip</body>]]></svg>'
+          + '<main id="slot">real</main></body></html>',
+      ),
+    );
+    await writeFile(
+      path.join(dir, 'cr-delimiter.html'),
+      Buffer.from(
+        '<!doctype html><html><head></head><body>'
+          + '<script\r>const doc = "<body>slip</body>";<\/script>'
+          + '<main id="slot">real</main></body></html>',
+      ),
+    );
     // Token shapes an audit against parse5 turned up, each of which had the
     // scan resume inside author text: an end-tag-open on a non-letter (bogus
     // comment), the `--!>` and `<!-->` comment ends, a custom element whose
@@ -679,6 +699,31 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
     expect(html).toContain('</ note: use </body> carefully>');
     expect(html).toContain('<iframe-x>a</iframe-x>');
     expect(html).toContain('var s = "</iframe> --> </body>";');
+    expect(injectedAt).toBeGreaterThan(html.indexOf('<main id="slot">real</main>'));
+    expect(injectedAt).toBeLessThan(html.lastIndexOf('</body>'));
+  });
+
+  it('refuses a boundary through CDATA under a raw-text-named foreign element', async () => {
+    const bridged = await fetch(`${rawUrl('foreign-and-delimiters.html')}?odPreviewBridge=scroll`);
+    expect(bridged.status).toBe(200);
+    const html = await bridged.text();
+    const injectedAt = html.indexOf('data-od-url-scroll-bridge');
+    expect(injectedAt).toBeGreaterThan(-1);
+    // `<svg><script>` is a foreign element, not HTML raw text, so its CDATA is
+    // still a section; and `data= http://x/` is an unquoted value, not a
+    // self-closing solidus. Both sections survive byte for byte.
+    expect(html).toContain('<![CDATA[x > <\/script></svg><body>slip</body>]]>');
+    expect(html).toContain('<![CDATA[x > </svg><body>slip</body>]]>');
+    expect(injectedAt).toBeGreaterThan(html.lastIndexOf('</body>'));
+  });
+
+  it('treats a carriage return as a tag-name delimiter', async () => {
+    const bridged = await fetch(`${rawUrl('cr-delimiter.html')}?odPreviewBridge=scroll`);
+    expect(bridged.status).toBe(200);
+    const html = await bridged.text();
+    const injectedAt = html.indexOf('data-od-url-scroll-bridge');
+    expect(injectedAt).toBeGreaterThan(-1);
+    expect(html).toContain('const doc = "<body>slip</body>";');
     expect(injectedAt).toBeGreaterThan(html.indexOf('<main id="slot">real</main>'));
     expect(injectedAt).toBeLessThan(html.lastIndexOf('</body>'));
   });

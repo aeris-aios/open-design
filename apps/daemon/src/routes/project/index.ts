@@ -1492,6 +1492,7 @@ function isSelfClosingTag(html: string, from: number, tagEnd: number): boolean {
   let i = from;
   let lastSignificant = 0;
   let inUnquotedValue = false;
+  let pendingValue = false;
   while (i < tagEnd) {
     const ch = html.charCodeAt(i);
     if ((ch === 34 /* " */ || ch === 39 /* ' */) && lastSignificant === 61 /* = */) {
@@ -1502,8 +1503,12 @@ function isSelfClosingTag(html: string, from: number, tagEnd: number): boolean {
       inUnquotedValue = false;
       continue;
     }
-    if (ch === 61 /* = */) inUnquotedValue = true;
-    else if (ch <= 32) inUnquotedValue = false;
+    // `=` may be followed by whitespace before the value starts, so whitespace
+    // alone does not end the pending-value state — only a real value character
+    // followed by whitespace does.
+    if (ch === 61 /* = */) { inUnquotedValue = true; pendingValue = true; }
+    else if (ch <= 32) { if (!pendingValue) inUnquotedValue = false; }
+    else if (pendingValue) pendingValue = false;
     if (ch > 32) lastSignificant = ch;
     i += 1;
   }
@@ -1645,7 +1650,7 @@ function findScriptClose(lowerHtml: string, from: number): number {
  * would end the template early and drop the scan back into author text.
  */
 function skipTemplateContent(html: string, lowerHtml: string, from: number): number {
-  const tagOpen = /<(\/?)([a-z][^\t\n\f \/>]*)/iy;
+  const tagOpen = /<(\/?)([a-z][^\t\n\f\r \/>]*)/iy;
   let depth = 1;
   let i = from;
   while (i < html.length && depth > 0) {
@@ -1710,7 +1715,7 @@ function skipTemplateContent(html: string, lowerHtml: string, from: number): num
  * inside `<svg>` or `<math>`.
  */
 function skipForeignContent(html: string, lowerHtml: string, rootName: string, from: number): number {
-  const tagOpen = /<(\/?)([a-z][^\t\n\f \/>]*)/iy;
+  const tagOpen = /<(\/?)([a-z][^\t\n\f\r \/>]*)/iy;
   let depth = 1;
   let i = from;
   while (i < html.length && depth > 0) {
@@ -1755,12 +1760,11 @@ function skipForeignContent(html: string, lowerHtml: string, rootName: string, f
     if (tagEnd < 0) return -1;
     const tagName = (open[2] ?? '').toLowerCase();
     const selfClosing = isSelfClosingTag(html, i, tagEnd);
-    if (!open[1] && !selfClosing && (PREVIEW_RAW_TEXT_ELEMENTS as readonly string[]).includes(tagName)) {
-      const contentEnd = findRawTextClose(lowerHtml, tagName, tagEnd + 1);
-      if (contentEnd < 0) return -1;
-      i = contentEnd;
-      continue;
-    }
+    // Deliberately no raw-text handling here: inside foreign content a
+    // `<script>`/`<style>`/`<title>` is an ordinary SVG or MathML element, so
+    // `<` in it is markup and a CDATA section inside it is still a section.
+    // Treating it as HTML raw text hides that CDATA and lets the scan resume
+    // inside it.
     if (!selfClosing && tagName === rootName) depth += open[1] ? -1 : 1;
     i = tagEnd + 1;
   }
@@ -1769,7 +1773,7 @@ function skipForeignContent(html: string, lowerHtml: string, rootName: string, f
 
 function findRealTagOffset(html: string, pattern: RegExp): number {
   const anchored = new RegExp(pattern.source, `${pattern.flags.replace(/[gy]/g, '')}y`);
-  const tagOpen = /<(\/?)([a-z][^\t\n\f \/>]*)/iy;
+  const tagOpen = /<(\/?)([a-z][^\t\n\f\r \/>]*)/iy;
   // ASCII-only, so the shadow stays index-aligned with `html`. A full
   // toLowerCase() is not length-preserving (U+0130 lowercases to two code
   // units), and every offset taken from the shadow is used against `html`.
