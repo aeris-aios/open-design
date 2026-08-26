@@ -251,6 +251,18 @@ describe('PreviewRuntimeTransport', () => {
       type: 'od:preview-observability-host-state',
       active: false,
     }, '*');
+
+    postMessage.mockClear();
+    rerender(view({ active: true, modeState: bridgeModeState() }));
+
+    expect(screen.getByTestId('preview-runtime-frame-current')).toBe(frame);
+    expect(frame.getAttribute('src')).toBe(src);
+    expect(postMessage.mock.calls.filter(([message]) => (
+      (message as { type?: unknown } | null)?.type === 'od:preview-observability-host-state'
+    ))).toHaveLength(1);
+    expect(postMessage.mock.calls.filter(([message]) => (
+      (message as { type?: unknown } | null)?.type === 'od:comment-mode'
+    ))).toHaveLength(1);
   });
 
   it('restores host-owned document state before promoting a replacement frame', () => {
@@ -295,7 +307,9 @@ describe('PreviewRuntimeTransport', () => {
       index: 6,
     }, '*');
 
+    postMessage.mockClear();
     signal(frame, 'od:preview:visible-paint', capabilities);
     expect(screen.getByTestId('preview-runtime-frame-current')).toBe(frame);
+    expect(postMessage).not.toHaveBeenCalled();
   });
 });

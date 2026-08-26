@@ -120,13 +120,15 @@ export function PreviewRuntimeTransport({
     currentFrameRef.current = frame;
     if (frame) {
       retainedCurrentFrameRef.current = frame;
-      const appliedCapabilities = appliedCapabilitiesRef.current.get(frame);
-      if (appliedCapabilities) replayToFrame(frame, appliedCapabilities);
+      // Capability acknowledgement restores the complete host state before a
+      // standby is allowed to paint and promote. Replaying again on promotion
+      // duplicates slide/edit/comment work. Reactivation is likewise owned by
+      // the semantic-state effect below, so the ref callback never replays.
     } else if (active) {
       retainedCurrentFrameRef.current = null;
     }
     callbacksRef.current.onCurrentFrameChange?.(frame);
-  }, [active, replayToFrame]);
+  }, [active]);
 
   useEffect(() => {
     const previous = previousSemanticStateRef.current;
