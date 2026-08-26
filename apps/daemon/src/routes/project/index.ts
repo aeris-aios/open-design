@@ -1617,7 +1617,12 @@ function scanTag(html: string, from: number): ScannedTag {
   while (i < html.length) {
     // Before attribute name.
     const ch = html.charCodeAt(i);
-    if (isHtmlWhitespace(ch)) { i += 1; continue; }
+    // A solidus only self-closes when `>` comes *immediately* after it: the
+    // self-closing start tag state reconsumes anything else in the
+    // before-attribute-name state, so `<svg/ >` is an ordinary open tag.
+    // Leaving the flag set through the whitespace made `<svg/ >` look closed,
+    // and the scan then read the element's contents as document markup.
+    if (isHtmlWhitespace(ch)) { selfClosing = false; i += 1; continue; }
     if (ch === 47 /* / */) { selfClosing = true; i += 1; continue; }
     if (ch === 62 /* > */) return { end: i, selfClosing, attrs };
     // A solidus only self-closes when `>` comes next; anything else resumes
@@ -2058,11 +2063,18 @@ function skipForeignContent(html: string, lowerHtml: string, rootName: string, f
       continue;
     }
     if (!selfClosing && !PREVIEW_VOID_ELEMENTS.includes(tagName)) {
-      const underMathmlText = nsStack[nsStack.length - 1]?.mathmlText ?? false;
+      const parent = nsStack[nsStack.length - 1];
+      const underMathmlText = parent?.mathmlText ?? false;
+      // The dispatcher hands `<svg>` beneath a MathML `annotation-xml` to the
+      // HTML rules even with no `encoding`, so the element lands in SVG rather
+      // than inheriting MathML — and a `<foreignObject>` under it is then a
+      // real integration point whose `<script>` is HTML raw text again.
       const elementNs = currentNs === 'html'
         ? (underMathmlText && MATHML_TEXT_INTEGRATION_EXCEPTIONS.includes(tagName) ? 'math'
           : tagName === 'svg' ? 'svg' : tagName === 'math' ? 'math' : 'html')
-        : currentNs;
+        : (currentNs === 'math' && tagName === 'svg' && parent?.name === 'annotation-xml'
+          ? 'svg'
+          : currentNs);
       nsStack.push({
         name: tagName,
         childNs: foreignChildNamespace(tagName, elementNs, tag.attrs),
@@ -2159,6 +2171,20 @@ function findRealTagOffset(html: string, pattern: RegExp): number {
  * DOCTYPE is then dropped, silently changing the page's box model — a bridge
  * must never do that to an artifact.
  */
+/**
+ * Whether a bogus comment starts at `i` — a token the tokenizer turns into a
+ * comment rather than markup, and which therefore does not stop a later doctype
+ * from applying. `<!doctype` is excluded because it is the thing being looked
+ * for, and `<!--` because a real comment is walked with `endOfComment`.
+ */
+function isBogusCommentStart(html: string, i: number): boolean {
+  if (html.startsWith('<?', i)) return true;
+  if (html.startsWith('</', i)) return !/[a-z]/i.test(html.charAt(i + 2));
+  if (!html.startsWith('<!', i)) return false;
+  if (html.startsWith('<!--', i)) return false;
+  return !/^<!doctype/i.test(html.slice(i, i + 9));
+}
+
 function prependAfterDoctype(html: string, payload: string): string {
   // A leading U+FEFF is the encoding signature, and it only counts at byte
   // zero. Putting anything in front of it demotes it to an ordinary character
@@ -2167,17 +2193,33 @@ function prependAfterDoctype(html: string, payload: string): string {
   // therefore stays put, and every offset here is measured after it.
   const bom = html.charCodeAt(0) === 0xfeff ? 1 : 0;
   const atTop = (): string => html.slice(0, bom) + payload + html.slice(bom);
-  // Comments (and whitespace) may legally precede the doctype, and a script
-  // token before it still forces quirks mode — so skip past them too. The
-  // comments are walked with `endOfComment` rather than a `-->`-only regex,
-  // since `--!>` and the abrupt forms close a comment just as well.
+  // Whitespace and comments may legally precede the doctype without changing
+  // the document's mode, so the payload has to go behind them. "Comment" here
+  // is every token the tokenizer turns into one, not just `<!-- … -->`: an XML
+  // prologue (`<?xml … ?>`), a stray `<!foo>` and a `</1>` are all bogus
+  // comments, and a document that opens with one still reaches its doctype in
+  // no-quirks mode. Stopping at only the `<!--` spelling put the payload in
+  // front of those, which puts a character token before the doctype and drops
+  // the document to quirks — a silent change to the artifact's box model.
+  //
+  // Real comments still go through `endOfComment`, since `--!>` and the abrupt
+  // forms close one just as well as `-->`; bogus comments end at the first `>`.
   let i = bom;
   for (;;) {
     while (i < html.length && isHtmlWhitespace(html.charCodeAt(i))) i += 1;
-    if (!html.startsWith('<!--', i)) break;
-    const end = endOfComment(html, i);
-    if (end < 0) return atTop();
-    i = end;
+    if (html.startsWith('<!--', i)) {
+      const end = endOfComment(html, i);
+      if (end < 0) return atTop();
+      i = end;
+      continue;
+    }
+    if (isBogusCommentStart(html, i)) {
+      const end = html.indexOf('>', i + 2);
+      if (end < 0) return atTop();
+      i = end + 1;
+      continue;
+    }
+    break;
   }
   if (!/^<!doctype/i.test(html.slice(i))) return atTop();
   const doctypeEnd = html.indexOf('>', i);

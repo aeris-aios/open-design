@@ -349,6 +349,43 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
           + '<main id="slot">real</main></body></html>',
       ),
     );
+    // A solidus only self-closes when `>` comes immediately after it; the
+    // self-closing start tag state reconsumes anything else in the
+    // before-attribute-name state. So `<svg/ >` is an ordinary open tag, and a
+    // scan that treats it as closed reads the element's contents as markup.
+    await writeFile(
+      path.join(dir, 'solidus-then-space.html'),
+      Buffer.from(
+        '<!doctype html><html><head></head><body>'
+          + '<svg/ ><![CDATA[x > <\/svg><body>slip</body>]]></svg>'
+          + '<main id="slot">real</main></body></html>',
+      ),
+    );
+    // The dispatcher hands `<svg>` beneath a MathML `annotation-xml` to the
+    // HTML rules even with no `encoding`, so that `<svg>` lands in SVG rather
+    // than inheriting MathML — and the `<foreignObject>` under it is then a
+    // real integration point whose `<script>` is HTML raw text again.
+    await writeFile(
+      path.join(dir, 'annotation-xml-svg.html'),
+      Buffer.from(
+        '<!doctype html><html><head></head><body>'
+          + '<math><annotation-xml><svg><foreignObject>'
+          + `<script>const x = '<\/math><body>slip</body>';<\/script>`
+          + '</foreignObject></svg></annotation-xml></math>'
+          + '<main id="slot">real</main></body></html>',
+      ),
+    );
+    // Every token the tokenizer turns into a comment may precede the doctype
+    // without changing the document's mode — an XML prologue and a stray
+    // `<!foo>` among them. Putting the payload in front of one puts a character
+    // before the doctype, which silently drops the artifact into quirks mode.
+    await writeFile(
+      path.join(dir, 'bogus-prologue.html'),
+      Buffer.from(
+        `<?xml version='1.0'?><!bogus><!doctype html>`
+          + '<plaintext>tail</body></html>',
+      ),
+    );
     // A leading BOM is the encoding signature and only counts at byte zero, so
     // the no-boundary fallback has to insert after it rather than in front of
     // it — otherwise the doctype stops applying and the artifact silently
@@ -969,6 +1006,40 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
     expect(page('body > [data-od-url-scroll-bridge]').length).toBe(1);
     expect(page('#slot').text()).toBe('real');
     expect(html).toContain('<script><!--<script>--></script>');
+  });
+
+  it('does not treat a solidus followed by whitespace as self-closing', async () => {
+    const bridged = await fetch(`${rawUrl('solidus-then-space.html')}?odPreviewBridge=scroll`);
+    expect(bridged.status).toBe(200);
+    const html = await bridged.text();
+    const page = load(html);
+    expect(page('body > [data-od-url-scroll-bridge]').length).toBe(1);
+    expect(page('#slot').text()).toBe('real');
+    expect(html).toContain('<![CDATA[x > </svg><body>slip</body>]]>');
+  });
+
+  it('gives an svg beneath annotation-xml the SVG namespace', async () => {
+    const bridged = await fetch(`${rawUrl('annotation-xml-svg.html')}?odPreviewBridge=scroll`);
+    expect(bridged.status).toBe(200);
+    const html = await bridged.text();
+    const page = load(html);
+    expect(page('body > [data-od-url-scroll-bridge]').length).toBe(1);
+    expect(page('#slot').text()).toBe('real');
+    expect(html).toContain(`const x = '</math><body>slip</body>';`);
+  });
+
+  it('keeps a standards-mode doctype behind a bogus-comment prologue', async () => {
+    const bridged = await fetch(`${rawUrl('bogus-prologue.html')}?odPreviewBridge=scroll`);
+    expect(bridged.status).toBe(200);
+    const html = await bridged.text();
+    // The prologue and the doctype both still precede every injected token, so
+    // the served document keeps the mode it had before injection.
+    const doctypeAt = html.toLowerCase().indexOf('<!doctype');
+    const injectedAt = html.indexOf('data-od-url-scroll-bridge');
+    expect(doctypeAt).toBeGreaterThan(-1);
+    expect(injectedAt).toBeGreaterThan(doctypeAt);
+    expect(html.indexOf('<?xml')).toBeLessThan(doctypeAt);
+    expect(load(html)('[data-od-url-scroll-bridge]').length).toBe(1);
   });
 
   it('keeps a leading BOM at byte zero when there is no boundary', async () => {
