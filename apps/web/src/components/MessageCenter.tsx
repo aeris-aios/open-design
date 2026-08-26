@@ -7,6 +7,7 @@ import {
   clearAnonymousState,
   findGoPlanSunsetMessage,
   isAmrLoggedIn,
+  readAmrAuthMode,
   markAccountMessageRead,
   pullMessageCenter,
   readAnonymousMessages,
@@ -190,7 +191,8 @@ export function MessageCenter({
     const issuedAccountGeneration = currentWorkspaceAccountGeneration();
     const writeToken = issueSnapshotWriteToken();
     if (messagesRef.current.length === 0) setSyncState('loading');
-    const account = await isAmrLoggedIn();
+    const authMode = await readAmrAuthMode();
+    const account = authMode === 'signed-in';
     // Before the writes, not after them. `account` describes the authority the
     // request was issued under; publishing it into component state once the
     // boundary has moved shows the previous account's signed-in state, and
@@ -228,7 +230,6 @@ export function MessageCenter({
     // describes an authority that is no longer current, so it may neither be
     // committed nor published as a snapshot.
     if (currentWorkspaceAccountGeneration() !== issuedAccountGeneration) return;
-    if (account) clearAnonymousState(window.localStorage);
     // Refs and React state are this host's own and its request id already
     // ordered them. The two SHARED sinks are the snapshot and the anonymous
     // localStorage cache, and both need the global ordering: an unmounted host
@@ -237,9 +238,24 @@ export function MessageCenter({
     // remount past the snapshot window — reads them back and resurrects
     // messages the user has already read.
     const ownsLatestWrite = ownsLatestSnapshotWrite(writeToken);
+    // CLEARING is a write to that same shared cache, and the account boundary
+    // does not cover it: `notifyWorkspaceContextRefresh` — the only thing that
+    // advances the generation — runs on sign-IN (AmrLoginPill) and not on
+    // sign-out (`handleActiveCloudSignOut`). So a run issued while signed in
+    // resumes after a sign-out with its captured `account === true` still
+    // looking current, and wipes the anonymous cache a newer signed-out run
+    // has already written. For an anonymous reader those read ids exist
+    // nowhere else, so the badges simply come back.
+    if (account && ownsLatestWrite) clearAnonymousState(window.localStorage);
     commitState(merged, overlayReadIds, { persistAnonymous: !account && ownsLatestWrite });
     setPriorityMessage(account ? findGoPlanSunsetMessage(merged) : null);
-    if (ownsLatestWrite) {
+    // `unavailable` is the daemon failing to ask, not an answer about the user,
+    // and `readAmrAuthMode` is the only place that can still tell them apart —
+    // by here it has already collapsed into `account === false`. Publishing a
+    // snapshot on it would serve the PUBLIC feed to a signed-in reader for the
+    // whole window, because a later mount adopts without re-asking. Committing
+    // it to this host is still right: it is what we could actually load.
+    if (ownsLatestWrite && authMode !== 'unavailable') {
       publishSnapshot({
         at: Date.now(),
         accountGeneration: issuedAccountGeneration,
@@ -441,6 +457,9 @@ export function MessageCenter({
     // the new account has already published. Captured BEFORE the await, so the
     // announcement contract below still reports its own failure first.
     const issuedAccountGeneration = currentWorkspaceAccountGeneration();
+    // Claimed before the awaits so a sync issued while this read is in flight
+    // outranks it for the shared-cache clear below.
+    const readWriteToken = issueSnapshotWriteToken();
     const account = await resolveLoggedInForWrite();
     if (options?.requireAccount && !account) {
       throw new Error('A signed-in account is required to acknowledge this announcement');
@@ -458,7 +477,11 @@ export function MessageCenter({
     const nextMessages = messagesRef.current.map((item) => (item.id === messageId ? { ...item, readAt } : item));
     if (account) {
       pendingReadIdsRef.current = new Set(pendingReadIdsRef.current).add(messageId);
-      clearAnonymousState(window.localStorage);
+      // Same rule as `sync`: a POST that started while signed in can resolve
+      // after a sign-out, and clearing then destroys read ids a signed-out run
+      // has since persisted. The token claimed at entry loses to any sync
+      // issued since, which is the run that knows better.
+      if (ownsLatestSnapshotWrite(readWriteToken)) clearAnonymousState(window.localStorage);
     }
     invalidateSyncResponses();
     // Component state only — the durable anonymous cache is shared, so it takes

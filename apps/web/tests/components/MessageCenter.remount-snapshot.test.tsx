@@ -733,6 +733,104 @@ describe('MessageCenter remount snapshot', () => {
     expect(screen.queryByText('检查失败，请重试')).toBeNull();
   });
 
+  it('does not wipe the anonymous cache from a run issued before a sign-out', async () => {
+    // The account generation is the only guard on the clear, and it does not
+    // move on sign-out: `notifyWorkspaceContextRefresh` is called on sign-IN by
+    // AmrLoginPill and not by `handleActiveCloudSignOut`. So a signed-in run
+    // resumes after the user signs out, still believing `account === true`, and
+    // destroys read ids a signed-out run has since persisted — which for an
+    // anonymous reader exist nowhere else.
+    let releasePull: (() => void) | null = null;
+    let pulls = 0;
+    let loggedIn = true;
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/integrations/vela/status')) {
+        statusCalls += 1;
+        return Response.json({ loggedIn });
+      }
+      if (url.includes('/message-center') && url.includes('/messages')) {
+        messageCalls += 1;
+        pulls += 1;
+        if (pulls === 1) {
+          await new Promise<void>((resolve) => {
+            releasePull = resolve;
+          });
+        }
+        return Response.json({ messages: [row('kept-read', null)], nextCursor: null, unreadCount: 1 });
+      }
+      return Response.json({});
+    }));
+
+    // A signed-in host puts a pull on the wire and then goes away.
+    const signedIn = mount();
+    await waitFor(() => expect(messageCalls).toBe(1));
+    signedIn.unmount();
+
+    // The user signs out; a signed-out run persists what it read.
+    loggedIn = false;
+    const anon = mount();
+    // The first pull is still on the wire, so this mount JOINS it rather than
+    // starting its own; the visibility refresh is what gives the signed-out
+    // state a run of its own (the app navigates on sign-out, so a refresh here
+    // is the realistic shape).
+    document.dispatchEvent(new Event('visibilitychange'));
+    await waitFor(() => expect(messageCalls).toBe(2));
+    recordAnonymousRead(window.localStorage, 'kept-read', '2026-07-16T13:00:00.000Z');
+    expect(window.localStorage.getItem('open-design.message-center.anonymous-read-ids.v1') ?? '')
+      .toContain('kept-read');
+
+    // Only now does the signed-in pull land.
+    releasePull!();
+    await new Promise((r) => setTimeout(r, 30));
+    anon.unmount();
+
+    expect(window.localStorage.getItem('open-design.message-center.anonymous-read-ids.v1') ?? '')
+      .toContain('kept-read');
+  });
+
+  it('does not let a runtime-unavailable read stand in for a signed-out answer', async () => {
+    // `isAmrLoggedIn` maps a 503 `amr-runtime-unavailable` to `false`, which is
+    // indistinguishable from a real signed-out state. Publishing a snapshot on
+    // that reading served the PUBLIC feed to a signed-in reader for the whole
+    // window: a remount adopts without re-asking, so a runtime that recovered
+    // in the meantime went unnoticed and the targeted messages stayed missing.
+    let runtimeUp = false;
+    const pulled: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/integrations/vela/status')) {
+        statusCalls += 1;
+        if (!runtimeUp) {
+          return new Response(JSON.stringify({ error: 'amr-runtime-unavailable' }), {
+            status: 503,
+            headers: { 'content-type': 'application/json' },
+          });
+        }
+        return Response.json({ loggedIn: true });
+      }
+      if (url.includes('/message-center') && url.includes('/messages')) {
+        messageCalls += 1;
+        pulled.push(url.includes('message-center-public') ? 'public' : 'account');
+        return Response.json({ messages: [], nextCursor: null, unreadCount: 0 });
+      }
+      return Response.json({});
+    }));
+
+    const down = await mountAndSettle();
+    expect(pulled).toEqual(['public']);
+    down.unmount();
+
+    // The runtime comes back; the workspace identity never changed, so the
+    // account generation has not moved and the window has not elapsed.
+    runtimeUp = true;
+    mount();
+
+    // The remount must ask again rather than reuse an answer nobody gave.
+    await waitFor(() => expect(pulled.length).toBe(2));
+    expect(pulled[1]).toBe('account');
+  });
+
   it('does not re-sync when it is remounted straight away', async () => {
     const first = await mountAndSettle();
     const afterFirst = { status: statusCalls, messages: messageCalls };

@@ -92,15 +92,28 @@ export function clearAnonymousState(storage: Storage): void {
   storage.removeItem(LEGACY_WINDOW_KEY);
 }
 
-export async function isAmrLoggedIn(): Promise<boolean> {
+/**
+ * Three answers, not two. A 503 `amr-runtime-unavailable` means the daemon
+ * could not ASK — it is not a statement about the user — and collapsing it into
+ * "signed out" is only safe for a caller that is about to act once. A caller
+ * that caches its result must be able to tell the difference, or it will serve
+ * the public feed to a signed-in reader for as long as the cache lives.
+ */
+export type AmrAuthMode = 'signed-in' | 'signed-out' | 'unavailable';
+
+export async function readAmrAuthMode(): Promise<AmrAuthMode> {
   const response = await fetch('/api/integrations/vela/status', { cache: 'no-store' });
   if (response.status === 503) {
     const payload = (await response.clone().json().catch(() => null)) as { error?: string } | null;
-    if (payload?.error === 'amr-runtime-unavailable') return false;
+    if (payload?.error === 'amr-runtime-unavailable') return 'unavailable';
   }
   if (!response.ok) throw new Error(`AMR status failed: ${response.status}`);
   const payload = (await response.json()) as { loggedIn?: boolean };
-  return payload.loggedIn === true;
+  return payload.loggedIn === true ? 'signed-in' : 'signed-out';
+}
+
+export async function isAmrLoggedIn(): Promise<boolean> {
+  return (await readAmrAuthMode()) === 'signed-in';
 }
 
 export async function pullMessageCenter(input: {
