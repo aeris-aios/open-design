@@ -4,6 +4,7 @@
  * event-shape diagnostics. Depends on acp/types, acp/json, and the vela-errors
  * integration; consumed exclusively by acp/session.ts.
  */
+import { isTodoWriteToolName } from '@open-design/contracts';
 import { createHash } from 'node:crypto';
 import type { JsonObject } from './types.js';
 import { asObject, acpValueKind, objectKeys, extractAcpUpdateText } from './json.js';
@@ -547,6 +548,27 @@ export function acpToolName(update: JsonObject): string {
   const kindName = kindRaw ? acpToolNameFromKind(kindRaw) : null;
   // "other" is a valid ACP kind for custom tools, not a canonical family.
   const kindIsCanonicalFamily = recognizedKind && kindToken !== 'other';
+
+  /*
+   * 清单快照**先认,不进启发式**。
+   *
+   * vela 的 ACP 桥从不发 `name`,只把原始 opencode 工具名塞进 `kind`
+   * (`acp_runtime.go` 的 `mapOpenCodeToolPart`)。`todowrite` 不在 canonical
+   * 家族白名单里,于是会掉到下面的 title 启发式 —— 而那里的 `/\bwrite\b/`
+   * 因为**词边界**匹配不到 `todowrite` 里的 write,最后走「首词 title-case」
+   * 兜底,发出 `Todowrite`;title 再带一句描述(`todowrite: 复刻列表页`)时
+   * 首词是 `Todowrite:`,带冒号被 `sanitizeAcpCustomToolName` 拒掉,退成 `Other`
+   * —— 清单在 AMR 上就此整个消失。
+   *
+   * 讽刺的是 AMR 跑的就是 opencode 本人:直连 BYOK-opencode 一切正常,
+   * 走 AMR 就没了,纯粹是传输层把名字改坏。九家 ACP runtime 同受影响。
+   *
+   * 归一成契约里的规范名,而不是靠下游宽容 —— 传输层保真是它自己的职责,
+   * 把坏账留给每个未来的消费者才是真的贵。判据只有一个出处:`isTodoWriteToolName`。
+   */
+  if (isTodoWriteToolName(kindRaw) || isTodoWriteToolName(update.name)) {
+    return 'TodoWrite';
+  }
 
   let name: string | null = null;
   if (kindIsCanonicalFamily && kindName) {

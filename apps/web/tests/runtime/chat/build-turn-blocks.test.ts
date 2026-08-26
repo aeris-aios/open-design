@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { PersistedAgentEvent } from '@open-design/contracts';
 import { buildTurnBlocks } from '../../../src/runtime/chat/build-turn-blocks';
 import { isExpandable, isStruck } from '../../../src/runtime/chat/contract';
-import type { ExecutionShell, ProseBlock, ToolRow, TurnBlock } from '../../../src/runtime/chat/contract';
+import type { ExecutionShell, ProseBlock, TodoSegment, ToolRow, TurnBlock } from '../../../src/runtime/chat/contract';
 
 /* ── 事件构造 ─────────────────────────────────────────────── */
 
@@ -628,5 +628,33 @@ describe('done 分界在有清单时同样成立(D43)', () => {
       ...done(),
     });
     expect(prose(blocks).map((p) => p.text).join('')).toContain('看完了。');
+  });
+});
+
+/*
+ * 补一个测试洞(2026-08-27):规格 `chat-panel-next.md:274-283` 那张表里
+ * **最容易被误判的一格** —— 「召回 · 本轮继续做的」既划线又可展开 ——
+ * 原本那条用例标题写着「仍划线但可展开」,断言里却**没有 `isStruck`**。
+ *
+ * 这一格钉不住的后果是真实的:我自己就在 2026-08-27 把它读成 bug,
+ * 差点去「修」一段本来正确的代码。
+ */
+describe('召回:划线与可展开是两件事', () => {
+  const recalledAndWorked = () => buildTurnBlocks({
+    events: [
+      { kind: 'tool_use', id: 'p1', name: 'TodoWrite', input: { todos: [{ content: '复刻列表页', status: 'in_progress' }] } },
+      { kind: 'tool_use', id: 't1', name: 'Bash', input: { command: 'ls' } },
+      { kind: 'tool_result', toolUseId: 't1', content: 'ok', isError: false },
+    ] as never,
+    runStatus: 'succeeded',
+    previousTodos: [{ content: '复刻列表页', status: 'in_progress' }],
+  } as never);
+
+  it('召回回来、本轮又真干了活:**划线**(旧账)且**可展开**(本轮新增)', () => {
+    const shell = recalledAndWorked().find((b) => b.kind === 'shell') as never as { segments: TodoSegment[] };
+    const seg = shell.segments[0]!;
+    expect(seg.recalled).toBe(true);
+    expect(isStruck(seg)).toBe(true);
+    expect(isExpandable(seg)).toBe(true);
   });
 });

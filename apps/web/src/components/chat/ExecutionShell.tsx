@@ -147,8 +147,14 @@ function PlanRow({ steps, t }: { steps: string[]; t: RenderCtx['t'] }): ReactEle
 
 /**
  * 一条 todo 的抽屉。
- * 能不能展开只看**本轮有没有内容**(D25);划线表示「这一条本轮没有内容」——
- * 召回的、作废的、以及同一份清单里一次性关掉从没进行过的,都是这一种(D35)。
+ *
+ * **两件事解耦**:
+ *  · 能不能展开 —— 只看**本轮有没有内容**(D25)
+ *  · 划不划线 —— 只看**是不是本轮新开的活**(见 `isStruck` 的注释)
+ *
+ * 所以「**划线 + 可展开**」是合法形态:线说的是「这是旧账」,
+ * 展开看到的是本轮新增的那部分。
+ * (这里曾经写着「划线表示这一条本轮没有内容」,**说反了**,只描述了 D35 那一条。)
  */
 function TodoRow({ segment, ctx }: { segment: TodoSegment; ctx: RenderCtx }): ReactElement {
   const expandable = isExpandable(segment);

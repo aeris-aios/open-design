@@ -64,15 +64,31 @@ function todoItemsFromToolInput(input: unknown): unknown {
   return undefined;
 }
 
-/** TodoWrite surfaces under several tool aliases across runtimes. Mirrors
- *  isTodoWriteToolName in apps/web/src/runtime/todos.ts. */
+/**
+ * 「这是不是一次清单快照」—— **全仓唯一的判据**。
+ *
+ * 各家 runtime 的原生写法本来就不一样(claude `TodoWrite`、opencode `todowrite`、
+ * codex 归一后也是 `TodoWrite`、gemini 系 `write_todos`),再加上 MCP 注入的
+ * `mcp__*__todo_write`。**大小写一律不敏感**,因为判据不该依赖某一家怎么拼。
+ *
+ * 为什么必须不敏感 —— 一条真实的坏账(2026-08-27 复现):
+ * AMR 走 vela 的 ACP 桥,而 vela **从不发 `name` 字段**,只发 `kind: 'todowrite'`。
+ * OD 于是掉到 title 启发式(`agent-protocol/acp/updates.ts:438-448`),那里的
+ * `/\bwrite\b/` 因为**词边界**匹配不到 `todowrite` 里的 write,最后走兜底
+ * 「首词 title-case」,发出来的名字是 **`Todowrite`**(w 小写)。
+ *
+ * 当时全仓有**三份**判据、写法还不一致(这里和 `web/runtime/todos.ts` 是精确 `===`,
+ * `web/runtime/chat/tool-kind.ts` 是带 `/i` 的正则),于是表现成**「一半坏」**——
+ * 最难查的那种:客户端画得出清单,而 daemon 的 `endedWithUnfinishedWork` 漏判。
+ * 讽刺的是 AMR 跑的就是 opencode 本人:直连 BYOK-opencode 一切正常,走 AMR 就没了,
+ * 纯粹是传输层把名字改坏。九家 ACP runtime 同受影响。
+ *
+ * **不要再复制一份。** 需要这个判据的地方从这里 import。
+ */
+const TODO_TOOL_NAME_RE = /^(?:todowrite|todo_write|update_plan|write_todos)$|(?:^|__)todo_?write$/i;
+
 export function isTodoWriteToolName(name: unknown): boolean {
-  return (
-    name === 'TodoWrite' ||
-    name === 'todowrite' ||
-    name === 'todo_write' ||
-    name === 'update_plan'
-  );
+  return typeof name === 'string' && TODO_TOOL_NAME_RE.test(name);
 }
 
 /**

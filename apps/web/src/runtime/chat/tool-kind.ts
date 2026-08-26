@@ -1,3 +1,4 @@
+import { isTodoWriteToolName } from '@open-design/contracts';
 /**
  * 工具行的语义:这一次调用到底在干什么。
  *
@@ -243,9 +244,21 @@ export function isRawCommandTitle(toolName: string, input: unknown): boolean {
  *    建模成一个反复改写的条目,五次推进共用一个 tool id,按 id 去重会把
  *    除第一次以外的状态推进全部丢掉(真机撞到:一轮跑完四条 todo 还全是未开始)。
  */
-const SNAPSHOT_TOOL_RE = /^(TodoWrite|todowrite|todo_write|update_plan)$|(^|__)todo_?write$/i;
-
+/**
+ * **快照型**工具:每次调用都是把整份状态**替换**一遍,而不是记一笔流水。
+ *
+ * 判据本身**不在这里** —— 它是全仓唯一的 `isTodoWriteToolName`(契约里),
+ * 这里只是给它一个说明「为什么落块器和去重器要认它」的名字。
+ * 曾经这里自己写过一份带 `/i` 的正则,而契约那份是精确 `===`,两份口径不一,
+ * 于是 AMR 把名字改成 `Todowrite` 之后表现成「一半坏」:这边认得、那边不认。
+ *
+ * 谁要用它:
+ *  · `build-turn-blocks` 靠它把快照落成 todo 分段;
+ *  · `dedupeToolUsesById` 靠它**放行同 id 的多次调用** —— 有的 agent 把「计划」
+ *    建模成一个反复改写的条目,五次推进共用一个 tool id,按 id 去重会把
+ *    除第一次以外的状态推进全部丢掉(真机撞到:一轮跑完四条 todo 还全是未开始)。
+ */
 export function isSnapshotTool(toolName: string): boolean {
-  return SNAPSHOT_TOOL_RE.test(toolName);
+  return isTodoWriteToolName(toolName);
 }
 

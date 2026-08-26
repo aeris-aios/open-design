@@ -1,3 +1,4 @@
+import { isTodoWriteToolName } from '@open-design/contracts';
 import { todoStatusIsUnfinished } from '@open-design/contracts';
 import type { AgentEvent } from '../types';
 
@@ -124,14 +125,15 @@ export function latestTodoWriteInputForPinnedCard<
   return null;
 }
 
-export function isTodoWriteToolName(name: string): boolean {
-  return (
-    name === 'TodoWrite' ||
-    name === 'todowrite' ||
-    name === 'todo_write' ||
-    name === 'update_plan'
-  );
-}
+/**
+ * 转发给契约里那个**唯一**的判据 —— 这里不再自己写一份。
+ *
+ * 曾经全仓有三份、写法还不一致(两份精确 `===`、一份带 `/i` 的正则),
+ * 于是 AMR 把名字 title-case 成 `Todowrite` 之后表现成「一半坏」:
+ * 客户端画得出清单,daemon 的 `endedWithUnfinishedWork` 却漏判。
+ * 保留这个导出只是为了不改动全部调用点。
+ */
+export { isTodoWriteToolName };
 
 function hasTerminalRunEnded(
   runStatus: 'queued' | 'running' | 'succeeded' | 'failed' | 'canceled' | undefined,

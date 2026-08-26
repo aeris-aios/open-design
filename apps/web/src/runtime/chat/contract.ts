@@ -118,7 +118,20 @@ export function isExpandable(segment: TodoSegment): boolean {
   return segment.items.length > 0;
 }
 
-/** 划线 = 「这一条在本轮没有内容」:召回的、作废的、以及一次性关掉从没进行过的(D35) */
+/**
+ * 划线 = 「**这一条不是本轮新开的活**」。三种情况彼此独立:
+ *   ① 来自更早的轮次(`recalled`)
+ *   ② 被重新规划作废(`abandoned`)
+ *   ③ 本轮开出来但一次都没干过(已关闭且名下无内容,D35)
+ *
+ * ⚠️ 这里曾经写着「划线 = 这一条在本轮没有内容」—— **说反了**,它只描述了第 ③ 条。
+ * 规格 `chat-panel-next.md:274-283` 那张表把三种召回态的划线列**全部**写成 ✓,
+ * 包括「召回 · 本轮继续做的」和「召回 · 本轮继续做并做完的」。
+ *
+ * 也就是说 **「划线 + 可展开」是合法形态**:线说的是「这是旧账」,
+ * 展开看到的是本轮新增的那部分。划线与可展开**解耦** ——
+ * 能不能展开只看本轮有没有内容(D25),见 `isExpandable`。
+ */
 export function isStruck(segment: TodoSegment): boolean {
   if (segment.abandoned || segment.recalled) return true;
   const closed = segment.status !== 'in_progress' && segment.status !== 'pending';
