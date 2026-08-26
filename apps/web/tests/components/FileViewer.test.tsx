@@ -8605,6 +8605,70 @@ describe('FileViewer tweaks toolbar', () => {
     ))).toHaveLength(mintCount);
   });
 
+  it('does not mint a converged navigation before the current file source is classified', async () => {
+    const file = htmlPreviewFile({ name: 'gated.html', path: 'gated.html' });
+    const sourceResponse = deferredResponse();
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = typeof input === 'string'
+        ? input
+        : input instanceof Request
+          ? input.url
+          : String(input);
+      if (url.startsWith('/api/projects/project-1/raw/gated.html')) {
+        return sourceResponse.promise;
+      }
+      if (url === '/api/projects/project-1/files') {
+        return new Response(JSON.stringify({ files: [file] }), { status: 200 });
+      }
+      if (url.includes('/api/projects/project-1/preview-url')) {
+        return new Response(JSON.stringify({
+          url: '/api/projects/project-1/preview/legacy-scope/gated.html',
+          file: 'gated.html',
+          expiresAt: Date.now() + 60 * 60 * 1000,
+          scopedOrigin: {
+            normalUrl: 'http://n-scope-0002.localhost:43111/gated.html',
+            poweredUrl: 'http://p-scope-0002.localhost:43111/gated.html',
+            documentVersion: 'gated-v1',
+          },
+        }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ deployments: [] }), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(
+      <FileViewer
+        projectId="project-1"
+        projectKind="prototype"
+        file={file}
+        previewRuntimeConvergence
+      />,
+    );
+
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.some(([input]) => (
+        String(input).startsWith('/api/projects/project-1/raw/gated.html')
+      ))).toBe(true);
+    });
+    expect(fetchMock.mock.calls.some(([input]) => (
+      String(input).includes('/api/projects/project-1/preview-url')
+    ))).toBe(false);
+
+    sourceResponse.resolve(new Response(
+      '<!doctype html><html><body><main>Ready</main></body></html>',
+      { status: 200, headers: { 'Content-Type': 'text/html' } },
+    ));
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.some(([input]) => (
+        String(input).includes('/api/projects/project-1/preview-url')
+      ))).toBe(true);
+    });
+    expect(screen.getByTestId('preview-runtime-frame-standby')).toHaveAttribute(
+      'src',
+      'http://n-scope-0002.localhost:43111/gated.html',
+    );
+  });
+
   it('renders Annotation, Edit, and Draw as the primary preview tools', async () => {
     render(
       <FileViewer projectId="project-1" projectKind="prototype" file={htmlPreviewFile()}

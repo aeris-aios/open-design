@@ -10553,11 +10553,13 @@ function HtmlViewer({
     if (mode !== 'preview') return undefined;
     return subscribePreviewIframeMessages(({ source: messageSource, data }) => {
       if (!workspaceActiveRef.current) return;
-      const activeFrame = useUrlLoadPreview
-        ? urlPreviewIframeRef.current
-        : srcDocPreviewIframeRef.current;
+      const activeFrame = previewRuntimeConvergence
+        ? iframeRef.current
+        : useUrlLoadPreview
+          ? urlPreviewIframeRef.current
+          : srcDocPreviewIframeRef.current;
       if (!activeFrame || messageSource !== activeFrame.contentWindow) return;
-      if (useUrlLoadPreview && data.event === 'visible_paint') {
+      if (!previewRuntimeConvergence && useUrlLoadPreview && data.event === 'visible_paint') {
         const keepAliveKey = urlPreviewKeepAliveKeyRef.current;
         const sourceUrl = data.source_url;
         const documentEpoch = data.document_epoch;
@@ -10597,14 +10599,23 @@ function HtmlViewer({
       }
       reportPreviewIframeMessage(data, {
         surface: 'artifact_preview',
-        renderMode: useUrlLoadPreview ? 'url_load' : 'srcdoc',
+        renderMode: previewRuntimeConvergence || useUrlLoadPreview ? 'url_load' : 'srcdoc',
         artifactId: anonymizeArtifactId({ projectId, fileName: file.name }),
         artifactKind: handoffArtifactKind ?? artifactKindToTracking({ fileKind: file.kind ?? null }),
         projectId,
       }, previewObservabilitySeenRef.current);
     });
-  }, [file.kind, file.name, handoffArtifactKind, mode, projectId, useUrlLoadPreview]);
+  }, [
+    file.kind,
+    file.name,
+    handoffArtifactKind,
+    mode,
+    previewRuntimeConvergence,
+    projectId,
+    useUrlLoadPreview,
+  ]);
   useEffect(() => {
+    if (previewRuntimeConvergence) return;
     const activeFrame = useUrlLoadPreview
       ? urlPreviewIframeRef.current
       : srcDocPreviewIframeRef.current;
@@ -10617,6 +10628,7 @@ function HtmlViewer({
     }
   }, [
     beginDesktopPreviewContentMeasurementGeneration,
+    previewRuntimeConvergence,
     transportPreviewMeasurementDocumentEpoch,
     scheduleDesktopPreviewContentMeasure,
     useUrlLoadPreview,
@@ -15126,6 +15138,17 @@ function HtmlViewer({
     const visibleIframe = iframeRef.current ?? srcDocPreviewIframeRef.current;
     const hostSnapshot = await captureHostIframeSnapshot(visibleIframe);
     if (hostSnapshot) return hostSnapshot;
+
+    if (previewRuntimeConvergence) {
+      const activeIframe = iframeRef.current;
+      if (!activeIframe) {
+        captureFailureStageRef.current = 'NO_URL_IFRAME';
+        return null;
+      }
+      await waitForIframeLoadOrTimeout(activeIframe, 250);
+      await waitForAnimationFrame();
+      return requestPreviewSnapshotWithRetry(activeIframe);
+    }
 
     if (!useUrlLoadPreview) {
       const activeIframe = srcDocPreviewIframeRef.current ?? iframeRef.current;
