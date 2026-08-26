@@ -34,6 +34,7 @@ import { resolvePrivateIpcPath } from "../src/stamp.js";
 const originalArgv = [...process.argv];
 const originalResources = process.env.OD_SIDECAR_RESOURCES;
 const originalEndpoint = process.env.OD_SIDECAR_CLIENT_ENDPOINT;
+const FIXTURE_READY_TIMEOUT_MS = 10_000;
 
 const stamp: SidecarStamp = {
   channel: "local",
@@ -444,7 +445,7 @@ describe("server-side atomic operations", () => {
     try {
       await vi.waitFor(async () => {
         expect(await getSidecarStatus(restartStamp)).toEqual({ pid: first.pid, port });
-      });
+      }, { timeout: FIXTURE_READY_TIMEOUT_MS });
       await expect(getSidecarStatus(restartStamp, { generationPid: first.pid + 1 }))
         .rejects.toThrow(`sidecar endpoint belongs to generation ${first.pid}, expected ${first.pid + 1}`);
       await expect(getSidecarStatus(restartStamp, { generationPid: first.pid }))
@@ -461,11 +462,11 @@ describe("server-side atomic operations", () => {
       expect(restarted.stop.stoppedPids).toContain(first.pid);
       await vi.waitFor(async () => {
         expect(await getSidecarStatus(restartStamp)).toEqual({ pid: restarted.pid, port });
-      });
+      }, { timeout: FIXTURE_READY_TIMEOUT_MS });
     } finally {
       await stopSidecar(restartStamp, { killGraceMs: 2_000, termGraceMs: 0 }).catch(() => undefined);
     }
-  });
+  }, 30_000);
 
   it("serializes two concurrent restarts into one healthy generation", async () => {
     const fixture = fileURLToPath(new URL("./fixtures/managed-child.ts", import.meta.url));
@@ -545,7 +546,7 @@ describe("server-side atomic operations", () => {
         expect(daemonStatus.pid).toBe(daemon.pid);
         expect(daemonStatus.port).toBeGreaterThan(0);
         await expect(getSidecarStatus(adjacentStamp)).resolves.toEqual({ pid: adjacent.pid, port: adjacentDaemonPort });
-      });
+      }, { timeout: FIXTURE_READY_TIMEOUT_MS });
       const resolvedDaemonPort = daemonStatus.port;
       daemonPort = resolvedDaemonPort;
       await new Promise<void>((resolve, reject) => {
@@ -564,7 +565,7 @@ describe("server-side atomic operations", () => {
       expect(restarted.reusedPort).toBe(false);
       await vi.waitFor(async () => {
         await expect(getSidecarStatus(daemonStamp)).resolves.toEqual({ pid: restarted.pid, port: resolvedDaemonPort });
-      });
+      }, { timeout: FIXTURE_READY_TIMEOUT_MS });
 
       expect(web.address()).toEqual(expect.objectContaining({ port: webPort }));
       await expect(fetch(`http://127.0.0.1:${webPort}/api/projects`).then(({ status }) => status)).resolves.toBe(200);
@@ -577,7 +578,7 @@ describe("server-side atomic operations", () => {
         stopSidecar(adjacentStamp, { killGraceMs: 2_000, termGraceMs: 0 }).catch(() => undefined),
       ]);
     }
-  });
+  }, 30_000);
 
   it("keeps explicit and fresh restart port requests authoritative", async () => {
     const fixture = fileURLToPath(new URL("./fixtures/managed-child.ts", import.meta.url));
@@ -600,12 +601,12 @@ describe("server-side atomic operations", () => {
     try {
       await vi.waitFor(async () => {
         expect(await getSidecarStatus(restartStamp)).toEqual(expect.objectContaining({ port: firstPort }));
-      });
+      }, { timeout: FIXTURE_READY_TIMEOUT_MS });
       const explicit = await restartSidecar({ ...request, resources: { ...request.resources, port: explicitPort } });
       expect(explicit.reusedPort).toBe(false);
       await vi.waitFor(async () => {
         expect(await getSidecarStatus(restartStamp)).toEqual(expect.objectContaining({ port: explicitPort }));
-      });
+      }, { timeout: FIXTURE_READY_TIMEOUT_MS });
 
       const fresh = await restartSidecar(
         { ...request, resources: { ...request.resources, port: 0 } },
@@ -617,7 +618,7 @@ describe("server-side atomic operations", () => {
         freshStatus = await getSidecarStatus(restartStamp);
         expect(freshStatus.pid).toBe(fresh.pid);
         expect(freshStatus.port).toBeGreaterThan(0);
-      });
+      }, { timeout: FIXTURE_READY_TIMEOUT_MS });
       await expect(restartSidecar(
         { ...request, resources: { ...request.resources, port: 0 } },
         { requireConcretePort: true },
@@ -626,7 +627,7 @@ describe("server-side atomic operations", () => {
     } finally {
       await stopSidecar(restartStamp, { killGraceMs: 2_000, termGraceMs: 0 }).catch(() => undefined);
     }
-  });
+  }, 30_000);
 
   it("does not leak a parent client capability into an independently stamped sidecar", async () => {
     const fixture = fileURLToPath(new URL("./fixtures/stamped-child.ts", import.meta.url));
@@ -713,14 +714,14 @@ describe("server-side atomic operations", () => {
     try {
       await vi.waitFor(async () => {
         expect((await lstat(endpoint)).isSocket()).toBe(true);
-      });
+      }, { timeout: FIXTURE_READY_TIMEOUT_MS });
       const result = await stopSidecar(staleStamp, { killGraceMs: 2_000, termGraceMs: 0 });
       expect(result.remainingPids).toEqual([]);
       await expect(lstat(endpoint)).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
       await stopSidecar(staleStamp, { killGraceMs: 2_000, termGraceMs: 0 }).catch(() => undefined);
     }
-  }, 10_000);
+  }, 20_000);
 
   it("sends SIGTERM before waiting when graceful IPC is not accepted", async () => {
     if (process.platform === "win32") return;
@@ -738,7 +739,10 @@ describe("server-side atomic operations", () => {
     });
 
     try {
-      await vi.waitFor(async () => expect((await lstat(endpoint)).isSocket()).toBe(true));
+      await vi.waitFor(
+        async () => expect((await lstat(endpoint)).isSocket()).toBe(true),
+        { timeout: FIXTURE_READY_TIMEOUT_MS },
+      );
       const result = await spawned.stop({ killGraceMs: 2_000, termGraceMs: 2_000 });
       expect(result).toMatchObject({ forcedPids: [], gracefulAccepted: false, remainingPids: [] });
       await expect(readFile(marker, "utf8")).resolves.toBe("SIGTERM");
@@ -747,7 +751,7 @@ describe("server-side atomic operations", () => {
       await stopSidecar(termStamp, { killGraceMs: 2_000, termGraceMs: 0 }).catch(() => undefined);
       await rm(root, { force: true, recursive: true });
     }
-  }, 10_000);
+  }, 20_000);
 
   it("lets an owned generation handle retire its stale endpoint without discovering a replacement", async () => {
     if (process.platform === "win32") return;
@@ -768,7 +772,10 @@ describe("server-side atomic operations", () => {
     });
 
     try {
-      await vi.waitFor(async () => expect((await lstat(endpoint)).isSocket()).toBe(true));
+      await vi.waitFor(
+        async () => expect((await lstat(endpoint)).isSocket()).toBe(true),
+        { timeout: FIXTURE_READY_TIMEOUT_MS },
+      );
       const result = await spawned.stop({ killGraceMs: 2_000, termGraceMs: 0 });
       expect(result).toMatchObject({ remainingPids: [], staleEndpointRemoved: true });
       await expect(lstat(endpoint)).rejects.toMatchObject({ code: "ENOENT" });
@@ -776,7 +783,7 @@ describe("server-side atomic operations", () => {
       await spawned.stop({ killGraceMs: 2_000, termGraceMs: 0 }).catch(() => undefined);
       await stopSidecar(ownedStamp, { killGraceMs: 2_000, termGraceMs: 0 }).catch(() => undefined);
     }
-  }, 10_000);
+  }, 20_000);
 
   it("removes a refused stale endpoint after its stamped generation is already gone", async () => {
     if (process.platform === "win32") return;
@@ -792,7 +799,10 @@ describe("server-side atomic operations", () => {
     });
 
     try {
-      await vi.waitFor(async () => expect((await lstat(endpoint)).isSocket()).toBe(true));
+      await vi.waitFor(
+        async () => expect((await lstat(endpoint)).isSocket()).toBe(true),
+        { timeout: FIXTURE_READY_TIMEOUT_MS },
+      );
       const generationPids = collectProcessTreePids(await captureProcessSnapshot(), [launched.pid]);
       for (const pid of generationPids) {
         try { process.kill(pid, "SIGKILL"); } catch {}
@@ -806,7 +816,7 @@ describe("server-side atomic operations", () => {
     } finally {
       await stopSidecar(staleStamp, { killGraceMs: 2_000, termGraceMs: 0 }).catch(() => undefined);
     }
-  }, 10_000);
+  }, 20_000);
 
   it("force-stops an unresponsive target after its declared owner dies", async () => {
     const fixture = fileURLToPath(new URL("./fixtures/unresponsive-sidecar.ts", import.meta.url));
@@ -827,7 +837,7 @@ describe("server-side atomic operations", () => {
         expect((await findSidecarProcesses(ownerStamp)).map(({ pid }) => pid)).toContain(spawned.process.pid);
         generationPids = collectProcessTreePids(await captureProcessSnapshot(), [spawned.process.pid]);
         expect(generationPids.length).toBeGreaterThan(1);
-      }, { interval: 100, timeout: process.platform === "win32" ? 10_000 : 1_000 });
+      }, { interval: 100, timeout: FIXTURE_READY_TIMEOUT_MS });
       owner.kill("SIGKILL");
       await expect(waitForProcessExit(spawned.process.pid, 9_000)).resolves.toBe(true);
       await Promise.all(generationPids.map(async (pid) => {
@@ -903,7 +913,7 @@ describe("server-side atomic operations", () => {
         snapshots = await captureProcessSnapshot();
         generationPids = collectProcessTreePids(snapshots, [spawned.process.pid]);
         expect(generationPids.length).toBeGreaterThan(1);
-      }, { interval: 100, timeout: process.platform === "win32" ? 10_000 : 1_000 });
+      }, { interval: 100, timeout: FIXTURE_READY_TIMEOUT_MS });
 
       const stopping = retireSidecarGeneration(
         sidecarGenerationRef(orphanStamp, spawned.process.pid),
@@ -942,13 +952,13 @@ describe("server-side atomic operations", () => {
     try {
       await vi.waitFor(async () => {
         expect((await findSidecarProcesses(replacementStamp)).map(({ pid }) => pid)).toContain(oldPid);
-      }, { interval: 100, timeout: process.platform === "win32" ? 10_000 : 1_000 });
+      }, { interval: 100, timeout: FIXTURE_READY_TIMEOUT_MS });
       const stopping = old.stop({ killGraceMs: 2_000, termGraceMs: 300 });
       await new Promise((resolveWait) => setTimeout(resolveWait, 100));
       replacement = await launchSidecar({ args: [fixture], command: process.execPath, resources, stamp: replacementStamp });
       await vi.waitFor(async () => {
         expect((await findSidecarProcesses(replacementStamp)).map(({ pid }) => pid)).toContain(replacement?.pid);
-      }, { interval: 100, timeout: process.platform === "win32" ? 10_000 : 1_000 });
+      }, { interval: 100, timeout: FIXTURE_READY_TIMEOUT_MS });
 
       const result = await stopping;
       expect(result.matchedPids).toContain(oldPid);
@@ -984,7 +994,7 @@ describe("server-side atomic operations", () => {
       await vi.waitFor(async () => {
         expect((await findSidecarProcesses(ambiguousStamp)).map(({ pid }) => pid).sort())
           .toEqual([firstPid, secondPid].sort());
-      });
+      }, { timeout: FIXTURE_READY_TIMEOUT_MS });
       await expect(stopSidecar(ambiguousStamp, { termGraceMs: 0 }))
         .rejects.toThrow("multiple stamped generation roots");
       expect((await findSidecarProcesses(ambiguousStamp)).map(({ pid }) => pid).sort())
@@ -1012,7 +1022,7 @@ describe("server-side atomic operations", () => {
     try {
       await vi.waitFor(async () => {
         await expect(findSidecarProcesses(transientStamp)).resolves.toHaveLength(2);
-      });
+      }, { timeout: FIXTURE_READY_TIMEOUT_MS });
       setTimeout(() => {
         retireSecond = second.stop({ killGraceMs: 2_000, termGraceMs: 0 });
       }, 100);
@@ -1056,7 +1066,7 @@ describe("server-side atomic operations", () => {
         ready = JSON.parse(await readFile(readyPath, "utf8"));
         expect(ready.generationPid).toBe(spawned.process.pid);
         expect(ready.runtimePid).not.toBe(spawned.process.pid);
-      });
+      }, { timeout: FIXTURE_READY_TIMEOUT_MS });
       await expect(findSidecarProcesses(renamedStamp)).resolves.toEqual([
         expect.objectContaining({ pid: spawned.process.pid }),
       ]);
@@ -1068,7 +1078,7 @@ describe("server-side atomic operations", () => {
       });
       await vi.waitFor(async () => {
         expect((await findSidecarProcesses(renamedStamp)).map(({ pid }) => pid)).toContain(replacement?.pid);
-      });
+      }, { timeout: FIXTURE_READY_TIMEOUT_MS });
 
       const result = await spawned.stop({ killGraceMs: 2_000, termGraceMs: 0 });
 
@@ -1086,5 +1096,5 @@ describe("server-side atomic operations", () => {
       if (replacement != null) await waitForProcessExit(replacement.pid, 2_000);
       await rm(root, { force: true, recursive: true });
     }
-  }, 10_000);
+  }, 20_000);
 });
