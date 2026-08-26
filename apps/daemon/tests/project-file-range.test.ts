@@ -331,6 +331,24 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
           + '<main id="slot">real</main></body></html>',
       ),
     );
+    // Leaving script-data-double-escaped through `-->`. In the
+    // double-escaped *dash-dash* state a `>` returns the tokenizer to plain
+    // script data, so the `</script>` that follows is a real close and what
+    // comes after it is markup.
+    await writeFile(
+      path.join(dir, 'double-escape-exit.html'),
+      Buffer.from(
+        '<!doctype html><html><head></head><body>'
+          // The shape from review, which has a second `</script>` to fall back
+          // on, so both readings eventually find some boundary.
+          + '<script><!--<script>--><\/script><body>slip</body><\/script>'
+          // The same state without that fallback. Read as staying
+          // double-escaped, this script never closes, swallows `<main>` and
+          // the real body close, and the scan has no boundary left at all.
+          + '<script><!--<script>--><\/script>'
+          + '<main id="slot">real</main></body></html>',
+      ),
+    );
     // A leading BOM is the encoding signature and only counts at byte zero, so
     // the no-boundary fallback has to insert after it rather than in front of
     // it — otherwise the doctype stops applying and the artifact silently
@@ -934,6 +952,23 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
     expect(page('body > [data-od-url-scroll-bridge]').length).toBe(1);
     expect(page('#slot').text()).toBe('real');
     expect(html).toContain('<![CDATA[q > </svg><body>slip</body>]]>');
+  });
+
+  it('leaves script-data-double-escaped through the dash-dash greater-than', async () => {
+    const bridged = await fetch(`${rawUrl('double-escape-exit.html')}?odPreviewBridge=scroll`);
+    expect(bridged.status).toBe(200);
+    const html = await bridged.text();
+    const page = load(html);
+    // A live bridge inside `<body>`, and `<main>` still an element rather than
+    // script text. Read as staying double-escaped, the second script never
+    // closes: `#slot` is swallowed and the bridge falls back into `<head>`, so
+    // both assertions below fail. The bridge lands at the first `</body>` — the
+    // one the tree builder acts on — which is ahead of `<main>`; that position
+    // and the document's last `</body>` leave an identical tree, which is why
+    // this asserts live elements and not an offset.
+    expect(page('body > [data-od-url-scroll-bridge]').length).toBe(1);
+    expect(page('#slot').text()).toBe('real');
+    expect(html).toContain('<script><!--<script>--></script>');
   });
 
   it('keeps a leading BOM at byte zero when there is no boundary', async () => {
