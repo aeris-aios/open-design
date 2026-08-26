@@ -5347,4 +5347,5 @@ export const en: Dict = {
   'chat.record.imageCount': "{count} images",
   'chat.record.retry': "Retry",
   'chat.record.viewImage': "View image {index}",
+  'chat.record.imagePending': "Generating illustration…",
 };

@@ -5333,4 +5333,5 @@ export const uk: Dict = {
   'chat.record.imageCount': "{count} зобр.",
   'chat.record.retry': "Повторити",
   'chat.record.viewImage': "Відкрити зображення {index}",
+  'chat.record.imagePending': "Генерування зображення…",
 };

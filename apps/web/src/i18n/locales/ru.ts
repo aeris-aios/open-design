@@ -5333,4 +5333,5 @@ export const ru: Dict = {
   'chat.record.imageCount': "{count} изобр.",
   'chat.record.retry': "Повторить",
   'chat.record.viewImage': "Открыть изображение {index}",
+  'chat.record.imagePending': "Генерация изображения…",
 };

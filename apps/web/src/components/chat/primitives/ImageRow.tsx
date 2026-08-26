@@ -11,9 +11,11 @@
  *   出完了有失败   仍是大格,失败那格给「重试」,**不收行** —— 收了就没地方放重试
  */
 import type { ReactElement } from 'react';
+import { VisuallyHidden } from '@open-design/components';
 import { useT } from '../../../i18n';
 import type { ImageRow as ImageRowData } from '../../../runtime/chat/contract';
 import { formatElapsed } from '../../../runtime/chat/format';
+import { PixelLiquid } from '../../PixelLiquid';
 import { ImageIcon, RetryIcon } from './icons';
 import { Orb } from './Orb';
 import styles from './record.module.css';
@@ -72,19 +74,32 @@ export function ImageRow({ row, onRetry, onOpenImage }: ImageRowProps): ReactEle
       </div>
       <div className={styles.imgs}>
         {Array.from({ length: row.total }, (_, i) => {
-          if (i < row.done) return <span key={i} className={styles.shot}><span className={styles.mini} /></span>;
+          if (i < row.done) {
+            return (
+              <span key={i} className={styles.shot} data-image-cell="done">
+                <span className={styles.mini} />
+              </span>
+            );
+          }
           if (i < row.done + row.failed) {
             const inner = <><RetryIcon />{t('chat.record.retry')}</>;
             return (
-              <span key={i} className={`${styles.shot} ${styles.fail}`}>
+              <span key={i} className={`${styles.shot} ${styles.fail}`} data-image-cell="failed">
                 {onRetry
                   ? <button type="button" className={styles.retry} onClick={() => onRetry(row, i)}>{inner}</button>
                   : <span className={styles.retry}>{inner}</span>}
               </span>
             );
           }
-          // 还没出来的格子。设计稿这里是「像素液体」动效(pixel-liquid.js),尚未接入
-          return <span key={i} className={`${styles.shot} ${styles.load}`} />;
+          /* 还没出来的格子:设计稿的「像素液体」。这一格什么都还没有,底下没有图
+             可以糊,所以液体不指向任何一张具体的图 —— 它只说「这里在动、东西还在长」。
+             静止的灰块说不出这句话,产品 2026-08-26 明令不许再用。 */
+          return (
+            <span key={i} className={`${styles.shot} ${styles.load}`} data-image-cell="loading">
+              <PixelLiquid />
+              <VisuallyHidden role="status">{t('chat.record.imagePending')}</VisuallyHidden>
+            </span>
+          );
         })}
       </div>
     </>

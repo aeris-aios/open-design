@@ -5333,4 +5333,5 @@ export const ar: Dict = {
   'chat.record.imageCount': "{count} صور",
   'chat.record.retry': "إعادة المحاولة",
   'chat.record.viewImage': "عرض الصورة {index}",
+  'chat.record.imagePending': "جارٍ إنشاء الصورة…",
 };

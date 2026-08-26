@@ -5333,4 +5333,5 @@ export const th: Dict = {
   'chat.record.imageCount': "{count} ภาพ",
   'chat.record.retry': "ลองใหม่",
   'chat.record.viewImage': "ดูภาพที่ {index}",
+  'chat.record.imagePending': "กำลังสร้างภาพประกอบ…",
 };

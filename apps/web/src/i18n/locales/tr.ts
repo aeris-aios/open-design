@@ -5333,4 +5333,5 @@ export const tr: Dict = {
   'chat.record.imageCount': "{count} görsel",
   'chat.record.retry': "Yeniden dene",
   'chat.record.viewImage': "{index}. görseli aç",
+  'chat.record.imagePending': "Görsel oluşturuluyor…",
 };
