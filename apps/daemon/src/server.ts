@@ -117,6 +117,9 @@ import {
   resolveChatRunInactivityTimeoutMs,
   resolveChatRunShutdownGraceMs,
 } from './runtimes/chat-run-lifecycle.js';
+// Shared with `POST /api/runs/:id/steer` so the opening prompt and a B11
+// mid-turn steering frame are encoded by the same writer.
+import { encodeStreamJsonUserMessage } from './runtimes/run-steering.js';
 import {
   normalizeRunContextSelection,
   renderRunContextPrompt,
@@ -14108,18 +14111,16 @@ export async function startServer({
         // messages into the same turn. The stdin is closed on a clean terminal
         // turn (see applyClaudeStreamJsonRunBookkeeping) or when the child
         // exits (run terminates, user cancels).
-        const userMessage = JSON.stringify({
-          type: 'user',
-          message: {
-            role: 'user',
-            content: [{ type: 'text', text: composed }],
-          },
-        });
+        //
+        // Shared encoder with B11 steering (`run-steering.ts`): a mid-turn
+        // frame the model does not recognise fails invisibly, so the opening
+        // prompt and the steering write must never drift apart.
+        const userMessage = encodeStreamJsonUserMessage(composed);
         try {
           // E-lite: `write` returns false when the chunk was buffered because the
           // OS pipe is full (the child isn't draining stdin) — the corroborating
           // signal for a `stdin_write`-phase inactivity stall.
-          const accepted = child.stdin.write(`${userMessage}\n`, 'utf8', markStdinWriteEnd);
+          const accepted = child.stdin.write(userMessage, 'utf8', markStdinWriteEnd);
           run.stdinBackpressure = accepted === false;
         } catch (err) {
           // Swallow EPIPE here for the same reason as the listener above —

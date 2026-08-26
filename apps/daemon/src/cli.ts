@@ -7523,6 +7523,13 @@ async function runRun(args) {
                [--agent claude] [--model <id>] [--service-tier <id>] [--follow] [--json]
   od run watch  <runId>                     ND-JSON event stream on stdout.
   od run cancel <runId>                     Request cancellation.
+  od run steer  <runId> [--message "<text>" | --prompt-file <path|->] [--json]
+                                            Push a message into the turn that is
+                                            STILL RUNNING (「引导对话」) instead of
+                                            cancelling and resending. Only agents
+                                            whose CLI keeps stdin open mid-turn
+                                            can take it; the rest refuse with
+                                            RUN_STEERING_UNSUPPORTED.
   od run continue <runId> [--follow]        Continue a resumable failed run.
   od run list   [--project <id>]            List recent runs.
   od run info   <runId>                     One run's status.
@@ -7611,6 +7618,37 @@ Common options:
       });
       if (!resp.ok) return structuredHttpFailure(resp, 'run-not-found');
       console.log(`[run] cancelled ${id}`);
+      return;
+    }
+    // B11 「引导对话」. The dual of `cancel`: the turn is NOT stopped, the text is
+    // written onto the agent child's still-open stdin so the model reads it
+    // mid-turn. Long instructions go through --prompt-file <path|-> so a
+    // heredoc / jq pipeline stays clean (same contract as `od automation`).
+    case 'steer': {
+      const id = positionalArgs(rest, PROJECT_RESOURCE_STRING_FLAGS)[0];
+      const text = (
+        (typeof flags.message === 'string' && flags.message.length > 0
+          ? flags.message
+          : await readPromptFromFlags(flags)) ?? ''
+      ).trim();
+      if (!id || !text) {
+        console.error(
+          'Usage: od run steer <runId> --message "<text>" [--json]\n'
+          + '       od run steer <runId> --prompt-file <path|-> [--json]',
+        );
+        process.exit(2);
+      }
+      const resp = await fetch(`${base}/api/runs/${encodeURIComponent(id)}/steer`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...workspaceHeaders },
+        body: JSON.stringify({ text }),
+      });
+      if (!resp.ok) return structuredHttpFailure(resp, 'run-not-found');
+      const data = await resp.json();
+      if (flags.json) return process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+      // Clean stdout stays machine-chainable; the hint goes to stderr.
+      process.stderr.write('[run] delivered into the running turn — the agent keeps its work\n');
+      console.log(`${id}\t${data?.messageId ?? ''}\t${data?.run?.status ?? '-'}`);
       return;
     }
     case 'continue': {

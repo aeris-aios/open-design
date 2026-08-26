@@ -738,6 +738,43 @@ export interface ChatRunCancelResponse {
   run?: ChatRunStatusResponse;
 }
 
+/**
+ * B11 「引导对话」 — `POST /api/runs/:id/steer`.
+ *
+ * Steering is the opposite of cancel-and-resend: the running turn keeps its
+ * work and the message is written onto the agent child's still-open stdin, so
+ * the model reads it in the middle of the turn it is already executing.
+ */
+export interface ChatRunSteerRequest {
+  /** The user's mid-turn instruction. Must be non-blank. */
+  text: string;
+}
+
+/**
+ * Why a steer was refused. `runtime_unsupported` is permanent for the run's
+ * agent; the other two are about this run's stdin having already closed.
+ */
+export type ChatRunSteerRefusal =
+  | 'runtime_unsupported'
+  | 'run_terminal'
+  | 'stdin_closed';
+
+export interface ChatRunSteerResponse {
+  ok: true;
+  /**
+   * True once the JSONL user frame was handed to the child's stdin. False is
+   * never returned with `ok: true` — a failed write is an error response.
+   */
+  delivered: true;
+  /**
+   * Id of the `role: 'user'` message the daemon appended to the run's
+   * conversation, so a reload still shows what the user said mid-turn.
+   */
+  messageId: string;
+  /** Run status AFTER delivery — still non-terminal, because steering does not stop the turn. */
+  run: ChatRunStatusResponse;
+}
+
 export interface ChatAttachment {
   path: string;
   name: string;
