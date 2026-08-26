@@ -2072,7 +2072,11 @@ export function ProjectView({
   // Read-only banner copy: when the collab cloud resolved who shared this project,
   // name them ("这是 麻薯 创建的共享项目…"); otherwise fall back to the name-less
   // notice. Only computed when the viewer is actually read-only.
-  const readonlyNoticeText = projectCollab.viewerOnly
+  // Keyed to `isSharedNonOwner`, not `viewerOnly`: the latter is fail-closed and
+  // also covers the status-unknown window, where naming this a shared project
+  // would be a guess. `isSharedNonOwner` requires positive evidence (see its
+  // docblock in useProjectCollab) -- exactly what a factual banner needs.
+  const readonlyNoticeText = projectCollab.isSharedNonOwner
     ? projectCollab.ownerDisplayName
       ? t('workspace.readonlyNoticeBy', { owner: projectCollab.ownerDisplayName })
       : t('workspace.readonlyNotice')
@@ -11758,6 +11762,7 @@ export function ProjectView({
           projectName={currentProject.name}
           viewerOnly={projectMutationReadOnly}
           materializationPending={projectCollab.materializationPending}
+          filesAuthoritative={committedFilesGeneration > 0}
           readonlyNotice={
             projectCollab.materializationPending
               ? t('designFiles.syncing')
