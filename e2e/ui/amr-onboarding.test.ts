@@ -149,7 +149,7 @@ test('[P0] Cloud status loading does not block signed-out Local CLI or BYOK setu
     .toBe(true);
 });
 
-test('[P0] delayed active Cloud login does not hijack direct Local CLI setup', async ({ page }) => {
+test('[P0] delayed active Cloud login stays out of Local setup and resumes after Back', async ({ page }) => {
   let releaseInitialStatus!: () => void;
   const statusGate = new Promise<void>((resolve) => {
     releaseInitialStatus = resolve;
@@ -177,9 +177,6 @@ test('[P0] delayed active Cloud login does not hijack direct Local CLI setup', a
   await expect
     .poll(() => page.evaluate(() => window.__amrOnboardingStatusResponses ?? 0))
     .toBeGreaterThanOrEqual(1);
-  await page.evaluate(() => {
-    window.__amrOnboardingCompleteLogin = true;
-  });
 
   await expect(localPanel).toBeVisible();
   await expect(continueButton).toBeEnabled();
@@ -190,6 +187,13 @@ test('[P0] delayed active Cloud login does not hijack direct Local CLI setup', a
     timeout: 2_500,
     message: 'a resumed Cloud login must not replace the active Local CLI setup',
   });
+
+  await page.getByRole('button', { name: /^Back$|返回/i }).click();
+  await expect(page.getByRole('button', { name: /Cancel sign-in/i })).toBeVisible();
+  await page.evaluate(() => {
+    window.__amrOnboardingCompleteLogin = true;
+  });
+  await expectModelSourceChooser(page);
 });
 
 test('[P0] @critical onboarding Local CLI card lets the user pick an agent model before continuing', async ({ page }) => {

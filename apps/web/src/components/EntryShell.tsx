@@ -2321,26 +2321,7 @@ function OnboardingView({
             amrAuthAttemptIdRef.current = next.authAttemptId;
           }
           if (next.loginInFlight && cloudLandingIntentStillCurrent()) {
-            setAmrLoginPending(true);
-            if (!amrHydratedLoginPollStartedRef.current) {
-              amrHydratedLoginPollStartedRef.current = true;
-              amrLoginPollCancelledRef.current = false;
-              void pollAmrLoginCompletion()
-                .then((completed) => {
-                  if (
-                    completed
-                    && onboardingMountedRef.current
-                    && cloudLandingIntentStillCurrent()
-                  ) {
-                    continueAfterCloudSignIn();
-                  }
-                })
-                .finally(() => {
-                  if (onboardingMountedRef.current) {
-                    setAmrLoginPending(false);
-                  }
-                });
-            }
+            startHydratedAmrLoginPoll();
           }
           onAmrLoginStatusChange?.(next);
         }
@@ -2352,6 +2333,21 @@ function OnboardingView({
       cancelled = true;
     };
   }, [onAmrLoginStatusChange]);
+
+  useEffect(() => {
+    if (
+      step !== 0
+      || runtime !== null
+      || amrLoginPending
+      || amrStatus?.loginInFlight !== true
+    ) {
+      return;
+    }
+    // The mount status request may settle while a direct Local/BYOK setup is
+    // active. Returning to the Cloud landing must resume observation of that
+    // hydrated attempt instead of leaving its stale cancel state indefinitely.
+    startHydratedAmrLoginPoll();
+  }, [amrLoginPending, amrStatus?.loginInFlight, runtime, step]);
 
   useEffect(() => {
     if (
@@ -2379,7 +2375,7 @@ function OnboardingView({
   ]);
 
   useEffect(() => {
-    if (runtime === 'amr') return;
+    if (runtime === 'amr' || runtime === null) return;
     amrLoginPollCancelledRef.current = true;
     setAmrLoginPending(false);
     setAmrLoginCancelPending(false);
@@ -2679,6 +2675,28 @@ function OnboardingView({
       return;
     }
     setStep(1);
+  }
+
+  function startHydratedAmrLoginPoll(): void {
+    if (amrHydratedLoginPollStartedRef.current) return;
+    amrHydratedLoginPollStartedRef.current = true;
+    amrLoginPollCancelledRef.current = false;
+    setAmrLoginPending(true);
+    void pollAmrLoginCompletion()
+      .then((completed) => {
+        if (
+          completed
+          && onboardingMountedRef.current
+          && cloudLandingIntentStillCurrent()
+        ) {
+          continueAfterCloudSignIn();
+        }
+      })
+      .finally(() => {
+        if (onboardingMountedRef.current) {
+          setAmrLoginPending(false);
+        }
+      });
   }
 
   function handleModelSourceKeyDown(
