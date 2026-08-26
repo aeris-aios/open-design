@@ -1049,8 +1049,8 @@ describe('EntryShell onboarding OpenDesign AMR runtime', () => {
     // The runtime smoke test spawns the agent CLI and waits for a real model
     // reply: 7s for Claude Code and 12s for Codex CLI measured against a local
     // daemon, against a 45s budget. Starting it only when Continue is pressed
-    // puts that whole cost between the click and the next screen (OPEND-2281),
-    // so it has to already be under way by the time the user clicks.
+    // puts that whole cost between the click and the next screen, so it has to
+    // already be under way by the time the user clicks.
     let testCalls = 0;
     globalThis.fetch = vi.fn(async (input, init) => {
       const url = String(input);
