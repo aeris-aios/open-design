@@ -2170,11 +2170,28 @@ function findRealTagOffset(html: string, pattern: RegExp): number {
     // the table tokens below close it too — and outside a table those same
     // tokens are simply ignored, which is why the table has to be tracked
     // rather than assumed.
-    if (!open[1] && tagName === 'table' && !tag.selfClosing) tableDepth += 1;
-    else if (open[1] && tagName === 'table' && tableDepth > 0) tableDepth -= 1;
+    // Both decisions are made against the state *before* this token: a
+    // `<table>` cannot put itself in a table. In select mode with no table
+    // already open the token is ignored outright, so it neither ends the mode
+    // nor joins the table stack — counting it first made `<select><table>`
+    // look like "in select in table" and end the mode on its own token.
+    const wasInSelect = inSelect;
+    const tableDepthBefore = tableDepth;
     if (tagName === 'select') inSelect = !open[1] && !inSelect;
     else if (inSelect && !open[1] && SELECT_CLOSING_START_TAGS.includes(tagName)) inSelect = false;
-    else if (inSelect && tableDepth > 0 && SELECT_IN_TABLE_CLOSING_TAGS.includes(tagName)) inSelect = false;
+    else if (inSelect && tableDepthBefore > 0 && SELECT_IN_TABLE_CLOSING_TAGS.includes(tagName)) {
+      // Whether this ends the mode depends on the select being in *table
+      // scope*, which is a property of the open-element stack, not of having
+      // seen a `<table>` start tag: foster parenting can move the select out of
+      // the table it appeared inside. A linear scan cannot tell the two apart,
+      // and both answers are wrong in some document — skipping the foreign walk
+      // when the mode has ended, or taking it when it has not. So refuse.
+      return -1;
+    }
+    if (!(wasInSelect && tableDepthBefore === 0)) {
+      if (!open[1] && tagName === 'table' && !tag.selfClosing) tableDepth += 1;
+      else if (open[1] && tagName === 'table' && tableDepth > 0) tableDepth -= 1;
+    }
     if (!open[1] && (PREVIEW_RAW_TEXT_ELEMENTS as readonly string[]).includes(tagName)) {
       const contentEnd = findRawTextClose(lower, tagName, tagEnd + 1);
       // Unclosed raw text runs to the end of the document — same as above.

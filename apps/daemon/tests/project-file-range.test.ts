@@ -453,6 +453,18 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
         ),
       );
     }
+    // A `<table>` cannot put itself in a table. In select mode with no table
+    // already open the token is ignored outright, so it neither ends the mode
+    // nor joins the table stack, and the `<svg>` after it is ignored too.
+    await writeFile(
+      path.join(dir, 'select-table-token.html'),
+      Buffer.from(
+        '<!doctype html><html><head></head><body>'
+          + '<select><table><svg>'
+          + '<script>const x = "<table><\/body>";<\/script></select>'
+          + '<main id="slot">real</main></body></html>',
+      ),
+    );
     // A leading BOM is the encoding signature and only counts at byte zero, so
     // the no-boundary fallback has to insert after it rather than in front of
     // it — otherwise the doctype stops applying and the artifact silently
@@ -1158,6 +1170,16 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
       expect(page('#slot').text()).toBe('real');
       expect(html).toContain('<![CDATA[x > </body>]]>');
     }
+  });
+
+  it('does not let a table token put itself in a table while in select', async () => {
+    const bridged = await fetch(`${rawUrl('select-table-token.html')}?odPreviewBridge=scroll`);
+    expect(bridged.status).toBe(200);
+    const html = await bridged.text();
+    const page = load(html);
+    expect(page('[data-od-url-scroll-bridge]').length).toBe(1);
+    expect(page('#slot').text()).toBe('real');
+    expect(html).toContain('const x = "<table></body>";');
   });
 
   it('keeps a leading BOM at byte zero when there is no boundary', async () => {
