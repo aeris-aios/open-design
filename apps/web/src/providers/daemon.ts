@@ -35,11 +35,27 @@ import type {
   ByokChatProviderConfig,
   MediaExecutionPolicy,
   ResearchOptions,
+  RunCancelOrigin,
   RunContextSelection,
   SseErrorPayload,
   WorkspaceCollabContext,
 } from '@open-design/contracts';
 import type { StreamHandlers } from './anthropic';
+
+/**
+ * 取消来源的四个合法值。服务端说了才算,说不清就不认 —— UI 把 `user_stop`
+ * 当作「人按了停止」的证据,一个没见过的字符串不能冒充它。
+ */
+const RUN_CANCEL_ORIGINS = new Set<string>([
+  'user_stop',
+  'project_cleanup',
+  'daemon_shutdown',
+  'unknown',
+]);
+
+function isRunCancelOrigin(value: unknown): value is RunCancelOrigin {
+  return typeof value === 'string' && RUN_CANCEL_ORIGINS.has(value);
+}
 import { workspaceProjectHeaders } from '../state/projects';
 import { setRuntimeAmrConsoleOrigin } from '../runtime/amr-guidance';
 
@@ -386,6 +402,17 @@ export interface DaemonStreamOptions {
   /** Authoritative project-relative artifacts created or modified by the run. */
   onArtifactPaths?: (paths: string[]) => void;
   onRunEventId?: (eventId: string) => void;
+  /**
+   * 这一轮**被谁取消了**,由 `POST /api/runs/:id/cancel` 的应答如实带回。
+   *
+   * 只有走这条端点的取消才会拿到 `user_stop` —— 也就是「人按了停止」这件事的
+   * 唯一证据。UI 靠它决定要不要画那一行「已手动暂停任务」:
+   * `runStatus: 'canceled'` 自己分不出用户按停与 daemon 关机 / 项目清理杀掉,
+   * 照那个判据画,daemon 重启后会谎报(盘点 R8)。
+   *
+   * 旧 daemon 不带这个字段时**不发**这条回调 —— 证不出是用户按的就不说是。
+   */
+  onCancelOrigin?: (origin: RunCancelOrigin) => void;
   // v2 analytics context propagated to run_created / run_finished.
   // Optional; the daemon only consumes these to shape PostHog props
   // (page_name / area / entry_from / DS context). Behavior never
@@ -407,6 +434,17 @@ export interface DaemonReattachOptions {
   onRunStatus?: (status: ChatRunStatus) => void;
   onArtifactPaths?: (paths: string[]) => void;
   onRunEventId?: (eventId: string) => void;
+  /**
+   * 这一轮**被谁取消了**,由 `POST /api/runs/:id/cancel` 的应答如实带回。
+   *
+   * 只有走这条端点的取消才会拿到 `user_stop` —— 也就是「人按了停止」这件事的
+   * 唯一证据。UI 靠它决定要不要画那一行「已手动暂停任务」:
+   * `runStatus: 'canceled'` 自己分不出用户按停与 daemon 关机 / 项目清理杀掉,
+   * 照那个判据画,daemon 重启后会谎报(盘点 R8)。
+   *
+   * 旧 daemon 不带这个字段时**不发**这条回调 —— 证不出是用户按的就不说是。
+   */
+  onCancelOrigin?: (origin: RunCancelOrigin) => void;
   /** Publish a current-run success outcome to the app-level upgrade gate. */
   publishRunFinishedEvent?: boolean;
 }
@@ -759,6 +797,7 @@ export async function streamViaDaemon({
   onRunStatus,
   onArtifactPaths,
   onRunEventId,
+  onCancelOrigin,
   analyticsHints,
 }: DaemonStreamOptions): Promise<void> {
   const emitRunStatus = (status: ChatRunStatus) => {
@@ -866,6 +905,7 @@ export async function streamViaDaemon({
       onRunStatus: emitRunStatus,
       onArtifactPaths,
       onRunEventId,
+      onCancelOrigin,
       projectId,
       conversationId,
       workspaceContext,
@@ -1305,6 +1345,7 @@ async function consumeDaemonRun({
   onRunStatus,
   onArtifactPaths,
   onRunEventId,
+  onCancelOrigin,
   projectId,
   conversationId,
   workspaceContext,
@@ -1359,7 +1400,17 @@ async function consumeDaemonRun({
       ...(workspaceContext
         ? { headers: workspaceProjectHeaders(workspaceContext) }
         : {}),
-    }).catch(() => {});
+    })
+      .then(async (resp) => {
+        // 读应答而不是「我发了这个请求所以一定是用户按的」:这一层不替服务端
+        // 下结论。服务端说不出来(旧 daemon、失败、非 200)就什么都不报,
+        // 那一行于是不画 —— 宁可少说一句,不可谎报。
+        if (!resp.ok) return;
+        const body = (await resp.json()) as { run?: { cancelOrigin?: unknown } };
+        const origin = body?.run?.cancelOrigin;
+        if (isRunCancelOrigin(origin)) onCancelOrigin?.(origin);
+      })
+      .catch(() => {});
   };
 
   /**

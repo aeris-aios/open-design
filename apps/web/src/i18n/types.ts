@@ -4396,6 +4396,11 @@ export interface Dict {
   'assistant.unfinishedMore': string;
   'assistant.continueRemaining': string;
   'chat.resumeRunCta': string;
+  'chat.runError.contactSupportCta': string;
+  'chat.runError.exportLogsCta': string;
+  'chat.runError.switchModelCta': string;
+  'chat.support.channel.feishu': string;
+  'chat.support.channel.discord': string;
   'assistant.outTokens': string;
   'assistant.producedFiles': string;
   'assistant.openFile': string;

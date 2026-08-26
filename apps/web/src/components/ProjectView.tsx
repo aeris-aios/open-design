@@ -144,13 +144,13 @@ import { RESUME_CONTINUE_PROMPT } from '../runtime/resume';
 import {
   amrBalanceGateScopeForWorkspaceContext,
   amrBalanceGateScopesMatch,
+  amrWalletBalanceUsd,
   checkAmrBalanceGate,
   isAmrBalanceGateScope,
   type AmrBalanceGateScope,
 } from '../runtime/amr-balance-gate';
 import { isPaidAmrPlan, resolveAmrPlan } from '../runtime/amr-low-balance-plan';
 import { AmrBalanceDialog } from './AmrBalanceDialog';
-import { AmrLowBalanceDialog, type AmrLowBalanceDecision } from './AmrLowBalanceDialog';
 import {
   cancelBrandExtraction,
   continueBrandExtraction,
@@ -2429,14 +2429,16 @@ export function ProjectView({
       conversationId: string;
     } | null
   >(null);
-  // Soft low-balance warning holding a pending send: the dialog resolves the
-  // promise the gate is awaiting ('proceed' continues the very same send).
-  const [amrLowBalanceWarn, setAmrLowBalanceWarn] = useState<
-    {
-      snapshot: AmrWalletSnapshot;
-      resolve: (decision: AmrLowBalanceDecision) => void;
-    } | null
-  >(null);
+  /**
+   * 余额提示卡(交付稿第 75 / 76 格)要显示的余额,`null` = 不提示。
+   *
+   * 产品 2026-08-26 裁决:「**告警可继续的不弹窗,只有卡片;余额不足再弹窗**」。
+   * 于是这里成了告警档**唯一**的呈现方式 —— 它不挡发送(D4),卡在流水里,
+   * 和输入框无关。拦截档弹窗保留,但也会同时点亮这张卡。
+   *
+   * 判定本身没动(`runtime/amr-balance-gate.ts`),这只是判定结果的呈现。
+   */
+  const [amrBalanceCardUsd, setAmrBalanceCardUsd] = useState<number | null>(null);
   // Conversations with a balance-gate check currently in flight. Sends that
   // arrive during the check queue instead of racing a duplicate run through
   // the not-yet-busy window the gate's await opens.
@@ -6169,6 +6171,11 @@ export function ProjectView({
               scheduleConversationMessageRefresh(reattachConversationId);
             }
           },
+          /* 同上:重连接管的那条 run 被停掉时,来源同样落到它自己的消息上。 */
+          onCancelOrigin: (cancelOrigin) => {
+            textBuffer.flush();
+            updateMessageById(message.id, (prev) => ({ ...prev, cancelOrigin }), true);
+          },
           onRunEventId: (lastRunEventId) => {
             textBuffer.flush();
             updateMessageById(message.id, (prev) => ({ ...prev, lastRunEventId }));
@@ -6784,31 +6791,38 @@ export function ProjectView({
               snapshot: gate.snapshot,
               conversationId: gateConversationId,
             });
+            // 拦截档:弹窗保留(那是「不能开始」的硬话),同时把流水里那张卡也点亮
+            // —— 弹窗一关就什么都不剩,而人回到聊天里仍然需要看到「为什么开不了」。
+            //
+            // 只对「余额耗尽」出卡。被登出也走这条硬拦截,但那张卡说的是钱的事,
+            // 摆一个 $0.00 去解释一次登录过期是在误导 —— 那一档交给弹窗。
+            if (gate.reason === 'insufficient') {
+              setAmrBalanceCardUsd(amrBalanceCardBalanceUsd(gate.snapshot));
+            }
             return acceptedQueuedHomeHandoff(parkBlockedSend());
           }
           if (gate.kind === 'unavailable') {
             return acceptedQueuedHomeHandoff(parkBlockedSend());
           }
           if (gate.kind === 'soft') {
-            // Low balance: pause THIS send while the reminder dialog waits
-            // for a decision. 'proceed' resumes the very same send below —
-            // a continuation, not a re-submit.
+            /*
+             * 告警档。产品 2026-08-26 裁决:「告警可继续的不弹窗,只有卡片」——
+             * 所以这里**不再拦住这一次发送**,只在流水里留下那张卡,人自己决定
+             * 要不要现在去充值(D4 不阻塞)。
+             *
+             * `isPaidAmrPlan` 这道判据原样保留:它属于**判定**(免费档的钱包读数
+             * 不是他们的约束,提醒他们是噪音),这次改的只是判定结果怎么呈现。
+             */
             const plan = await resolveAmrPlan(gate.snapshot);
             if (messagesConversationIdRef.current !== activeConversationId) {
               return acceptedQueuedHomeHandoff(queueGateSend());
             }
             if (isPaidAmrPlan(plan)) {
-              const decision = await new Promise<AmrLowBalanceDecision>((resolve) => {
-                setAmrLowBalanceWarn({ snapshot: gate.snapshot, resolve });
-              });
-              setAmrLowBalanceWarn(null);
-              // Same conversation-switch guard for the dialog-open window; the
-              // payload is parked (not sent) so nothing is lost either way.
-              if (decision !== 'proceed' || messagesConversationIdRef.current !== activeConversationId) {
-                return acceptedQueuedHomeHandoff(parkBlockedSend());
-              }
+              setAmrBalanceCardUsd(amrBalanceCardBalanceUsd(gate.snapshot));
             }
           }
+          // 判定放行:撤掉那张卡 —— 余额已经不是问题了,提示不该留在屏幕上。
+          if (gate.kind === 'allow') setAmrBalanceCardUsd(null);
           amrGatePausedQueueConversationsRef.current.delete(gateConversationId);
         } finally {
           amrGateInFlightConversationsRef.current.delete(gateConversationId);
@@ -8053,6 +8067,15 @@ export function ProjectView({
               if (runStatus !== 'succeeded') clearTraceTouchedFilePaths();
             }
           },
+          /*
+           * 「这一轮是谁停的」——只在服务端答得出来时才落到消息上。
+           * 交付稿第 81 格那一行「已手动暂停任务」只认 `user_stop`;
+           * 存进消息(而不是只留在 run 对象里)是因为刷新之后那一行还得在,
+           * 而且还得是同一个来源(盘点 R8)。
+           */
+          onCancelOrigin: (cancelOrigin) => {
+            updateMessageById(assistantId, (prev) => ({ ...prev, cancelOrigin }), true);
+          },
           onRunEventId: (lastRunEventId) => {
             updateMessageById(assistantId, (prev) => ({ ...prev, lastRunEventId }));
             persistAssistantSoon();
@@ -8227,6 +8250,15 @@ export function ProjectView({
               clearCurrentRunStreamingMarker(runConversationId, controller, cancelController);
               scheduleConversationMessageRefresh(runConversationId);
             }
+          },
+          /*
+           * 「这一轮是谁停的」——只在服务端答得出来时才落到消息上。
+           * 交付稿第 81 格那一行「已手动暂停任务」只认 `user_stop`;
+           * 存进消息(而不是只留在 run 对象里)是因为刷新之后那一行还得在,
+           * 而且还得是同一个来源(盘点 R8)。
+           */
+          onCancelOrigin: (cancelOrigin) => {
+            updateMessageById(assistantId, (prev) => ({ ...prev, cancelOrigin }), true);
           },
           onRunEventId: (lastRunEventId) => {
             updateMessageById(assistantId, (prev) => ({ ...prev, lastRunEventId }));
@@ -11301,6 +11333,7 @@ export function ProjectView({
               onDeleteConversation={handleDeleteConversation}
               config={config}
               onOpenSettings={onOpenSettings}
+              amrBalanceCardUsd={amrBalanceCardUsd}
               showByokRecoveryAction={
                 config.mode === 'api' &&
                 daemonLive &&
@@ -11609,16 +11642,6 @@ export function ProjectView({
             amrGatePausedQueueConversationsRef.current.delete(conversationId);
             setQueuedAutoStartTick((tick) => tick + 1);
           }}
-        />
-      ) : null}
-      {amrLowBalanceWarn ? (
-        <AmrLowBalanceDialog
-          balanceUsd={amrLowBalanceWarn.snapshot.balanceUsd}
-          profile={amrLowBalanceWarn.snapshot.profile}
-          entrySource="chat_low_balance_warn_recharge"
-          metricsConsent={config.telemetry?.metrics === true}
-          installationId={config.installationId}
-          onDecision={amrLowBalanceWarn.resolve}
         />
       ) : null}
       <AnimatePresence>
@@ -12668,6 +12691,20 @@ export function shouldClearActiveRunRefs(
   completedConversationId: string,
 ): boolean {
   return currentConversationId === completedConversationId;
+}
+
+/**
+ * 升级卡要显示的余额。读数拿不准就返回 `null` —— 这张卡把数字念给用户听,
+ * 念错比不念更糟(付费档的 $0.00 本来就常态,见 #7190)。
+ *
+ * 判定用的是 `amrWalletBalanceUsd` 同一条解析规则,两处不另算。
+ */
+export function amrBalanceCardBalanceUsd(
+  snapshot: AmrWalletSnapshot | null | undefined,
+): number | null {
+  const balance = amrWalletBalanceUsd(snapshot);
+  if (balance == null) return null;
+  return Math.max(0, balance);
 }
 
 export function finalizeActiveAssistantMessagesOnStop(

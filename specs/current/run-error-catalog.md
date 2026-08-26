@@ -298,9 +298,14 @@ L5 环境/外围  离线、代理、企业网、磁盘、更新器、打包壳�
 
 ## 6. 决策记录
 
-| ID | 决定 | 依据 |
-|---|---|---|
-| (暂无) | 本文目前只有事实与候选,还没有一条产品 / 设计决定 | — |
+| ID | 决定 | 依据 | 落地 |
+|---|---|---|---|
+| D-01 | **告警可继续的不弹窗,只有卡片;余额不足再弹窗。** 余额告警档(`gate.kind === 'soft'`)撤掉 `AmrLowBalanceDialog`,改成流水里的 `UpgradeCard`,**不再挡住那一次发送**(D4 不阻塞);拦截档(`gate.kind === 'hard'`,`reason: 'insufficient'`)弹窗保留,**同时**也出卡片 | 产品 2026-08-26 | `ProjectView.tsx` 余额门分支 + `ChatPane` 的 `amrBalanceCardUsd` |
+| D-02 | **所有报错卡都给〔导出日志〕。** 不挑失败类型 —— 原话「好多都应该得有导出日志这个按钮」。同一排还常驻〔联系支持〕(交付稿第 78 格的前两颗次级) | 产品 2026-08-26 | `ChatPane` 报错卡动作行 + `chat/ExportLogsAction.tsx`(复用 `useDiagnosticsExport`) |
+| D-03 | **`AMR_MODEL_UNAVAILABLE` 不给重试,给「换个模型」。** 模型已下线 / 不在套餐里,重试必然同样结果(设计原则四:重试只在有用时出现)。落点是设置 → 执行(composer 齿轮通向的同一个模型选择面板) | 产品 2026-08-26 | `runtime/amr-guidance.ts` 新增 `primaryAction: 'switch-model'` |
+| D-04 | **「已手动暂停任务」只认 `user_stop`。** 其余三种取消(`project_cleanup` / `daemon_shutdown` / `unknown`)与缺字段一律不显示 —— 该给它们哪句话属于新文案语义,**待产品定**。剩余步数为 0 时这一行也不出 | 产品 2026-08-26 + `chat-panel-edge-audit.md` §4 R8 | `ChatMessage.cancelOrigin` 落 `messages.cancel_origin` 列;`ChatPane` 渲染 `chat/PauseLine.tsx` |
+
+> **仍未决(与 D-01 相邻)**:R-010 那条「付费档余额 0 = 不限量,**不拦**」属于**判定**层(`runtime/amr-balance-gate.ts` 今天仍在 `<= $0` 硬拦),D-01 只改了判定结果的**呈现**,没有动判定。要不要让付费档的 0 余额直接放行,仍是 Q-05。
 
 ### 6.X 2026-08-26 用户逐条裁决(对《报错体验设计方案》的 32 个场景)
 

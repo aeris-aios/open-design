@@ -989,6 +989,18 @@ export interface ChatMessage {
     /** 新会话 id —— 之后要跳过去看靠它 */
     conversationId?: string;
   };
+  /**
+   * 这一轮是**谁**取消的。枚举与 `ChatRun.cancelOrigin` 同源。
+   *
+   * 交付稿第 81 格那一行「已手动暂停任务」只有在 `user_stop` 时才成立。
+   * 客户端此前只有 `runStatus: 'canceled'`,把「用户按停」和
+   * 「daemon 关机 / 项目清理杀掉」混成一种 —— 照那个判据画,daemon 重启后
+   * 那一行会谎报(盘点 R8)。所以来源要跟着**消息**存下来,而不是只活在
+   * run 对象里:刷新之后那一行还得在,而且还得是同一个来源。
+   *
+   * 缺失(旧 daemon 不发)时不补默认值 —— 证不出是用户按的就不说是。
+   */
+  cancelOrigin?: RunCancelOrigin | null;
   producedFiles?: ProjectFile[];
   traceObjectFiles?: ProjectFile[];
   // Diff baseline so reattach can rebuild producedFiles after reload.
