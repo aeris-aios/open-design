@@ -1432,6 +1432,92 @@ describe('MessageCenter remount snapshot', () => {
     await waitFor(() => expect(currentSnapshotWriteToken()).toBeGreaterThan(tokenBefore));
   });
 
+  it('clears the anonymous cache on sign-in even when a sync overlaps the read', async () => {
+    // Both halves must be in flight at once for the hole to open: the read
+    // observes token N, a successor sync is issued at N+1 so the read declines
+    // to clear, the read then supersedes to N+2 so the SYNC declines too, and a
+    // signed-out session's rows survive the sign-in. Gating only one of them
+    // lets the other clear and the spec passes against the broken code — which
+    // is how the first two versions of this test were written.
+    const seedAnonymous = () => {
+      window.localStorage.setItem(
+        'open-design.message-center.anonymous-messages.v1',
+        JSON.stringify([row('stale-anon', null)]),
+      );
+      window.localStorage.setItem(
+        'open-design.message-center.anonymous-read-ids.v1',
+        JSON.stringify(['stale-anon']),
+      );
+    };
+
+    const post = { armed: false, release: null as (() => void) | null };
+    const pull = { armed: false, release: null as (() => void) | null };
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/integrations/vela/status')) {
+        statusCalls += 1;
+        return Response.json({ loggedIn: true });
+      }
+      if (url.includes('/read') && init?.method === 'POST') {
+        if (post.armed) {
+          post.armed = false;
+          await new Promise<void>((resolve) => { post.release = resolve; });
+        }
+        return Response.json({ read: true, markedCount: 1 });
+      }
+      if (url.includes('/message-center') && url.includes('/messages')) {
+        messageCalls += 1;
+        if (pull.armed) {
+          pull.armed = false;
+          await new Promise<void>((resolve) => { pull.release = resolve; });
+        }
+        return Response.json({ messages: [row('acct-row', null)], nextCursor: null, unreadCount: 1 });
+      }
+      return Response.json({});
+    }));
+
+    render(
+      <I18nProvider initial="zh-CN">
+        <MessageCenter />
+      </I18nProvider>,
+    );
+    await waitFor(() => expect(messageCalls).toBeGreaterThan(0));
+    fireEvent.click(screen.getByTestId('message-center-trigger'));
+    const target = await screen.findByRole('button', { name: /acct-row/ });
+    await new Promise((r) => setTimeout(r, 30));
+
+    // Seeded HERE, not before the render: the mount sync is already signed in,
+    // so it clears the anonymous cache on its way through and an earlier seed
+    // would be gone before the scenario starts — which made the first three
+    // versions of this spec assert `null` against a cache nothing had left.
+    seedAnonymous();
+
+    // The read parks on its POST.
+    post.armed = true;
+    fireEvent.click(target);
+    await waitFor(() => expect(post.release).not.toBeNull());
+
+    // A successor sync is issued and parks on its PULL, so it cannot clear
+    // before the read resumes.
+    pull.armed = true;
+    document.dispatchEvent(new Event('visibilitychange'));
+    await waitFor(() => expect(pull.release).not.toBeNull());
+
+    // The premise, asserted rather than assumed: the cache is still there when
+    // the two overlapping operations are about to resolve.
+    expect(window.localStorage.getItem('open-design.message-center.anonymous-read-ids.v1'))
+      .toContain('stale-anon');
+
+    // Read first, then the sync.
+    post.release!();
+    await new Promise((r) => setTimeout(r, 30));
+    pull.release!();
+    await new Promise((r) => setTimeout(r, 40));
+
+    expect(window.localStorage.getItem('open-design.message-center.anonymous-read-ids.v1')).toBeNull();
+    expect(window.localStorage.getItem('open-design.message-center.anonymous-messages.v1')).toBeNull();
+  });
+
   it('does not re-sync when it is remounted straight away', async () => {
     const first = await mountAndSettle();
     const afterFirst = { status: statusCalls, messages: messageCalls };

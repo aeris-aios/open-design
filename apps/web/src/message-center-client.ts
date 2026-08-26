@@ -50,11 +50,32 @@ export function readAnonymousReadIds(storage: Storage): Set<string> {
   return new Set(parseArray<string>(storage.getItem(READ_KEY)));
 }
 
+/**
+ * Advances whenever anonymous state is WRITTEN. The obligation to clear that
+ * cache on a successful account read belongs to the cache, not to snapshot
+ * publication: gating the clear on the publication token meant an unrelated
+ * sync could move that token, both the read and the sync would then decline to
+ * clear, and a signed-out session's rows survived the sign-in. The only thing
+ * that should stop an account run from clearing is a newer ANONYMOUS write
+ * actually landing.
+ */
+let anonymousWriteSeq = 0;
+
+export function currentAnonymousWriteSeq(): number {
+  return anonymousWriteSeq;
+}
+
+/** Test hook — module counters must not leak between cases. */
+export function resetAnonymousWriteSeq(): void {
+  anonymousWriteSeq = 0;
+}
+
 export function writeAnonymousState(
   storage: Storage,
   messages: MessageCenterMessage[],
   readIds: Set<string>,
 ): void {
+  anonymousWriteSeq += 1;
   storage.setItem(MESSAGES_KEY, JSON.stringify(messages));
   storage.setItem(READ_KEY, JSON.stringify([...readIds]));
 }

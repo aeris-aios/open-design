@@ -11,6 +11,7 @@ import {
   pullMessageCenter,
   readAnonymousMessages,
   readAnonymousReadIds,
+  currentAnonymousWriteSeq,
   recordAnonymousRead,
   type MessageCenterMessage,
   writeAnonymousState,
@@ -22,7 +23,6 @@ import {
 import { GoPlanSunsetDialog } from './GoPlanSunsetDialog';
 import {
   adoptableSnapshot,
-  currentSnapshotWriteToken,
   issueSnapshotWriteToken,
   joinableSync,
   ownsLatestSnapshotWrite,
@@ -191,6 +191,13 @@ export function MessageCenter({
     // account's messages as current.
     const issuedAccountGeneration = currentWorkspaceAccountGeneration();
     const writeToken = issueSnapshotWriteToken();
+    // Separate obligations, separate counters. The publication token orders
+    // SNAPSHOT writes; the anonymous cache has its own writer sequence, because
+    // the only thing that should stop this run from clearing that cache is a
+    // newer ANONYMOUS write actually landing — not an unrelated sync moving the
+    // publication token, which used to make both this run and the read decline
+    // to clear and let a signed-out session survive the sign-in.
+    const anonSeqAtStart = currentAnonymousWriteSeq();
     if (messagesRef.current.length === 0) setSyncState('loading');
     const authMode = await readAmrAuthMode();
     const account = authMode === 'signed-in';
@@ -270,7 +277,7 @@ export function MessageCenter({
     // looking current, and wipes the anonymous cache a newer signed-out run
     // has already written. For an anonymous reader those read ids exist
     // nowhere else, so the badges simply come back.
-    if (account && ownsLatestWrite) clearAnonymousState(window.localStorage);
+    if (account && currentAnonymousWriteSeq() === anonSeqAtStart) clearAnonymousState(window.localStorage);
     // Two more readings of the same collapsed boolean, found by walking the
     // rest of this function rather than waiting for them to be reported.
     //
@@ -534,13 +541,10 @@ export function MessageCenter({
     // the new account has already published. Captured BEFORE the await, so the
     // announcement contract below still reports its own failure first.
     const issuedAccountGeneration = currentWorkspaceAccountGeneration();
-    // OBSERVED, not claimed. The question below is only "has a sync been issued
-    // since this read began", and claiming a slot to answer it made every early
-    // return — a missing row, an already-read row, a moved boundary, an
-    // unavailable runtime — bump the counter for nothing, which strips a
-    // concurrent sync of its right to publish and costs the next host swap the
-    // very fetch this module exists to avoid.
-    const writeTokenAtStart = currentSnapshotWriteToken();
+    // The anonymous cache's own writer sequence, observed rather than claimed:
+    // the question is "did a newer anonymous write land while this read was in
+    // flight", and nothing about snapshot publication answers it.
+    const anonSeqAtStart = currentAnonymousWriteSeq();
     const writeAuthMode = await resolveAuthModeForWrite();
     // `unavailable` is not an answer about the user, and every branch below
     // needs one: the account path would skip its POST, and the anonymous path
@@ -583,7 +587,7 @@ export function MessageCenter({
       // after a sign-out, and clearing then destroys read ids a signed-out run
       // has since persisted. The token claimed at entry loses to any sync
       // issued since, which is the run that knows better.
-      if (currentSnapshotWriteToken() === writeTokenAtStart) clearAnonymousState(window.localStorage);
+      if (currentAnonymousWriteSeq() === anonSeqAtStart) clearAnonymousState(window.localStorage);
     }
     invalidateSyncResponses();
     // Component state only — the durable anonymous cache is shared, so it takes
