@@ -658,6 +658,7 @@ export function EntryShell({
     workspaceBillingResponse,
     workspaceContext,
   );
+  const [goPlanSunsetMessagePending, setGoPlanSunsetMessagePending] = useState(false);
   const deepSeekCampaignVisibility = useDeepSeekV4FlashCampaignVisibility();
   // Same personal-vs-team accountPlan rule as App's `resolvedAmrPlan`.
   const deepSeekCampaignPlan = resolvePlanLabelTier({
@@ -668,7 +669,7 @@ export function EntryShell({
         ? null
         : amrAccountPlan?.trim() || null,
   });
-  const deepSeekV4FlashCampaignAudience = resolveDeepSeekV4FlashCampaignAudience({
+  const resolvedDeepSeekV4FlashCampaignAudience = resolveDeepSeekV4FlashCampaignAudience({
     // Subscription is the only campaign segmentation axis. In particular,
     // `resolvePlanLabelTier` turns the backend-confirmed unsubscribed state into
     // `free`; wallet balance / historical recharge never upgrades this audience.
@@ -676,6 +677,9 @@ export function EntryShell({
     loggedIn: amrLoggedIn,
     now: deepSeekCampaignVisibility.now,
   });
+  const deepSeekV4FlashCampaignAudience = goPlanSunsetMessagePending
+    ? 'unknown'
+    : resolvedDeepSeekV4FlashCampaignAudience;
   const topRightCampaignAudience =
     deepSeekV4FlashCampaignAudience === 'unknown'
       ? null
@@ -1645,6 +1649,15 @@ export function EntryShell({
           // only a successful null context (or known local sign-out) may show
           // the sign-in card.
           footerNotice={accountFooterNotice}
+          priorityAnnouncementActive={
+            view === 'home'
+            && goPlanSunsetMessagePending
+            && amrBalanceGateBlock == null
+            && amrLowBalanceWarn == null
+          }
+          onPriorityAnnouncementPendingChange={setGoPlanSunsetMessagePending}
+          priorityAnnouncementCurrentPlanId={deepSeekCampaignPlan}
+          priorityAnnouncementMetricsConsent={config.telemetry?.metrics === true}
         />
         {projectSearchOpen ? (
           <ProjectSearchModal
@@ -1661,7 +1674,7 @@ export function EntryShell({
               the workspace tabs bar (entryRailBridge), the updater popup host
               lives in the rail footer, and everything below is fixed-position
               or portalled so it occupies no layout space here. */}
-          <WhatsNewPopup active={view === 'home'} />
+          <WhatsNewPopup active={view === 'home' && !goPlanSunsetMessagePending} />
           {/* The campaign badge lives in EntryNavRail's top-right cluster so it
               stays beside the account module across every entry tab. */}
           {amrBalanceGateBlock ? (

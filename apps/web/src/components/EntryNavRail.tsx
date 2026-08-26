@@ -239,6 +239,11 @@ interface Props {
   updaterSlot?: ReactNode;
   /** Optional notice shown above the footer controls. */
   footerNotice?: ReactNode;
+  /** One-off targeted announcement coordination owned by the Home shell. */
+  priorityAnnouncementActive?: boolean;
+  onPriorityAnnouncementPendingChange?: (pending: boolean) => void;
+  priorityAnnouncementCurrentPlanId?: string | null;
+  priorityAnnouncementMetricsConsent?: boolean;
 }
 
 interface NavButtonProps {
@@ -533,6 +538,10 @@ interface EntryTopRightClusterProps {
   updaterSlot?: ReactNode;
   onOpenSettings?: (section?: EntrySettingsSection) => void;
   onSignedOut?: () => void | Promise<void>;
+  priorityAnnouncementActive?: boolean;
+  onPriorityAnnouncementPendingChange?: (pending: boolean) => void;
+  priorityAnnouncementCurrentPlanId?: string | null;
+  priorityAnnouncementMetricsConsent?: boolean;
 }
 
 /**
@@ -557,6 +566,10 @@ export function EntryTopRightCluster({
   updaterSlot,
   onOpenSettings,
   onSignedOut,
+  priorityAnnouncementActive,
+  onPriorityAnnouncementPendingChange,
+  priorityAnnouncementCurrentPlanId,
+  priorityAnnouncementMetricsConsent,
 }: EntryTopRightClusterProps) {
   const { t } = useI18n();
   const analytics = useAnalytics();
@@ -1032,6 +1045,10 @@ export function EntryTopRightCluster({
           onOpenChange={setMessageCenterOpen}
           onUnreadCountChange={setMessageUnreadCount}
           onOpenNotificationSettings={onOpenSettings ? () => onOpenSettings('notifications') : undefined}
+          priorityAnnouncementActive={priorityAnnouncementActive}
+          onPriorityAnnouncementPendingChange={onPriorityAnnouncementPendingChange}
+          priorityAnnouncementCurrentPlanId={priorityAnnouncementCurrentPlanId}
+          priorityAnnouncementMetricsConsent={priorityAnnouncementMetricsConsent}
         />
       ) : null}
     </>
@@ -1199,6 +1216,10 @@ export function EntryNavRail({
   onSignedOut,
   updaterSlot,
   footerNotice,
+  priorityAnnouncementActive,
+  onPriorityAnnouncementPendingChange,
+  priorityAnnouncementCurrentPlanId,
+  priorityAnnouncementMetricsConsent,
 }: Props) {
   const { t } = useI18n();
   const analytics = useAnalytics();
@@ -1850,6 +1871,10 @@ export function EntryNavRail({
           onOpenChange={setMessageCenterOpen}
           onUnreadCountChange={setMessageUnreadCount}
           onOpenNotificationSettings={onOpenSettings ? () => onOpenSettings('notifications') : undefined}
+          priorityAnnouncementActive={priorityAnnouncementActive}
+          onPriorityAnnouncementPendingChange={onPriorityAnnouncementPendingChange}
+          priorityAnnouncementCurrentPlanId={priorityAnnouncementCurrentPlanId}
+          priorityAnnouncementMetricsConsent={priorityAnnouncementMetricsConsent}
         />
       )}
 
@@ -1882,6 +1907,10 @@ export function EntryNavRail({
         updaterSlot={updaterSlot}
         onOpenSettings={onOpenSettings}
         onSignedOut={onSignedOut}
+        priorityAnnouncementActive={priorityAnnouncementActive}
+        onPriorityAnnouncementPendingChange={onPriorityAnnouncementPendingChange}
+        priorityAnnouncementCurrentPlanId={priorityAnnouncementCurrentPlanId}
+        priorityAnnouncementMetricsConsent={priorityAnnouncementMetricsConsent}
       />
     </nav>
   );
