@@ -234,6 +234,40 @@
 `bottom: 10px; height: var(--fan-h)` —— 稿子那两条是因为它把 `.vnav` 挂在更高的 `.opts` 上、
 要自己把盒子压回这一沓;我们的定位祖先已经正好是这一沓,再写一遍会错开 10px。
 
+## D-catalog. 内置风格目录接管 `direction-cards`(2026-08-26 用户裁决)
+
+> 「它那个 4 个卡片数据是从设计稿里搬过来的,但设计稿是 mock 的…我们原本应该有这个
+>   风格选择的功能,而且原本应该也有缩略图啊,我记得当初还是我传到 R2 去的,一大堆图片」
+> 「为什么不把 tone 的内容换到 direction-cards 里?」
+
+**三件事分清楚**:
+- **真功能是活的**:内置目录挂在 discovery 简报的 `tone` 那道题上,宿主认到
+  `q.id === 'tone'` 就把模型给的纯文字选项换成目录卡。共 **96 张**预览图(deck 25 /
+  prototype 26 / document 11 / image 22 / video 12),住在 R2
+  `repo-assets.open-design.ai/style-catalog/v1/` —— 逐张探过,**非 200 的 0 张**。
+- **用户截到的「四张纯色卡」不是这条路**:那是模型**自己现开**的 `direction-cards`
+  (提示词允许它在「用户明确要看视觉方向」时发)。模型现开的卡**没有素材**,
+  预览面只能画占位块。
+- **一处死代码**:`renderDirectionFormBody()`(5 个硬编码方向、调色板色块、无图)
+  在 `apps/daemon/src/prompts/directions.ts` 与 `packages/contracts/src/prompts/directions.ts`
+  **各有一份,全仓零调用点**。这才是真正「从设计稿 mock 搬过来」的那份。**待删。**
+
+**已做**:判据从「id 恰好叫 tone」放宽到「**这道题在问视觉方向**」——
+`tone`(radio/checkbox)与模型开的 `direction-cards` 都由目录接管,前提是项目有视觉风格
+上下文;没有上下文就原样渲染模型那几张。`direction-cards` 是单选。
+
+**为什么换掉模型的选项不会「说两件事」**:答案是按 `formatFormAnswers` 拼成**文本行**
+回给模型的(`- 视觉方向: Content-led product`),不是机器 id 契约;`tone` 那条路今天
+就是这么替换的,已经在线上跑着。我一度把这个风险说重了,已更正。
+
+红测:`tests/components/QuestionForm.direction-cards-catalog.test.tsx`(4 条,撤掉实现
+复验会红 2 条)。
+
+| 编号 | 现象 | 状态 |
+| --- | --- | --- |
+| B53 | (接 B39 照出)取消分页时「View all」按钮跟着退场,于是 `openGallery()` **失去全部调用点** —— 带分类页签(商务/编辑/创意/极简)的画廊弹窗在正常流程里打不开了,只有输入过自定义值、点 `.qf-visual-custom-summary` 才够得着;`visual_style_gallery_open` 埋点也基本不再触发 | `[ ]` 对应覆盖已**停用而非删除**(`QuestionForm.test.tsx` 里 `it.skip('[B53] …')`),修好后原样恢复 |
+| B54 | (同上照出)「随机」抽中的那张**没被翻到最前面**,选完还压在底下看不见。真因:`VisualStylePicker` 只传了 `revealToken`、**漏了 `revealValue`**,那个 effect 拿不到目标就 `at = -1`、弹回第一张。一沓只有 4 张时概率 1/4 撞对,整份目录进来才露馅 | `[x]` 已补 `revealValue`(旁边 `DirectionCardsPicker` 本来就传了,只有这一处漏) |
+
 ## C. 长期约束(用户反复强调过的,不是单条 bug)
 
 - **别留尾巴**:「要抽组件的就抽,要新实现的功能就实现,每个像素对齐过去」。

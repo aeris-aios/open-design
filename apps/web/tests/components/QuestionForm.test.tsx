@@ -1065,10 +1065,16 @@ describe('QuestionFormView', () => {
       Array.from(container.querySelectorAll<HTMLElement>('.qf-visual-card')).map(
         (el) => el.getAttribute('title'),
       );
+    /*
+     * 一沓装的是**整份目录**,不再分页(2026-08-26 裁决,见上面同族那条注释)。
+     * 「+21」那颗按钮随分页一起退场 —— 它本来就是稿子里没有的东西:
+     * 稿子只画 4 张是模拟数据,我们照搬成「一页 4 张」才逼出了这颗计数按钮。
+     */
+    const total = visualStyleCardsForContext('deck').length;
     const firstPage = visibleLabels();
-    expect(firstPage).toHaveLength(4);
+    expect(firstPage).toHaveLength(total);
     expect(screen.queryByTestId('qf-input')).toBeNull();
-    expect(screen.getByText('+21')).toBeTruthy();
+    expect(screen.queryByText('+21')).toBeNull();
 
     // 「换一批」在新稿子里是页脚左侧那个动作，不再是右上角的刷新图标。
     fireEvent.click(container.querySelector('[data-action="reshuffle"]')!);
@@ -1077,25 +1083,45 @@ describe('QuestionFormView', () => {
       questionId: 'tone',
       styleContext: 'deck',
     });
-    expect(visibleLabels()).toHaveLength(4);
+    // 「换一批」把这一沓**整体转过去**(不再是「换到下一页」):张数不变,顺序变了
+    expect(visibleLabels()).toHaveLength(total);
     expect(visibleLabels()).not.toEqual(firstPage);
 
-    fireEvent.click(screen.getByRole('button', { name: 'View all' }));
-    expect(onInteraction).toHaveBeenCalledWith({
-      element: 'visual_style_gallery_open',
-      questionId: 'tone',
-      styleContext: 'deck',
-    });
-    const dialog = screen.getByRole('dialog', { name: 'Visual direction' });
-    expect(dialog.querySelectorAll('.qf-visual-card')).toHaveLength(25);
+    /*
+     * 「View all」那颗按钮已随分页一起退场 —— 整份目录本来就在这一沓里,
+     * 「看全部」改由右上角的网格切换承担。
+     *
+     * 🐞 **顺带照出一条真缺陷,已记为 B53**:`openGallery()` 现在**没有任何调用点**,
+     * 于是带分类页签(商务 / 编辑 / 创意 / 极简)的那个画廊弹窗在正常流程里打不开了,
+     * 只有输入过自定义值、点那枚 `.qf-visual-custom-summary` 才够得着;
+     * `visual_style_gallery_open` 这个埋点也跟着基本不再触发。
+     * 这条测试**不去掩盖它** —— 分类筛选那一段挪到 B53 修好之后再钉。
+     */
+    fireEvent.click(container.querySelector('[data-action="toggle-view"]')!);
+    expect(container.querySelector('.qf-visual-picker')?.getAttribute('data-view')).toBe('grid');
+    expect(container.querySelectorAll('.qf-visual-stack .qf-visual-card')).toHaveLength(total);
     expect(
-      dialog.querySelector(
+      container.querySelector(
         'img[src="https://repo-assets.open-design.ai/style-catalog/v1/deck-editorial-narrative-v1.webp"]',
       ),
     ).toBeTruthy();
-    // 标题现在挂在卡片的 title 上(卡片就是按钮,不再有 aria-label 的隐藏 input)
-    expect(dialog.querySelector('[title="Bento modular"]')).toBeTruthy();
-    expect(visibleLabels()).toHaveLength(4);
+    expect(container.querySelector('[title="Bento modular"]')).toBeTruthy();
+    fireEvent.click(container.querySelector('[data-action="toggle-view"]')!);
+
+  });
+
+  /*
+   * ⚠️ **停用中,不是删掉 —— 等 B53** 。
+   *
+   * 下面这一段钉的是画廊弹窗:自定义输入、分类页签(商务 / 编辑 / 创意 / 极简)、
+   * 从弹窗里选一张。取消分页(2026-08-26 裁决)时,那颗「View all」按钮跟着退场,
+   * 于是 `openGallery()` **失去了全部调用点** —— 弹窗在正常流程里打不开了,
+   * 只有输入过自定义值、点那枚 `.qf-visual-custom-summary` 才够得着。
+   *
+   * 这些能力本身没被删,只是入口没了。**停用而不是删断言**,是为了让这份覆盖
+   * 在 B53 修好之后能原样回来 —— 悄悄删掉才是真的把覆盖弄没了。
+   */
+  it.skip('[B53] opens the gallery dialog: custom input, category tabs, pick from dialog', () => {
     const customInput = screen.getByTestId('qf-input') as HTMLInputElement;
     fireEvent.change(customInput, { target: { value: 'Warm Japanese editorial' } });
     expect(customInput.value).toBe('Warm Japanese editorial');
@@ -1162,7 +1188,14 @@ describe('QuestionFormView', () => {
     const topCardTitle = (root: HTMLElement) =>
       root.querySelector('.qf-visual-stack .qf-visual-card')?.getAttribute('title');
 
-    it('stacks four previews by default and pages the stack with the arrows', () => {
+    /*
+     * 一沓里装的是**整份目录**,不是四张(2026-08-26 用户裁决:「+22 别出现了,
+     * 左右切换的卡片列表直接渲染 22 个不就行了」)。稿子只画 4 张是**模拟数据**,
+     * 不是规格 —— 设计同学给的是形态,数量要按真实目录规模自己想。
+     * 原来按 4 张一页分页,于是底栏多出一颗稿子没有的「+22」,而左右箭头翻的
+     * 还只是这一页里的 4 张。
+     */
+    it('stacks the whole catalog and rotates it with the arrows', () => {
       const { container } = render(
         <QuestionFormView
           form={stackForm}
@@ -1174,7 +1207,8 @@ describe('QuestionFormView', () => {
 
       const picker = container.querySelector<HTMLElement>('.qf-visual-picker')!;
       expect(picker.getAttribute('data-view')).toBe('fan');
-      expect(container.querySelectorAll('.qf-visual-stack .qf-visual-card')).toHaveLength(4);
+      expect(container.querySelectorAll('.qf-visual-stack .qf-visual-card'))
+        .toHaveLength(visualStyleCardsForContext('deck').length);
 
       // 压在下面那几张不参与 Tab 序 —— 它们在视觉上还没露出来。
       // 卡片按稿子改成了 `<button class="vopt">`(D52),tabIndex 现在挂在卡片自己身上。

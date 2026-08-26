@@ -603,11 +603,30 @@ export const QuestionFormView = forwardRef<QuestionFormHandle, Props>(function Q
       <div className="question-form-body">
         {questionsToRender.map((q) => {
           const value = currentAnswers[q.id];
+          /*
+           * 内置风格目录接管哪几道题(2026-08-26 用户裁决:「为什么不把 tone 的内容
+           * 换到 direction-cards 里?」)。
+           *
+           * 目录是**产品自己的功能**:每个 context 一沓真预览图,共 96 张,住在 R2
+           * (`repo-assets.open-design.ai/style-catalog/v1/`)。而模型**现开**的
+           * `direction-cards` 没有素材 —— 预览面只能画占位块,用户看到的就是几张
+           * 「纯色卡」。同一件事(选视觉方向)不该有真图和占位块两副样子。
+           *
+           * 所以判据从「id 恰好叫 tone」放宽到「**这道题在问视觉方向**」:
+           *  · discovery 简报里的 `tone`(模型按提示词发的纯文字选项);
+           *  · 模型自己开的 `direction-cards`。
+           * 两者都由目录接管,前提是这个项目**有视觉风格上下文**(deck / prototype /
+           * document / image / video)—— 没有上下文就没有对应的那一沓,只能原样渲染。
+           *
+           * 为什么换掉模型的选项不会「说两件事」:答案是按 `formatFormAnswers` 拼成
+           * **文本行**回给模型的(`- 视觉方向: Content-led product`),不是机器 id 契约。
+           * `tone` 那条路今天就是这么替换的,已经在线上跑着。
+           */
+          const asksVisualDirection =
+            (q.id === 'tone' && (q.type === 'checkbox' || q.type === 'radio') && !!q.options) ||
+            q.type === 'direction-cards';
           const visualStyleCards =
-            visualStyleContext &&
-            q.id === 'tone' &&
-            (q.type === 'checkbox' || q.type === 'radio') &&
-            q.options
+            visualStyleContext && asksVisualDirection
               ? visualStyleCardsForContext(visualStyleContext)
               : null;
           return (
@@ -686,7 +705,7 @@ export const QuestionFormView = forwardRef<QuestionFormHandle, Props>(function Q
                         : []
                   }
                   disabled={locked}
-                  selectionMode={q.type === 'radio' ? 'single' : 'multiple'}
+                  selectionMode={q.type === 'checkbox' ? 'multiple' : 'single'}
                   maxSelections={q.type === 'checkbox' ? q.maxSelections : 1}
                   onChange={(next) =>
                     update(q.id, q.type === 'radio' ? (next[0] ?? '') : next)
@@ -854,7 +873,7 @@ export const QuestionFormView = forwardRef<QuestionFormHandle, Props>(function Q
                   onChange={(e) => update(q.id, e.target.value)}
                 />
               ) : null}
-              {q.type === 'direction-cards' && q.cards && q.cards.length > 0 ? (
+              {q.type === 'direction-cards' && !visualStyleCards && q.cards && q.cards.length > 0 ? (
                 <DirectionCardsPicker
                   cards={q.cards}
                   formId={form.id}
@@ -864,7 +883,7 @@ export const QuestionFormView = forwardRef<QuestionFormHandle, Props>(function Q
                   onSelect={(cardId) => pickFixed(q, cardId)}
                 />
               ) : null}
-              {q.type === 'direction-cards' && q.cards && q.cards.length > 0 && shouldRenderCustomChoice(q) ? (
+              {q.type === 'direction-cards' && !visualStyleCards && q.cards && q.cards.length > 0 && shouldRenderCustomChoice(q) ? (
                 <div className="qf-options">
                   {renderOwnChoice(q, customSingleValue(q, value), (next) => update(q.id, next))}
                 </div>
@@ -1158,6 +1177,8 @@ function VisualStylePicker({
   const [offset, setOffset] = useState(0);
   /** 换过一批 / 替人随机挑过之后，把这一沓翻回第一张 —— 见 VisualDirectionStack。 */
   const [stackResetToken, setStackResetToken] = useState(0);
+  /** 「随机」抽中的那张 —— 交给这一沓翻到最前面(见 `pickRandomStyle`) */
+  const [revealValue, setRevealValue] = useState<string | undefined>(undefined);
   const [galleryOpen, setGalleryOpen] = useState(false);
   const [galleryCategory, setGalleryCategory] =
     useState<VisualStyleGalleryCategory>('all');
@@ -1216,6 +1237,14 @@ function VisualStylePicker({
     const card = pool[Math.floor(Math.random() * pool.length)];
     if (!card) return;
     selectStyle(card, 'inline');
+    /*
+     * 把随机选中的那张**翻到最前面**,不然选完它还压在底下,用户看不见自己抽到了什么。
+     *
+     * 光 bump token 不够 —— `VisualDirectionStack` 的那个 effect 是拿 `revealValue`
+     * 去找下标的,没给就 `at = -1`,于是弹回第一张。这里原来漏了 `revealValue`,
+     * 一沓只有 4 张时碰巧看不出来(概率 1/4 撞对),整份目录进来之后就露馅了。
+     */
+    setRevealValue(card.value);
     setStackResetToken((current) => current + 1);
   }
 
@@ -1289,6 +1318,7 @@ function VisualStylePicker({
         disabled={disabled}
         inputType={selectionMode === 'single' ? 'radio' : 'checkbox'}
         revealToken={stackResetToken}
+        revealValue={revealValue}
         onSelect={(option) => {
           const card = cards.find((candidate) => candidate.value === option.value);
           if (card) selectStyle(card, 'inline');
