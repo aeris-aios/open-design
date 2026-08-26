@@ -6626,7 +6626,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
                   workspaceMemberId: headerContext.workspaceMemberId,
                 }
               : null;
-          const scope = projectPreviewScopes.mint(projectId, previewWorkspace);
+          const scope = projectPreviewScopes.acquire(projectId, previewWorkspace);
           const expiresAt = projectPreviewScopes.expiresAt(projectId, scope);
           if (expiresAt === undefined) return html;
           return injectProjectPreviewBase(
