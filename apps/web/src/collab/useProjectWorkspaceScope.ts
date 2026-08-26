@@ -183,6 +183,40 @@ export function projectWorkspaceScopeAuthorizesAmr(
   return scope?.kind === 'personal' || scope?.kind === 'team';
 }
 
+/**
+ * Which kind of "no scope" this response is — the answer decides whether the
+ * reader ever asks again.
+ *
+ * A 404 from this endpoint carries two unrelated meanings and they must not be
+ * collapsed. A daemon that never had the route is authoritatively
+ * `unsupported`, and polling it forever would be pointless. But
+ * `PROJECT_NOT_FOUND` says only that this daemon has no local row for the
+ * project YET — the first open of a project pulled from the hub, where the row
+ * appears a few seconds later once materialization lands. That is exactly the
+ * transient condition `unavailable` already models.
+ *
+ * Treating the second as the first is not a cosmetic misclassification: the
+ * scope stays null forever, and every consumer that needs a resolved scope
+ * KIND silently stalls with it. Measured on a first open of a team project,
+ * the chat pane spun indefinitely because the empty-conversation seed can only
+ * act once the scope resolves to personal/unbound/team (OPEND-2283 follow-up).
+ */
+async function classifyScopeFetchFailure(
+  response: Response,
+): Promise<'unsupported' | 'forbidden' | 'unavailable'> {
+  if (response.status === 403) return 'forbidden';
+  if (response.status !== 404) return 'unavailable';
+  let code: unknown;
+  try {
+    const body = (await response.json()) as { error?: { code?: unknown } } | null;
+    code = body?.error?.code;
+  } catch {
+    // A body-less or non-JSON 404 is the old-daemon shape.
+    code = undefined;
+  }
+  return code === 'PROJECT_NOT_FOUND' ? 'unavailable' : 'unsupported';
+}
+
 class ProjectWorkspaceScopeFetchError extends Error {
   constructor(
     readonly failure: NonNullable<ProjectWorkspaceScopeState['failure']>,
@@ -248,11 +282,7 @@ async function fetchProjectWorkspaceScope(
       );
       if (!response.ok) {
         throw new ProjectWorkspaceScopeFetchError(
-          response.status === 404
-            ? 'unsupported'
-            : response.status === 403
-              ? 'forbidden'
-              : 'unavailable',
+          await classifyScopeFetchFailure(response),
         );
       }
       const body = (await response.json()) as ProjectWorkspaceScopeResponse;
