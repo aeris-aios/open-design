@@ -59,6 +59,7 @@
 
 .copyPanel {
   display: flex;
+  min-height: 0;
   min-width: 0;
   flex-direction: column;
   justify-content: flex-start;
@@ -212,7 +213,6 @@
 
   .copyPanel {
     padding: 28px 22px 22px;
-    overflow: visible;
   }
 
   .panel .title {
