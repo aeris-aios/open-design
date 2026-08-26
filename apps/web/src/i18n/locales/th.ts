@@ -5345,6 +5345,7 @@ export const th: Dict = {
   'chat.record.verb.exec': "รัน",
   'chat.record.failed': "ล้มเหลว",
   'chat.record.hits': "{count} รายการ",
+  'chat.record.slowUpstream': 'ผู้ให้บริการตอบสนองช้า — รอมาแล้ว {seconds} วินาที',
   'chat.record.running': "กำลังทำงาน",
   'chat.record.thinking': "กำลังคิด",
   'chat.record.done': "เสร็จแล้ว",

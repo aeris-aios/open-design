@@ -27,6 +27,12 @@ import { StatusMark } from './primitives/StatusMark';
 import { ToolRow } from './primitives/ToolRow';
 import styles from './primitives/record.module.css';
 
+/**
+ * 多久算「等太久」。60 秒来自 `error-ux-design.md:33`(10 分钟 / Cloud 30 分钟才报超时,
+ * 这一句只是等待期间的回音,不改变任何超时判定)。
+ */
+const SLOW_UPSTREAM_AFTER_MS = 60_000;
+
 export interface ExecutionShellProps {
   shell: ShellData;
   onOpenFile?: (path: string) => void;
@@ -74,7 +80,19 @@ export function ExecutionShell({ shell, onOpenFile, onRetryImage }: ExecutionShe
       return <span>{t('chat.record.running')}</span>;
     }
     if (running) {
-      const label = shell.thinking ? t('chat.record.thinking') : t('chat.record.running');
+      /**
+       * S12「等太久没动静」(P1,18,891 次/月、6,372 台):60 秒没有新东西落下来就
+       * 换一句话,告诉用户我们知道它久,而不是干写着「进行中」。门槛与文案逐字来自
+       * `docs/design/run-errors/error-ux-design.md:33`;〔停止〕那一半由输入框那颗
+       * 常驻的停止键承担,不在这里再摆一颗。
+       *
+       * 一有任何东西落下来,`quietMs` 自己就归零(见 `build-turn-blocks` 的 `shellQuiet`),
+       * 所以这句话会自动退回去 —— 这里不留状态。
+       */
+      const quiet = shell.quietMs != null && shell.quietMs >= SLOW_UPSTREAM_AFTER_MS;
+      const label = quiet
+        ? t('chat.record.slowUpstream', { seconds: Math.floor((shell.quietMs ?? 0) / 1000) })
+        : shell.thinking ? t('chat.record.thinking') : t('chat.record.running');
       return (
         <>
           {/* 不给标签:紧跟着的就是「进行中 / 思考中」那行字,读屏念一遍就够 */}

@@ -5340,6 +5340,7 @@ export const fa: Dict = {
   'chat.record.verb.exec': "اجرا شد",
   'chat.record.failed': "ناموفق",
   'chat.record.hits': "{count} مورد",
+  'chat.record.slowUpstream': 'پاسخ سرویس‌دهنده کند است — {seconds} ثانیه در انتظار',
   'chat.record.running': "در حال اجرا",
   'chat.record.thinking': "در حال فکر کردن",
   'chat.record.done': "انجام شد",

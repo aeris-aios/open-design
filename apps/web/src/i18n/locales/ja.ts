@@ -5345,6 +5345,7 @@ export const ja: Dict = {
   'chat.record.verb.exec': "実行",
   'chat.record.failed': "失敗",
   'chat.record.hits': "{count} 件",
+  'chat.record.slowUpstream': 'プロバイダーの応答が遅く、{seconds} 秒待機中',
   'chat.record.running': "実行中",
   'chat.record.thinking': "思考中",
   'chat.record.done': "完了",

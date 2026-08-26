@@ -5345,6 +5345,7 @@ export const hu: Dict = {
   'chat.record.verb.exec': "Futtatva",
   'chat.record.failed': "Hiba",
   'chat.record.hits': "{count} találat",
+  'chat.record.slowUpstream': 'A szolgáltató lassan válaszol – {seconds} másodperce várunk',
   'chat.record.running': "Folyamatban",
   'chat.record.thinking': "Gondolkodik",
   'chat.record.done': "Kész",

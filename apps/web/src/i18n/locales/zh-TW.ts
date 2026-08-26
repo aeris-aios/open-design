@@ -5801,6 +5801,7 @@ export const zhTW: Dict = {
   'chat.record.verb.exec': "執行",
   'chat.record.failed': "失敗",
   'chat.record.hits': "{count} 處",
+  'chat.record.slowUpstream': '上游回應慢，已等 {seconds} 秒',
   'chat.record.running': "進行中",
   'chat.record.thinking': "思考中",
   'chat.record.done': "已完成",

@@ -5345,6 +5345,7 @@ export const it: Dict = {
   'chat.record.verb.exec': "Eseguito",
   'chat.record.failed': "Errore",
   'chat.record.hits': "{count} risultati",
+  'chat.record.slowUpstream': 'Il provider risponde lentamente — {seconds}s di attesa',
   'chat.record.running': "In corso",
   'chat.record.thinking': "Sta pensando",
   'chat.record.done': "Completato",

@@ -5531,6 +5531,7 @@ export interface Dict {
   'chat.record.verb.exec': string;
   'chat.record.failed': string;
   'chat.record.hits': string;
+  'chat.record.slowUpstream': string;
   'chat.record.running': string;
   'chat.record.thinking': string;
   'chat.record.done': string;

@@ -196,3 +196,51 @@ describe('思考流(D46)', () => {
     expect(body?.className ?? '').not.toMatch(/stream/);
   });
 });
+
+describe('S12 · 等太久没动静时壳头换一句话', () => {
+  /**
+   * 权威:`docs/design/run-errors/error-ux-design.md:33`
+   * 「60 秒没新输出显示『上游响应慢，已等 N 秒』+〔停止〕」。
+   * 产品口述的落点是**现有这张卡的文案**,不新起一块 UI。
+   * 〔停止〕那一半由输入框那颗常驻的停止键承担。
+   */
+  const START = 1_000_000;
+  const startedTurn = (nowMs: number): ShellData[] =>
+    buildTurnBlocks({
+      events: [{ kind: 'tool_use', id: 'item_1', name: 'Read', input: { file_path: '/a.ts' }, startedAt: START }] as PersistedAgentEvent[],
+      runStatus: 'running',
+      nowMs,
+    }).filter((b): b is ShellData => b.kind === 'shell');
+
+  it('still says 进行中 inside the first minute', () => {
+    render(<ExecutionShell shell={nth(startedTurn(START + 30_000), 0)} />);
+    expect(screen.getByText('进行中')).toBeTruthy();
+    expect(screen.queryByText(/上游响应慢/)).toBeNull();
+  });
+
+  it('acknowledges the wait past a minute, with the seconds it has waited', () => {
+    render(<ExecutionShell shell={nth(startedTurn(START + 95_000), 0)} />);
+    expect(screen.getByText('上游响应慢，已等 95 秒')).toBeTruthy();
+    expect(screen.queryByText('进行中')).toBeNull();
+  });
+
+  it('goes back to 进行中 as soon as something lands', () => {
+    const shells = buildTurnBlocks({
+      events: [
+        { kind: 'tool_use', id: 'item_1', name: 'Read', input: { file_path: '/a.ts' }, startedAt: START },
+        { kind: 'tool_use', id: 'item_2', name: 'Read', input: { file_path: '/b.ts' }, startedAt: START + 90_000 },
+      ] as PersistedAgentEvent[],
+      runStatus: 'running',
+      nowMs: START + 95_000,
+    }).filter((b): b is ShellData => b.kind === 'shell');
+    render(<ExecutionShell shell={nth(shells, 0)} />);
+    expect(screen.getByText('进行中')).toBeTruthy();
+    expect(screen.queryByText(/上游响应慢/)).toBeNull();
+  });
+
+  it('never says it on a turn that already ended', () => {
+    const shells = shellsOf(call('item_1', 'Read', { file_path: '/a.ts' }, { startedAt: 0 }), 'succeeded');
+    render(<ExecutionShell shell={nth(shells, 0)} />);
+    expect(screen.queryByText(/上游响应慢/)).toBeNull();
+  });
+});

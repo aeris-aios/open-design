@@ -678,6 +678,9 @@ function AssistantMessageImpl({
       // 所以 agent 不重发时它是纯空转,不会凭空造出任何一行。
       ...(previousTodos?.length ? { previousTodos } : {}),
       ...(nowMs != null ? { nowMs } : {}),
+      // 只为「一件事都还没发生」那一格服务(S12):没有它,卡在首个 token 的轮次
+      // 算不出静默时长,壳头就只能一直干写着「进行中」。
+      ...(message.createdAt != null ? { startedAtMs: message.createdAt } : {}),
     });
     return {
       shells: turn.filter((b): b is ExecutionShellData => b.kind === 'shell'),

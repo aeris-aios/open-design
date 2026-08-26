@@ -5345,6 +5345,7 @@ export const ko: Dict = {
   'chat.record.verb.exec': "실행",
   'chat.record.failed': "실패",
   'chat.record.hits': "{count}건",
+  'chat.record.slowUpstream': '업스트림 응답이 느립니다 — {seconds}초 대기 중',
   'chat.record.running': "진행 중",
   'chat.record.thinking': "생각 중",
   'chat.record.done': "완료",

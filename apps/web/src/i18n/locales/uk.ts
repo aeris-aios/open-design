@@ -5345,6 +5345,7 @@ export const uk: Dict = {
   'chat.record.verb.exec': "Виконано",
   'chat.record.failed': "Помилка",
   'chat.record.hits': "{count} збігів",
+  'chat.record.slowUpstream': 'Провайдер відповідає повільно — очікування {seconds} с',
   'chat.record.running': "Виконується",
   'chat.record.thinking': "Думає",
   'chat.record.done': "Готово",

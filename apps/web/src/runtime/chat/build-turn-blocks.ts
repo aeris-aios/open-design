@@ -277,6 +277,7 @@ function makeShell(seq: number): ExecutionShell {
     stopped: false,
     thinking: false,
     elapsedMs: null,
+    quietMs: null,
     items: [],
     segments: [],
   };
@@ -803,6 +804,7 @@ export function buildTurnBlocks(input: BuildTurnInput): TurnBlock[] {
       // 只有**还在跑的那张**跟着 now 走;先结束的那张定在自己的最后一刻
       const live = running && shell === activeShell();
       shell.elapsedMs = shellElapsed(live, shell);
+      shell.quietMs = shellQuiet(live, shell);
     }
 
     if (running || !started) return;
@@ -825,6 +827,22 @@ export function buildTurnBlocks(input: BuildTurnInput): TurnBlock[] {
       else if (shell.status === 'running') shell.status = 'done';
       closeRunningSegments(shell);
     }
+  }
+
+  /**
+   * 上一件事之后过了多久 —— S12 用它决定要不要把「进行中」换成「还在等」那句话。
+   *
+   * 和 `shellElapsed` 的差别只在起点:那个从**轮次开头**量(总耗时),
+   * 这个从**最后一刻**量(静默)。壳里还一件事都没有时(卡在首个 token 的那种,
+   * 正是这条要救的场景)退回轮次开头 —— 那时候「等了多久」和「跑了多久」本来就是一回事。
+   */
+  function shellQuiet(running: boolean, shell?: ExecutionShell): number | null {
+    if (!running || input.nowMs == null) return null;
+    const span = shell ? shellSpan.get(shell) : undefined;
+    const last = (span ? span.to : lastEndedAt) ?? firstStartedAt ?? input.startedAtMs ?? null;
+    if (last == null) return null;
+    const ms = input.nowMs - last;
+    return ms > 0 ? ms : null;
   }
 
   function shellElapsed(running: boolean, shell?: ExecutionShell): number | null {

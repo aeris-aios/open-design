@@ -157,6 +157,18 @@ export interface ExecutionShell {
    */
   thinking: boolean;
   elapsedMs: number | null;
+  /**
+   * 壳里**最后一件事**之后过去了多久(还在跑时才有值,结束了就是 `null`)。
+   *
+   * S12「等太久没动静」是 P1(18,891 次/月、6,372 台),而稿子里等待期间**一句回音都没有**
+   * (`chat-panel-edge-audit.md:555` 把它记成最大的一块缺口)。产品口述的落点是
+   * 现有那张「进行中」卡片的**文案**,不新起一块 UI —— 所以这里给的是时长,
+   * 换哪句话由组件按 `error-ux-design.md:33` 的 60 秒门槛决定。
+   *
+   * 放在纯函数层而不是组件里起计时器:秒数从 `nowMs` 推,后台标签页 rAF 被节流也不会
+   * 把它带偏,而且这一条能脱离 React 测。
+   */
+  quietMs: number | null;
   items: ShellItem[];
   /** 这张壳知道的全部 todo(用于「执行计划 · N 步」与进度) */
   segments: TodoSegment[];
@@ -177,4 +189,10 @@ export interface BuildTurnInput {
   previousTodos?: Pick<TodoSegment, 'content' | 'status'>[];
   /** 壳头「进行中 · 31s」的当前时刻;不传则运行中不显示秒数 */
   nowMs?: number;
+  /**
+   * 这一轮是什么时候开始的。**只有一件事都还没发生时才用得上** ——
+   * 卡在首个 token 的那种(每月 5,547 次)事件流里一个带时刻的事都没有,
+   * 没有它就算不出「等了多久」,而那恰恰是最需要说一句话的时刻。
+   */
+  startedAtMs?: number;
 }

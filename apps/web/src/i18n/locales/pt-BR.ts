@@ -5345,6 +5345,7 @@ export const ptBR: Dict = {
   'chat.record.verb.exec': "Executado",
   'chat.record.failed': "Falhou",
   'chat.record.hits': "{count} resultados",
+  'chat.record.slowUpstream': 'O provedor está lento para responder — aguardando {seconds}s',
   'chat.record.running': "Em andamento",
   'chat.record.thinking': "Pensando",
   'chat.record.done': "Concluído",

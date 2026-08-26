@@ -5345,6 +5345,7 @@ export const id: Dict = {
   'chat.record.verb.exec': "Dijalankan",
   'chat.record.failed': "Gagal",
   'chat.record.hits': "{count} hasil",
+  'chat.record.slowUpstream': 'Penyedia lambat merespons — menunggu {seconds}d',
   'chat.record.running': "Berjalan",
   'chat.record.thinking': "Berpikir",
   'chat.record.done': "Selesai",
