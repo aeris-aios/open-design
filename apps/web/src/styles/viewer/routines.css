@@ -1736,17 +1736,20 @@
   color: var(--text-soft);
   font-weight: 500;
 }
-.app .msg.user .user-text,
-.chat-skin .msg.user .user-text {
-  padding: 8px 12px;
-  border: 0;
-  border-radius: var(--radius-lg) var(--radius-none) var(--radius-lg) var(--radius-lg);
-  background: #ededed;
-  color: var(--text);
-  line-height: 1.45;
-  font-size: 13px;
-  box-shadow: none;
-}
+/*
+ * 用户气泡的**旧皮肤**已删。
+ *
+ * 它是灰底(#ededed)+ 深灰字,而交付稿的 `.bub` 是**近黑底 + 白字**
+ * (`--bub-bg: var(--text-strong)` / `color: var(--bg)`),右下角才是小圆角。
+ *
+ * 它靠 `.app` / `.chat-skin` 这个祖先把特异性拔到 (0,4,0),压过按稿子写的
+ * `.msg.user .user-text` (0,3,0) —— 而**验收陈列页没有这个祖先**,
+ * 于是陈列页里是黑的、真实产品里是灰的,同一个组件两个样子。
+ * 用户连着截了四次图问「这个消息怎么还是这个样式」。
+ *
+ * 教训记在 `specs/current/chat-panel-feedback.md` B37:陈列页照不出
+ * 「只在 app 壳里才生效」的规则。删掉这一整条,让稿子那条直接生效。
+ */
 .app .msg.user .user-copy-btn,
 .chat-skin .msg.user .user-copy-btn {
   color: var(--text-soft);

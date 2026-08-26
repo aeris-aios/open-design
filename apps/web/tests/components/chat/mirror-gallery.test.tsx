@@ -1564,7 +1564,7 @@ const CELLS: Cell[] = [
 function renderCell(cell: Cell): string {
   if (cell.node) {
     return dehash(renderToStaticMarkup(
-      <I18nProvider initial="zh-CN"><div className="root" data-chat-root="">{cell.node()}</div></I18nProvider>,
+      <I18nProvider initial="zh-CN"><div className="app"><div className="root" data-chat-root="">{cell.node()}</div></div></I18nProvider>,
     ));
   }
   const blocks = buildTurnBlocks({ events: cell.events ?? [], runStatus: cell.run, nowMs: 31_000 });
@@ -1573,9 +1573,13 @@ function renderCell(cell: Cell): string {
   if (!shell) return '';
   return dehash(renderToStaticMarkup(
     <I18nProvider initial="zh-CN">
-      <div className="root" data-chat-root="">
+      {/* `.app` 这一层是**真实产品的祖先**。不套它,陈列页就看不见那一整层
+          `.app .msg…` 的旧皮肤规则(它们靠多一个祖先把特异性拔高,稳压按稿子写的那些)——
+          于是同一个组件在陈列页里是一个样、在产品里是另一个样。
+          用户连着截了四次图问「这个消息怎么还是这个样式」,根因就在这儿。 */}
+      <div className="app"><div className="root" data-chat-root="">
         <ExecutionShell shell={shell} />
-      </div>
+      </div></div>
     </I18nProvider>,
   ));
 }
@@ -1840,6 +1844,27 @@ function buildPage(): string {
   const artifactCss = pick(read('src/styles/viewer/tools.css'), /(^|[\s,>+~])\.(artifact-card|file-ops)/);
   const footerBase = pick(read('src/styles/viewer/composio.css'), /(^|[\s,>+~])\.assistant-footer/);
   const footerSkin = pick(read('src/styles/viewer/theater.css'), /(^|[\s,>+~])\.assistant-(footer|feedback|copy-button)/);
+  /*
+   * 旧聊天皮肤 —— 这一页长期照不出真相的**系统性原因**,不是某一格的疏忽。
+   *
+   * `styles/viewer/routines.css` 里有一整块 `.app …` / `.chat-skin …` 的聊天皮肤(451 条),
+   * `index.css` 把它排在**最后**(第 31 行,chat.css 是第 13 行、theater 是第 24 行)——
+   * 于是它对同一个元素既赢特异性(0,2,0 对 0,1,0)又赢顺序,产品里真正生效的是**它**。
+   * 而这一页原来一条都没内联,量出来的「和稿子一致」是**假的**:
+   * 用户连续四次截图反馈用户气泡是灰底圆角,这一页却一直显示对齐 —— 差就差在这一层。
+   *
+   * 不整份塞:451 条里绝大多数够不着这一页(工作区页签、交接菜单、设计文件表…),
+   * 塞进来只会把别的格子弄花。按**这一页实际渲染出来的类名**求交集,真正会命中的只有下面
+   * 这几族(msg / user-text / user-copy-btn / prose-block / md-p / assistant-footer)。
+   * 位置也照生产:排在 footerSkin(theater)之后,顺序错了照出来的还是旧版那一行。
+   *
+   * 这些格子照出差异之后,修法是**删掉旧皮肤里和稿子冲突的那一条**,不是在新组件上加特异性
+   * 去压它 —— 后者会把同一场层叠战争再打一遍。
+   */
+  const legacySkin = pick(
+    read('src/styles/viewer/routines.css'),
+    /(^|[\s,>+~])\.(msg|user-text|user-copy-btn|prose-block|md-p|assistant-footer|assistant-flow|chat-log|msg-time)\b/,
+  );
   // 下一步引导是本族唯一已经 Module 化的;报错那张附卡的壳也是 Module。
   // 这两份的类名(`.root` `.card` `.title` `.label` …)太大路,必须关进笼子,见 `scope()`
   const nextStepCss = scope(read('src/components/NextStepActions.module.css'), CAGE_NEXT_STEP);
@@ -1978,6 +2003,7 @@ ${tokens}</style>
 <style>${artifactCss}</style>
 <style>${footerBase}</style>
 <style>${footerSkin}</style>
+<style>${legacySkin}</style>
 <style>${nextStepCss}</style>
 <style>${actionCardCss}</style>
 <style>${upgradeCss}</style>

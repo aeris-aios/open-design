@@ -415,6 +415,7 @@ import { stageAmrImagePaths } from './media/amr-image-staging.js';
 import { ingestRoutineConnectorEvolution } from './automation-routine-evolution.js';
 import { createClaudeStreamHandler } from './runtimes/claude-stream.js';
 import { createAgentTitleMarkerStripper } from './title-marker.js';
+import { createPanelGrammarStripper } from './panel-grammar-strip.js';
 import { createRoleMarkerGuard } from './role-marker-guard.js';
 import { createToolLoopGuard, resolveToolLoopMode, type ToolLoopVerdict } from './tool-loop-guard.js';
 import { diagnoseClaudeCliFailure } from './claude-diagnostics.js';
@@ -12762,10 +12763,26 @@ export async function startServer({
     const runGuard = createRoleMarkerGuard('run');
     let runWarned = false;
     const visibleStdoutControlStripper = new TerminalControlSequenceStripper();
-    const titleMarkerStripper = createAgentTitleMarkerStripper({
+    const rawTitleMarkerStripper = createAgentTitleMarkerStripper({
       enabled: Boolean(titleGenerationRequested),
       emitTitle: (title) => send('agent', { type: 'conversation_title', title }),
     });
+    /*
+     * 评审剧场的通信语法**兜底剥离**(见 `panel-grammar-strip.ts` 的注释)。
+     *
+     * 挂在这里而不是逐个改五个调用点:所有可见文本都要先过 `titleMarkerStripper`,
+     * 把它包一层,五处自动都有,以后再多一处也不会漏。
+     * 顺序是「先剥标题、再剥面板语法」—— 两者互不重叠,谁先都行,
+     * 但两个都必须有各自的半截缓冲,否则会闪出半截标签。
+     */
+    const panelGrammarStripper = createPanelGrammarStripper();
+    const titleMarkerStripper = {
+      strip: (delta: string) => panelGrammarStripper.strip(rawTitleMarkerStripper.strip(delta)),
+      flush: () => {
+        const head = panelGrammarStripper.strip(rawTitleMarkerStripper.flush());
+        return head + panelGrammarStripper.flush();
+      },
+    };
 
     function flushAgentTitleMarkerBuffer() {
       const visible = titleMarkerStripper.flush();
