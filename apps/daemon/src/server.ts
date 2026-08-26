@@ -5211,12 +5211,23 @@ export async function startServer({
         );
         return;
       }
+      // `candidates` counts projects CONSIDERED, which is not what the
+      // background lanes cost a member: a sweep with candidates=25 says
+      // nothing about whether 25 files or 25,000 landed on their disk. The
+      // `process*` fields below are this daemon process's running totals (not
+      // this sweep's), and they are the reading that makes
+      // OD_COLLAB_BACKGROUND_PULL_MAX_CUMULATIVE_ENTRIES choosable from a
+      // diagnostics bundle instead of from a synthetic workspace.
+      const backgroundVolume = backgroundPullSizeGuard.volume();
       console.info(
         `[od] shared-project content catch-up completed mode=${event.mode} lane=${event.lane} ` +
           `workspaceId=${event.workspaceId ?? 'unknown'} scanned=${event.scanned ?? 0} ` +
           `candidates=${event.candidates ?? 0} headChecks=${event.headChecks ?? 0} ` +
           `heads=${event.heads ?? 0} ` +
-          `suppressed=${event.suppressed ?? 0} complete=${event.complete === true}`,
+          `suppressed=${event.suppressed ?? 0} complete=${event.complete === true} ` +
+          `processEntries=${backgroundVolume.entries} ` +
+          `processProjects=${backgroundVolume.countedProjects} ` +
+          `processUncounted=${backgroundVolume.uncountedProjects}`,
       );
     },
   });
@@ -14937,7 +14948,7 @@ export async function startServer({
         markRpcCloseReason('empty_output');
         send('error', createSseErrorPayload(
           'AGENT_EXECUTION_FAILED',
-          'Agent completed without producing any output. The model or provider may have returned an empty response. Check the agent logs for upstream errors, then try re-authenticating the agent, checking quota, or switching models.',
+          'Agent completed without producing any output. The model or provider may have returned an empty response. Check the agent logs for upstream errors, then try re-authenticating the agent or switching models.',
           { retryable: true },
         ));
         return finishWithRetryDecision('failed', code, signal);

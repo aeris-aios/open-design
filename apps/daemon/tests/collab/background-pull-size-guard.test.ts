@@ -225,6 +225,61 @@ describe('createBackgroundPullSizeGuard', () => {
     }
   });
 
+  // Volume reporting. The cumulative ceiling ships disabled (a capacity number
+  // nobody could justify without production data), and the counter that would
+  // have produced that data ran only when the ceiling was already on. Every
+  // default-configured client therefore measured nothing, which is why the
+  // ceiling stayed unset. Counting always — and enforcing only when a ceiling
+  // is set — is what makes it choosable.
+  it('reports the volume it cleared even when the cumulative ceiling is off', async () => {
+    const guard = createBackgroundPullSizeGuard({
+      maxEntries: 2000,
+      inspect: async () => countedInspect(12),
+    });
+
+    await guard.assess(scope, 1);
+    await guard.assess({ ...scope, projectId: 'proj-2' }, 1);
+
+    expect(guard.volume()).toEqual({
+      entries: 24,
+      countedProjects: 2,
+      uncountedProjects: 0,
+    });
+  });
+
+  it('keeps uncounted allowances apart so a zero is not read as a quiet fleet', async () => {
+    // An old server returns no manifest count, and the guard fails open. If
+    // those allowances vanished from the report, a fleet that pulls plenty
+    // would look idle and the ceiling would be set far too low.
+    const guard = createBackgroundPullSizeGuard({
+      maxEntries: 2000,
+      inspect: async () => ({ kind: 'uncounted' }) as const,
+    });
+
+    await guard.assess(scope, 1);
+
+    expect(guard.volume()).toEqual({
+      entries: 0,
+      countedProjects: 0,
+      uncountedProjects: 1,
+    });
+  });
+
+  it('does not report a deferred project as materialized volume', async () => {
+    const guard = createBackgroundPullSizeGuard({
+      maxEntries: 2000,
+      inspect: async () => countedInspect(7442),
+    });
+
+    await expect(guard.assess(scope, 1)).resolves.toBe('defer');
+
+    expect(guard.volume()).toEqual({
+      entries: 0,
+      countedProjects: 0,
+      uncountedProjects: 0,
+    });
+  });
+
   it('pulls a version at or below the threshold', async () => {
     const guard = createBackgroundPullSizeGuard({
       maxEntries: 2000,
@@ -549,8 +604,30 @@ describe('background size guard composed with the proactive pull lanes', () => {
         return { status: 'pulled', version: expectedVersion ?? null };
       },
     };
-    return { deps, inspect };
+    return { deps, inspect, guard };
   }
+
+  it('reports what the background lane actually materialized, through the real lane', async () => {
+    // Reading `volume()` off a direct `assess()` call proves the counter
+    // increments; it does not prove the counter is fed by the code path that
+    // costs a member their disk. Drive the real lane instead, so a future
+    // change that stops consulting the guard shows up here.
+    const { deps, guard } = makeComposedDeps(async () => countedInspect(12));
+    const pull = createProactiveContentPull(deps);
+
+    await pull.handleContentChanged({
+      projectId: 'proj-1',
+      workspaceId: 'ws-1',
+      version: 12,
+    });
+
+    expect(deps.pullCalls).toEqual([{ projectId: 'proj-1', version: 12 }]);
+    expect(guard.volume()).toEqual({
+      entries: 12,
+      countedProjects: 1,
+      uncountedProjects: 0,
+    });
+  });
 
   it('background lanes probe once, defer, and stay quiet across sweep rounds', async () => {
     const { deps, inspect } = makeComposedDeps(async () =>

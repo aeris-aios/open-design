@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom';
 import { useI18n, type Locale } from '../i18n';
 import {
   clearAnonymousState,
+  findGoPlanSunsetMessage,
   isAmrLoggedIn,
   markAccountMessageRead,
   pullMessageCenter,
@@ -17,6 +18,20 @@ import {
   currentWorkspaceAccountGeneration,
   subscribeWorkspaceAccountGeneration,
 } from '../collab/workspace-identity';
+import { GoPlanSunsetDialog } from './GoPlanSunsetDialog';
+import {
+  adoptableSnapshot,
+  issueSnapshotWriteToken,
+  joinableSync,
+  ownsLatestSnapshotWrite,
+  publishInFlightSync,
+  publishSnapshot,
+  recordSnapshotRead,
+  retireInFlightSync,
+  supersedeEarlierSnapshotWrites,
+  type MessageCenterInFlightSync,
+  type MessageCenterSnapshot,
+} from './message-center-snapshot';
 import { Icon } from './Icon';
 import styles from './MessageCenter.module.css';
 
@@ -45,6 +60,13 @@ interface Props {
   /** Streams the unread count so hosts can render their own badge (e.g. the
    *  rail avatar's red dot). */
   onUnreadCountChange?: (count: number) => void;
+  /** Whether the Home shell currently grants the targeted announcement its
+   *  modal slot. Detection still runs while false, so the notice can wait
+   *  behind higher-priority business dialogs or a non-Home route. */
+  priorityAnnouncementActive?: boolean;
+  onPriorityAnnouncementPendingChange?: (pending: boolean) => void;
+  priorityAnnouncementCurrentPlanId?: string | null;
+  priorityAnnouncementMetricsConsent?: boolean;
 }
 
 type SyncState = 'loading' | 'ready' | 'error';
@@ -67,69 +89,8 @@ type SyncState = 'loading' | 'ready' | 'error';
  * Keyed on the account boundary: a sign-out/sign-in makes the previous
  * account's messages inadmissible no matter how recent they are.
  */
-const MOUNT_SNAPSHOT_WINDOW_MS = 10_000;
-
-let lastSyncSnapshot: {
-  at: number;
-  accountGeneration: number;
-  /** `pullMessageCenter` asks for locale-specific fields, so a snapshot is only
-   *  valid for the language it was fetched under. */
-  locale: string;
-  loggedIn: boolean;
-  messages: MessageCenterMessage[];
-  readIds: Set<string>;
-  /**
-   * The optimistic reads not yet visible in the server's projection. Adopting
-   * a snapshot restores `readIdsRef`, but a signed-in sync builds its overlay
-   * from `serverReadIds` plus `pendingReadIdsRef` and never consults
-   * `readIdsRef` — so without carrying these, a remount inside the window
-   * followed by any refresh drops them and marks a just-read row unread again,
-   * which is the exact regression the pending set exists to prevent.
-   */
-  pendingReadIds: Set<string>;
-} | null = null;
-
-/**
- * The sync a mount is currently running, if any.
- *
- * The snapshot alone only dedupes SEQUENTIAL remounts: it is written when a
- * sync finishes, so mounts that start while one is still in flight all miss it
- * and stampede. A route switch produces exactly that shape — the outgoing host
- * unmounts and the incoming one mounts within the same frame — so both halves
- * are needed. A mount that finds a sync already running waits for it instead of
- * starting its own.
- */
-let inFlightSync: { generation: number; locale: string; run: Promise<void> } | null = null;
-
-/** Test hook: module state must not leak between cases. */
-export function resetMessageCenterSnapshot(): void {
-  lastSyncSnapshot = null;
-  inFlightSync = null;
-  snapshotWriteToken = 0;
-}
-
-/**
- * Orders snapshot PUBLICATION across every host, which `syncRequestIdRef`
- * cannot: that ref lives on one component, so a host which has since unmounted
- * still matches its own counter forever. Rail and account cluster swap on a
- * route change, so a slow pull issued by the host that went away resolves with
- * its request id, account generation and locale all still valid — and would
- * write its older rows over the snapshot its successor already published, which
- * the next remount then adopts. Only the newest issued run may publish.
- */
-let snapshotWriteToken = 0;
-
 /** Stable identity for the empty view, so deriving it never churns children. */
 const EMPTY_MESSAGES: MessageCenterMessage[] = [];
-
-function adoptableSnapshot(locale: string): typeof lastSyncSnapshot {
-  const snapshot = lastSyncSnapshot;
-  if (!snapshot) return null;
-  if (snapshot.accountGeneration !== currentWorkspaceAccountGeneration()) return null;
-  if (snapshot.locale !== locale) return null;
-  if (Date.now() - snapshot.at >= MOUNT_SNAPSHOT_WINDOW_MS) return null;
-  return snapshot;
-}
 
 export function MessageCenter({
   onOpenNotificationSettings,
@@ -138,6 +99,10 @@ export function MessageCenter({
   open: controlledOpen,
   onOpenChange,
   onUnreadCountChange,
+  priorityAnnouncementActive = false,
+  onPriorityAnnouncementPendingChange,
+  priorityAnnouncementCurrentPlanId,
+  priorityAnnouncementMetricsConsent = false,
 }: Props) {
   const { locale, t } = useI18n();
   const titleId = useId();
@@ -165,6 +130,7 @@ export function MessageCenter({
   const [readIds, setReadIds] = useState<Set<string>>(new Set());
   const [loggedIn, setLoggedIn] = useState(false);
   const [syncState, setSyncState] = useState<SyncState>('loading');
+  const [priorityMessage, setPriorityMessage] = useState<MessageCenterMessage | null>(null);
   const loggedInRef = useRef(false);
   const messagesRef = useRef<MessageCenterMessage[]>([]);
   const readIdsRef = useRef<Set<string>>(new Set());
@@ -184,6 +150,22 @@ export function MessageCenter({
     currentWorkspaceAccountGeneration,
   );
   const seenAccountGenerationRef = useRef(accountGeneration);
+  const priorityPendingCallbackRef = useRef(onPriorityAnnouncementPendingChange);
+  priorityPendingCallbackRef.current = onPriorityAnnouncementPendingChange;
+
+  // Fail closed DURING the boundary render, not after it. `useSyncExternalStore`
+  // re-renders this component with the new generation while the state still
+  // holds the previous account's rows; the effect that clears them runs only
+  // once that render is committed. Deriving the view here means nothing from
+  // the previous account is ever rendered for the new one, and the effect below
+  // is left to do the refetch rather than the hiding.
+  //
+  // The Go Plan announcement is account-scoped too — it is picked out of the
+  // signed-in pull — so it is derived the same way rather than being allowed to
+  // stay on screen across a boundary.
+  const rowsBelongToThisAccount = stateAccountGeneration === accountGeneration;
+  const visibleMessages = rowsBelongToThisAccount ? messages : EMPTY_MESSAGES;
+  const visiblePriorityMessage = rowsBelongToThisAccount ? priorityMessage : null;
 
   const commitState = useCallback(
     (nextMessages: MessageCenterMessage[], nextReadIds: Set<string>, options?: { persistAnonymous?: boolean }) => {
@@ -205,7 +187,7 @@ export function MessageCenter({
     // account's generation, and a later mount would adopt the previous
     // account's messages as current.
     const issuedAccountGeneration = currentWorkspaceAccountGeneration();
-    const writeToken = ++snapshotWriteToken;
+    const writeToken = issueSnapshotWriteToken();
     if (messagesRef.current.length === 0) setSyncState('loading');
     const account = await isAmrLoggedIn();
     // Before the writes, not after them. `account` describes the authority the
@@ -219,6 +201,7 @@ export function MessageCenter({
     if (wasAccount && !account) {
       readIdsRef.current = new Set();
       pendingReadIdsRef.current = new Set();
+      setPriorityMessage(null);
     }
     const pulled = await pullMessageCenter({ locale, loggedIn: account });
     if (requestId !== syncRequestIdRef.current) return;
@@ -252,10 +235,11 @@ export function MessageCenter({
     // overwrite the cache a newer run just wrote, and a reload — or any
     // remount past the snapshot window — reads them back and resurrects
     // messages the user has already read.
-    const ownsLatestWrite = writeToken === snapshotWriteToken;
+    const ownsLatestWrite = ownsLatestSnapshotWrite(writeToken);
     commitState(merged, overlayReadIds, { persistAnonymous: !account && ownsLatestWrite });
+    setPriorityMessage(account ? findGoPlanSunsetMessage(merged) : null);
     if (ownsLatestWrite) {
-      lastSyncSnapshot = {
+      publishSnapshot({
         at: Date.now(),
         accountGeneration: issuedAccountGeneration,
         locale,
@@ -263,7 +247,7 @@ export function MessageCenter({
         messages: merged,
         readIds: overlayReadIds,
         pendingReadIds: new Set(pendingReadIdsRef.current),
-      };
+      });
     }
     setSyncState('ready');
   }, [commitState, locale]);
@@ -280,17 +264,15 @@ export function MessageCenter({
     // of starting a second identical sync. Keyed by the account boundary it was
     // started under, so a post-boundary mount never joins pre-boundary work.
     const generation = currentWorkspaceAccountGeneration();
-    const entry: { generation: number; locale: string; run: Promise<void> } = {
+    const entry: MessageCenterInFlightSync = {
       generation,
       locale,
       run: Promise.resolve(),
     };
     entry.run = sync()
       .catch(() => setSyncState('error'))
-      .finally(() => {
-        if (inFlightSync === entry) inFlightSync = null;
-      });
-    inFlightSync = entry;
+      .finally(() => retireInFlightSync(entry));
+    publishInFlightSync(entry);
     void entry.run;
   }, [sync]);
 
@@ -317,12 +299,13 @@ export function MessageCenter({
       pendingReadIdsRef.current = new Set();
       setMessages([]);
       setReadIds(new Set());
+      setPriorityMessage(null);
       setSyncState('loading');
     }
     // A remount that lands within the window adopts what the previous mount
     // already fetched; everything else below still goes to the network.
     let cancelled = false;
-    const adopt = (snapshot: NonNullable<typeof lastSyncSnapshot>) => {
+    const adopt = (snapshot: MessageCenterSnapshot) => {
       if (cancelled) return;
       loggedInRef.current = snapshot.loggedIn;
       setLoggedIn(snapshot.loggedIn);
@@ -333,15 +316,11 @@ export function MessageCenter({
     const adopted = adoptableSnapshot(locale);
     if (adopted) {
       adopt(adopted);
-    } else if (
-      inFlightSync
-      && inFlightSync.generation === currentWorkspaceAccountGeneration()
-      && inFlightSync.locale === locale
-    ) {
+    } else if (joinableSync(locale)) {
       // Someone else's sync is already on the wire for this same data and the
       // same account; take its result rather than racing a second copy of it.
       if (messagesRef.current.length === 0) setSyncState('loading');
-      void inFlightSync.run.then(() => {
+      void joinableSync(locale)!.run.then(() => {
         const settled = adoptableSnapshot(locale);
         if (settled) adopt(settled);
         else if (!cancelled) retrySync();
@@ -365,19 +344,19 @@ export function MessageCenter({
     if (open) retrySync();
   }, [open, retrySync]);
 
-  // Fail closed DURING the boundary render, not after it. `useSyncExternalStore`
-  // re-renders this component with the new generation while `messages` still
-  // holds the previous account's rows; the effect that clears them runs only
-  // after that render is committed. Deriving the view here means the previous
-  // account's rows and badge are never rendered for the new one, and the effect
-  // below is left to do the refetch rather than the hiding.
-  const rowsBelongToThisAccount = stateAccountGeneration === accountGeneration;
-  const visibleMessages = rowsBelongToThisAccount ? messages : EMPTY_MESSAGES;
   const unreadCount = visibleMessages.filter((message) => !message.readAt).length;
 
   useEffect(() => {
     onUnreadCountChange?.(unreadCount);
   }, [unreadCount, onUnreadCountChange]);
+
+  useEffect(() => {
+    onPriorityAnnouncementPendingChange?.(visiblePriorityMessage != null);
+  }, [onPriorityAnnouncementPendingChange, visiblePriorityMessage]);
+
+  useEffect(() => () => {
+    priorityPendingCallbackRef.current?.(false);
+  }, []);
 
   /** The control keyboard focus must land on after the panel closes. Opening
    *  focuses the portaled dialog, so closing always unmounts the focused node —
@@ -410,16 +389,33 @@ export function MessageCenter({
     };
   }, [open]);
 
-  const markRead = async (messageId: string) => {
+  useEffect(() => {
+    if (priorityAnnouncementActive && visiblePriorityMessage != null && open) {
+      setOpen(false);
+    }
+  }, [open, priorityAnnouncementActive, visiblePriorityMessage, setOpen]);
+
+  const markRead = async (messageId: string, options?: { requireAccount?: boolean }) => {
     const message = messagesRef.current.find((item) => item.id === messageId);
-    if (!message || message.readAt) return;
+    if (!message) {
+      if (options?.requireAccount) throw new Error('Announcement message is no longer available');
+      return;
+    }
+    if (message.readAt) {
+      if (priorityMessage?.id === messageId) setPriorityMessage(null);
+      return;
+    }
     // Same rule as `sync`: capture the boundary this action began under. Two
     // awaits follow, and if a sign-out/sign-in lands across them this write
     // describes an account that is no longer current — it may not reach
     // component state, and it certainly may not stamp its rows over a snapshot
-    // the new account has already published.
+    // the new account has already published. Captured BEFORE the await, so the
+    // announcement contract below still reports its own failure first.
     const issuedAccountGeneration = currentWorkspaceAccountGeneration();
     const account = await resolveLoggedInForWrite();
+    if (options?.requireAccount && !account) {
+      throw new Error('A signed-in account is required to acknowledge this announcement');
+    }
     if (currentWorkspaceAccountGeneration() !== issuedAccountGeneration) return;
     const readAt = new Date().toISOString();
     if (account) await markAccountMessageRead(messageId);
@@ -437,48 +433,18 @@ export function MessageCenter({
     }
     invalidateSyncResponses();
     commitState(nextMessages, nextIds, { persistAnonymous: !account });
-    // Keep the cross-mount snapshot consistent with what the user just did.
-    // Without this a remount inside the window adopts the pre-read rows and the
-    // unread count comes back until the next network sync. The timestamp is
-    // deliberately left alone: the underlying fetch is no fresher than it was.
-    //
-    // Matched against the CAPTURED generation, not the current one, so this can
-    // only ever update a snapshot belonging to the same account this read began
-    // under — never one a newer account published while the write was pending.
-    // A durable read outranks every pull that was issued before it. Patching
-    // the snapshot is not enough on its own: `invalidateSyncResponses` only
-    // bumps THIS component's request id, so a pull started by a host that has
-    // since unmounted still holds a globally current write token and would
-    // republish the pre-read rows straight over this patch — and the next
-    // remount would restore the unread badge. Taking the next token bars every
-    // run issued before the read; a run issued after it takes a higher one and
-    // may still publish, which is correct because the server knows the read by
-    // then.
-    snapshotWriteToken += 1;
-    // Apply the read as a DELTA to whatever snapshot is current, rather than
-    // writing this host's whole row set over it. Writing `nextMessages`
-    // wholesale drops rows a sync published in the meantime; guarding that
-    // with snapshot identity instead made concurrent reads lose each other —
-    // two quick clicks both capture the same snapshot, the first replaces it,
-    // and the second finds the identity no longer matching and records
-    // nothing, so its badge came back on the next remount. A delta needs
-    // neither guard: it only ever adds this one id.
-    if (
-      lastSyncSnapshot
-      && lastSyncSnapshot.accountGeneration === issuedAccountGeneration
-      && lastSyncSnapshot.locale === locale
-    ) {
-      lastSyncSnapshot = {
-        ...lastSyncSnapshot,
-        messages: lastSyncSnapshot.messages.map((item) => (
-          item.id === messageId ? { ...item, readAt: item.readAt ?? readAt } : item
-        )),
-        readIds: new Set(lastSyncSnapshot.readIds).add(messageId),
-        pendingReadIds: account
-          ? new Set(lastSyncSnapshot.pendingReadIds).add(messageId)
-          : lastSyncSnapshot.pendingReadIds,
-      };
-    }
+    // A durable read outranks every pull issued before it, and the snapshot
+    // patch itself is a delta — both live in `message-center-snapshot` because
+    // both are shared across hosts, unlike everything committed above.
+    supersedeEarlierSnapshotWrites();
+    recordSnapshotRead({
+      messageId,
+      readAt,
+      accountGeneration: issuedAccountGeneration,
+      locale,
+      account,
+    });
+    if (priorityMessage?.id === messageId) setPriorityMessage(null);
   };
 
   const openLabel = unreadCount > 0 ? `${t('messageCenter.openAria')} (${t('messageCenter.unreadCount', { count: unreadCount })})` : t('messageCenter.openAria');
@@ -517,6 +483,16 @@ export function MessageCenter({
       </div>
       <footer className={styles.footer}><p>{t('messageCenter.desktopSettingsHint')}</p>{onOpenNotificationSettings ? <Button variant="ghost" onClick={() => { closePanel(); onOpenNotificationSettings(); }}>{t('messageCenter.desktopSettings')}</Button> : null}</footer>
     </aside></div>, document.body) : null}
+    {visiblePriorityMessage != null ? (
+      <GoPlanSunsetDialog
+        active={priorityAnnouncementActive}
+        currentPlanId={priorityAnnouncementCurrentPlanId ?? 'unknown'}
+        metricsConsent={priorityAnnouncementMetricsConsent}
+        onDismiss={async () => {
+          await markRead(visiblePriorityMessage.id, { requireAccount: true });
+        }}
+      />
+    ) : null}
   </div>;
 }
 

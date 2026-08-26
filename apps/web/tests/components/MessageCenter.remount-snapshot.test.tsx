@@ -13,7 +13,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushSync } from 'react-dom';
 
 import { I18nProvider, useI18n } from '../../src/i18n';
-import { MessageCenter, resetMessageCenterSnapshot } from '../../src/components/MessageCenter';
+import { MessageCenter } from '../../src/components/MessageCenter';
+import { resetMessageCenterSnapshot } from '../../src/components/message-center-snapshot';
 import { advanceWorkspaceAccountGeneration } from '../../src/collab/workspace-identity';
 
 let statusCalls = 0;

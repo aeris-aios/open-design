@@ -13,7 +13,7 @@ import { resetHtmlThumbnailSourceCache } from '../../src/components/html-thumbna
 import { resetProjectCoverSnapshots } from '../../src/lib/project-cover-cache';
 import { resetThumbnailLoadGateForTests } from '../../src/lib/thumbnail-load-gate';
 import { resetSharedCancellableGet } from '../../src/lib/shared-cancellable-get';
-import { resetMessageCenterSnapshot } from '../../src/components/MessageCenter';
+import { resetMessageCenterSnapshot } from '../../src/components/message-center-snapshot';
 
 
 beforeEach(() => {
