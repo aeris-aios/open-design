@@ -10653,22 +10653,27 @@ function HtmlViewer({
     setRedirectLoopBlocked(false);
   }, [projectId, file.name, reloadKey]);
   // The injected redirect guard posts `od:redirect-loop-blocked` when a preview
-  // reloads itself past its hop budget. Only trust our own two preview frames,
-  // then park the srcDoc iframe on static content so the loop cannot continue.
+  // reloads itself past its hop budget. Only trust the active transport. The
+  // converged real-URL path destroys that exact pooled browsing context before
+  // replacing it with the static host placeholder; parking it would let the
+  // redirect loop keep running invisibly in the keep-alive pool.
   useEffect(() => {
     if (!workspaceActive) return;
     function onMessage(ev: MessageEvent) {
-      const fromPreview =
-        ev.source === srcDocPreviewIframeRef.current?.contentWindow ||
-        ev.source === urlPreviewIframeRef.current?.contentWindow;
+      const runtimeFrame = previewRuntimeConvergence ? iframeRef.current : null;
+      const fromPreview = previewRuntimeConvergence
+        ? ev.source === runtimeFrame?.contentWindow
+        : ev.source === srcDocPreviewIframeRef.current?.contentWindow
+          || ev.source === urlPreviewIframeRef.current?.contentWindow;
       if (!fromPreview) return;
       const data = ev.data as { type?: string } | null;
       if (data?.type !== PREVIEW_REDIRECT_LOOP_MESSAGE) return;
+      if (runtimeFrame) iframeKeepAlivePool.evictFrame(runtimeFrame);
       setRedirectLoopBlocked(true);
     }
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, [workspaceActive]);
+  }, [iframeKeepAlivePool, previewRuntimeConvergence, workspaceActive]);
 
   // Resolve the cross-origin powered-preview URL for artifacts that need it.
   // `resolved:false` means the (cached) daemon isolation probe is still in
@@ -17291,7 +17296,15 @@ function HtmlViewer({
                   >
                     <div className="artifact-preview-transport-stack">
                       {previewRuntimeConvergence ? (
-                        previewRuntimeNavigation.navigation ? (
+                        redirectLoopBlocked ? (
+                          <iframe
+                            data-testid="preview-runtime-redirect-loop-blocked"
+                            data-od-render-mode="runtime-blocked"
+                            title={file.name}
+                            sandbox=""
+                            srcDoc={redirectLoopBlockedDoc}
+                          />
+                        ) : previewRuntimeNavigation.navigation ? (
                           <PreviewRuntimeTransport
                             projectId={projectId}
                             fileName={file.name}

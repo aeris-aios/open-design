@@ -30,6 +30,8 @@ interface IframeKeepAlivePoolValue {
   attach(key: string, host: HTMLElement, create: () => HTMLIFrameElement): HTMLIFrameElement;
   release(key: string): void;
   evict(key: string): void;
+  /** Remove the exact browsing context regardless of its logical cache key. */
+  evictFrame(frame: HTMLIFrameElement): void;
   evictProject(projectId: string, options?: { includeActive?: boolean }): void;
   evictMatching(
     predicate: (entry: PoolEntry) => boolean,
@@ -154,6 +156,13 @@ export function IframeKeepAliveProvider({
     evict(key) {
       removeEntry(key);
     },
+    evictFrame(frame) {
+      for (const entry of entriesRef.current.values()) {
+        if (entry.element !== frame) continue;
+        removeEntry(entry.key);
+        return;
+      }
+    },
     evictProject(projectId, options) {
       for (const entry of Array.from(entriesRef.current.values())) {
         if (
@@ -246,6 +255,13 @@ export function useIframeKeepAlivePool(): IframeKeepAlivePoolValue {
       },
       evict(key) {
         removeFallbackEntry(key);
+      },
+      evictFrame(frame) {
+        for (const entry of fallbackEntriesRef.current.values()) {
+          if (entry.element !== frame) continue;
+          removeFallbackEntry(entry.key);
+          return;
+        }
       },
       evictProject(projectId) {
         for (const entry of Array.from(fallbackEntriesRef.current.values())) {

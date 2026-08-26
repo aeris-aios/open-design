@@ -8525,10 +8525,11 @@ describe('FileViewer tweaks toolbar', () => {
     const signal = (
       type: 'od:preview:hello' | 'od:preview:capabilities-applied' | 'od:preview:visible-paint',
       capabilities: readonly PreviewRuntimeCapability[],
+      target: HTMLIFrameElement = frame,
     ) => {
       act(() => {
         window.dispatchEvent(new MessageEvent('message', {
-          source: frame.contentWindow,
+          source: target.contentWindow,
           data: {
             type,
             protocolVersion: PREVIEW_RUNTIME_PROTOCOL_VERSION,
@@ -8767,11 +8768,23 @@ describe('FileViewer tweaks toolbar', () => {
       String(input).includes('/api/projects/project-1/preview-url')
     )).length;
     postMessage.mockClear();
-    fireEvent.click(screen.getByTestId('manual-edit-mode-toggle'));
+    const manualEditToggle = screen.getByTestId('manual-edit-mode-toggle');
+    fireEvent.click(manualEditToggle);
+    await waitFor(() => {
+      expect(manualEditToggle).toHaveAttribute('aria-pressed', 'false');
+    });
     signal('od:preview:capabilities-applied', baseCapabilities);
     expect(screen.getByTestId('preview-runtime-frame-current')).toBe(frame);
     expect(frame.getAttribute('src')).toBe(initialSrc);
-    fireEvent.click(screen.getByTestId('manual-edit-mode-toggle'));
+    postMessage.mockClear();
+    fireEvent.click(manualEditToggle);
+    await waitFor(() => {
+      expect(manualEditToggle).toHaveAttribute('aria-pressed', 'true');
+      expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({
+        type: 'od:preview:set-capabilities',
+        enabledCapabilities: [...baseCapabilities, 'edit'],
+      }), '*');
+    });
     signal('od:preview:capabilities-applied', [...baseCapabilities, 'edit']);
     expect(screen.getByTestId('preview-runtime-frame-current')).toBe(frame);
     expect(frame.getAttribute('src')).toBe(initialSrc);
@@ -8779,14 +8792,55 @@ describe('FileViewer tweaks toolbar', () => {
       String(input).includes('/api/projects/project-1/preview-url')
     ))).toHaveLength(mintCountBeforeEditReentry);
 
+    const forgedRedirectFrame = document.createElement('iframe');
+    document.body.appendChild(forgedRedirectFrame);
+    act(() => {
+      window.dispatchEvent(new MessageEvent('message', {
+        source: forgedRedirectFrame.contentWindow,
+        data: { type: 'od:redirect-loop-blocked' },
+      }));
+    });
+    expect(screen.getByTestId('preview-runtime-frame-current')).toBe(frame);
+    forgedRedirectFrame.remove();
+
+    act(() => {
+      window.dispatchEvent(new MessageEvent('message', {
+        source: frame.contentWindow,
+        data: { type: 'od:redirect-loop-blocked' },
+      }));
+    });
+    expect(screen.queryByTestId('preview-runtime-frame-current')).toBeNull();
+    expect(screen.getByTestId('preview-runtime-redirect-loop-blocked')).toBeTruthy();
+    expect(frame.isConnected).toBe(false);
+
+    fireEvent.click(screen.getByRole('button', { name: /Reload.*Preview/i }));
+    const recoveredFrame = await waitFor(() => {
+      const candidate = screen.getByTestId('preview-runtime-frame-standby') as HTMLIFrameElement;
+      expect(candidate).not.toBe(frame);
+      return candidate;
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const recoveredPostMessage = vi.spyOn(recoveredFrame.contentWindow!, 'postMessage');
+    signal('od:preview:hello', [...baseCapabilities, 'comment', 'edit'], recoveredFrame);
+    expect(recoveredPostMessage).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'od:preview:set-capabilities',
+      enabledCapabilities: [...baseCapabilities, 'edit'],
+    }), '*');
+    signal('od:preview:capabilities-applied', [...baseCapabilities, 'edit'], recoveredFrame);
+    signal('od:preview:visible-paint', [...baseCapabilities, 'edit'], recoveredFrame);
+    expect(screen.getByTestId('preview-runtime-frame-current')).toBe(recoveredFrame);
+    expect(recoveredFrame.getAttribute('src')).toBe(initialSrc);
+
     const mintCount = fetchMock.mock.calls.filter(([input]) => (
       String(input).includes('/api/projects/project-1/preview-url')
     )).length;
     rerender(renderViewer(
       '<!doctype html><html><body><main data-od-id="hero">Streaming update</main></body></html>',
     ));
-    expect(screen.getByTestId('preview-runtime-frame-current')).toBe(frame);
-    expect(frame.getAttribute('src')).toBe(initialSrc);
+    expect(screen.getByTestId('preview-runtime-frame-current')).toBe(recoveredFrame);
+    expect(recoveredFrame.getAttribute('src')).toBe(initialSrc);
     expect(fetchMock.mock.calls.filter(([input]) => (
       String(input).includes('/api/projects/project-1/preview-url')
     ))).toHaveLength(mintCount);
