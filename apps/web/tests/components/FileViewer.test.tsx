@@ -8551,17 +8551,18 @@ describe('FileViewer tweaks toolbar', () => {
 
     postMessage.mockImplementation((message: unknown) => {
       const data = message as { type?: string; id?: string } | null;
-      if (data?.type !== 'od:snapshot' || !data.id) return;
-      window.dispatchEvent(new MessageEvent('message', {
-        source: frame.contentWindow,
-        data: {
-          type: 'od:snapshot:result',
-          id: data.id,
-          dataUrl: TEST_SNAPSHOT_DATA_URL,
-          w: 2,
-          h: 2,
-        },
-      }));
+      if (data?.type === 'od:snapshot' && data.id) {
+        window.dispatchEvent(new MessageEvent('message', {
+          source: frame.contentWindow,
+          data: {
+            type: 'od:snapshot:result',
+            id: data.id,
+            dataUrl: TEST_SNAPSHOT_DATA_URL,
+            w: 2,
+            h: 2,
+          },
+        }));
+      }
     });
     postMessage.mockClear();
     fireEvent.click(screen.getByTestId('edit-screenshot-to-chat-button'));
@@ -8844,6 +8845,132 @@ describe('FileViewer tweaks toolbar', () => {
     expect(fetchMock.mock.calls.filter(([input]) => (
       String(input).includes('/api/projects/project-1/preview-url')
     ))).toHaveLength(mintCount);
+  });
+
+  it('keeps the converged real-URL frame while Draw opens and closes', async () => {
+    const file = htmlPreviewFile({ name: 'draw.html', path: 'draw.html' });
+    const sessionId = 'scope-draw';
+    const documentVersion = 'draw-v1';
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = typeof input === 'string'
+        ? input
+        : input instanceof Request
+          ? input.url
+          : String(input);
+      if (url.startsWith('/api/projects/project-1/raw/draw.html')) {
+        return new Response('<!doctype html><html><body><main>Draw</main></body></html>', {
+          status: 200,
+          headers: { 'Content-Type': 'text/html' },
+        });
+      }
+      if (url === '/api/projects/project-1/files') {
+        return new Response(JSON.stringify({ files: [file] }), { status: 200 });
+      }
+      if (url.includes('/api/projects/project-1/preview-url')) {
+        return new Response(JSON.stringify({
+          url: '/api/projects/project-1/preview/legacy-scope/draw.html',
+          file: 'draw.html',
+          expiresAt: Date.now() + 60 * 60 * 1000,
+          scopedOrigin: {
+            normalUrl: `http://n-${sessionId}.localhost:43111/draw.html`,
+            poweredUrl: `http://p-${sessionId}.localhost:43111/draw.html`,
+            documentVersion,
+          },
+        }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ deployments: [] }), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(
+      <FileViewer
+        projectId="project-1"
+        projectKind="prototype"
+        file={file}
+        previewRuntimeConvergence
+      />,
+    );
+
+    const frame = await waitFor(() => (
+      screen.getByTestId('preview-runtime-frame-standby') as HTMLIFrameElement
+    ));
+    const initialSrc = frame.getAttribute('src');
+    const postMessage = vi.spyOn(frame.contentWindow!, 'postMessage');
+    const baseCapabilities: PreviewRuntimeCapability[] = [
+      'content_measurement',
+      'scroll',
+      'snapshot',
+      'observability',
+      'selection',
+      'tweaks',
+      'palette',
+    ];
+    const drawCapabilities: PreviewRuntimeCapability[] = [
+      'content_measurement',
+      'scroll',
+      'snapshot',
+      'observability',
+      'selection',
+      'draw',
+      'tweaks',
+      'palette',
+    ];
+    const signal = (
+      type: 'od:preview:hello' | 'od:preview:capabilities-applied' | 'od:preview:visible-paint',
+      capabilities: readonly PreviewRuntimeCapability[],
+    ) => {
+      act(() => {
+        window.dispatchEvent(new MessageEvent('message', {
+          source: frame.contentWindow,
+          data: {
+            type,
+            protocolVersion: PREVIEW_RUNTIME_PROTOCOL_VERSION,
+            sessionId,
+            documentVersion,
+            ...(type === 'od:preview:hello' ? { availableCapabilities: capabilities } : {}),
+            ...(type === 'od:preview:capabilities-applied'
+              ? { enabledCapabilities: capabilities }
+              : {}),
+          },
+        }));
+      });
+    };
+
+    signal('od:preview:hello', [...baseCapabilities, 'draw']);
+    signal('od:preview:capabilities-applied', baseCapabilities);
+    signal('od:preview:visible-paint', baseCapabilities);
+    expect(screen.getByTestId('preview-runtime-frame-current')).toBe(frame);
+
+    postMessage.mockClear();
+    fireEvent.click(screen.getByTestId('draw-overlay-toggle'));
+    await waitFor(() => {
+      expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({
+        type: 'od:preview:set-capabilities',
+        enabledCapabilities: drawCapabilities,
+      }), '*');
+    });
+    signal('od:preview:capabilities-applied', drawCapabilities);
+    expect(screen.getByTestId('draw-overlay-toggle')).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByPlaceholderText('Add a note for this mark')).toBeTruthy();
+    expect(screen.getByTestId('preview-runtime-frame-current')).toBe(frame);
+    expect(frame.getAttribute('src')).toBe(initialSrc);
+
+    postMessage.mockClear();
+    fireEvent.click(screen.getByTestId('draw-overlay-toggle'));
+    await waitFor(() => {
+      expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({
+        type: 'od:preview:set-capabilities',
+        enabledCapabilities: baseCapabilities,
+      }), '*');
+    });
+    signal('od:preview:capabilities-applied', baseCapabilities);
+    expect(screen.getByTestId('draw-overlay-toggle')).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.queryByPlaceholderText('Add a note for this mark')).toBeNull();
+    expect(screen.getByTestId('preview-runtime-frame-current')).toBe(frame);
+    expect(frame.getAttribute('src')).toBe(initialSrc);
+    expect(fetchMock.mock.calls.filter(([input]) => (
+      String(input).includes('/api/projects/project-1/preview-url')
+    ))).toHaveLength(1);
   });
 
   it('does not mint a converged navigation before the current file source is classified', async () => {
