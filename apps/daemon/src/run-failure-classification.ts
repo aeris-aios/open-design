@@ -172,7 +172,18 @@ function collectFailureText(input: RunFailureClassificationInput): string {
 }
 
 function isHardQuotaText(text: string): boolean {
-  return /\b(session limit|usage limit|limit reached|quota|billing (?:hard )?limit|insufficient[ _-]?(?:quota|credit|credits|funds)|exceeded your current quota|out of credits|no payment method|requires more credits|can only afford)\b|DAILY_LIMIT_EXCEEDED|用户额度不足|额度不足|预扣费额度失败/i
+  // Standalone `\bquota\b` is intentionally absent: advisory phrases such as
+  // "checking quota" in the daemon's own empty-output fallback message would
+  // otherwise match, misclassifying a retryable empty_output run as a
+  // non-retryable hard quota exhaustion.  Specific exhaustion phrases are
+  // listed below instead.
+  //
+  // `quota reached` covers Antigravity's upstream log line:
+  //   RESOURCE_EXHAUSTED (code 429): Individual quota reached.
+  // `RESOURCE_EXHAUSTED` catches the same log when the phrase portion is
+  // truncated or arrives separately — it is the gRPC status code that
+  // Antigravity uses exclusively for per-model quota exhaustion.
+  return /\b(session limit|usage limit|limit reached|quota exceeded|quota reached|exceeded your current quota|billing (?:hard )?limit|insufficient[ _-]?(?:quota|credit|credits|funds)|out of credits|no payment method|requires more credits|can only afford)\b|DAILY_LIMIT_EXCEEDED|RESOURCE_EXHAUSTED|用户额度不足|额度不足|预扣费额度失败/i
     .test(text);
 }
 
@@ -700,6 +711,9 @@ function classifyRunFailureBase(
   const errorCode = normalizeCode(input.errorCode ?? input.status.errorCode);
   const text = collectFailureText({ ...input, events });
   const retryableHint = latestRetryable(events);
+  // Compute once; used both for the early empty_output guard below and for the
+  // fatal_rpc_error promotion later in this function.
+  const runtimeCloseReason = readRuntimeCloseReason(events);
   const amrFailure = classifyAmrAccountFailure(text);
   const byokOpenCodeProviderNotFound = isByokOpenCodeProviderNotFoundText(
     input.agentId,
@@ -932,6 +946,22 @@ function classifyRunFailureBase(
     );
   }
 
+  // Prefer the structured rpc_close_reason=empty_output signal over text
+  // heuristics — but only after RATE_LIMITED, UPSTREAM_UNAVAILABLE, and other
+  // structured-code branches above have had a chance to claim the run. A child
+  // that exits cleanly after a provider rate-limit rejection may still carry
+  // rpc_close_reason=empty_output; the structured error code is the authoritative
+  // signal in that case, not the close reason.
+  if (runtimeCloseReason === 'empty_output') {
+    return classification(
+      'empty_output',
+      'empty_output',
+      inferFailureStageFromEvents(events, 'first_token_wait'),
+      retryableHint ?? true,
+      'retry',
+    );
+  }
+
   if (isEmptyOutputText(text)) {
     return classification(
       'empty_output',
@@ -1069,7 +1099,6 @@ function classifyRunFailureBase(
   // had a chance to claim auth, quota, upstream, prompt-size, and other known
   // failures. Unlike stream_error, fatal_rpc_error may have no structured SSE
   // error code at all, so it must also refine signal/unknown/exit fallbacks.
-  const runtimeCloseReason = readRuntimeCloseReason(events);
   if (
     runtimeCloseReason === 'fatal_rpc_error' &&
     (

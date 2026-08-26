@@ -78,6 +78,7 @@ import {
   byokProtocolToTracking,
   executionModeToTracking,
   projectKindFromMetadataToTracking,
+  projectKindFromMetadataToTrackingOrLegacyDefault,
   projectKindToTracking,
   sessionModeToTracking,
 } from '@open-design/contracts/analytics';
@@ -11769,7 +11770,7 @@ export function ProjectView({
               : readonlyNoticeText
           }
           fileSyncBadge={fileSyncBadge}
-          projectKind={projectKindFromMetadataToTracking(currentProject.metadata) ?? 'prototype'}
+          projectKind={projectKindFromMetadataToTrackingOrLegacyDefault(currentProject.metadata)}
           rootDirName={(() => {
             const baseDir = currentProject.metadata?.baseDir;
             return typeof baseDir === 'string'

@@ -2572,6 +2572,7 @@ export function HomeView({
             // template/preset or types their own prompt.
             suppressPromptUpdate: true,
             replaceWithoutConfirmation: true,
+            deferApply: true,
           });
           return;
         }

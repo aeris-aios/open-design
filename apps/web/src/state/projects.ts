@@ -1010,12 +1010,47 @@ export async function importClaudeDesignZip(
 
 // ---------- templates ----------
 
+/**
+ * Bumped by every successful local template mutation, and part of the read key.
+ *
+ * `ttl = 0` stops a settled result from being reused; it does not stop a new
+ * caller from JOINING a request that is still in flight — and the caller that
+ * follows a mutation is exactly the one that must not join. `handleDeleteTemplate`
+ * awaits `deleteTemplate` and then refreshes, and the daemon answers
+ * `/api/templates` from a snapshot taken when the request arrived, so joining a
+ * pre-delete GET would leave the deleted template on screen until something
+ * else happened to refetch.
+ */
+let templateListMutationGeneration = 0;
+
+function noteTemplateListMutation(): void {
+  templateListMutationGeneration += 1;
+}
+
 export async function listTemplates(): Promise<ProjectTemplate[]> {
+  // Same launch-burst shape as the design-system catalog: App's one-shot
+  // bootstrap and the home-route effect both want this list on the same pass,
+  // and both must keep their own read — one settles the entry view, the other
+  // exists to pick up a template saved inside a project. Neither can drop its
+  // read; on the wire they are one request, and on a cold Home load they land
+  // together and take two of the browser's ~6 connection slots.
+  //
+  // SINGLE-FLIGHT ONLY (ttl 0). The home-route effect and the save handler's
+  // own refresh both exist to observe a change that just happened, so a shared
+  // settled answer would hand them the list they were fired to replace.
+  //
+  // One global key, deliberately not partitioned by Workspace identity: the
+  // daemon handler ignores the request entirely (`(_req, res) =>`) and answers
+  // from its local store, so this response cannot vary by caller identity.
+  // Throwing inside keeps a transient failure out of the shared entry, so the
+  // next caller retries instead of joining a dead read.
   try {
-    const resp = await fetch('/api/templates');
-    if (!resp.ok) return [];
-    const json = (await resp.json()) as { templates: ProjectTemplate[] };
-    return json.templates ?? [];
+    return await coalescedGet(`project-templates:${templateListMutationGeneration}`, async () => {
+      const resp = await fetch('/api/templates');
+      if (!resp.ok) throw new Error(`templates ${resp.status}`);
+      const json = (await resp.json()) as { templates: ProjectTemplate[] };
+      return json.templates ?? [];
+    }, 0);
   } catch {
     return [];
   }
@@ -1044,6 +1079,7 @@ export async function saveTemplate(input: {
       body: JSON.stringify(input),
     });
     if (!resp.ok) return null;
+    noteTemplateListMutation();
     const json = (await resp.json()) as { template: ProjectTemplate };
     return json.template;
   } catch {
@@ -1056,6 +1092,7 @@ export async function deleteTemplate(id: string): Promise<boolean> {
     const resp = await fetch(`/api/templates/${encodeURIComponent(id)}`, {
       method: 'DELETE',
     });
+    if (resp.ok) noteTemplateListMutation();
     return resp.ok;
   } catch {
     return false;

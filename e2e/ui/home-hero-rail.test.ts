@@ -6,6 +6,7 @@ import {
 } from '@/playwright/home-hero';
 import {
   routeAgents,
+  routeSignedOutVelaStatus,
   routeSuccessfulRuns,
   successfulRunEventBody,
   suppressWhatsNew,
@@ -1421,8 +1422,9 @@ test('[P0] home design-system picker carries explicit and cleared selections int
   expect(clearedBody.designSystemId ?? null).toBeNull();
 });
 
-test('[P1] home design-system picker Create opens design-system creation and starts brand extraction', async ({ page }) => {
+test('[P0] signed-out Local setup can create a design system and start brand extraction', async ({ page }) => {
   const brandRequests: Array<{ url?: string; locale?: string }> = [];
+  await routeSignedOutVelaStatus(page);
   await routeHomeDesignSystems(page);
   await routeProjectCreates(page);
   await routeRunsAccepted(page);

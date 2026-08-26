@@ -36,6 +36,8 @@ import {
   anonymizeArtifactId,
   artifactKindToTracking,
   type ArtifactPublishResultProps,
+  type ArtifactEditResultProps,
+  type TrackingArtifactEditKind,
   type TrackingFileVersionSource,
   type TrackingArtifactKind,
   type TrackingProjectKind,
@@ -55,6 +57,7 @@ import {
 } from '../observability/iframe-error';
 import {
   trackArtifactExportResult,
+  trackArtifactEditResult,
   trackArtifactDeployResult,
   trackArtifactPublishResult,
   trackArtifactHeaderClick,
@@ -3359,6 +3362,20 @@ function fileVersionSourceToTracking(version: ProjectFileVersion): TrackingFileV
   return 'ai';
 }
 
+function manualEditPatchKindToTracking(patch: ManualEditPatch): TrackingArtifactEditKind {
+  switch (patch.kind) {
+    case 'set-text': return 'text';
+    case 'set-link': return 'link';
+    case 'set-image': return 'image';
+    case 'remove-element': return 'element_remove';
+    case 'set-token': return 'token';
+    case 'set-style': return 'style';
+    case 'set-attributes': return 'attributes';
+    case 'set-outer-html': return 'html';
+    case 'set-full-source': return 'source';
+  }
+}
+
 function sourceLooksLikeDeckPreview(source: string | null | undefined): boolean {
   if (!source) return false;
   return (
@@ -3454,7 +3471,7 @@ function FileVersionManagerModal({
   viewerOnly = false,
 }: {
   projectId: string;
-  projectKind: TrackingProjectKind | null;
+  projectKind: TrackingProjectKind;
   file: ProjectFile;
   currentSource: string | null;
   entryFrom: 'toolbar' | 'more_menu';
@@ -3525,6 +3542,8 @@ function FileVersionManagerModal({
       element,
       artifact_id: trackingArtifactId,
       artifact_kind: trackingArtifactKind,
+      project_id: projectId,
+      project_kind: projectKind,
       version_count: versions.length,
       ...extra,
     });
@@ -3541,8 +3560,10 @@ function FileVersionManagerModal({
       entry_from: entryFrom,
       artifact_id: trackingArtifactId,
       artifact_kind: trackingArtifactKind,
+      project_id: projectId,
+      project_kind: projectKind,
     });
-  }, [analytics.track, entryFrom, trackingArtifactId, trackingArtifactKind]);
+  }, [analytics.track, entryFrom, projectId, projectKind, trackingArtifactId, trackingArtifactKind]);
   const versionById = useMemo(() => {
     const map = new Map<string, ProjectFileVersion>();
     for (const version of versions) map.set(version.id, version);
@@ -7209,6 +7230,7 @@ function ReactComponentViewer({
               {viewerOnly ? null : (
                 <HandoffButton
                   projectId={projectId}
+                  projectKind={projectKind}
                   projectName={projectName}
                   projectDir={projectDir}
                   agents={agents}
@@ -7718,6 +7740,8 @@ function HtmlViewer({
       element,
       artifact_id: anonymizeArtifactId({ projectId, fileName: file.name }),
       artifact_kind: artifactKindToTracking({ fileKind: file.kind ?? null }),
+      project_id: projectId,
+      project_kind: projectKind,
       ...(entryFrom ? { entry_from: entryFrom } : {}),
     });
   };
@@ -7733,6 +7757,8 @@ function HtmlViewer({
       ...(submitAction ? { submit_action: submitAction } : {}),
       artifact_id: anonymizeArtifactId({ projectId, fileName: file.name }),
       artifact_kind: artifactKindToTracking({ fileKind: file.kind ?? null }),
+      project_id: projectId,
+      project_kind: projectKind,
     });
   };
   const fireArtifactHeaderClick = (
@@ -7751,6 +7777,8 @@ function HtmlViewer({
       element,
       artifact_id: anonymizeArtifactId({ projectId, fileName: file.name }),
       artifact_kind: artifactKindToTracking({ fileKind: file.kind ?? null }),
+      project_id: projectId,
+      project_kind: projectKind,
     });
   };
   const firePresentPopoverClick = (
@@ -7786,6 +7814,8 @@ function HtmlViewer({
       element,
       artifact_id: anonymizeArtifactId({ projectId, fileName: file.name }),
       artifact_kind: artifactKindToTracking({ fileKind: file.kind ?? null }),
+      project_id: projectId,
+      project_kind: projectKind,
       ...(extra?.action ? { action: extra.action } : {}),
       ...(typeof extra?.slide_index === 'number'
         ? { slide_index: extra.slide_index }
@@ -7805,6 +7835,33 @@ function HtmlViewer({
       element,
       artifact_id: anonymizeArtifactId({ projectId, fileName: file.name }),
       artifact_kind: artifactKindToTracking({ fileKind: file.kind ?? null }),
+      project_id: projectId,
+      project_kind: projectKind,
+    });
+  };
+  const fireArtifactEditResult = (
+    action: ArtifactEditResultProps['action'],
+    patch: ManualEditPatch,
+    startedAt: number,
+    result: ArtifactEditResultProps['result'],
+    errorCode?: ArtifactEditResultProps['error_code'],
+  ) => {
+    // A retained viewer can become inactive while an edit write is in flight.
+    // Read the live ref so the async continuation does not emit from the
+    // background tab after it settles.
+    if (!workspaceActiveRef.current) return;
+    trackArtifactEditResult(analytics.track, {
+      page_name: 'artifact',
+      area: 'manual_edit',
+      action,
+      edit_kind: manualEditPatchKindToTracking(patch),
+      artifact_id: anonymizeArtifactId({ projectId, fileName: file.name }),
+      artifact_kind: artifactKindToTracking({ fileKind: file.kind ?? null }),
+      project_id: projectId,
+      project_kind: projectKind,
+      result,
+      ...(errorCode ? { error_code: errorCode } : {}),
+      duration_ms: Math.max(0, Math.round(performance.now() - startedAt)),
     });
   };
   const [mode, setMode] = useState<'preview' | 'source'>('preview');
@@ -9837,12 +9894,14 @@ function HtmlViewer({
       area: 'deck_viewer',
       artifact_id: anonymizeArtifactId({ projectId, fileName: file.name }),
       artifact_kind: artifactKindToTracking({ fileKind: file.kind ?? null }),
+      project_id: projectId,
+      project_kind: projectKind,
       slide_count: deckSlideTotal,
     });
     // deckSlideTotal intentionally omitted from deps: we snapshot it at first
     // recognition and don't want later count updates to refire the view.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [effectiveDeck, source, projectId, file.name, file.kind]);
+  }, [analytics.track, effectiveDeck, source, projectId, projectKind, file.name, file.kind]);
   useEffect(() => {
     setSpeakerNotesDraft(activeSpeakerNote);
     setSpeakerNotesEditMode(false);
@@ -13006,8 +13065,24 @@ function HtmlViewer({
   }
 
   async function applyManualEdit(patch: ManualEditPatch, label: string): Promise<boolean> {
-    if (manualEditSavingRef.current) return false;
-    if (sourceRef.current == null) return false;
+    const startedAt = performance.now();
+    let resultTracked = false;
+    const finish = (
+      result: ArtifactEditResultProps['result'],
+      errorCode?: ArtifactEditResultProps['error_code'],
+    ) => {
+      if (resultTracked) return;
+      resultTracked = true;
+      fireArtifactEditResult('apply', patch, startedAt, result, errorCode);
+    };
+    if (manualEditSavingRef.current) {
+      finish('failed', 'edit_busy');
+      return false;
+    }
+    if (sourceRef.current == null) {
+      finish('failed', 'source_unavailable');
+      return false;
+    }
     manualEditSavingRef.current = true;
     setManualEditSaving(true);
     setManualEditError(null);
@@ -13016,12 +13091,16 @@ function HtmlViewer({
       const result = applyManualEditPatch(baseSource, patch);
       if (!result.ok) {
         setManualEditError(result.error ?? 'Could not apply edit.');
+        finish('failed', 'patch_invalid');
         return false;
       }
       if (!(await confirmManualEditHistorySource(
         baseSource,
         'The file changed outside manual edit mode. Refreshing before applying manual edits.',
-      ))) return false;
+      ))) {
+        finish('failed', 'source_conflict');
+        return false;
+      }
       const parentVersionId = await resolveManualEditParentVersionId(baseSource);
       // A committed content patch can notify the file watcher as soon as the
       // write lands. Capture the opaque iframe's exact scroll position before
@@ -13044,6 +13123,7 @@ function HtmlViewer({
         setManualEditError(
           `Could not save the edited file${status ? ` (${status}${code ? ` ${code}` : ''})` : ''}: ${message}`,
         );
+        finish('failed', 'save_failed');
         return false;
       }
       const entry: ManualEditHistoryEntry = {
@@ -13111,8 +13191,12 @@ function HtmlViewer({
       // they do not yet have a live bridge equivalent.
       syncRetainedManualEditDocument(result.source, patch);
       setManualEditError(null);
+      finish('success');
       await onFileSaved?.();
       return true;
+    } catch (error) {
+      finish('failed', 'unknown');
+      throw error;
     } finally {
       manualEditSavingRef.current = false;
       setManualEditSaving(false);
@@ -13147,16 +13231,32 @@ function HtmlViewer({
   }
 
   async function undoManualEdit() {
-    if (manualEditSavingRef.current) return;
     const [latest, ...rest] = manualEditHistory;
     if (!latest) return;
+    const startedAt = performance.now();
+    let resultTracked = false;
+    const finish = (
+      result: ArtifactEditResultProps['result'],
+      errorCode?: ArtifactEditResultProps['error_code'],
+    ) => {
+      if (resultTracked) return;
+      resultTracked = true;
+      fireArtifactEditResult('undo', latest.patch, startedAt, result, errorCode);
+    };
+    if (manualEditSavingRef.current) {
+      finish('failed', 'edit_busy');
+      return;
+    }
     manualEditSavingRef.current = true;
     setManualEditSaving(true);
     try {
       if (!(await confirmManualEditHistorySource(
         latest.afterSource,
         'The file changed outside manual edit mode. History was cleared to avoid overwriting newer content.',
-      ))) return;
+      ))) {
+        finish('failed', 'source_conflict');
+        return;
+      }
       const parentVersionId = await resolveManualEditParentVersionId(latest.afterSource);
       const saved = await writeProjectTextFileDetailed(projectId, file.name, latest.beforeSource, {
         artifactManifest: file.artifactManifest,
@@ -13166,6 +13266,7 @@ function HtmlViewer({
       }, workspaceContext);
       if (!saved.ok) {
         setManualEditError(describeManualEditSaveFailure('Could not save the undo result', saved));
+        finish('failed', 'save_failed');
         return;
       }
       // Same srcDoc rebuild as a committed patch — keep the scroll position
@@ -13182,7 +13283,11 @@ function HtmlViewer({
       setManualEditHistory(rest);
       setManualEditUndone((current) => [latest, ...current]);
       setManualEditDraft((current) => ({ ...current, fullSource: latest.beforeSource }));
+      finish('success');
       await onFileSaved?.();
+    } catch (error) {
+      finish('failed', 'unknown');
+      throw error;
     } finally {
       manualEditSavingRef.current = false;
       setManualEditSaving(false);
@@ -13190,16 +13295,32 @@ function HtmlViewer({
   }
 
   async function redoManualEdit() {
-    if (manualEditSavingRef.current) return;
     const [latest, ...rest] = manualEditUndone;
     if (!latest) return;
+    const startedAt = performance.now();
+    let resultTracked = false;
+    const finish = (
+      result: ArtifactEditResultProps['result'],
+      errorCode?: ArtifactEditResultProps['error_code'],
+    ) => {
+      if (resultTracked) return;
+      resultTracked = true;
+      fireArtifactEditResult('redo', latest.patch, startedAt, result, errorCode);
+    };
+    if (manualEditSavingRef.current) {
+      finish('failed', 'edit_busy');
+      return;
+    }
     manualEditSavingRef.current = true;
     setManualEditSaving(true);
     try {
       if (!(await confirmManualEditHistorySource(
         latest.beforeSource,
         'The file changed outside manual edit mode. History was cleared to avoid overwriting newer content.',
-      ))) return;
+      ))) {
+        finish('failed', 'source_conflict');
+        return;
+      }
       const parentVersionId = await resolveManualEditParentVersionId(latest.beforeSource);
       const saved = await writeProjectTextFileDetailed(projectId, file.name, latest.afterSource, {
         artifactManifest: file.artifactManifest,
@@ -13209,6 +13330,7 @@ function HtmlViewer({
       }, workspaceContext);
       if (!saved.ok) {
         setManualEditError(describeManualEditSaveFailure('Could not save the redo result', saved));
+        finish('failed', 'save_failed');
         return;
       }
       // Same srcDoc rebuild as a committed patch — keep the scroll position
@@ -13225,7 +13347,11 @@ function HtmlViewer({
       setManualEditUndone(rest);
       setManualEditHistory((current) => [latest, ...current]);
       setManualEditDraft((current) => ({ ...current, fullSource: latest.afterSource }));
+      finish('success');
       await onFileSaved?.();
+    } catch (error) {
+      finish('failed', 'unknown');
+      throw error;
     } finally {
       manualEditSavingRef.current = false;
       setManualEditSaving(false);
@@ -13332,6 +13458,8 @@ function HtmlViewer({
       edit_surface: editSurface,
       artifact_id: anonymizeArtifactId({ projectId, fileName: file.name }),
       artifact_kind: artifactKindToTracking({ fileKind: file.kind ?? null }),
+      project_id: projectId,
+      project_kind: projectKind,
       slide_count: deckSlideTotal,
       has_content: hasContent,
       result,
@@ -16921,6 +17049,7 @@ function HtmlViewer({
               {viewerOnly ? null : (
                 <HandoffButton
                   projectId={projectId}
+                  projectKind={projectKind}
                   projectName={projectName}
                   projectDir={projectDir}
                   agents={agents}

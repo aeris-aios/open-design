@@ -19,6 +19,7 @@ import type {
   AssistantFeedbackReasonPanelSurfaceViewProps,
   QuestionsFormSurfaceViewProps,
   DeepSeekCampaignModalSurfaceViewProps,
+  GoPlanSunsetModalSurfaceViewProps,
   DeepSeekCampaignBadgeSurfaceViewProps,
   DeepSeekCampaignModelBenefitSurfaceViewProps,
   // ui_click
@@ -79,6 +80,7 @@ import type {
   AmrEntryClickProps,
   PreviewRunStatusSurfaceViewProps,
   DeepSeekCampaignModalClickProps,
+  GoPlanSunsetModalClickProps,
   DeepSeekCampaignBadgeClickProps,
   RunFailedToastSurfaceViewProps,
   RunRecoveryActionSurfaceViewProps,
@@ -135,6 +137,7 @@ import type {
   FileUploadResultProps,
   ContextLinkResultProps,
   SpeakerNotesSaveResultProps,
+  ArtifactEditResultProps,
   ArtifactExportResultProps,
   ArtifactDeployResultProps,
   ArtifactPublishResultProps,
@@ -438,6 +441,13 @@ export function trackDeepSeekCampaignModalSurfaceView(
   send(track, 'surface_view', props);
 }
 
+export function trackGoPlanSunsetModalSurfaceView(
+  track: Track,
+  props: GoPlanSunsetModalSurfaceViewProps,
+): void {
+  send(track, 'surface_view', props);
+}
+
 export function trackDeepSeekCampaignBadgeSurfaceView(
   track: Track,
   props: DeepSeekCampaignBadgeSurfaceViewProps,
@@ -455,6 +465,13 @@ export function trackDeepSeekCampaignModelBenefitSurfaceView(
 export function trackDeepSeekCampaignModalClick(
   track: Track,
   props: DeepSeekCampaignModalClickProps,
+): void {
+  send(track, 'ui_click', props);
+}
+
+export function trackGoPlanSunsetModalClick(
+  track: Track,
+  props: GoPlanSunsetModalClickProps,
 ): void {
   send(track, 'ui_click', props);
 }
@@ -1176,6 +1193,13 @@ export function trackArtifactExportResult(
   options?: { requestId?: string },
 ): void {
   send(track, 'artifact_export_result', props, options);
+}
+
+export function trackArtifactEditResult(
+  track: Track,
+  props: ArtifactEditResultProps,
+): void {
+  send(track, 'artifact_edit_result', props);
 }
 
 export function trackArtifactDeployResult(

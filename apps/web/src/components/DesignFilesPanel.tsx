@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import type { TrackingProjectKind } from '@open-design/contracts/analytics';
 import { useAnalytics } from '../analytics/provider';
 import { trackFileManagerClick } from '../analytics/events';
 import { useT } from '../i18n';
@@ -46,6 +47,7 @@ export interface DesignFilesNavState {
 
 interface Props {
   projectId: string;
+  projectKind: TrackingProjectKind;
   filesRefreshKey?: number;
   /** Read-only viewer of a team-shared project: disables project mutations. */
   viewerOnly?: boolean;
@@ -451,6 +453,7 @@ function RotatingTip({ auxiliary = false }: { auxiliary?: boolean }) {
  */
 export function DesignFilesPanel({
   projectId,
+  projectKind,
   filesRefreshKey = 0,
   viewerOnly = false,
   downloadPending = false,
@@ -1366,6 +1369,8 @@ export function DesignFilesPanel({
                       page_name: 'file_manager',
                       area: 'file_manager',
                       element: 'create_design_system_from_project',
+                      project_id: projectId,
+                      project_kind: projectKind,
                     });
                     setProjectMenuOpen(false);
                     onCreateDesignSystemFromProject();
@@ -1385,6 +1390,8 @@ export function DesignFilesPanel({
                       page_name: 'file_manager',
                       area: 'file_manager',
                       element: 'duplicate_project',
+                      project_id: projectId,
+                      project_kind: projectKind,
                     });
                     setProjectMenuOpen(false);
                     onDuplicateProject();
@@ -1510,6 +1517,8 @@ export function DesignFilesPanel({
                       page_name: 'file_manager',
                       area: 'file_manager',
                       element: 'download_as_zip',
+                      project_id: projectId,
+                      project_kind: projectKind,
                     });
                     void handleBatchDownload();
                   }}

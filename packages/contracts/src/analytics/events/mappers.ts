@@ -80,6 +80,8 @@ export function projectKindToTracking(
       return 'audio';
     case 'brand':
       return 'brand';
+    case 'orbit':
+      return 'orbit';
     case 'live-artifact':
     case 'live_artifact':
       return 'live_artifact';
@@ -114,6 +116,19 @@ export function projectKindFromMetadataToTracking(
     platform: metadata?.platform,
     platformTargets: metadata?.platformTargets,
   });
+}
+
+// Projects created before `metadata.kind` was persisted are prototype projects.
+// Keep that legacy fallback in the shared contract so web and daemon events do
+// not split the same project between `prototype` and a null cohort.
+export function projectKindFromMetadataToTrackingOrLegacyDefault(
+  metadata: Parameters<typeof projectKindFromMetadataToTracking>[0],
+): TrackingProjectKind {
+  const tracked = projectKindFromMetadataToTracking(metadata);
+  if (tracked) return tracked;
+  // Only a genuinely absent kind is a legacy prototype. Persisted but unknown
+  // values are explicit data and must not silently corrupt the prototype cohort.
+  return metadata?.kind == null ? 'prototype' : 'other';
 }
 
 // Code `CreateTab` from apps/web/src/components/NewProjectPanel.tsx:

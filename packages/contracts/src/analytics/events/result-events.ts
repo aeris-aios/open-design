@@ -90,10 +90,49 @@ export interface SpeakerNotesSaveResultProps {
   edit_surface: 'preview' | 'presenter';
   artifact_id: string;
   artifact_kind: TrackingArtifactKind;
+  project_id: string;
+  project_kind: TrackingProjectKind;
   slide_count?: number;
   has_content?: boolean;
   result: TrackingResult;
   error_code?: string;
+}
+
+export type TrackingArtifactEditAction = 'apply' | 'undo' | 'redo';
+
+export type TrackingArtifactEditKind =
+  | 'text'
+  | 'link'
+  | 'image'
+  | 'element_remove'
+  | 'token'
+  | 'style'
+  | 'attributes'
+  | 'html'
+  | 'source';
+
+// Terminal result for a direct Manual Edit mutation. The toolbar `edit` click
+// measures entry; this event measures whether a concrete file mutation was
+// actually persisted, including undo/redo. Content, selectors and filenames
+// are intentionally excluded.
+export interface ArtifactEditResultProps {
+  page_name: 'artifact';
+  area: 'manual_edit';
+  action: TrackingArtifactEditAction;
+  edit_kind: TrackingArtifactEditKind;
+  artifact_id: string;
+  artifact_kind: TrackingArtifactKind;
+  project_id: string;
+  project_kind: TrackingProjectKind;
+  result: TrackingResult;
+  error_code?:
+    | 'edit_busy'
+    | 'source_unavailable'
+    | 'patch_invalid'
+    | 'source_conflict'
+    | 'save_failed'
+    | 'unknown';
+  duration_ms: number;
 }
 
 // Outcome of an actual import attempt from the plugin import modal. Fires
@@ -799,6 +838,7 @@ export interface SketchSaveResultProps {
   result: TrackingExportResult;
   error_code?: string;
   project_id: string;
+  project_kind: TrackingProjectKind;
 }
 
 // Fired when the user exports a sketch to a PNG from the sketch editor, which
@@ -812,6 +852,7 @@ export interface SketchExportResultProps {
   result: TrackingExportResult;
   error_code?: string;
   project_id: string;
+  project_kind: TrackingProjectKind;
 }
 
 export type TrackingDeployProvider = 'vercel' | 'cloudflare_pages';
