@@ -48,6 +48,39 @@ export interface MessageCenterInFlightSync {
   run: Promise<void>;
 }
 
+/**
+ * The last AUTHORITATIVE answer about whether anyone is signed in.
+ *
+ * The account generation cannot stand in for this. It advances on a workspace
+ * identity change, and a signed-out answer does not always come with one — the
+ * component's own signed-out transition is written to work without it, and the
+ * app's status polling can observe a remote or expired session the same way. A
+ * snapshot published while signed in therefore stayed adoptable after the
+ * account went away, and a remount inside the window showed the previous
+ * account's rows, unread count and targeted announcement to a signed-out
+ * reader.
+ *
+ * Kept only as the last observation; admission does not consult it. Comparing
+ * at admission time is redundant with dropping the snapshot when the answer
+ * changes, and two mechanisms for one rule means a test can pass with either
+ * one deleted — so there is one.
+ */
+let lastAuthoritativeLoggedIn: boolean | null = null;
+
+export function noteAuthoritativeAuthMode(loggedIn: boolean): void {
+  lastAuthoritativeLoggedIn = loggedIn;
+  // Compared against what is actually CACHED, not against the previous
+  // observation. Keying off the previous value meant the first authoritative
+  // answer could never invalidate anything — and the first answer after a fresh
+  // load is exactly when a snapshot from the old authority is still sitting
+  // there. Admission-time comparison cannot cover this either: a mount adopts
+  // before it syncs, so it would still be reading the stale answer.
+  if (lastSyncSnapshot && lastSyncSnapshot.loggedIn !== loggedIn) {
+    lastSyncSnapshot = null;
+    inFlightSync = null;
+  }
+}
+
 let lastSyncSnapshot: MessageCenterSnapshot | null = null;
 
 /**
@@ -77,6 +110,7 @@ let snapshotWriteToken = 0;
 /** Test hook: module state must not leak between cases. */
 export function resetMessageCenterSnapshot(): void {
   lastSyncSnapshot = null;
+  lastAuthoritativeLoggedIn = null;
   inFlightSync = null;
   snapshotWriteToken = 0;
   readListeners.clear();
@@ -195,6 +229,9 @@ export function recordSnapshotRead(args: MessageCenterReadDelta): void {
   // published was dropped, and the next remount adopted rows that still showed
   // it unread.
   if (snapshot.accountGeneration !== args.accountGeneration) return;
+  // A signed-out read must not patch a signed-in snapshot, or the mismatch
+  // outlives the transition that produced it.
+  if (snapshot.loggedIn !== args.account) return;
   lastSyncSnapshot = {
     ...snapshot,
     messages: snapshot.messages.map((item) => (

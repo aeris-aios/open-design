@@ -37,6 +37,7 @@ import type {
   WorkspaceProjectSummary,
 } from '@open-design/contracts';
 import { DEFAULT_UNSELECTED_SCENARIO_PLUGIN_ID } from '@open-design/contracts';
+import { noteAuthoritativeAuthMode } from './components/message-center-snapshot';
 import { EntryView } from './components/EntryView';
 import type { ProjectTitleHint } from './components/EntryShell';
 import type { IntegrationTab } from './components/IntegrationsView';
@@ -1692,6 +1693,11 @@ function AppInner() {
     const previousStatus = amrLoginStatusRef.current;
     const wasLoggedIn = isAmrSessionAuthenticated(previousStatus);
     const isLoggedIn = isAmrSessionAuthenticated(status);
+    // The message centre caches rows per authority for a few seconds, and this
+    // is the one place that learns about a session ending REMOTELY — an expired
+    // or revoked session never goes through the sign-out handler, so nothing
+    // else would tell that cache its contents no longer belong to anyone.
+    noteAuthoritativeAuthMode(isLoggedIn);
     const pendingRetry = amrAuthRetryContinuationRef.current;
     const accountChangedWhileAuthorizing = Boolean(
       pendingRetry

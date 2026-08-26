@@ -17,6 +17,7 @@ import { MessageCenter } from '../../src/components/MessageCenter';
 import { recordAnonymousRead } from '../../src/message-center-client';
 import {
   currentSnapshotWriteToken,
+  noteAuthoritativeAuthMode,
   resetMessageCenterSnapshot,
 } from '../../src/components/message-center-snapshot';
 import { advanceWorkspaceAccountGeneration } from '../../src/collab/workspace-identity';

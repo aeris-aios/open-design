@@ -27,6 +27,7 @@ import {
   joinableSync,
   ownsLatestSnapshotWrite,
   publishInFlightSync,
+  noteAuthoritativeAuthMode,
   publishSnapshot,
   recordSnapshotRead,
   subscribeMessageCenterReads,
@@ -222,6 +223,9 @@ export function MessageCenter({
     // let the signed-in overlay survive into the anonymous view. The last
     // authoritative mode is what carries across an outage.
     if (authMode !== 'unavailable') {
+      // Recorded for every host, not just this one: snapshot admission needs the
+      // latest authoritative answer, and a non-answer must not overwrite it.
+      noteAuthoritativeAuthMode(account);
       loggedInRef.current = account;
       setLoggedIn(account);
     }
