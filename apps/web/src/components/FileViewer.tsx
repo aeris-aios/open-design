@@ -14733,7 +14733,7 @@ function HtmlViewer({
         setManualEditMode(true);
         closeArtifactToolMenus();
       };
-      if (!useUrlLoadPreview) {
+      if (!previewRuntimeConvergence && !useUrlLoadPreview) {
         // A snapshot is only valid for the URL-load -> srcDoc handoff that
         // captured it. Once srcDoc is already the active transport it owns the
         // newest in-frame navigation state; retaining a missed/late snapshot

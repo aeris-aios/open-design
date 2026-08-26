@@ -8831,6 +8831,114 @@ describe('FileViewer tweaks toolbar', () => {
     }
   });
 
+  it('keeps the last-good frame visible until an agent-written revision paints', async () => {
+    const fileV1 = htmlPreviewFile({ mtime: 1_000, size: 100 });
+    const fileV2 = htmlPreviewFile({ mtime: 2_000, size: 120 });
+    let servedVersion = 1;
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = typeof input === 'string'
+        ? input
+        : input instanceof Request
+          ? input.url
+          : String(input);
+      if (url.startsWith('/api/projects/project-1/raw/preview.html')) {
+        return new Response(
+          `<!doctype html><html><body><main>Version ${servedVersion}</main></body></html>`,
+          { status: 200, headers: { 'Content-Type': 'text/html' } },
+        );
+      }
+      if (url === '/api/projects/project-1/files') {
+        return new Response(JSON.stringify({ files: [servedVersion === 1 ? fileV1 : fileV2] }), {
+          status: 200,
+        });
+      }
+      if (url.includes('/api/projects/project-1/preview-url')) {
+        return new Response(JSON.stringify({
+          url: `/api/projects/project-1/preview/legacy-scope/preview.html?v=${servedVersion}`,
+          file: 'preview.html',
+          expiresAt: Date.now() + 60 * 60 * 1000,
+          scopedOrigin: {
+            normalUrl: `http://n-scope-v${servedVersion}.localhost:43111/preview.html`,
+            poweredUrl: `http://p-scope-v${servedVersion}.localhost:43111/preview.html`,
+            documentVersion: `preview-v${servedVersion}`,
+          },
+        }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ deployments: [] }), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const capabilities: PreviewRuntimeCapability[] = [
+      'content_measurement',
+      'scroll',
+      'snapshot',
+      'observability',
+      'selection',
+      'tweaks',
+      'palette',
+    ];
+    const signal = (
+      frame: HTMLIFrameElement,
+      version: number,
+      type: 'od:preview:hello' | 'od:preview:capabilities-applied' | 'od:preview:visible-paint',
+    ) => {
+      act(() => {
+        window.dispatchEvent(new MessageEvent('message', {
+          source: frame.contentWindow,
+          data: {
+            type,
+            protocolVersion: PREVIEW_RUNTIME_PROTOCOL_VERSION,
+            sessionId: `scope-v${version}`,
+            documentVersion: `preview-v${version}`,
+            ...(type === 'od:preview:hello' ? { availableCapabilities: capabilities } : {}),
+            ...(type === 'od:preview:capabilities-applied'
+              ? { enabledCapabilities: capabilities }
+              : {}),
+          },
+        }));
+      });
+    };
+    const view = (file: ProjectFile, filesRefreshKey: number) => (
+      <IframeKeepAliveProvider>
+        <FileViewer
+          projectId="project-1"
+          projectKind="prototype"
+          file={file}
+          filesRefreshKey={filesRefreshKey}
+          previewRuntimeConvergence
+        />
+      </IframeKeepAliveProvider>
+    );
+    const { rerender } = render(view(fileV1, 0));
+    const first = await waitFor(() => (
+      screen.getByTestId('preview-runtime-frame-standby') as HTMLIFrameElement
+    ));
+    signal(first, 1, 'od:preview:hello');
+    signal(first, 1, 'od:preview:capabilities-applied');
+    signal(first, 1, 'od:preview:visible-paint');
+    expect(screen.getByTestId('preview-runtime-frame-current')).toBe(first);
+
+    servedVersion = 2;
+    rerender(view(fileV2, 1));
+
+    const replacement = await waitFor(() => {
+      const next = screen.getByTestId('preview-runtime-frame-standby') as HTMLIFrameElement;
+      expect(next).not.toBe(first);
+      return next;
+    });
+    expect(screen.getByTestId('preview-runtime-frame-current')).toBe(first);
+    expect(first.dataset.odActive).toBe('true');
+    expect(replacement.dataset.odActive).toBe('false');
+    expect(replacement.src).toBe('http://n-scope-v2.localhost:43111/preview.html');
+
+    signal(replacement, 2, 'od:preview:hello');
+    signal(replacement, 2, 'od:preview:capabilities-applied');
+    expect(screen.getByTestId('preview-runtime-frame-current')).toBe(first);
+    signal(replacement, 2, 'od:preview:visible-paint');
+
+    expect(screen.getByTestId('preview-runtime-frame-current')).toBe(replacement);
+    expect(document.body.contains(first)).toBe(false);
+  });
+
   it('navigates a converged deck directly without replacing its real-URL frame', async () => {
     const file = htmlPreviewFile({
       name: 'deck.html',
@@ -8914,6 +9022,7 @@ describe('FileViewer tweaks toolbar', () => {
       'palette',
       'deck',
     ];
+    const availableCapabilities: PreviewRuntimeCapability[] = [...capabilities, 'edit'];
     const signal = (
       type: 'od:preview:hello' | 'od:preview:capabilities-applied' | 'od:preview:visible-paint',
     ) => {
@@ -8925,7 +9034,7 @@ describe('FileViewer tweaks toolbar', () => {
             protocolVersion: PREVIEW_RUNTIME_PROTOCOL_VERSION,
             sessionId,
             documentVersion,
-            ...(type === 'od:preview:hello' ? { availableCapabilities: capabilities } : {}),
+            ...(type === 'od:preview:hello' ? { availableCapabilities } : {}),
             ...(type === 'od:preview:capabilities-applied'
               ? { enabledCapabilities: capabilities }
               : {}),
@@ -8958,6 +9067,61 @@ describe('FileViewer tweaks toolbar', () => {
     expect(slideCalls).toEqual([
       [{ type: 'od:slide', action: 'go', index: 4 }, '*'],
     ]);
+    expect(screen.getByTestId('preview-runtime-frame-current')).toBe(frame);
+    expect(frame.getAttribute('src')).toBe(initialSrc);
+
+    postMessage.mockClear();
+    fireEvent.click(screen.getByTestId('manual-edit-mode-toggle'));
+    const captureRequest = await waitFor(() => {
+      const message = postMessage.mock.calls
+        .map(([value]) => value)
+        .find((value) => (
+          typeof value === 'object'
+          && value !== null
+          && (value as { type?: unknown }).type === 'od:preview-runtime-state-capture'
+        )) as { type: string; id: string } | undefined;
+      expect(message?.id).toBeTruthy();
+      return message!;
+    });
+    act(() => {
+      window.dispatchEvent(new MessageEvent('message', {
+        source: frame.contentWindow,
+        data: {
+          type: 'od:preview-runtime-state-captured',
+          id: captureRequest.id,
+          state: {
+            version: 1,
+            hash: '',
+            htmlAttrs: {},
+            bodyAttrs: {},
+            entries: [],
+          },
+        },
+      }));
+    });
+    const editCapabilities: PreviewRuntimeCapability[] = [...capabilities, 'edit'];
+    await waitFor(() => {
+      expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({
+        type: 'od:preview:set-capabilities',
+        enabledCapabilities: editCapabilities,
+      }), '*');
+    });
+    act(() => {
+      window.dispatchEvent(new MessageEvent('message', {
+        source: frame.contentWindow,
+        data: {
+          type: 'od:preview:capabilities-applied',
+          protocolVersion: PREVIEW_RUNTIME_PROTOCOL_VERSION,
+          sessionId,
+          documentVersion,
+          enabledCapabilities: editCapabilities,
+        },
+      }));
+    });
+    expect(postMessage).toHaveBeenCalledWith({
+      type: 'od-edit-mode',
+      enabled: true,
+    }, '*');
     expect(screen.getByTestId('preview-runtime-frame-current')).toBe(frame);
     expect(frame.getAttribute('src')).toBe(initialSrc);
   });
