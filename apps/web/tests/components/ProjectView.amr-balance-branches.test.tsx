@@ -1,21 +1,25 @@
 // @vitest-environment jsdom
 //
-// 红测:余额判定的**呈现**改了口径 —— 产品 2026-08-26 裁决
-// 「告警可继续的不弹窗,只有卡片;余额不足再弹窗」。
+// 红测:**余额不足 · 身份 × 订阅的四种分支**(规格
+// `specs/current/run-error-catalog.md` §6.V,2026-08-26 用户逐条裁决)。
 //
-//   告警档(余额 > 0 但撑不住下一轮) → **弹窗撤掉**,改成流水里的 `UpgradeCard`,
-//                                     而且**不再挡住这一次发送**(D4 不阻塞)。
-//   拦截档(余额耗尽)               → 弹窗**保留**,**同时**也出卡片。
+// 卡片永远保留,四组的差别只在「同时唤起什么弹窗、点了跳哪」:
 //
-// 这一层管的是「判定结果怎么呈现」。判定本身(`runtime/amr-balance-gate.ts`)
-// 一个字都没动 —— 「付费档余额 0 = 不限量,不拦」是另一条已定口径(#7190),
-// 那属于判定,不属于这次改动;这里只保证新加的卡**不会把付费用户重新拦回去**。
+//   非 Max · owner    卡 + 现有升级弹窗           卡和弹窗都直接跳 Pricing
+//   非 Max · 非 owner 卡 + 新的「找所有者充值」弹窗  不外跳
+//   Max   · owner     卡,**不弹窗**              跳 vela web 并唤起团队自动充值
+//   Max   · 非 owner  卡 + 新的「找所有者充值」弹窗  不外跳
 //
-// `ChatPane` 在这一层是 mock 的(它自带半个应用),所以这里断言的是
-// **ProjectView 把哪份数据交给了 ChatPane** + 弹窗的去留。
-// 「ChatPane 拿到这份数据之后真的画出了那张卡」由
-// `tests/components/chat/ChatPane.wired-cards.test.tsx` 从真实 ChatPane 断言,
-// 两段靠同一个 prop 名(typecheck 保证)接在一起。
+// 另外两条守卫:
+//
+//   ① 「付费档余额 0 = 不限量,不拦」(#7190 / R-010)是**判定**那一层的口径。
+//      这次只改呈现,所以这里钉的是:判定放行时,四种分支一个都不许冒出来。
+//   ② §6.Y 的死胡同:没有账单权限的成员,弹窗上必须有**一条前进的路**,
+//      不能只剩一颗「暂不需要」。
+//
+// `ChatPane` 在这一层是 mock 的(它自带半个应用),所以「卡点了跳哪」是按下
+// ProjectView 交给它的那个回调来断言的;真卡把这个回调接到按钮上这件事,
+// 由 `tests/components/chat/ChatPane.wired-cards.test.tsx` 从真实 ChatPane 保证。
 
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import {
@@ -53,35 +57,38 @@ import type {
   SkillSummary,
 } from '../../src/types';
 
-const PROJECT_ID = 'caustic-pool-project';
-/** The team workspace from the report. */
+const PROJECT_ID = 'balance-branch-project';
 const TEAM_WORKSPACE = 'nt3itfm1b95puq5w33tvzu44';
 const TEAM_MEMBER = 'member-sender';
-/** The 「水面焦散」 card's seeded prompt. */
-const SEED_PROMPT =
-  '自包含 WebGL2 主视觉：由域扭曲涟漪织成的动态水面焦散；点击水面掉涟漪。无网格、无贴图。';
+const SEED_PROMPT = 'ignored — the branch tests send manually';
 
 /**
- * 这一页管的是「告警出卡 / 拦截出卡 + 弹窗」这一层,不是身份分支那一层。
- *
- * 身份钉在 **非 Max · owner** 上,因为那一组的弹窗就是 `AmrBalanceDialog` ——
- * 也就是这一页原本断言的那张。四种身份各自唤起哪张弹窗,由
- * `ProjectView.amr-balance-branches.test.tsx` 单独断言(规格 §6.V)。
+ * 一个团队工作区的调用者。`role` 决定 `canManageBilling`(契约
+ * `buildWorkspacePermissions`:`readable && role === 'owner'`),
+ * `planId` 决定订阅档。四种分支就是这两位的四种组合。
  */
-const CALLER_CONTEXT: WorkspaceCollabContext = {
-  workspaceId: TEAM_WORKSPACE,
-  workspaceType: 'team',
-  workspaceMemberId: TEAM_MEMBER,
-  role: 'owner',
-  memberStatus: 'active',
-  lifecycleState: 'active',
-  billingState: 'active',
-  planId: 'team_pro',
-  providerMode: 'platform_credits',
-  seatSummary: buildWorkspaceSeatSummary({ seatLimit: 5, usedSeats: 2 }),
-  permissions: buildWorkspacePermissions({ role: 'owner', lifecycleState: 'active' }),
-} as WorkspaceCollabContext;
+function callerContext(
+  role: 'owner' | 'member',
+  planId: string | null,
+  extra: Partial<WorkspaceCollabContext> = {},
+): WorkspaceCollabContext {
+  return {
+    workspaceId: TEAM_WORKSPACE,
+    workspaceType: 'team',
+    workspaceMemberId: TEAM_MEMBER,
+    role,
+    memberStatus: 'active',
+    lifecycleState: 'active',
+    billingState: 'active',
+    planId,
+    providerMode: 'platform_credits',
+    seatSummary: buildWorkspaceSeatSummary({ seatLimit: 5, usedSeats: 2 }),
+    permissions: buildWorkspacePermissions({ role, lifecycleState: 'active' }),
+    ...extra,
+  } as WorkspaceCollabContext;
+}
 
+const CALLER_CONTEXT = callerContext('owner', 'team_pro');
 
 const workspaceScopeMocks = vi.hoisted(() => ({
   projectScope: { loading: true, scope: null } as ProjectWorkspaceScopeState,
@@ -280,6 +287,7 @@ vi.mock('../../src/components/ChatPane', () => ({
     sendDisabled?: boolean;
     queuedItems?: Array<{ prompt: string }>;
     amrBalanceCardUsd?: number | null;
+    onAmrBalanceUpgrade?: () => void;
     onSend?: (
       prompt: string,
       attachments: [],
@@ -300,6 +308,16 @@ vi.mock('../../src/components/ChatPane', () => ({
           onClick={() => props.onSend?.('normal prompt', [], [])}
         >
           send
+        </button>
+        {/* 卡上那颗 Upgrade。真卡由 `chat/UpgradeCard.tsx` 画,这里只需要
+            按下**它拿到的那个回调**,才能断言「点了跳哪」。 */}
+        <button
+          type="button"
+          data-testid="upgrade-card-click"
+          disabled={props.onAmrBalanceUpgrade == null}
+          onClick={() => props.onAmrBalanceUpgrade?.()}
+        >
+          upgrade
         </button>
       </div>
     );
@@ -422,13 +440,23 @@ const snapshot = (balanceUsd: string): AmrWalletSnapshot => ({
   source: 'vela_api',
 });
 
-describe('余额判定的呈现:告警只出卡,拦截才弹窗', () => {
+
+const mockedWindowOpen = vi.fn();
+
+const EMPTY_WALLET = {
+  kind: 'hard' as const,
+  reason: 'insufficient' as const,
+  snapshot: snapshot('0'),
+};
+
+describe('余额不足:身份 × 订阅的四种分支', () => {
   beforeEach(() => {
     resourceContextObservations.length = 0;
     window.sessionStorage.clear();
     window.localStorage.clear();
     resetWorkspaceContextCache();
     stubFetch();
+    vi.stubGlobal('open', mockedWindowOpen);
     mockedListConversations.mockImplementation(async (projectId: string) => [
       conversation(projectId),
     ]);
@@ -456,60 +484,213 @@ describe('余额判定的呈现:告警只出卡,拦截才弹窗', () => {
     resetWorkspaceContextCache();
   });
 
-  /** 项目页发一条,不走 Home 的自动发送。 */
-  async function sendOnce(
+  /** 用给定身份发一条,并把余额门钉在给定判定上。 */
+  async function sendAs(
+    context: WorkspaceCollabContext | null,
     gate: Awaited<ReturnType<typeof checkAmrBalanceGate>>,
   ) {
+    workspaceScopeMocks.ambientContext = context;
     mockedCheckAmrBalanceGate.mockResolvedValue(gate as never);
     renderProjectView({ project: { ...project(), pendingPrompt: null } as never });
     await screen.findByTestId('normal-send');
     fireEvent.click(screen.getByTestId('normal-send'));
   }
 
-  // 产品裁决:「告警可继续的不弹窗,只有卡片」。
-  it('告警档:不弹窗,出卡片,而且这一次发送照常跑完', async () => {
-    await sendOnce({ kind: 'soft', snapshot: snapshot('1.2') });
+  /** 卡出现了吗(ProjectView 交给 ChatPane 的那个余额)。 */
+  function cardBalance(): string {
+    return screen.getByTestId('amr-balance-card-prop').textContent ?? '';
+  }
 
-    await waitFor(() =>
-      expect(screen.getByTestId('amr-balance-card-prop').textContent).toBe('1.2'),
-    );
-    expect(screen.queryByTestId('amr-low-balance-dialog')).toBeNull();
-    // D4 不阻塞:告警不再把这次发送吊在半空。
-    await waitFor(() => expect(mockedStreamViaDaemon).toHaveBeenCalled());
-  });
-
-  // 拦截档:弹窗保留,同时也要出卡片。这里的身份是**非 Max · owner**,
-  // 那一组的弹窗正是 `AmrBalanceDialog`(规格 §6.V 第一行)。
-  it('拦截档:弹窗和卡片同时出', async () => {
-    await sendOnce({
-      kind: 'hard',
-      reason: 'insufficient',
-      snapshot: snapshot('0'),
-    });
+  it('非 Max · owner:卡 + 现有升级弹窗,两边都跳 Pricing', async () => {
+    await sendAs(callerContext('owner', 'team_pro'), EMPTY_WALLET);
 
     await waitFor(() => expect(screen.getByTestId('amr-balance-dialog')).toBeTruthy());
-    expect(screen.getByTestId('amr-balance-card-prop').textContent).toBe('0');
-    // 拦截就是拦截 —— 这一次发送不该跑起来。
-    expect(mockedStreamViaDaemon).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('amr-balance-owner-dialog')).toBeNull();
+    expect(cardBalance()).toBe('0');
+
+    fireEvent.click(screen.getByTestId('upgrade-card-click'));
+    expect(mockedWindowOpen).toHaveBeenCalledTimes(1);
+    expect(String(mockedWindowOpen.mock.calls[0]?.[0])).toContain('billing=plan');
   });
 
-  it('放行时既不弹窗也不出卡', async () => {
-    await sendOnce({ kind: 'allow' });
+  it('非 Max · 非 owner:卡 + 找所有者充值弹窗,不外跳', async () => {
+    await sendAs(callerContext('member', 'team_pro'), EMPTY_WALLET);
+
+    await waitFor(() =>
+      expect(screen.getByTestId('amr-balance-owner-dialog')).toBeTruthy(),
+    );
+    expect(screen.queryByTestId('amr-balance-dialog')).toBeNull();
+    expect(cardBalance()).toBe('0');
+
+    fireEvent.click(screen.getByTestId('upgrade-card-click'));
+    expect(mockedWindowOpen).not.toHaveBeenCalled();
+  });
+
+  it('Max · owner:只出卡,不弹窗;点击跳 vela web 的自动充值', async () => {
+    await sendAs(callerContext('owner', 'team_max'), EMPTY_WALLET);
+
+    await waitFor(() => expect(cardBalance()).toBe('0'));
+    expect(screen.queryByTestId('amr-balance-dialog')).toBeNull();
+    expect(screen.queryByTestId('amr-balance-owner-dialog')).toBeNull();
+
+    fireEvent.click(screen.getByTestId('upgrade-card-click'));
+    expect(mockedWindowOpen).toHaveBeenCalledTimes(1);
+    expect(String(mockedWindowOpen.mock.calls[0]?.[0])).toContain('billing=auto-recharge');
+  });
+
+  // 「Max」= 个人 Max 和团队 Max 都算(用户修正)。个人档走的是另一条链路
+  // (个人工作区 + 账号档),但结论必须一样。
+  it('个人 Max · owner:同样只出卡,同样跳自动充值', async () => {
+    await sendAs(
+      callerContext('owner', 'max', { workspaceType: 'personal' }),
+      EMPTY_WALLET,
+    );
+
+    await waitFor(() => expect(cardBalance()).toBe('0'));
+    expect(screen.queryByTestId('amr-balance-dialog')).toBeNull();
+    expect(screen.queryByTestId('amr-balance-owner-dialog')).toBeNull();
+
+    fireEvent.click(screen.getByTestId('upgrade-card-click'));
+    expect(String(mockedWindowOpen.mock.calls[0]?.[0])).toContain('billing=auto-recharge');
+  });
+
+  it('Max · 非 owner:和非 Max 的成员同一条路', async () => {
+    await sendAs(callerContext('member', 'team_max'), EMPTY_WALLET);
+
+    await waitFor(() =>
+      expect(screen.getByTestId('amr-balance-owner-dialog')).toBeTruthy(),
+    );
+    expect(screen.queryByTestId('amr-balance-dialog')).toBeNull();
+    expect(cardBalance()).toBe('0');
+  });
+
+  // 团队工作区带着 vela 的 settings URL 时,自动充值链接要落在那个工作区的
+  // 控制台上,而不是账号级兜底页 —— 否则所有者会被带到别的工作区去充值。
+  it('团队工作区的自动充值链接带上这个工作区', async () => {
+    await sendAs(
+      callerContext('owner', 'team_max', {
+        workspaceSettingsUrl:
+          'https://open-design.ai/amr/settings?workspaceId=nt3itfm1b95puq5w33tvzu44',
+      }),
+      EMPTY_WALLET,
+    );
+
+    await waitFor(() => expect(cardBalance()).toBe('0'));
+    fireEvent.click(screen.getByTestId('upgrade-card-click'));
+    const url = String(mockedWindowOpen.mock.calls[0]?.[0]);
+    expect(url).toContain('workspaceId=nt3itfm1b95puq5w33tvzu44');
+    expect(url).toContain('billing=auto-recharge');
+  });
+});
+
+describe('死胡同:没有账单权限的成员必须拿到一条前进的路', () => {
+  beforeEach(() => {
+    resourceContextObservations.length = 0;
+    window.sessionStorage.clear();
+    window.localStorage.clear();
+    resetWorkspaceContextCache();
+    stubFetch();
+    vi.stubGlobal('open', mockedWindowOpen);
+    mockedListConversations.mockImplementation(async (projectId: string) => [
+      conversation(projectId),
+    ]);
+    mockedCreateConversation.mockImplementation(async (projectId: string) =>
+      conversation(projectId),
+    );
+    mockedListMessages.mockResolvedValue([]);
+    mockedFetchPreviewComments.mockResolvedValue([]);
+    mockedFetchProjectFiles.mockResolvedValue([]);
+    mockedFetchBrands.mockResolvedValue([]);
+    mockedStreamViaDaemon.mockResolvedValue(undefined);
+    workspaceScopeMocks.projectScope = { loading: true, scope: null };
+    projectCollabMocks.writerAuthority = 'allowed';
+    projectCollabMocks.viewerOnly = false;
+    mockedLoadTabs.mockResolvedValue({ tabs: [], active: null });
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+    vi.clearAllMocks();
+    resetWorkspaceContextCache();
+  });
+
+  /**
+   * §6.Y:`AmrBalanceDialog` 的主按钮取自 `workspaceUpgradeUrl`,而它对没有
+   * `canManageBilling` 的成员返回 `null` —— 于是那个三元落空,弹窗上只剩一颗
+   * 「暂不需要」。这条测试钉的是**结果**:这类成员看到的弹窗里,除了关闭之外
+   * 还得有别的可点的东西。
+   */
+  it('成员的弹窗上不能只有一颗「暂不需要」', async () => {
+    workspaceScopeMocks.ambientContext = callerContext('member', 'team_pro');
+    mockedCheckAmrBalanceGate.mockResolvedValue(EMPTY_WALLET as never);
+    render(projectViewElement({ project: { ...project(), pendingPrompt: null } as never }));
+    await screen.findByTestId('normal-send');
+    fireEvent.click(screen.getByTestId('normal-send'));
+
+    const dialog = await screen.findByTestId('amr-balance-owner-dialog');
+    // 一条真正的前进的路:把该说的话交到他手上,而不是让他自己猜该找谁。
+    expect(screen.getByTestId('amr-balance-owner-copy')).toBeTruthy();
+    // 而且这条路不是「再点一次也还是关掉」——它在弹窗里是一颗独立的动作。
+    expect(
+      dialog.querySelectorAll('button').length,
+    ).toBeGreaterThan(2);
+  });
+});
+
+describe('守卫:判定放行时四种分支一个都不许冒出来', () => {
+  beforeEach(() => {
+    resourceContextObservations.length = 0;
+    window.sessionStorage.clear();
+    window.localStorage.clear();
+    resetWorkspaceContextCache();
+    stubFetch();
+    vi.stubGlobal('open', mockedWindowOpen);
+    mockedListConversations.mockImplementation(async (projectId: string) => [
+      conversation(projectId),
+    ]);
+    mockedCreateConversation.mockImplementation(async (projectId: string) =>
+      conversation(projectId),
+    );
+    mockedListMessages.mockResolvedValue([]);
+    mockedFetchPreviewComments.mockResolvedValue([]);
+    mockedFetchProjectFiles.mockResolvedValue([]);
+    mockedFetchBrands.mockResolvedValue([]);
+    mockedStreamViaDaemon.mockResolvedValue(undefined);
+    workspaceScopeMocks.projectScope = { loading: true, scope: null };
+    projectCollabMocks.writerAuthority = 'allowed';
+    projectCollabMocks.viewerOnly = false;
+    mockedLoadTabs.mockResolvedValue({ tabs: [], active: null });
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+    vi.clearAllMocks();
+    resetWorkspaceContextCache();
+  });
+
+  /**
+   * 「付费档余额 0 = 不限量,不拦」(`error-ux-design.md` §3 / R-010 / OD #7190)。
+   * 那条口径住在 `runtime/amr-balance-gate.ts` —— 它对这种账号返回 `allow`。
+   * 这一步的职责只有一个:**别把它重新拦回去**。四组身份逐一验一遍,免得某一支
+   * 顺手把「拦截」画进了呈现层。
+   */
+  it.each([
+    ['非 Max · owner', callerContext('owner', 'team_pro')],
+    ['非 Max · 非 owner', callerContext('member', 'team_pro')],
+    ['Max · owner', callerContext('owner', 'team_max')],
+    ['Max · 非 owner', callerContext('member', 'team_max')],
+  ])('%s:余额 0 但判定放行 → 照跑,不出卡也不弹窗', async (_name, context) => {
+    workspaceScopeMocks.ambientContext = context;
+    mockedCheckAmrBalanceGate.mockResolvedValue({ kind: 'allow' });
+    render(projectViewElement({ project: { ...project(), pendingPrompt: null } as never }));
+    await screen.findByTestId('normal-send');
+    fireEvent.click(screen.getByTestId('normal-send'));
 
     await waitFor(() => expect(mockedStreamViaDaemon).toHaveBeenCalled());
     expect(screen.getByTestId('amr-balance-card-prop').textContent).toBe('none');
-    expect(screen.queryByTestId('amr-low-balance-dialog')).toBeNull();
     expect(screen.queryByTestId('amr-balance-dialog')).toBeNull();
-  });
-
-  // 已定口径「付费档余额 0 = 不限量,不拦」(#7190)属于**判定**那一层。
-  // 这次只改呈现,所以这里钉的是:新加的卡**自己不拦人** —— 判定放行的时候,
-  // 卡不出现、发送也不被它挡住。
-  it('新加的卡不会把判定放行的付费用户重新拦回去', async () => {
-    await sendOnce({ kind: 'allow' });
-
-    await waitFor(() => expect(mockedStreamViaDaemon).toHaveBeenCalled());
-    expect(screen.queryByTestId('amr-balance-dialog')).toBeNull();
-    expect(screen.getByTestId('amr-balance-card-prop').textContent).toBe('none');
+    expect(screen.queryByTestId('amr-balance-owner-dialog')).toBeNull();
   });
 });

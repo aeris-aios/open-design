@@ -695,6 +695,14 @@ interface Props {
    * 这里只负责**呈现** —— 卡在流水里,不挡发送(D4)。
    */
   amrBalanceCardUsd?: number | null;
+  /**
+   * 升级卡那颗按钮点下去做什么。给了就用它,没给就退回本组件自己的 plans 深链。
+   *
+   * 之所以由调用方给:**点了跳哪由身份 × 订阅决定**(规格 §6.V 的四组),而那份
+   * 判据握在 ProjectView / EntryShell 手里 —— 它们才知道这一次要付钱的是哪个
+   * 工作区、这个人有没有账单权限。聊天面板不该自己去猜。
+   */
+  onAmrBalanceUpgrade?: () => void;
   showByokRecoveryAction?: boolean;
   onSwitchToLocalCli?: () => void;
   onOpenAmrSettings?: () => void;
@@ -1010,6 +1018,7 @@ export function ChatPane({
   onDeleteConversation,
   onOpenSettings,
   amrBalanceCardUsd = null,
+  onAmrBalanceUpgrade,
   showByokRecoveryAction = false,
   onSwitchToLocalCli,
   onOpenAmrSettings,
@@ -3263,7 +3272,9 @@ export function ChatPane({
                 {amrBalanceCardUsd != null ? (
                   <UpgradeCard
                     balanceUsd={amrBalanceCardUsd}
-                    onUpgrade={() => openAmrPlans('chat_upgrade_card')}
+                    onUpgrade={
+                      onAmrBalanceUpgrade ?? (() => openAmrPlans('chat_upgrade_card'))
+                    }
                   />
                 ) : null}
                 {/*

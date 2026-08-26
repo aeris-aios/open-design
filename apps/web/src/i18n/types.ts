@@ -4406,6 +4406,12 @@ export interface Dict {
   'chat.runError.switchModelCta': string;
   'chat.support.channel.feishu': string;
   'chat.support.channel.discord': string;
+  'chat.amrBalanceOwner.title': string;
+  'chat.amrBalanceOwner.message': string;
+  'chat.amrBalanceOwner.requestTemplate': string;
+  'chat.amrBalanceOwner.copyCta': string;
+  'chat.amrBalanceOwner.copiedCta': string;
+  'chat.amrBalanceOwner.dismissCta': string;
   'assistant.outTokens': string;
   'assistant.producedFiles': string;
   'assistant.openFile': string;
