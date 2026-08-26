@@ -17,17 +17,17 @@ import {
   type WebStatusSnapshot,
 } from "@open-design/sidecar-proto";
 import {
+  convergeSidecarLaunch,
   findSidecarProcesses,
   getSidecarStatus,
   invokeSidecar,
-  launchSidecar,
-  stopSidecar,
+  stopSidecars,
   type SidecarStamp,
 } from "@open-design/sidecar";
-import { releaseChannelFromNamespace, releaseChannelFromVersion } from "@open-design/release";
 import { readLogTail } from "@open-design/platform";
 
 import type { ToolPackConfig } from "../config/index.js";
+import { allPackagedSidecarStopRequests, toolPackSidecarStamp } from "../config/sidecar-stamps.js";
 import { resolveToolPackLauncherLayout } from "../launcher/layout.js";
 import { readToolPackLauncherRuntimeSnapshot } from "../launcher/runtime-snapshot.js";
 import { readToolPackUpdateCacheLifecycleSnapshot } from "../updates/cache-lifecycle-snapshot.js";
@@ -70,14 +70,8 @@ function appStamp(
   source: typeof SIDECAR_SOURCES.TOOLS_PACK | typeof SIDECAR_SOURCES.PACKAGED = SIDECAR_SOURCES.TOOLS_PACK,
   mode: SidecarStamp["mode"] = SIDECAR_MODES.RUNTIME,
 ): SidecarStamp & { source: typeof SIDECAR_SOURCES.TOOLS_PACK | typeof SIDECAR_SOURCES.PACKAGED } {
-  return {
-    app,
-    channel: releaseChannelFromVersion(config.appVersion)
-      ?? releaseChannelFromNamespace(config.namespace, "default")
-      ?? "stable",
-    mode,
-    namespace: config.namespace,
-    source,
+  return toolPackSidecarStamp(config, { app, mode, source }) as SidecarStamp & {
+    source: typeof SIDECAR_SOURCES.TOOLS_PACK | typeof SIDECAR_SOURCES.PACKAGED;
   };
 }
 
@@ -292,7 +286,7 @@ export async function startPackedWinApp(config: ToolPackConfig, options: { waitF
   const logPath = desktopLogPath(config);
   await mkdir(dirname(logPath), { recursive: true });
   await writeFile(logPath, "", "utf8");
-  const spawned = await launchSidecar({
+  const convergence = await convergeSidecarLaunch({
     args: [],
     command: target.executablePath,
     cwd: dirname(target.executablePath),
@@ -314,7 +308,7 @@ export async function startPackedWinApp(config: ToolPackConfig, options: { waitF
     executablePath: target.executablePath,
     logPath,
     namespace: config.namespace,
-    pid: spawned.pid,
+    pid: convergence.description.resources.pid,
     source: target.source,
     status: options.waitForStatus === false ? null : await waitForDesktopStatus(config),
   };
@@ -339,21 +333,15 @@ async function waitForNoManagedDesktopProcesses(config: ToolPackConfig, timeoutM
 }
 
 export async function stopPackedWinApp(config: ToolPackConfig): Promise<WinStopResult> {
-  const stopped = await Promise.all(
-    [SIDECAR_SOURCES.TOOLS_PACK, SIDECAR_SOURCES.PACKAGED].flatMap((source) => [
-      stopSidecar(appStamp(config, APP_KEYS.DESKTOP, source, SIDECAR_MODES.RUNTIME)),
-      stopSidecar(appStamp(config, APP_KEYS.DESKTOP, source, "headless")),
-    ]),
-  );
-  const gracefulRequested = stopped.some((result) => result.gracefulAccepted);
-  const matchedPids = stopped.flatMap((result) => result.matchedPids);
-  const remainingPids = stopped.flatMap((result) => result.remainingPids);
+  const stopped = await stopSidecars(allPackagedSidecarStopRequests(config));
   return {
-    gracefulRequested,
+    gracefulRequested: stopped.gracefulAccepted,
     namespace: config.namespace,
-    remainingPids,
-    status: remainingPids.length > 0 ? "partial" : matchedPids.length > 0 || gracefulRequested ? "stopped" : "not-running",
-    stoppedPids: stopped.flatMap((result) => result.stoppedPids),
+    remainingPids: stopped.remainingPids,
+    status: stopped.remainingPids.length > 0
+      ? "partial"
+      : stopped.matchedPids.length > 0 || stopped.gracefulAccepted ? "stopped" : "not-running",
+    stoppedPids: stopped.stoppedPids,
   };
 }
 
@@ -379,6 +367,7 @@ export async function uninstallPackedWinApp(config: ToolPackConfig): Promise<Win
   const paths = resolveWinPaths(config);
   const registeredPaths = await measureLifecycleStep(lifecycleTimings, "resolve registered paths", async () => resolveWinRegisteredPaths(config, paths));
   const stop = await measureLifecycleStep(lifecycleTimings, "stop", async () => stopPackedWinApp(config));
+  assertWinStopComplete(stop, "uninstall");
   if (await pathExists(registeredPaths.uninstallerPath)) {
     await measureLifecycleStep(lifecycleTimings, "nsis uninstall", async () => runTimed(paths.uninstallTimingPath, "uninstall", async () => {
       await invokeNsis(paths, registeredPaths.uninstallerPath, config.silent ? ["/S"] : [], "uninstall");
@@ -425,10 +414,10 @@ export async function cleanupPackedWinNamespace(config: ToolPackConfig): Promise
   const launcher = resolveToolPackLauncherLayout(config);
   const registeredPaths = await resolveWinRegisteredPaths(config, paths);
   const removalPlan = await createWinRemovalPlan(config);
-  if (await pathExists(registeredPaths.uninstallerPath)) {
-    await uninstallPackedWinApp(config);
-  }
-  const stop = await stopPackedWinApp(config);
+  const stop = await pathExists(registeredPaths.uninstallerPath)
+    ? (await uninstallPackedWinApp(config)).stop
+    : await stopPackedWinApp(config);
+  assertWinStopComplete(stop, "cleanup");
   const removedOutputRoot = await pathExists(config.roots.output.namespaceRoot);
   const removedRuntimeNamespaceRoot = await pathExists(config.roots.runtime.namespaceRoot);
   const removedLauncherNamespaceRoot = await pathExists(launcher.paths.namespaceRoot);
@@ -452,6 +441,13 @@ export async function cleanupPackedWinNamespace(config: ToolPackConfig): Promise
     residueObservation: await observeWinResidues(config, registeredPaths),
     stop,
   };
+}
+
+function assertWinStopComplete(stop: WinStopResult, operation: string): void {
+  if (stop.remainingPids.length === 0) return;
+  throw new Error(
+    `cannot ${operation} packaged namespace while sidecar processes remain: ${stop.remainingPids.join(", ")}`,
+  );
 }
 
 export async function listPackedWinNamespaces(config: ToolPackConfig): Promise<WinListResult> {

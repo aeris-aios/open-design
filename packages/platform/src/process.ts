@@ -50,6 +50,11 @@ export type StampedProcessInvocationSnapshot = {
   roots: ProcessSnapshot[];
 };
 
+export type StampedProcessSetInvocationSnapshot<TCriteria> = {
+  entries: Array<StampedProcessInvocationSnapshot & { criteria: TCriteria }>;
+  processes: ProcessSnapshot[];
+};
+
 export type StampedProcessMatchCriteria<TStamp extends ProcessStampShape> = Partial<TStamp>;
 
 export type StopProcessesResult = {
@@ -368,6 +373,28 @@ async function listWindowsProcessSnapshots(): Promise<ProcessSnapshot[]> {
   return parseWindowsProcessSnapshots(stdout);
 }
 
+/** Capture exact PIDs without paying Windows' full Win32_Process enumeration cost. */
+export async function captureProcessSnapshotsByPids(pids: readonly number[]): Promise<ProcessSnapshot[]> {
+  const exactPids = [...new Set(pids.filter((pid) => Number.isSafeInteger(pid) && pid > 0))];
+  if (exactPids.length === 0) return [];
+  if (process.platform !== "win32") {
+    const wanted = new Set(exactPids);
+    return (await captureProcessSnapshot()).filter(({ pid }) => wanted.has(pid));
+  }
+  const filter = exactPids.map((pid) => `ProcessId = ${pid}`).join(" OR ");
+  const command = [
+    "$ErrorActionPreference = 'Stop'",
+    `Get-CimInstance Win32_Process -Filter \"${filter}\" | Select-Object ProcessId, ParentProcessId, CommandLine, @{Name='StartedAtMs';Expression={([DateTimeOffset]$_.CreationDate).ToUnixTimeMilliseconds()}} | ConvertTo-Json -Compress`,
+  ].join("; ");
+  const stdout = await new Promise<string>((resolveList, rejectList) => {
+    execFile("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", command], { encoding: "utf8", maxBuffer: 1024 * 1024 }, (error, out) => {
+      if (error) rejectList(error);
+      else resolveList(out);
+    });
+  });
+  return parseWindowsProcessSnapshots(stdout);
+}
+
 /** @internal Parse the JSON emitted by the Windows process enumeration command. */
 export function parseWindowsProcessSnapshots(stdout: string): ProcessSnapshot[] {
   const payload = stdout.trim();
@@ -468,6 +495,88 @@ export async function captureStampedProcessSnapshot<
     processes,
     roots: matches.filter(({ ppid }) => !matchedPids.has(ppid)),
   };
+}
+
+/**
+ * Capture one invocation-fenced process table for several stamp criteria.
+ * Lifecycle operations use this form when a logical resource spans multiple
+ * stamped generations: every member is observed at the same boundary and a
+ * slow platform backend (notably Windows CIM) is paid only once.
+ */
+export async function captureStampedProcessSetSnapshot<
+  TStamp extends ProcessStampShape,
+  TCriteria extends Partial<TStamp> = Partial<TStamp>,
+>(
+  criteriaSet: readonly TCriteria[],
+  contract: ProcessStampContract<TStamp, TCriteria>,
+): Promise<StampedProcessSetInvocationSnapshot<TCriteria>> {
+  const invokedAtMs = Date.now();
+  const processes = process.platform === "win32"
+    ? await captureWindowsStampedProcessTrees(criteriaSet, contract)
+    : await captureProcessSnapshot();
+  return {
+    entries: criteriaSet.map((criteria) => {
+      const matches = selectStampedProcessesAtInvocation(
+        processes,
+        criteria,
+        contract,
+        invokedAtMs,
+      );
+      const matchedPids = new Set(matches.map(({ pid }) => pid));
+      return {
+        criteria,
+        matches,
+        processes,
+        roots: matches.filter(({ ppid }) => !matchedPids.has(ppid)),
+      };
+    }),
+    processes,
+  };
+}
+
+/** Query stamped Windows roots and only their descendant trees in one shell. */
+async function captureWindowsStampedProcessTrees<
+  TStamp extends ProcessStampShape,
+  TCriteria extends Partial<TStamp>,
+>(
+  criteriaSet: readonly TCriteria[],
+  contract: ProcessStampContract<TStamp, TCriteria>,
+): Promise<ProcessSnapshot[]> {
+  if (criteriaSet.length === 0) return [];
+  const clauses = criteriaSet.map((criteria) => {
+    const normalized = contract.normalizeStampCriteria(criteria);
+    const fields = contract.stampFields.flatMap((field) => {
+      const value = normalized[field];
+      if (typeof value !== "string") return [];
+      const needle = `${contract.stampFlags[field]}=${value}`.replaceAll("'", "''");
+      return [`CommandLine LIKE '%${needle}%'`];
+    });
+    return fields.length === 0 ? "CommandLine IS NOT NULL" : `(${fields.join(" AND ")})`;
+  });
+  const rootFilter = [...new Set(clauses)].join(" OR ");
+  const powershellRootFilter = `'${rootFilter.replaceAll("'", "''")}'`;
+  const command = [
+    "$ErrorActionPreference = 'Stop'",
+    `$roots = @(Get-CimInstance Win32_Process -Filter ${powershellRootFilter})`,
+    "$all = [System.Collections.Generic.List[object]]::new()",
+    "$seen = @{}",
+    "$frontier = [System.Collections.Generic.List[int]]::new()",
+    "foreach ($process in $roots) { $pidValue = [int]$process.ProcessId; if (-not $seen.ContainsKey($pidValue)) { $seen[$pidValue] = $true; $all.Add($process); $frontier.Add($pidValue) } }",
+    "while ($frontier.Count -gt 0) {",
+    "  $childFilter = (($frontier | ForEach-Object { \"ParentProcessId = $_\" }) -join ' OR ')",
+    "  $frontier = [System.Collections.Generic.List[int]]::new()",
+    "  $children = @(Get-CimInstance Win32_Process -Filter $childFilter)",
+    "  foreach ($process in $children) { $pidValue = [int]$process.ProcessId; if (-not $seen.ContainsKey($pidValue)) { $seen[$pidValue] = $true; $all.Add($process); $frontier.Add($pidValue) } }",
+    "}",
+    "$all | Select-Object ProcessId, ParentProcessId, CommandLine, @{Name='StartedAtMs';Expression={([DateTimeOffset]$_.CreationDate).ToUnixTimeMilliseconds()}} | ConvertTo-Json -Compress",
+  ].join("; ");
+  const stdout = await new Promise<string>((resolveList, rejectList) => {
+    execFile("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", command], { encoding: "utf8", maxBuffer: 8 * 1024 * 1024 }, (error, out) => {
+      if (error) rejectList(error);
+      else resolveList(out);
+    });
+  });
+  return parseWindowsProcessSnapshots(stdout);
 }
 
 /**

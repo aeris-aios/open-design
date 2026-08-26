@@ -10,7 +10,7 @@ import {
 import { collectSidecarGenerationPids } from "./process-tree.js";
 import { SIDECAR_STAMP_CONTRACT, type SidecarStamp } from "./stamp.js";
 
-type FencedGenerationRef = Readonly<{ rootPid: number; stamp: SidecarStamp }>;
+type FencedGenerationRef = Readonly<{ rootPid: number; startedAtMs?: number; stamp: SidecarStamp }>;
 type SupervisedTargetRef = Readonly<{ rootPid: number; stamp: SidecarStamp; supervisorPid: number }>;
 
 type FencedRetirementOptions = Readonly<{
@@ -28,6 +28,7 @@ export async function retireFencedSidecarProcessTree(
     ref,
     options,
     (processInfo) => processInfo.pid === ref.rootPid &&
+      (ref.startedAtMs == null || processInfo.startedAtMs === ref.startedAtMs) &&
       matchesStampedProcess(processInfo, ref.stamp, SIDECAR_STAMP_CONTRACT),
     (initialPids) => initialPids,
   );

@@ -10,7 +10,10 @@ import {
 
 import { type SidecarDescription, sidecarProtocol } from "./client.js";
 import { requestJsonIpc } from "./json-ipc.js";
-import { captureSidecarGenerationSnapshot } from "./process-tree.js";
+import {
+  captureSidecarGenerationSetSnapshot,
+  captureSidecarGenerationSnapshot,
+} from "./process-tree.js";
 import { retireFencedSidecarProcessTree } from "./process-retirement.js";
 import {
   normalizeSidecarStamp,
@@ -29,9 +32,19 @@ export type SidecarStopOptions = StopProcessesOptions & {
   gracefulRequestTimeoutMs?: number;
 };
 
+export type SidecarStopRequest = Readonly<{
+  options?: SidecarStopOptions;
+  stamp: SidecarStamp;
+}>;
+
+export type SidecarStopSetResult = SidecarStopResult & {
+  results: Array<Readonly<{ result: SidecarStopResult; stamp: SidecarStamp }>>;
+};
+
 /** Authority to mutate one concrete supervisor generation of a stamped resource. */
 export type SidecarGenerationRef = Readonly<{
   rootPid: number;
+  startedAtMs?: number;
   stamp: SidecarStamp;
 }>;
 
@@ -46,11 +59,19 @@ export type ObservedSidecarGeneration = Readonly<{
   stamp: SidecarStamp;
 }>;
 
-export function sidecarGenerationRef(stampInput: SidecarStamp, rootPid: number): SidecarGenerationRef {
+export function sidecarGenerationRef(
+  stampInput: SidecarStamp,
+  rootPid: number,
+  startedAtMs?: number,
+): SidecarGenerationRef {
   if (!Number.isSafeInteger(rootPid) || rootPid <= 0) {
     throw new Error("sidecar generation root pid must be a positive safe integer");
   }
-  return Object.freeze({ rootPid, stamp: normalizeSidecarStamp(stampInput) });
+  return Object.freeze({
+    rootPid,
+    ...(Number.isSafeInteger(startedAtMs) && (startedAtMs ?? 0) > 0 ? { startedAtMs } : {}),
+    stamp: normalizeSidecarStamp(stampInput),
+  });
 }
 
 export async function describeSidecarGeneration(
@@ -86,52 +107,74 @@ export async function observeSidecarGeneration(
   stampInput: SidecarStamp,
   descriptionTimeoutMs = 2_000,
 ): Promise<ObservedSidecarGeneration> {
-  const stamp = normalizeSidecarStamp(stampInput);
-  const normalizedDescriptionTimeoutMs = normalizeGracefulRequestTimeoutMs(descriptionTimeoutMs);
-  const deadline = Date.now() + 1_000;
+  return (await observeSidecarGenerations([stampInput], descriptionTimeoutMs))[0]!;
+}
+
+/** Observe several resources at one process-table boundary. */
+export async function observeSidecarGenerations(
+  stampInputs: readonly SidecarStamp[],
+  descriptionTimeoutMs: number | readonly number[] = 2_000,
+): Promise<ObservedSidecarGeneration[]> {
+  const stamps = uniqueNormalizedStamps(stampInputs);
+  const descriptionTimeouts = stamps.map((_, index) => normalizeGracefulRequestTimeoutMs(
+    typeof descriptionTimeoutMs === "number" ? descriptionTimeoutMs : descriptionTimeoutMs[index],
+  ));
+  let retryDeadline: number | null = null;
   while (true) {
     try {
-      return await observeSidecarGenerationOnce(stamp, normalizedDescriptionTimeoutMs);
+      return await observeSidecarGenerationsOnce(stamps, descriptionTimeouts);
     } catch (error) {
-      if (!isTransientGenerationObservation(error) || Date.now() >= deadline) throw error;
+      // Guarantee one real re-observation even when the first Windows CIM
+      // capture itself takes longer than the old one-second retry deadline.
+      if (!isTransientGenerationObservation(error)) throw error;
+      if (retryDeadline == null) retryDeadline = Date.now() + 1_000;
+      else if (Date.now() >= retryDeadline) throw error;
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
   }
 }
 
-async function observeSidecarGenerationOnce(
-  stamp: SidecarStamp,
-  descriptionTimeoutMs: number,
-): Promise<ObservedSidecarGeneration> {
-  const endpoint = await readPrivateEndpointIdentity(stamp);
-  const snapshot = await captureSidecarGenerationSnapshot(stamp);
-  const endpointAfterCapture = await readPrivateEndpointIdentity(stamp);
-  if (!samePrivateEndpointIdentity(endpoint, endpointAfterCapture)) {
-    throw new Error("cannot mutate sidecar because endpoint ownership changed during process discovery");
-  }
-  if (snapshot.roots.length > 1) {
-    throw new Error(
-      `cannot mutate sidecar with multiple stamped generation roots: ${snapshot.roots.map(({ pid }) => pid).join(", ")}`,
-    );
-  }
-  const description = await describeSidecarGeneration(stamp, descriptionTimeoutMs);
-  const endpointAfterDescribe = await readPrivateEndpointIdentity(stamp);
-  if (!samePrivateEndpointIdentity(endpoint, endpointAfterDescribe)) {
-    throw new Error("cannot mutate sidecar because endpoint ownership changed during description");
-  }
-  const rootPid = snapshot.roots[0]?.pid ?? null;
-  if (description != null && rootPid !== description.resources.pid) {
-    throw new Error(
-      `cannot mutate sidecar because endpoint pid ${description.resources.pid} is not the stamped generation root`,
-    );
-  }
-  return {
-    description,
-    endpoint,
-    processes: snapshot.processes,
-    ref: rootPid == null ? null : sidecarGenerationRef(stamp, rootPid),
-    stamp,
-  };
+async function observeSidecarGenerationsOnce(
+  stamps: readonly SidecarStamp[],
+  descriptionTimeoutMs: readonly number[],
+): Promise<ObservedSidecarGeneration[]> {
+  const endpoints = await Promise.all(stamps.map(readPrivateEndpointIdentity));
+  const snapshots = await captureSidecarGenerationSetSnapshot(stamps);
+  const endpointsAfterCapture = await Promise.all(stamps.map(readPrivateEndpointIdentity));
+  const descriptions = await Promise.all(
+    stamps.map(async (stamp, index) => await describeSidecarGeneration(stamp, descriptionTimeoutMs[index])),
+  );
+  const endpointsAfterDescribe = await Promise.all(stamps.map(readPrivateEndpointIdentity));
+
+  return stamps.map((stamp, index) => {
+    const endpoint = endpoints[index] ?? null;
+    if (!samePrivateEndpointIdentity(endpoint, endpointsAfterCapture[index] ?? null)) {
+      throw new Error("cannot mutate sidecar because endpoint ownership changed during process discovery");
+    }
+    if (!samePrivateEndpointIdentity(endpoint, endpointsAfterDescribe[index] ?? null)) {
+      throw new Error("cannot mutate sidecar because endpoint ownership changed during description");
+    }
+    const snapshot = snapshots[index]!;
+    if (snapshot.roots.length > 1) {
+      throw new Error(
+        `cannot mutate sidecar with multiple stamped generation roots: ${snapshot.roots.map(({ pid }) => pid).join(", ")}`,
+      );
+    }
+    const description = descriptions[index] ?? null;
+    const rootPid = snapshot.roots[0]?.pid ?? null;
+    if (description != null && rootPid !== description.resources.pid) {
+      throw new Error(
+        `cannot mutate sidecar because endpoint pid ${description.resources.pid} is not the stamped generation root`,
+      );
+    }
+    return {
+      description,
+      endpoint,
+      processes: snapshot.processes,
+      ref: rootPid == null ? null : sidecarGenerationRef(stamp, rootPid, snapshot.roots[0]?.startedAtMs),
+      stamp,
+    };
+  });
 }
 
 function isTransientGenerationObservation(error: unknown): boolean {
@@ -144,26 +187,45 @@ export async function retireObservedSidecarGeneration(
   observation: ObservedSidecarGeneration,
   options: SidecarStopOptions = {},
 ): Promise<SidecarStopResult> {
-  const result = observation.ref == null
-    ? alreadyStoppedResult()
-    : await retireSidecarGeneration(observation.ref, options, observation.processes);
-  const stamp = observation.stamp;
-  const replacements = (await captureSidecarGenerationSnapshot(stamp)).roots
-    .filter(({ pid }) => isProcessAlive(pid));
-  if (replacements.length > 0) {
+  return (await retireObservedSidecarGenerations([{ observation, options }]))[0]!;
+}
+
+/** Retire an invocation-fenced resource set and verify replacements once. */
+export async function retireObservedSidecarGenerations(
+  requests: readonly Readonly<{
+    observation: ObservedSidecarGeneration;
+    options?: SidecarStopOptions;
+  }>[],
+): Promise<SidecarStopResult[]> {
+  const baseResults = await Promise.all(requests.map(async ({ observation, options = {} }) =>
+    observation.ref == null
+      ? alreadyStoppedResult()
+      : await retireSidecarGeneration(observation.ref, options, observation.processes)));
+  const replacementSnapshots = await captureSidecarGenerationSetSnapshot(
+    requests.map(({ observation }) => observation.stamp),
+  );
+
+  return await Promise.all(requests.map(async ({ observation }, index) => {
+    const base = baseResults[index]!;
+    const replacements = replacementSnapshots[index]!.roots.filter(({ pid }) => isProcessAlive(pid));
+    const remainingPids = [...new Set([
+      ...base.remainingPids,
+      ...replacements.map(({ pid }) => pid),
+    ])];
+    let staleEndpointRemoved = false;
+    if (
+      remainingPids.length === 0 &&
+      (observation.ref != null || await privateEndpointRefusesConnections(observation.stamp))
+    ) {
+      staleEndpointRemoved = await removeOwnedPrivateEndpoint(observation.stamp, observation.endpoint);
+    }
     return {
-      ...result,
-      remainingPids: [...new Set([...result.remainingPids, ...replacements.map(({ pid }) => pid)])],
+      ...base,
+      alreadyStopped: base.alreadyStopped && remainingPids.length === 0,
+      remainingPids,
+      staleEndpointRemoved,
     };
-  }
-  let staleEndpointRemoved = false;
-  if (
-    result.remainingPids.length === 0 &&
-    (observation.ref != null || await privateEndpointRefusesConnections(stamp))
-  ) {
-    staleEndpointRemoved = await removeOwnedPrivateEndpoint(stamp, observation.endpoint);
-  }
-  return { ...result, staleEndpointRemoved };
+  }));
 }
 
 /** Retire a generation already owned by the caller without adopting a replacement. */
@@ -201,6 +263,7 @@ export async function retireSidecarGeneration(
   const snapshots = knownSnapshots ?? await captureProcessSnapshot();
   const rootOwnedAtEntry = snapshots.some((processInfo) =>
     processInfo.pid === ref.rootPid &&
+    (ref.startedAtMs == null || processInfo.startedAtMs === ref.startedAtMs) &&
     matchesStampedProcess(processInfo, ref.stamp, SIDECAR_STAMP_CONTRACT),
   );
   if (!rootOwnedAtEntry) return alreadyStoppedResult();
@@ -239,6 +302,15 @@ function alreadyStoppedResult(): SidecarStopResult {
     remainingPids: [],
     stoppedPids: [],
   };
+}
+
+function uniqueNormalizedStamps(stampInputs: readonly SidecarStamp[]): SidecarStamp[] {
+  const unique = new Map<string, SidecarStamp>();
+  for (const input of stampInputs) {
+    const stamp = normalizeSidecarStamp(input);
+    unique.set(JSON.stringify(stamp), stamp);
+  }
+  return [...unique.values()];
 }
 
 function samePrivateEndpointIdentity(

@@ -16,6 +16,31 @@ import {
 } from "@open-design/sidecar-proto";
 import { describe, expect, it, vi } from "vitest";
 
+const stopSidecarMock = vi.hoisted(() => vi.fn(async (_stamp?: unknown, _options?: unknown) => ({
+  alreadyStopped: true,
+  forcedPids: [],
+  gracefulAccepted: false,
+  matchedPids: [],
+  remainingPids: [],
+  stoppedPids: [],
+})));
+const stopSidecarsMock = vi.hoisted(() => vi.fn(async (requests: Array<{ options?: unknown; stamp: unknown }>) => {
+  const results = await Promise.all(requests.map(async ({ options, stamp }) => ({
+    result: await stopSidecarMock(stamp, options),
+    stamp,
+  })));
+  const stopped = results.map(({ result }) => result);
+  return {
+    alreadyStopped: stopped.every(({ alreadyStopped }) => alreadyStopped),
+    forcedPids: [],
+    gracefulAccepted: stopped.some(({ gracefulAccepted }) => gracefulAccepted),
+    matchedPids: [...new Set(stopped.flatMap(({ matchedPids }) => matchedPids))],
+    remainingPids: [...new Set(stopped.flatMap(({ remainingPids }) => remainingPids))],
+    results,
+    stoppedPids: [...new Set(stopped.flatMap(({ stoppedPids }) => stoppedPids))],
+  };
+}));
+
 vi.mock("@open-design/sidecar", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@open-design/sidecar")>();
   return {
@@ -23,9 +48,8 @@ vi.mock("@open-design/sidecar", async (importOriginal) => {
     findSidecarProcesses: vi.fn(async () => []),
     getSidecarStatus: vi.fn(async () => { throw new Error("status unavailable"); }),
     invokeSidecar: vi.fn(async () => { throw new Error("invoke unavailable"); }),
-    stopSidecar: vi.fn(async () => ({
-      alreadyStopped: true, forcedPids: [], gracefulAccepted: false, matchedPids: [], remainingPids: [], stoppedPids: [],
-    })),
+    stopSidecar: stopSidecarMock,
+    stopSidecars: stopSidecarsMock,
   };
 });
 
@@ -495,9 +519,15 @@ describe("stopPackedLinuxApp", () => {
       stoppedPids: [],
     });
     await expect(stopPackedLinuxApp(makeConfig())).resolves.toMatchObject({ status: "not-running" });
-    expect(stop).toHaveBeenCalledTimes(2);
-    expect(stop).toHaveBeenCalledWith(expect.objectContaining({ source: SIDECAR_SOURCES.TOOLS_PACK }));
-    expect(stop).toHaveBeenCalledWith(expect.objectContaining({ source: SIDECAR_SOURCES.PACKAGED }));
+    expect(stop).toHaveBeenCalledTimes(8);
+    expect(stop).toHaveBeenCalledWith(
+      expect.objectContaining({ source: SIDECAR_SOURCES.TOOLS_PACK }),
+      undefined,
+    );
+    expect(stop).toHaveBeenCalledWith(
+      expect.objectContaining({ source: SIDECAR_SOURCES.PACKAGED }),
+      undefined,
+    );
   });
 });
 

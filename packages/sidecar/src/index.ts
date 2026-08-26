@@ -59,6 +59,8 @@ export type {
   SidecarRestartResult,
   SidecarStopOptions,
   SidecarStopResult,
+  SidecarStopRequest,
+  SidecarStopSetResult,
   SpawnedSidecar,
 } from "./operations.js";
 export {
@@ -75,4 +77,5 @@ export {
   spawnSidecarLauncher,
   spawnSidecar,
   stopSidecar,
+  stopSidecars,
 } from "./operations.js";

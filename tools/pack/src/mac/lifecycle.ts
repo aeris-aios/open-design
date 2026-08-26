@@ -1,4 +1,4 @@
-import { execFile, type ChildProcess } from "node:child_process";
+import { execFile } from "node:child_process";
 import { mkdir, open, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { promisify } from "node:util";
@@ -19,12 +19,12 @@ import {
   convergeSidecarLaunch,
   getSidecarStatus,
   invokeSidecar,
-  stopSidecar,
+  stopSidecars,
   type SidecarStamp as ConvergedSidecarStamp,
 } from "@open-design/sidecar";
-import { releaseChannelFromNamespace, releaseChannelFromVersion } from "@open-design/release";
-import { isProcessAlive, readLogTail } from "@open-design/platform";
+import { readLogTail } from "@open-design/platform";
 import type { ToolPackConfig } from "../config/index.js";
+import { allPackagedSidecarStopRequests, toolPackSidecarStamp } from "../config/sidecar-stamps.js";
 import { resolveToolPackLauncherLayout } from "../launcher/layout.js";
 import { readToolPackLauncherRuntimeSnapshot } from "../launcher/runtime-snapshot.js";
 import { readToolPackUpdateCacheLifecycleSnapshot } from "../updates/cache-lifecycle-snapshot.js";
@@ -47,24 +47,7 @@ function convergedDesktopStamp(
   source: typeof SIDECAR_SOURCES.TOOLS_PACK | typeof SIDECAR_SOURCES.PACKAGED = SIDECAR_SOURCES.TOOLS_PACK,
   mode: ConvergedSidecarStamp["mode"] = SIDECAR_MODES.RUNTIME,
 ): ConvergedSidecarStamp {
-  return convergedPackagedStamp(config, APP_KEYS.DESKTOP, source, mode);
-}
-
-function convergedPackagedStamp(
-  config: ToolPackConfig,
-  app: ConvergedSidecarStamp["app"],
-  source: typeof SIDECAR_SOURCES.TOOLS_PACK | typeof SIDECAR_SOURCES.PACKAGED,
-  mode: ConvergedSidecarStamp["mode"],
-): ConvergedSidecarStamp {
-  return {
-    app,
-    channel: releaseChannelFromVersion(config.appVersion)
-      ?? releaseChannelFromNamespace(config.namespace, "default")
-      ?? "stable",
-    mode,
-    namespace: config.namespace,
-    source,
-  };
+  return toolPackSidecarStamp(config, { app: APP_KEYS.DESKTOP, mode, source });
 }
 
 type ReachableDesktop = {
@@ -95,46 +78,6 @@ async function waitForDesktopStatus(config: ToolPackConfig, timeoutMs = 45_000):
     await new Promise((resolveWait) => setTimeout(resolveWait, 200));
   }
   return null;
-}
-
-type ProcessExit = { code: number | null; signal: NodeJS.Signals | null };
-
-function watchProcessExit(child: ChildProcess): {
-  current(): ProcessExit | null;
-  wait(timeoutMs: number): Promise<ProcessExit | null>;
-} {
-  let exit: ProcessExit | null = null;
-  const waiters = new Set<(value: ProcessExit) => void>();
-
-  child.once("exit", (code, signal) => {
-    exit = { code, signal };
-    for (const resolveWait of waiters) resolveWait(exit);
-    waiters.clear();
-  });
-
-  return {
-    current() {
-      return exit;
-    },
-    async wait(timeoutMs: number): Promise<ProcessExit | null> {
-      if (exit != null) return exit;
-      return await new Promise((resolveWait) => {
-        const timer = setTimeout(() => {
-          waiters.delete(onExit);
-          resolveWait(null);
-        }, timeoutMs);
-        const onExit = (value: ProcessExit) => {
-          clearTimeout(timer);
-          resolveWait(value);
-        };
-        waiters.add(onExit);
-      });
-    },
-  };
-}
-
-function formatExit(exit: ProcessExit): string {
-  return `code=${exit.code ?? "null"} signal=${exit.signal ?? "null"}`;
 }
 
 function nonEmptyLines(value: string): string[] {
@@ -396,9 +339,9 @@ export async function startPackedMacApp(config: ToolPackConfig): Promise<MacStar
   await writeFile(logPath, "", "utf8");
 
   const logHandle = await open(logPath, "a");
-  let child: ChildProcess;
+  let convergence: Awaited<ReturnType<typeof convergeSidecarLaunch>>;
   try {
-    const convergence = await convergeSidecarLaunch({
+    convergence = await convergeSidecarLaunch({
       args: [],
       command: target.executablePath,
       cwd: target.appPath,
@@ -417,83 +360,40 @@ export async function startPackedMacApp(config: ToolPackConfig): Promise<MacStar
       },
       stamp,
     });
-    child = convergence.launcherProcess;
   } finally {
     await logHandle.close().catch(() => undefined);
   }
-  const pid = child.pid ?? 0;
-  const exit = watchProcessExit(child);
-  const earlyExit = await exit.wait(1500);
-  child.unref();
-  const cleanLauncherExit = earlyExit?.code === 0 && earlyExit.signal == null;
-  if (earlyExit != null && !cleanLauncherExit) {
-    throw new Error(await createLaunchFailureMessage(config, target, {
-      pid,
-      reason: `process exited early ${formatExit(earlyExit)}`,
-    }));
-  }
+  convergence.launcherProcess.unref();
+  const pid = convergence.description.resources.pid;
 
   const status = await waitForDesktopStatus(config);
-  if (status == null && earlyExit != null) {
+  if (status == null) {
     throw new Error(await createLaunchFailureMessage(config, target, {
       pid,
-      reason: `launcher exited cleanly before desktop IPC was available ${formatExit(earlyExit)}`,
+      reason: "converged sidecar owner stopped responding before desktop status became available",
     }));
   }
-  const delayedExit = exit.current();
-  if (status == null && delayedExit != null) {
-    throw new Error(await createLaunchFailureMessage(config, target, {
-      pid,
-      reason: `process exited before desktop IPC was available ${formatExit(delayedExit)}`,
-    }));
-  }
-  if (status == null && !isProcessAlive(pid)) {
-    throw new Error(await createLaunchFailureMessage(config, target, {
-      pid,
-      reason: "process exited before desktop IPC was available without an observed exit event",
-    }));
-  }
-  const activePid = typeof status?.pid === "number" && status.pid > 0 ? status.pid : pid;
   return {
     appPath: target.appPath,
     executablePath: target.executablePath,
     logPath,
     namespace: config.namespace,
-    pid: activePid,
+    pid,
     source: target.source,
     status,
   };
 }
 
 export async function stopPackedMacApp(config: ToolPackConfig): Promise<MacStopResult> {
-  // Desktop owns the user-visible lifecycle, but Web and daemon are detached
-  // stamped generations. Observe and retire all three concurrently so the
-  // outer stop cannot lose a frozen child after Electron itself exits.
-  const stamps = [SIDECAR_SOURCES.TOOLS_PACK, SIDECAR_SOURCES.PACKAGED].flatMap((source) => [
-    convergedPackagedStamp(config, APP_KEYS.DESKTOP, source, SIDECAR_MODES.RUNTIME),
-    convergedPackagedStamp(config, APP_KEYS.WEB, source, SIDECAR_MODES.RUNTIME),
-    convergedPackagedStamp(config, APP_KEYS.DAEMON, source, SIDECAR_MODES.RUNTIME),
-    convergedPackagedStamp(config, APP_KEYS.DESKTOP, source, "headless"),
-  ]);
-  const results = await Promise.all(
-    stamps.map(async (stamp) => await stopSidecar(stamp, stamp.app === APP_KEYS.WEB
-      ? {
-          gracefulRequestTimeoutMs: 500,
-          killGraceMs: 750,
-          termGraceMs: 750,
-        }
-      : {})),
-  );
-  const matchedPids = [...new Set(results.flatMap((result) => result.matchedPids))];
-  const remainingPids = [...new Set(results.flatMap((result) => result.remainingPids))];
-  const stoppedPids = [...new Set(results.flatMap((result) => result.stoppedPids))];
-  const gracefulRequested = results.some((result) => result.gracefulAccepted);
+  const stopped = await stopSidecars(allPackagedSidecarStopRequests(config));
   return {
-    gracefulRequested,
+    gracefulRequested: stopped.gracefulAccepted,
     namespace: config.namespace,
-    remainingPids,
-    status: remainingPids.length > 0 ? "partial" : matchedPids.length > 0 || gracefulRequested ? "stopped" : "not-running",
-    stoppedPids,
+    remainingPids: stopped.remainingPids,
+    status: stopped.remainingPids.length > 0
+      ? "partial"
+      : stopped.matchedPids.length > 0 || stopped.gracefulAccepted ? "stopped" : "not-running",
+    stoppedPids: stopped.stoppedPids,
   };
 }
 

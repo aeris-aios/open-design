@@ -33,6 +33,7 @@ export type {
   ProcessStampShape,
   SpawnProcessRequest,
   StampedProcessInvocationSnapshot,
+  StampedProcessSetInvocationSnapshot,
   StampedProcessMatchCriteria,
   StopProcessesOptions,
   StopProcessesResult,
@@ -40,7 +41,9 @@ export type {
 export {
   collectProcessTreePids,
   captureProcessSnapshot,
+  captureProcessSnapshotsByPids,
   captureStampedProcessSnapshot,
+  captureStampedProcessSetSnapshot,
   createProcessStampArgs,
   isProcessAlive,
   listProcessSnapshots,

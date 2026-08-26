@@ -24,6 +24,7 @@ import {
   spawnSidecar,
   spawnSidecarLauncher,
   stopSidecar,
+  stopSidecars,
   type SidecarResources,
   type SidecarStamp,
 } from "../src/index.js";
@@ -1164,6 +1165,41 @@ describe("server-side atomic operations", () => {
       ]);
     }
   });
+
+  it("retires a multi-resource lifecycle set at one declared boundary", async () => {
+    const fixture = fileURLToPath(new URL("./fixtures/stamped-child.ts", import.meta.url));
+    const namespace = `resource-set-${process.pid}`;
+    const resources = {
+      dataRoot: "/tmp/open-design-resource-set",
+      ownerPid: null,
+      port: 0,
+      runtimeRoot: "/tmp/open-design-resource-set-runtime",
+    };
+    const daemonStamp = { ...stamp, namespace };
+    const webStamp = { ...stamp, app: "web", namespace };
+    const daemon = await spawnSidecar({ args: [fixture], command: process.execPath, resources, stamp: daemonStamp });
+    const web = await spawnSidecar({ args: [fixture], command: process.execPath, resources, stamp: webStamp });
+    try {
+      await vi.waitFor(async () => {
+        await expect(findSidecarProcesses(daemonStamp)).resolves.toHaveLength(1);
+        await expect(findSidecarProcesses(webStamp)).resolves.toHaveLength(1);
+      }, { timeout: FIXTURE_READY_TIMEOUT_MS });
+
+      const result = await stopSidecars([
+        { stamp: daemonStamp },
+        { stamp: webStamp },
+      ]);
+
+      expect(result.remainingPids).toEqual([]);
+      expect(result.stoppedPids).toEqual(expect.arrayContaining([daemon.process.pid, web.process.pid]));
+      expect(result.results.map(({ stamp: stoppedStamp }) => stoppedStamp.app)).toEqual(["daemon", "web"]);
+    } finally {
+      await Promise.all([
+        daemon.stop({ killGraceMs: 2_000, termGraceMs: 0 }).catch(() => undefined),
+        web.stop({ killGraceMs: 2_000, termGraceMs: 0 }).catch(() => undefined),
+      ]);
+    }
+  }, 15_000);
 
   it("re-observes a transient second root before mutating the surviving generation", async () => {
     const fixture = fileURLToPath(new URL("./fixtures/stamped-child.ts", import.meta.url));

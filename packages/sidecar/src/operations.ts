@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 
 import type { SpawnProcessRequest } from "@open-design/platform";
 import {
+  captureProcessSnapshotsByPids,
   createProcessStampArgs,
   isProcessAlive,
   listProcessSnapshots,
@@ -23,10 +24,14 @@ import {
 import {
   describeSidecarGeneration,
   observeSidecarGeneration,
+  observeSidecarGenerations,
   retireKnownSidecarGeneration,
   retireObservedSidecarGeneration,
+  retireObservedSidecarGenerations,
   sidecarGenerationRef,
   type SidecarStopOptions,
+  type SidecarStopRequest,
+  type SidecarStopSetResult,
   type SidecarStopResult,
 } from "./generation.js";
 import { captureSidecarGenerationSnapshot } from "./process-tree.js";
@@ -43,7 +48,12 @@ import {
   type SidecarStamp,
 } from "./stamp.js";
 
-export type { SidecarStopOptions, SidecarStopResult } from "./generation.js";
+export type {
+  SidecarStopOptions,
+  SidecarStopRequest,
+  SidecarStopResult,
+  SidecarStopSetResult,
+} from "./generation.js";
 
 export type SidecarLaunchRequest = Omit<SpawnProcessRequest, "args" | "env"> & {
   args?: readonly string[];
@@ -243,12 +253,14 @@ export async function convergeSidecarLaunch(
         );
       }
 
-      const [description, roots] = await Promise.all([
-        describeSidecarGeneration(stamp),
-        findSidecarProcesses(stamp),
-      ]);
+      const description = await describeSidecarGeneration(stamp);
       const ownerPid = description?.ready === true ? description.resources.pid : null;
-      const generationStable = ownerPid != null && roots.length === 1 && roots[0]?.pid === ownerPid;
+      const ownerSnapshot = ownerPid == null
+        ? null
+        : (await captureProcessSnapshotsByPids([ownerPid]))[0] ?? null;
+      const generationStable = ownerSnapshot != null &&
+        matchesStampedProcess(ownerSnapshot, stamp, SIDECAR_STAMP_CONTRACT) &&
+        !isSidecarLauncherCommand(ownerSnapshot.command);
       const launcherConverged = exit != null && exit.signal == null && (
         exit.code === 0 || exit.code === SIDECAR_LAUNCHER_RETRY_EXIT_CODE
       );
@@ -339,7 +351,10 @@ export async function spawnSidecar(request: SidecarLaunchRequest): Promise<Spawn
   }));
   if (child.pid == null) throw new Error("spawned sidecar process has no pid");
   const rootPid = child.pid;
-  const ref = sidecarGenerationRef(stamp, rootPid);
+  const rootSnapshot = process.platform === "win32"
+    ? (await captureProcessSnapshotsByPids([rootPid]))[0] ?? null
+    : null;
+  const ref = sidecarGenerationRef(stamp, rootPid, rootSnapshot?.startedAtMs);
   const childProcess = child as ChildProcess & { pid: number };
   let stopTask: Promise<SidecarStopResult> | null = null;
   return {
@@ -396,6 +411,52 @@ export async function stopSidecar(stamp: SidecarStamp, options: SidecarStopOptio
     await observeSidecarGeneration(exact, options.gracefulRequestTimeoutMs),
     options,
   );
+}
+
+/** Stop a logical resource set against one shared generation boundary. */
+export async function stopSidecars(requests: readonly SidecarStopRequest[]): Promise<SidecarStopSetResult> {
+  if (requests.length === 0) {
+    return { ...emptyStopSetResult(), results: [] };
+  }
+  const normalized = new Map<string, SidecarStopRequest>();
+  for (const request of requests) {
+    const stamp = normalizeSidecarStamp(request.stamp);
+    normalized.set(JSON.stringify(stamp), { options: request.options, stamp });
+  }
+  const unique = [...normalized.values()];
+  const observations = await observeSidecarGenerations(
+    unique.map(({ stamp }) => stamp),
+    unique.map(({ options }) => options?.gracefulRequestTimeoutMs ?? 2_000),
+  );
+  const stopped = await retireObservedSidecarGenerations(observations.map((observation, index) => ({
+    observation,
+    options: unique[index]!.options,
+  })));
+  const results = stopped.map((result, index) => ({ result, stamp: unique[index]!.stamp }));
+  const matchedPids = [...new Set(stopped.flatMap(({ matchedPids: pids }) => pids))];
+  const remainingPids = [...new Set(stopped.flatMap(({ remainingPids: pids }) => pids))];
+  const stoppedPids = [...new Set(stopped.flatMap(({ stoppedPids: pids }) => pids))];
+  const forcedPids = [...new Set(stopped.flatMap(({ forcedPids: pids }) => pids))];
+  return {
+    alreadyStopped: stopped.every(({ alreadyStopped }) => alreadyStopped),
+    forcedPids,
+    gracefulAccepted: stopped.some(({ gracefulAccepted }) => gracefulAccepted),
+    matchedPids,
+    remainingPids,
+    results,
+    stoppedPids,
+  };
+}
+
+function emptyStopSetResult(): SidecarStopResult {
+  return {
+    alreadyStopped: true,
+    forcedPids: [],
+    gracefulAccepted: false,
+    matchedPids: [],
+    remainingPids: [],
+    stoppedPids: [],
+  };
 }
 
 /**

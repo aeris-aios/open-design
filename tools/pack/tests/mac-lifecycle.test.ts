@@ -32,12 +32,16 @@ const spawnLoggedProcess = vi.fn(async ({ env }: { env: NodeJS.ProcessEnv }) => 
     unref: vi.fn(),
   }) as unknown as ChildProcess & { env: NodeJS.ProcessEnv };
 });
-const convergeSidecarLaunch = vi.fn(async (request: { env: NodeJS.ProcessEnv; stamp: Record<string, string> }) => ({
+const defaultConvergeSidecarLaunch = async (request: { env: NodeJS.ProcessEnv; stamp: Record<string, string> }) => ({
   attempts: 1,
   description: { ready: true, resources: { pid: 1234 }, stamp: request.stamp },
   launcherProcess: await spawnLoggedProcess(request),
-}));
-const defaultStopSidecar = async (stamp: { app: string; mode: string; source: string }): Promise<SidecarStopResult> => ({
+});
+const convergeSidecarLaunch = vi.fn(defaultConvergeSidecarLaunch);
+const defaultStopSidecar = async (
+  stamp: { app: string; mode: string; source: string },
+  _options?: Record<string, number>,
+): Promise<SidecarStopResult> => ({
   alreadyStopped: stamp.source !== "packaged" || stamp.mode !== "headless",
   forcedPids: [],
   gracefulAccepted: stamp.source === "packaged" && stamp.mode === "headless",
@@ -46,6 +50,22 @@ const defaultStopSidecar = async (stamp: { app: string; mode: string; source: st
   stoppedPids: stamp.source === "packaged" && stamp.mode === "headless" ? [4242] : [],
 });
 const stopSidecar = vi.fn(defaultStopSidecar);
+const stopSidecars = vi.fn(async (requests: Array<{ options?: Record<string, number>; stamp: { app: string; mode: string; source: string } }>) => {
+  const results = await Promise.all(requests.map(async ({ options, stamp }) => ({
+    result: await stopSidecar(stamp, options ?? {}),
+    stamp,
+  })));
+  const stopped = results.map(({ result }) => result);
+  return {
+    alreadyStopped: stopped.every(({ alreadyStopped }) => alreadyStopped),
+    forcedPids: [...new Set(stopped.flatMap(({ forcedPids }) => forcedPids))],
+    gracefulAccepted: stopped.some(({ gracefulAccepted }) => gracefulAccepted),
+    matchedPids: [...new Set(stopped.flatMap(({ matchedPids }) => matchedPids))],
+    remainingPids: [...new Set(stopped.flatMap(({ remainingPids }) => remainingPids))],
+    results,
+    stoppedPids: [...new Set(stopped.flatMap(({ stoppedPids }) => stoppedPids))],
+  };
+});
 
 vi.mock("@open-design/sidecar", async () => ({
   ...(await vi.importActual<typeof import("@open-design/sidecar")>("@open-design/sidecar")),
@@ -53,6 +73,7 @@ vi.mock("@open-design/sidecar", async () => ({
   getSidecarStatus,
   convergeSidecarLaunch,
   stopSidecar,
+  stopSidecars,
 }));
 
 vi.mock("@open-design/platform", () => ({
@@ -120,6 +141,8 @@ afterEach(() => {
   );
   stopProcesses.mockImplementation(async (pids: number[]) => ({ remainingPids: [], stoppedPids: pids }));
   stopSidecar.mockImplementation(defaultStopSidecar);
+  stopSidecars.mockClear();
+  convergeSidecarLaunch.mockImplementation(defaultConvergeSidecarLaunch);
 });
 
 describe("startPackedMacApp", () => {
@@ -139,6 +162,11 @@ describe("startPackedMacApp", () => {
         throw new Error("tools-pack desktop endpoint is gone after delegation");
       });
       findSidecarProcesses.mockResolvedValue([]);
+      convergeSidecarLaunch.mockImplementationOnce(async (request) => ({
+        attempts: 1,
+        description: { ready: true, resources: { pid: delegatedPid }, stamp: request.stamp },
+        launcherProcess: await spawnLoggedProcess(request),
+      }));
       spawnLoggedProcess.mockImplementationOnce(async ({ env }: { env: NodeJS.ProcessEnv }) => {
         const child = Object.assign(new EventEmitter(), {
           env,
@@ -172,17 +200,13 @@ describe("startPackedMacApp", () => {
       await mkdir(join(paths.installedAppPath, "Contents", "MacOS"), { recursive: true });
       await writeFile(executablePath, "#!/bin/sh\nexit 1\n", "utf8");
       await chmod(executablePath, 0o755);
-      spawnLoggedProcess.mockImplementationOnce(async ({ env }: { env: NodeJS.ProcessEnv }) => {
-        const child = Object.assign(new EventEmitter(), {
-          env,
-          pid: 1234,
-          unref: vi.fn(),
-        }) as unknown as ChildProcess & { env: NodeJS.ProcessEnv };
-        setTimeout(() => child.emit("exit", 1, null), 10);
-        return child;
-      });
+      convergeSidecarLaunch.mockRejectedValueOnce(
+        new Error("sidecar launcher exited before convergence code=1 signal=null"),
+      );
 
-      await expect(startPackedMacApp(config)).rejects.toThrow("process exited early code=1 signal=null");
+      await expect(startPackedMacApp(config)).rejects.toThrow(
+        "sidecar launcher exited before convergence code=1 signal=null",
+      );
     } finally {
       await rm(root, { force: true, recursive: true });
     }

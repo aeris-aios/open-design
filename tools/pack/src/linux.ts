@@ -14,17 +14,21 @@ import {
   type DesktopStatusSnapshot,
 } from "@open-design/sidecar-proto";
 import {
+  convergeSidecarLaunch,
   findSidecarProcesses,
   getSidecarStatus,
   invokeSidecar,
-  launchSidecar,
-  stopSidecar,
+  stopSidecars,
   type SidecarStamp,
 } from "@open-design/sidecar";
-import { releaseChannelFromNamespace, releaseChannelFromVersion } from "@open-design/release";
 import { createPackageManagerInvocation, readLogTail } from "@open-design/platform";
 
 import type { ToolPackConfig } from "./config/index.js";
+import {
+  allPackagedSidecarStopRequests,
+  packagedSidecarStopRequests,
+  toolPackSidecarStamp,
+} from "./config/sidecar-stamps.js";
 import { domToPptxBundleResource } from "./dom-to-pptx-resource.js";
 import { copyBundledResourceTrees, linuxResources, packBundledDshRuntime } from "./resources/index.js";
 import { copyOptionalVelaCliBinary } from "./vela-cli.js";
@@ -885,15 +889,7 @@ function linuxStamp(
     source?: typeof SIDECAR_SOURCES.TOOLS_PACK | typeof SIDECAR_SOURCES.PACKAGED;
   } = {},
 ): SidecarStamp {
-  return {
-    app: options.app ?? APP_KEYS.DESKTOP,
-    channel: releaseChannelFromVersion(config.appVersion)
-      ?? releaseChannelFromNamespace(config.namespace, "default")
-      ?? "stable",
-    mode: options.mode ?? SIDECAR_MODES.RUNTIME,
-    namespace: config.namespace,
-    source: options.source ?? SIDECAR_SOURCES.TOOLS_PACK,
-  };
+  return toolPackSidecarStamp(config, options);
 }
 
 export function createLinuxDesktopLaunchEnv(
@@ -956,7 +952,7 @@ export async function startPackedLinuxApp(config: ToolPackConfig): Promise<Linux
   // --appimage-extract-and-run bypasses FUSE-mounted SquashFS, which is too slow
   // for daemon startup on first launch (smoke testing showed startup exceeded the
   // packaged sidecar's 35-second timeout when running from FUSE).
-  const child = await launchSidecar({
+  const convergence = await convergeSidecarLaunch({
     args: ["--appimage-extract-and-run"],
     command: appImagePath,
     cwd: dirname(appImagePath),
@@ -969,7 +965,7 @@ export async function startPackedLinuxApp(config: ToolPackConfig): Promise<Linux
       runtimeRoot: join(config.roots.runtime.namespaceRoot, "runtime"),
     },
     stamp,
-  });
+  }, { timeoutMs: 60_000 });
 
   // 60s ceiling: AppImage --appimage-extract-and-run unpacks ~200MB to /tmp on
   // first launch before exec'ing the inner electron, which adds substantial
@@ -977,7 +973,7 @@ export async function startPackedLinuxApp(config: ToolPackConfig): Promise<Linux
   //
   const active = await waitForLinuxStatus<DesktopStatusSnapshot>(launchStamps, 60_000);
   if (active == null) {
-    await Promise.all(launchStamps.map(async (candidate) => await stopSidecar(candidate).catch(() => undefined)));
+    await stopSidecars(launchStamps.map((candidate) => ({ stamp: candidate }))).catch(() => undefined);
     throw new Error(`desktop sidecar did not become ready within 60s for ${config.namespace}`);
   }
 
@@ -986,27 +982,21 @@ export async function startPackedLinuxApp(config: ToolPackConfig): Promise<Linux
     executablePath: appImagePath,
     logPath,
     namespace: config.namespace,
-    pid: child.pid,
+    pid: convergence.description.resources.pid,
     source,
     status: active.status,
   };
 }
 
 export async function stopPackedLinuxApp(config: ToolPackConfig): Promise<LinuxStopResult> {
-  const results = await Promise.all([
-    stopSidecar(linuxStamp(config)),
-    stopSidecar(linuxStamp(config, { source: SIDECAR_SOURCES.PACKAGED })),
-  ]);
-  const matchedPids = [...new Set(results.flatMap((result) => result.matchedPids))];
-  const stoppedPids = [...new Set(results.flatMap((result) => result.stoppedPids))];
-  const remainingPids = [...new Set(results.flatMap((result) => result.remainingPids))];
+  const stopped = await stopSidecars(allPackagedSidecarStopRequests(config));
 
   return {
-    gracefulRequested: results.some((result) => result.gracefulAccepted),
+    gracefulRequested: stopped.gracefulAccepted,
     namespace: config.namespace,
-    remainingPids,
-    status: remainingPids.length > 0 ? "partial" : matchedPids.length > 0 ? "stopped" : "not-running",
-    stoppedPids,
+    remainingPids: stopped.remainingPids,
+    status: stopped.remainingPids.length > 0 ? "partial" : stopped.matchedPids.length > 0 ? "stopped" : "not-running",
+    stoppedPids: stopped.stoppedPids,
   };
 }
 
@@ -1066,9 +1056,9 @@ export async function inspectPackedLinuxApp(
 export type LinuxUninstallResult = {
   namespace: string;
   removed: {
-    appImage: "ok" | "already-removed" | "skipped-process-running";
-    desktop: "ok" | "already-removed" | "skipped-process-running";
-    icon: "ok" | "already-removed" | "skipped-process-running";
+    appImage: "ok" | "already-removed";
+    desktop: "ok" | "already-removed";
+    icon: "ok" | "already-removed";
   };
   stop: LinuxStopResult;
   postUninstall: {
@@ -1091,26 +1081,17 @@ async function tryRemove(path: string): Promise<"ok" | "already-removed"> {
 // ours -- in both cases something is still using the AppImage's mounted or
 // extracted contents, so destructive removal would leave broken file handles
 // and an orphan with stale state.
-function isSafeToRemoveInstallFiles(stop: LinuxStopResult): boolean {
-  return stop.status === "stopped" || stop.status === "not-running";
+function assertLinuxStopComplete(stop: LinuxStopResult, operation: string): void {
+  if (stop.status === "stopped" || stop.status === "not-running") return;
+  throw new Error(
+    `cannot ${operation} packaged namespace while sidecar processes remain: ${stop.remainingPids.join(", ") || stop.status}`,
+  );
 }
 
 export async function uninstallPackedLinuxApp(config: ToolPackConfig): Promise<LinuxUninstallResult> {
   const paths = resolveLinuxPaths(config);
   const stop = await stopPackedLinuxApp(config);
-
-  if (!isSafeToRemoveInstallFiles(stop)) {
-    return {
-      namespace: config.namespace,
-      removed: {
-        appImage: "skipped-process-running",
-        desktop: "skipped-process-running",
-        icon: "skipped-process-running",
-      },
-      stop,
-      postUninstall: { desktopDatabase: "skipped", iconCache: "skipped" },
-    };
-  }
+  assertLinuxStopComplete(stop, "uninstall");
 
   const removedAppImage = await tryRemove(paths.installAppImagePath);
   const removedDesktop = await tryRemove(paths.installDesktopFilePath);
@@ -1134,7 +1115,7 @@ export async function uninstallPackedLinuxApp(config: ToolPackConfig): Promise<L
 export type LinuxHeadlessUninstallResult = {
   launcherPath: string;
   namespace: string;
-  removed: "ok" | "already-removed" | "skipped-process-running";
+  removed: "ok" | "already-removed";
   stop: LinuxStopResult;
 };
 
@@ -1143,15 +1124,7 @@ export async function uninstallPackedLinuxHeadless(
 ): Promise<LinuxHeadlessUninstallResult> {
   const stop = await stopPackedLinuxHeadless(config);
   const launcherPath = headlessLauncherPath(config);
-
-  if (!isSafeToRemoveInstallFiles(stop)) {
-    return {
-      launcherPath,
-      namespace: config.namespace,
-      removed: "skipped-process-running",
-      stop,
-    };
-  }
+  assertLinuxStopComplete(stop, "uninstall");
 
   return {
     launcherPath,
@@ -1167,11 +1140,8 @@ export type LinuxCleanupResult = {
   removedOutputRoot: boolean;
   removedRuntimeNamespaceRoot: boolean;
   runtimeNamespaceRoot: string;
-  // True when stopPackedLinuxApp returned "partial" or "unmanaged" -- the
-  // output and runtime namespace roots may contain files held open by a
-  // surviving process tree, so we leave them in place rather than yanking
-  // SQLite WAL files / log handles / IPC sockets out from under it.
-  // Both removed* flags will be false in this case.
+  // Headless cleanup leaves the namespace intact when a desktop-mode owner is
+  // still active; a partial stop itself fails before this result is produced.
   skipped: boolean;
   stop: LinuxStopResult;
 };
@@ -1273,7 +1243,7 @@ export async function startPackedLinuxHeadless(config: ToolPackConfig): Promise<
   const logHandle = await open(logPath, "a");
   let child: { pid: number };
   try {
-    child = await launchSidecar({
+    const convergence = await convergeSidecarLaunch({
       args: [entryPath],
       command: nodeCommand,
       cwd: dirname(entryPath),
@@ -1291,14 +1261,15 @@ export async function startPackedLinuxHeadless(config: ToolPackConfig): Promise<
         runtimeRoot: join(config.roots.runtime.namespaceRoot, "runtime"),
       },
       stamp,
-    });
+    }, { timeoutMs: 95_000 });
+    child = { pid: convergence.description.resources.pid };
   } finally {
     await logHandle.close().catch(() => undefined);
   }
 
   const active = await waitForLinuxStatus<DesktopStatusSnapshot>(launchStamps, 95_000);
   if (active == null) {
-    await Promise.all(launchStamps.map(async (candidate) => await stopSidecar(candidate).catch(() => undefined)));
+    await stopSidecars(launchStamps.map((candidate) => ({ stamp: candidate }))).catch(() => undefined);
     throw new Error(`headless sidecar did not become ready within 95s for ${config.namespace}`);
   }
 
@@ -1312,20 +1283,14 @@ export async function startPackedLinuxHeadless(config: ToolPackConfig): Promise<
 }
 
 export async function stopPackedLinuxHeadless(config: ToolPackConfig): Promise<LinuxStopResult> {
-  const results = await Promise.all([
-    stopSidecar(linuxStamp(config, { mode: "headless" })),
-    stopSidecar(linuxStamp(config, { mode: "headless", source: SIDECAR_SOURCES.PACKAGED })),
-  ]);
-  const matchedPids = [...new Set(results.flatMap((result) => result.matchedPids))];
-  const stoppedPids = [...new Set(results.flatMap((result) => result.stoppedPids))];
-  const remainingPids = [...new Set(results.flatMap((result) => result.remainingPids))];
+  const stopped = await stopSidecars(packagedSidecarStopRequests(config, "headless"));
 
   return {
-    gracefulRequested: results.some((result) => result.gracefulAccepted),
+    gracefulRequested: stopped.gracefulAccepted,
     namespace: config.namespace,
-    remainingPids,
-    status: remainingPids.length > 0 ? "partial" : matchedPids.length > 0 ? "stopped" : "not-running",
-    stoppedPids,
+    remainingPids: stopped.remainingPids,
+    status: stopped.remainingPids.length > 0 ? "partial" : stopped.matchedPids.length > 0 ? "stopped" : "not-running",
+    stoppedPids: stopped.stoppedPids,
   };
 }
 
@@ -1340,17 +1305,7 @@ export async function cleanupPackedLinuxNamespace(
   const outputRoot = config.roots.output.namespaceRoot;
   const runtimeNamespaceRoot = config.roots.runtime.namespaceRoot;
 
-  if (!isSafeToRemoveInstallFiles(stop)) {
-    return {
-      namespace: config.namespace,
-      outputRoot,
-      removedOutputRoot: false,
-      removedRuntimeNamespaceRoot: false,
-      runtimeNamespaceRoot,
-      skipped: true,
-      stop,
-    };
-  }
+  assertLinuxStopComplete(stop, "cleanup");
 
   if (mode === "headless") {
     const desktopRunning = await Promise.all([

@@ -18,6 +18,35 @@ const matchesStampedProcess = vi.hoisted(() =>
   vi.fn<typeof import("@open-design/platform").matchesStampedProcess>(() => false),
 );
 const spawnBackgroundProcess = vi.hoisted(() => vi.fn(async () => ({ pid: 12345 })));
+const convergeSidecarLaunch = vi.hoisted(() => vi.fn(async (request: { stamp: Record<string, string> }) => {
+  const spawned = await spawnBackgroundProcess();
+  return {
+    attempts: 1,
+    description: { ready: true, resources: { pid: spawned.pid }, stamp: request.stamp },
+    launcherProcess: { pid: spawned.pid },
+  };
+}));
+const stopSidecar = vi.hoisted(() => vi.fn(async (stamp: { mode: string; source: string }) => ({
+  alreadyStopped: stamp.source !== "packaged" || stamp.mode !== "headless",
+  forcedPids: [] as number[],
+  gracefulAccepted: stamp.source === "packaged" && stamp.mode === "headless",
+  matchedPids: stamp.source === "packaged" && stamp.mode === "headless" ? [4242] : [],
+  remainingPids: [] as number[],
+  stoppedPids: stamp.source === "packaged" && stamp.mode === "headless" ? [4242] : [],
+})));
+const stopSidecars = vi.hoisted(() => vi.fn(async (requests: Array<{ stamp: { mode: string; source: string } }>) => {
+  const results = await Promise.all(requests.map(async ({ stamp }) => ({ result: await stopSidecar(stamp), stamp })));
+  const stopped = results.map(({ result }) => result);
+  return {
+    alreadyStopped: stopped.every(({ alreadyStopped }) => alreadyStopped),
+    forcedPids: [] as number[],
+    gracefulAccepted: stopped.some(({ gracefulAccepted }) => gracefulAccepted),
+    matchedPids: [...new Set(stopped.flatMap(({ matchedPids }) => matchedPids))],
+    remainingPids: [...new Set(stopped.flatMap(({ remainingPids }) => remainingPids))],
+    results,
+    stoppedPids: [...new Set(stopped.flatMap(({ stoppedPids }) => stoppedPids))],
+  };
+}));
 const stopProcesses = vi.hoisted(() => vi.fn(async () => undefined));
 const invokeNsis = vi.hoisted(() => vi.fn<typeof import("@/win/nsis.js").invokeNsis>());
 const queryWinRegistryEntries = vi.hoisted(() =>
@@ -31,18 +60,13 @@ vi.mock("@open-design/sidecar", async () => {
   const actual = await vi.importActual<typeof import("@open-design/sidecar")>("@open-design/sidecar");
   return {
     ...actual,
+    convergeSidecarLaunch,
     findSidecarProcesses,
     getSidecarStatus: async (stamp: { app: string; source: string }) => await requestSidecar(stamp.app, { type: SIDECAR_MESSAGES.STATUS }, stamp.source),
     invokeSidecar: async (stamp: { app: string; source: string }, action: string, input: unknown) => await requestSidecar(stamp.app, { input, type: action }, stamp.source),
     launchSidecar: spawnBackgroundProcess,
-    stopSidecar: async (stamp: { mode: string; source: string }) => ({
-      alreadyStopped: stamp.source !== "packaged" || stamp.mode !== "headless",
-      forcedPids: [],
-      gracefulAccepted: stamp.source === "packaged" && stamp.mode === "headless",
-      matchedPids: stamp.source === "packaged" && stamp.mode === "headless" ? [4242] : [],
-      remainingPids: [],
-      stoppedPids: stamp.source === "packaged" && stamp.mode === "headless" ? [4242] : [],
-    }),
+    stopSidecar,
+    stopSidecars,
   };
 });
 
@@ -74,7 +98,7 @@ vi.mock("@/win/registry.js", async () => {
   };
 });
 
-const { diagnosePackedWinIpc, inspectPackedWinApp, installPackedWinApp, stopPackedWinApp } = await import(
+const { cleanupPackedWinNamespace, diagnosePackedWinIpc, inspectPackedWinApp, installPackedWinApp, stopPackedWinApp } = await import(
   "@/win/lifecycle.js"
 );
 const { resolveWinPaths } = await import("@/win/paths.js");
@@ -377,6 +401,39 @@ describe("stopPackedWinApp", () => {
         stoppedPids: [payloadDesktop.pid],
       });
       expect(stopProcesses).not.toHaveBeenCalled();
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+
+  it("does not delete namespace roots when a packaged generation survives", async () => {
+    const root = await mkdtemp(join(tmpdir(), "open-design-win-lifecycle-"));
+    const config = createConfig(root);
+    const outputMarker = join(config.roots.output.namespaceRoot, "artifact.txt");
+    const runtimeMarker = join(config.roots.runtime.namespaceRoot, "runtime.txt");
+
+    try {
+      invokeNsis.mockClear();
+      await mkdir(dirname(outputMarker), { recursive: true });
+      await mkdir(dirname(runtimeMarker), { recursive: true });
+      await writeFile(outputMarker, "artifact", "utf8");
+      await writeFile(runtimeMarker, "runtime", "utf8");
+      stopSidecars.mockResolvedValueOnce({
+        alreadyStopped: false,
+        forcedPids: [5252],
+        gracefulAccepted: false,
+        matchedPids: [5252],
+        remainingPids: [5252],
+        results: [],
+        stoppedPids: [],
+      });
+
+      await expect(cleanupPackedWinNamespace(config)).rejects.toThrow(
+        "cannot cleanup packaged namespace while sidecar processes remain: 5252",
+      );
+      await expect(readFile(outputMarker, "utf8")).resolves.toBe("artifact");
+      await expect(readFile(runtimeMarker, "utf8")).resolves.toBe("runtime");
+      expect(invokeNsis).not.toHaveBeenCalled();
     } finally {
       await rm(root, { force: true, recursive: true });
     }

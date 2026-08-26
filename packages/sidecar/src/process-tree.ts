@@ -1,5 +1,6 @@
 import {
   captureStampedProcessSnapshot,
+  captureStampedProcessSetSnapshot,
   collectProcessTreePids,
   readProcessStampFromCommand,
   type ProcessSnapshot,
@@ -25,6 +26,23 @@ export async function captureSidecarGenerationSnapshot(
     processes: snapshot.processes,
     roots: matches.filter(({ ppid }) => !matchedPids.has(ppid)),
   };
+}
+
+/** Capture several sidecar resources against one OS process-table boundary. */
+export async function captureSidecarGenerationSetSnapshot(
+  stamps: readonly SidecarStamp[],
+): Promise<Array<StampedProcessInvocationSnapshot & { stamp: SidecarStamp }>> {
+  const snapshot = await captureStampedProcessSetSnapshot(stamps, SIDECAR_STAMP_CONTRACT);
+  return snapshot.entries.map((entry) => {
+    const matches = entry.matches.filter(({ command }) => !isSidecarLauncherCommand(command));
+    const matchedPids = new Set(matches.map(({ pid }) => pid));
+    return {
+      matches,
+      processes: snapshot.processes,
+      roots: matches.filter(({ ppid }) => !matchedPids.has(ppid)),
+      stamp: entry.criteria,
+    };
+  });
 }
 
 /**
