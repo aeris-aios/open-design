@@ -18,6 +18,7 @@ import {
   type ChatReconnectView,
   nextChatReconnectView,
   reconnectViewForConversation,
+  settledSignalFromMessages,
 } from '../../../src/runtime/chat/reconnect-state';
 
 const RUN = 'run-1';
@@ -192,5 +193,72 @@ describe('nextChatReconnectView · 不残留', () => {
     const other = nextChatReconnectView(null, reconnecting(2, { conversationId: 'conv-2' }));
     expect(reconnectViewForConversation(other, CONV)).toBeNull();
     expect(reconnectViewForConversation(other, 'conv-2')).toBe(other);
+  });
+});
+
+describe('nextChatReconnectView · 按了〔重新连接〕之后不许留下死胡同', () => {
+  /**
+   * 真机复现(2026-08-27):断线走到「连接失败 +〔重新连接〕」,点那颗按钮,
+   * 那一行**整个消失了,而且什么都没重连** —— 屏幕上只剩壳头一句「运行失败」,
+   * 报错卡又被 R9 按设计压掉了,于是用户连再点一次的入口都没有。
+   *
+   * 成因:`ProjectView.handleManualReconnect` 乐观地推了一条 `dropped`。可
+   * `dropped` 的语义是「本地不再跟这条流了」(切会话、卸载),按重连恰恰相反。
+   * 而重挂本身有前置条件(要先拉到运行状态),断线时那一条也常常拉不到 ——
+   * 重挂于是根本没开始,没有人再把那一行画回来。
+   *
+   * 撤那一行的唯一正当时机是**重挂真的开始了**,`ProjectView` 在
+   * `reattachDaemonRun` 的前一行已经推了 `dropped`(见那里的注释)。
+   */
+  it('leaves the handed-back row on screen so it can be pressed again', () => {
+    const exhausted = nextChatReconnectView(null, {
+      kind: 'transport',
+      runId: RUN,
+      conversationId: CONV,
+      attempt: 5,
+      max: 5,
+      phase: 'exhausted',
+    });
+    expect(exhausted?.exhausted).toBe(true);
+
+    const afterPress = nextChatReconnectView(exhausted, { kind: 'manual-retry', runId: RUN });
+    expect(afterPress, '点了重连就把行撤掉 = 重挂起不来时没有第二次机会').toBe(exhausted);
+  });
+
+  it('ignores a press aimed at some other run', () => {
+    const view = nextChatReconnectView(null, reconnecting(2));
+    expect(nextChatReconnectView(view, { kind: 'manual-retry', runId: 'run-other' })).toBe(view);
+  });
+});
+
+describe('settledSignalFromMessages · 结局从别的门进来时也要撤那一行', () => {
+  const exhaustedView = () =>
+    nextChatReconnectView(null, {
+      kind: 'transport',
+      runId: RUN,
+      conversationId: CONV,
+      attempt: 5,
+      max: 5,
+      phase: 'exhausted',
+    });
+
+  it('reports a run that finished while nobody was listening to the stream', () => {
+    const view = exhaustedView();
+    const signal = settledSignalFromMessages(view, [
+      { runId: 'run-other', runStatus: 'failed' },
+      { runId: RUN, runStatus: 'succeeded' },
+    ]);
+    expect(signal).toEqual({ kind: 'settled', runId: RUN, status: 'succeeded' });
+    expect(nextChatReconnectView(view, signal!), '收场了还挂着 = 稿子说的残影').toBeNull();
+  });
+
+  it('leaves the handed-back row alone while the run is still failed-and-disconnected', () => {
+    const view = exhaustedView();
+    // 掉线时传输层写的正是 'failed' —— 拿它当「收场」会把 22-3 那颗按钮一闪而过。
+    expect(settledSignalFromMessages(view, [{ runId: RUN, runStatus: 'failed' }])).toBeNull();
+  });
+
+  it('says nothing when there is no row on screen', () => {
+    expect(settledSignalFromMessages(null, [{ runId: RUN, runStatus: 'succeeded' }])).toBeNull();
   });
 });

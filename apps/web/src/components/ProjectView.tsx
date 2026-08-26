@@ -37,6 +37,7 @@ import {
   type ChatReconnectView,
   nextChatReconnectView,
   reconnectViewForConversation,
+  settledSignalFromMessages,
 } from '../runtime/chat/reconnect-state';
 import { normalizeCustomReason } from '@open-design/contracts/analytics';
 import {
@@ -2689,6 +2690,18 @@ export function ProjectView({
     setReconnectView((prev) => nextChatReconnectView(prev, signal));
   }, []);
   /**
+   * 那一轮的结局有时不从流上来 —— 会话刷新、切回这个会话时重新拉消息,
+   * 都能把终态带进 `messages`,而 `settled` 今天只在流上发。掉线正是流断了的时刻,
+   * 所以这条「别的门」恰恰是最常走的那条:不补这一拍,重连行会挂在一条写着
+   * 「已完成」的消息下面继续说「连接失败」(2026-08-27 真机见过)。
+   *
+   * 撤不撤由 `nextChatReconnectView` 判 —— `failed` 对已经交回给人的那一行是不动的。
+   */
+  useEffect(() => {
+    const signal = settledSignalFromMessages(reconnectView, messages);
+    if (signal) pushReconnectSignal(signal);
+  }, [reconnectView, messages, pushReconnectSignal]);
+  /**
    * 22-3 那颗〔重新连接〕。
    *
    * 语义是**接回同一轮的流**,不是重试 —— 复用已有的重挂通道
@@ -2710,7 +2723,9 @@ export function ProjectView({
     genericDisconnectRetriesRef.current.delete(runId);
     genericDisconnectBackoffUntilRef.current.delete(runId);
     completedReattachRunsRef.current.delete(runId);
-    setReconnectView((prev) => nextChatReconnectView(prev, { kind: 'dropped', runId }));
+    // 不在这里撤那一行:见 `reconnect-state.ts` 的 `manual-retry`。撤它的时机在
+    // 下面那条重挂真的启动的那一行。
+    setReconnectView((prev) => nextChatReconnectView(prev, { kind: 'manual-retry', runId }));
     setRecoveryTick((t) => t + 1);
   }, [reconnectRunId]);
   const recoveredArtifactMessagesRef = useRef<Set<string>>(new Set());
