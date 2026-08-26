@@ -336,12 +336,12 @@
 
 | # | 事 | 状态 | 关键事实 |
 |---|---|---|---|
-| E1 | **错误码映射表要补** | 待做 | 三张表**共 16 档**(`AGENT_AGNOSTIC_FAILURE_UI` 7 + `DETAIL_FAILURE_UI` 3 + `AGENT_AGNOSTIC_DETAIL_FAILURE_UI` 6)对 32 个场景。**`AGENT_EXECUTION_FAILED` / `process_exit` 两张表里都没有** → S19(每月 20,868 次、第二大类)整个落兜底 |
-| E2 | **兜底不许把 `rawError` 摊在卡面** | 待做 | `ChatPane.tsx:1609` `displayError = messageKey ? t(...) : rawError` —— 没命中映射表时**直接显示上游原始错误串**。S19 今天「标题 + 一段 stderr」就是这么来的。补 E1 时要连兜底文案一起给 |
+| E1 | **错误码映射表要补** | ✅ **已完成并合入** —— 补了 S19 六档(`process_crashed` / `signal_killed` / `terminated_unknown` / `exit_code` / `exit_nonzero` / `execution_failed`)、`account_suspended`(daemon 侧同时加了分类器)、`cpu_unsupported` 与 `AGENT_RUNTIME_DEF_INVALID` 改判第 4 档。红测 `run-error-ladder.test.ts` / `ChatPane.error-card-ladder.test.tsx` / `run-failure-account-suspended.test.ts`,逐块撤实现复验过 | 三张表**共 16 档**(`AGENT_AGNOSTIC_FAILURE_UI` 7 + `DETAIL_FAILURE_UI` 3 + `AGENT_AGNOSTIC_DETAIL_FAILURE_UI` 6)对 32 个场景。**`AGENT_EXECUTION_FAILED` / `process_exit` 两张表里都没有** → S19(每月 20,868 次、第二大类)整个落兜底 |
+| E2 | **兜底不许把 `rawError` 摊在卡面** | ✅ **已完成,并在真机上看到了** —— 新增 `chat.runError.fallbackMessage`(19 语)。2026-08-27 真机:一次没有产物的运行,卡面是「这次没能顺利完成。原始报错收在下面的『查看详情』里…」,英文原文 `The design run finished without producing a deliverable project file.` 收进折叠区。**这正是修之前会直接摊在卡面上的那一串** | `ChatPane.tsx:1609` `displayError = messageKey ? t(...) : rawError` —— 没命中映射表时**直接显示上游原始错误串**。S19 今天「标题 + 一段 stderr」就是这么来的。补 E1 时要连兜底文案一起给 |
 | E3 | **〔更换模型〕落点与稿子不符** | ⚠️ 已实现但有分歧 | 稿子 `error-ux-design.md:130`:「**直接打开模型选择器,选完自动重跑**」。实现落成 `onOpenSettings('execution')`,**且不自动重跑**。理由是 `InlineModelSwitcher` 只在 Home 挂载(`EntryShell.tsx:1768`),项目页里不存在。**要产品确认接受,或另想落点** |
-| E4 | 主按钮阶梯落到每一档 | 待做 | 阶梯见 §6.Z,对应关系见 §6.T。E1 补表时按阶梯算主按钮,**不要逐档再挑一次** |
-| E5 | 四种身份的余额分支 | 待做 | 规格 §6.V。前置(UpgradeCard 接线)**已完成** |
-| E6 | 〔联系支持〕第 4 档提为主 | 待做 | 现在只做了常驻次级 |
+| E4 | 主按钮阶梯落到每一档 | ✅ **已完成** —— `primaryActionForFailure(nature)` 由 `RunFailureNature` 的三个问句(`directFix`/`transient`/`localDeadEnd`)推出按钮,全部调用点改走 `failureCard()`,仓里再没有手写 `primaryAction` 的字面量。**原则四从此是结构保证**:没声明 `directFix`/`transient` 的失败,函数根本产不出〔重试〕 | 阶梯见 §6.Z,对应关系见 §6.T。E1 补表时按阶梯算主按钮,**不要逐档再挑一次** |
+| E5 | 四种身份的余额分支 | ✅ **已完成** —— 四组按 §6.V 落地(判据:`permissions.canManageBilling` × 新增的 `isMaxPlanTier`),死胡同(§6.Y)一并修掉:没有账单权限的成员改看 `AmrOwnerTopUpDialog`(可一键复制给所有者的话),聊天流水和首页两条路都换了。**真机只能验 owner/member 两轴** —— Max 档在 prod 造不出来,那一格目前只有单测 |
+| E6 | 〔联系支持〕第 4 档提为主 | ✅ **已完成** —— 第 4 档把〔联系支持〕的 `variant` 提成实心主按钮,没有重排那一行(重排会动 e2e 的 274px 溢出判据)。**「提为主之后视觉上读不读得像主按钮」还需要人眼看一次** |
 
 ### F-2 todo 判据与召回
 
@@ -349,11 +349,11 @@
 |---|---|---|---|
 | T1 | **同一个判据有三份,口径不一** | ✅ **已完成** —— 三份合并成一个出处:`contracts/run-completeness.ts` 的 `isTodoWriteToolName` 改成大小写不敏感的正则(含 `write_todos` 与 MCP 前缀名),另两处改为 import 转发。红测 `packages/contracts/tests/todo-tool-name.test.ts`(6 条) |
 | T2 | **AMR 把 `todowrite` 改成 `Todowrite`** | ✅ **已完成** —— 治本不靠下游宽容:`acp/updates.ts` 在**进 title 启发式之前**先认 todo 家族并归一成 `TodoWrite`。红测 `apps/daemon/tests/acp-todo-tool-name.test.ts`(4 条,喂 vela 真实帧形状:只有 kind 没有 name)。ACP 全套 80 条绿 |
-| T3 | **召回通路不存在** | 待做 | 历史是 `buildDaemonTranscript` 拼的纯文本,只取 `message.content`;而 `content` 只累加 `kind==='text'`(`db.ts:3060`),**TodoWrite 是 `tool_use`,永远进不了**。21 家无 resume 的 runtime **结构上不可能**知道上一轮有过清单 |
-| T4 | 客户端 `previousTodos` 零调用方 | 待做 | `contract.ts:164` 定义了,没人传。**它是 T3 的下半段,单独接没用** —— agent 不重发,`previous.has()` 根本不会被调用 |
+| T3 | **召回通路不存在** | ✅ **已完成** —— `composeChatUserRequestForAgent`(唯一同时覆盖 `skipTranscript` 与非 skip 两条分支的钥匙孔)在每轮请求前**加一段陈述事实的短块**,说明这次对话还欠着什么;渲染器放 `packages/contracts` 免得文件系统档与 API 档漂移,措辞不点名任何工具(API 档没有工具)。没有未完成时组合出来的正文**逐字节不变**。判断继续/重排/忽略仍是 agent 的事,客户端不替它决定 | 历史是 `buildDaemonTranscript` 拼的纯文本,只取 `message.content`;而 `content` 只累加 `kind==='text'`(`db.ts:3060`),**TodoWrite 是 `tool_use`,永远进不了**。21 家无 resume 的 runtime **结构上不可能**知道上一轮有过清单 |
+| T4 | 客户端 `previousTodos` 零调用方 | ✅ **已完成** —— `ChatPane` 按助手消息推出「这条消息之前对话已经声明过的清单」喂给 `buildTurnBlocks`。**只认 agent 自己重发的条目**:不重发就什么都不查、什么都不画 | `contract.ts:164` 定义了,没人传。**它是 T3 的下半段,单独接没用** —— agent 不重发,`previous.has()` 根本不会被调用 |
 | T5 | **`isStruck` 的注释写反了**(代码是对的) | ✅ **已完成** —— 改的是**注释**不是代码。新表述:划线 =「这一条不是本轮新开的活」,三种情况独立(召回 / 作废 / 本轮开出来但没干过)。`ExecutionShell.tsx` 里那句复制的错注释一并改掉 |
 | T6 | 测试洞 | ✅ **已完成** —— `build-turn-blocks.test.ts` 补上「召回 + 本轮继续做 → 既划线又可展开」,规格里最容易误判的那一格现在钉住了 |
-| T7 | 〔继续未完成任务〕是**死按钮** | 待做 | `ProjectView.tsx:8765` 实现完整、一路 prop-drill 到 `AssistantMessage.tsx:566`,**然后没有然后** —— 全仓 `onContinue=` 在 chat 组件里 0 命中。`origin/main` 上也一样死。**它是 agent 不照做时唯一的用户出口**,且不依赖任何 agent 能力 |
+| T7 | 〔继续未完成任务〕是**死按钮** | ✅ **已接上** —— 落在「还欠着活」那条消息的轮次状态行上(那一行本来就写着「已停止,还有未完成」)。本轮没声明清单时回落到带过来的那一份,所以**21 家根本不发清单的 runtime 也能用** | `ProjectView.tsx:8765` 实现完整、一路 prop-drill 到 `AssistantMessage.tsx:566`,**然后没有然后** —— 全仓 `onContinue=` 在 chat 组件里 0 命中。`origin/main` 上也一样死。**它是 agent 不照做时唯一的用户出口**,且不依赖任何 agent 能力 |
 
 ### F-3 「画出来了,没接线」(权威:`run-error-catalog.md` §6.U)
 
@@ -361,22 +361,25 @@
 
 | # | 事 | 状态 | 关键事实 |
 |---|---|---|---|
-| W1 | **`Reconnect` 仍未接线** | ✅ **已接线并合入**。原作者纠正了盘点里一条**过期**的记载:重连的 `attempt/max/phase` 传输层**早就在发**(`providers/daemon.ts:291/307/327`),i18n 四个 key 19 语言包也齐 —— 「拿不到 N/M」不成立,是「铺好了没人接」。互斥做成了**结构保证**(暂停写在重连的 `else` 分支里),不靠两处判据碰巧不重叠 |
+| W1 | **`Reconnect` 仍未接线** | ✅ **已接线、已合入、已真机截图比对**(截图在 `docs/design/chat-mirror/shots-live-reconnect/`)。原作者纠正了盘点里一条**过期**的记载:重连的 `attempt/max/phase` 传输层**早就在发**(`providers/daemon.ts:291/307/327`),i18n 四个 key 19 语言包也齐 —— 「拿不到 N/M」不成立,是「铺好了没人接」。互斥做成了**结构保证**(暂停写在重连的 `else` 分支里),不靠两处判据碰巧不重叠 |
 | W2 | `AudioArtifact` | 阻塞 | 卡在**数据层**:`artifactCardKind` 对 `.mp3` 返回 null,契约里没有波形与时长。**不是接线能解决的**,要产品+后端立项 |
 
 ### F-4b 新照出的(2026-08-27)
 
 | # | 事 | 关键事实 |
 |---|---|---|
-| **R9** | **重连失败那一行和通用报错卡会同时出现** | 重连预算用尽后 `DAEMON_STREAM_DISCONNECTED` 仍落进 `amr-guidance.ts` 兜底 → 出一张「任务执行失败」。于是第 84 格那一行和报错卡**两块东西一起出来**,正是稿子 4058 明说要避免的「两个说法」。分流要改 `amr-guidance.ts` / 报错卡区 —— **归 E1 那条一起做** |
-| O6 | 重连循环**无退避** | `providers/daemon.ts:1394-1584` 五次尝试之间零 `setTimeout` —— 1/5→5/5 毫秒级烧完,肉眼看不到中间读数。**不是接错了**,这条路本来就这么快。持续断网时会「五连→失败→3s 后重挂→再五连」地闪。观感待产品看 |
+| **R9** | **重连失败那一行和通用报错卡会同时出现** | ✅ **已修复并真机确认** —— `DAEMON_STREAM_DISCONNECTED` 落表且 `suppressCard: true`,整张卡不出;判据 `isReconnectOwnedFailure()` 和 `ProjectView.hasGenericDisconnectFailureEvent` 读同一对线索。2026-08-27 真机(杀掉 web dev server 造断线):流水尾部只有那一行「连接失败 +〔重新连接〕」,**上面没有任何报错卡**。`AGENT_CONNECTION_DROPPED`(S11)刻意没碰 —— 那是 agent 到模型服务的连接,重连行接不回来 |
+| O6 | 重连循环**无退避** | ✅ **已修复并真机确认** —— 五次尝试之间零 `setTimeout`,而连接被拒的 fetch 约 1ms 就 reject,所以整个预算在同一个 tick 里烧光:①合盖子/切 Wi-Fi 这种几秒自愈的抖动被判成不可恢复;②那一行**没人看得见**。现在复用 `lib/backoff.ts` 的 `BackoffController`(700ms 起、×2、封顶 8s、带抖动),这条流原本是仓里唯一漏掉退避的。红测 `daemon-sse-reconnect-backoff.test.ts` 两条都先红过。**真机实测的相邻间隔:0.4s / 1.3s / 2.1s** —— 修之前这三档全在同一帧里 |
+| **R10** | **按〔重新连接〕会把那一行撤掉,而重连根本没起来** | ✅ **已修复并真机确认**(真机照出来的,单测照不出)。`handleManualReconnect` 乐观地推了一条 `dropped` —— 可 `dropped` 的语义是「本地不再跟这条流了」(切会话、卸载),按重连恰恰相反。重挂有前置条件(先要拉到这一轮的运行状态),**而断线时那一条也常常拉不到**,于是重挂没开始、那一行却已经没了:屏幕上只剩壳头一句「运行失败」,报错卡又被 R9 按设计压掉,**用户连再点一次的入口都没有**。改成新的 `manual-retry` 信号(什么都不做);撤那一行的唯一时机仍是 `reattachDaemonRun` 前一行那条 `dropped` |
+| **R11** | **结局从「别的门」进来时,重连行留成残影** | ✅ **已修复并真机确认**(是 R10 修完才露出来的第二层)。`settled` 今天只在**流上**发,可这一行出现的时刻正是流断了的时刻 —— 结局往往由一次会话刷新带回来。真机上看到那一行挂在一条写着「已完成」的消息下面继续说「连接失败」。补了 `settledSignalFromMessages()`;撤不撤仍交给 `nextChatReconnectView` 判(`failed` 对已交回给人的那一行**不动**,否则 22-3 那颗按钮会一闪而过) |
+| O8 | 读数**永远走不到 5/5** | 真机 trace 是 `1/5 → 2/5 → 3/5 → 4/5 →(判失败)`。原因是结构性的:读数记的是「已经用掉几次」,第 5 次用掉的那一刻循环条件就不成立了,于是 5/5 只存在几微秒。**要让它可读只能让它停一拍**,而停一拍时其实并没有在重试 —— 是「读数记已用次数还是记在飞的那一次」的口径问题。稿子把第 83 格明写成「**不是独立形态**」,所以这不算违反交付稿。**留给产品定,不自己改口径** |
 | O7 | 重连行的 ⌄ 展开箭头**故意不给** | 传输层今天把三种断法(接口/超时/服务端)走同一条路径,分不出断因。摆一颗点开什么都没有的箭头比不摆更糟 |
 
 ### F-4 其他已知、暂不处置
 
 | # | 事 | 关键事实 |
 |---|---|---|
-| O1 | `resumable` 硬写 `false` 两处 | `daemon/runtimes/runs.ts:744`(daemon 重启)、`web/ProjectView.tsx:12606`(没生成文件)—— 把 F2〔继续运行〕关死在最需要它的两个场景。按钮实现是好的 |
+| O1 | `resumable` 硬写 `false` 两处 | **查清了:两处都不是「随手写死」,是缺输入 / 刻意 fail-closed,所以不能当接线漏改去补。** ①`runtimes/runs.ts:741`(daemon 重启后的对账):`resumableFailure` 需要 `liveSessionId` + 实时观察到的 `committedWorkSeen`,而这条路是**从落盘状态重建**的 —— `state.json` 里**根本没有 sessionId 字段**(全文件零命中)。要让它算得出来,得先把 sessionId 与「已产生副作用」落盘,那是一件独立的事。②`ProjectView.tsx:12572`(跑完了没产物):这是**客户端合成**的 `ARTIFACT_NOT_FOUND`,daemon 侧那一轮是 `succeeded`,压根没算过 resumable;这里写 false 是不说谎。真正的缺口在上游 —— 「跑完但没交付物」该不该给〔继续运行〕是产品裁决(§6 对 ARTIFACT_NOT_FOUND 的 `report_only` 口径),**不是前端能自己定的** |
 | O2 | 团队成员余额死胡同 | 见 §6.Y。没有账单权限的成员余额耗尽时弹窗**只有一颗「暂不需要」** |
 | O3 | B11 未真机验 | ✅ **真机端到端验过了**(2026-08-27)。三条硬证据:①端点返回 `{"ok":true,"delivered":true}` 且返回的 run 仍是同一个;②那个 runId 在会话里**只出现 1 次** —— 没有为这条消息新建 run(这是区分「引导」与「打断重发」的判据,不是「界面有没有变」);③**模型在同一轮里回了「收到,行数表…」并照做** —— 这正是原作者明说「我证明不了」的那一环(它只能用假 claude 证明帧到达 stdin)。真实 `claude --input-format stream-json` 确认会消费第二个 user frame |
 | O4 | e2e `chat-error-card-layout.test.ts` | 接线 agent 改了但**没跑**(本机不装浏览器)。特别是「4 颗按钮在 274px 窄面板不溢出」要在 CI 确认 |
