@@ -499,8 +499,8 @@ export function collectProcessTreePids(
   return [...visited].sort((left, right) => right - left);
 }
 
-/** @internal Send a signal to each PID, ignoring `ESRCH` (already-dead) but rethrowing other errors. */
-function signalProcesses(pids: number[], signal: NodeJS.Signals): void {
+/** Send a signal to each PID, ignoring `ESRCH` (already-dead) but rethrowing other errors. */
+export function signalProcesses(pids: number[], signal: NodeJS.Signals): void {
   for (const pid of pids) {
     try {
       process.kill(pid, signal);

@@ -7,12 +7,11 @@ import {
   captureStampedProcessSnapshot,
   isProcessAlive,
   matchesStampedProcess,
-  stopProcesses,
 } from "@open-design/platform";
 
 import { type SidecarDescription, sidecarProtocol } from "./client.js";
 import { requestJsonIpc } from "./json-ipc.js";
-import { collectSidecarGenerationPids } from "./process-tree.js";
+import { retireFencedSidecarProcessTree } from "./process-retirement.js";
 import {
   normalizeSidecarStamp,
   resolvePrivateIpcPath,
@@ -175,8 +174,6 @@ export async function retireSidecarGeneration(
     matchesStampedProcess(processInfo, ref.stamp, SIDECAR_STAMP_CONTRACT),
   );
   if (!rootOwnedAtEntry) return alreadyStoppedResult();
-  const initialPids = collectSidecarGenerationPids(snapshots, [ref.rootPid], ref.stamp);
-  const initialPidSet = new Set(initialPids);
   let gracefulAccepted = false;
   try {
     const response = await requestJsonIpc<{ accepted?: unknown }>(
@@ -189,77 +186,12 @@ export async function retireSidecarGeneration(
     // An absent, stale, or replacement endpoint is resolved by the owned root tree.
   }
 
-  const graceMs = options.termGraceMs ?? 5_000;
-  const deadline = Date.now() + graceMs;
-  const remainingInitialPids = () => [...initialPidSet].filter(isProcessAlive);
-  let remaining = await remainingInitialPids();
-  while (remaining.length > 0 && Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    remaining = await remainingInitialPids();
-  }
-  if (remaining.length === 0) {
-    return {
-      alreadyStopped: false,
-      forcedPids: [],
-      gracefulAccepted,
-      matchedPids: initialPids,
-      remainingPids: [],
-      stoppedPids: initialPids,
-    };
-  }
-
-  // Refresh only this invocation's still-stamped supervisor root. This admits
-  // late ordinary descendants without crossing into replacements or another
-  // complete five-field resource rooted below the generation.
-  const latestSnapshots = await captureProcessSnapshot();
-  const rootStillOwned = latestSnapshots.some((processInfo) =>
-    processInfo.pid === ref.rootPid &&
-    matchesStampedProcess(processInfo, ref.stamp, SIDECAR_STAMP_CONTRACT),
-  );
-  const latestGenerationPids = rootStillOwned
-    ? collectSidecarGenerationPids(latestSnapshots, [ref.rootPid], ref.stamp)
-    : [];
-  if (latestGenerationPids.length === 0) {
-    // The root can exit while the refresh snapshot is being captured. Its
-    // already-fenced initial descendants still belong to this generation and
-    // must be force-stopped without adopting a replacement root.
-    const remainingAfterRefresh = remainingInitialPids();
-    if (remainingAfterRefresh.length > 0) {
-      const forced = await stopProcesses(remainingAfterRefresh, {
-        killGraceMs: options.killGraceMs,
-        termGraceMs: 0,
-      });
-      return {
-        alreadyStopped: false,
-        forcedPids: forced.forcedPids,
-        gracefulAccepted,
-        matchedPids: initialPids,
-        remainingPids: forced.remainingPids,
-        stoppedPids: initialPids.filter((pid) => !forced.remainingPids.includes(pid)),
-      };
-    }
-    return {
-      alreadyStopped: false,
-      forcedPids: [],
-      gracefulAccepted,
-      matchedPids: initialPids,
-      remainingPids: [],
-      stoppedPids: initialPids,
-    };
-  }
-  const forced = await stopProcesses(latestGenerationPids, {
-    killGraceMs: options.killGraceMs,
-    termGraceMs: 0,
+  const result = await retireFencedSidecarProcessTree(ref, {
+    gracefulStopInitiated: gracefulAccepted,
+    knownSnapshots: snapshots,
+    stopOptions: options,
   });
-  const matchedPids = [...new Set([...initialPids, ...latestGenerationPids])];
-  return {
-    alreadyStopped: false,
-    forcedPids: forced.forcedPids,
-    gracefulAccepted,
-    matchedPids,
-    remainingPids: forced.remainingPids,
-    stoppedPids: matchedPids.filter((pid) => !forced.remainingPids.includes(pid)),
-  };
+  return { ...result, gracefulAccepted };
 }
 
 function alreadyStoppedResult(): SidecarStopResult {

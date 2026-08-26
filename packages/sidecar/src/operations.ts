@@ -165,7 +165,10 @@ export async function spawnSidecar(request: SidecarLaunchRequest): Promise<Spawn
   const stamp = normalizeSidecarStamp(request.stamp);
   const child = await spawnLoggedProcess(sidecarSpawnRequest({
     ...request,
-    detached: request.detached ?? (process.platform === "win32"),
+    // A Windows generation must have its own process group so tree discovery
+    // and retirement cannot cross into the launching shell. This is a
+    // platform invariant, not a caller preference.
+    detached: process.platform === "win32" ? true : request.detached,
     stamp,
   }));
   if (child.pid == null) throw new Error("spawned sidecar process has no pid");

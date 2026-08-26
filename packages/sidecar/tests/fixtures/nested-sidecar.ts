@@ -13,6 +13,9 @@ const childStamp = JSON.parse(serializedStamp) as SidecarStamp;
 const child = await spawnSidecar({
   args: [fileURLToPath(new URL("./stamped-child.ts", import.meta.url))],
   command: process.execPath,
+  // Windows isolation is a sidecar invariant even when a caller attempts to
+  // opt out. On POSIX this remains a normal attached child.
+  detached: false,
   resources: {
     dataRoot: "/tmp/open-design-nested-child",
     ownerPid: null,

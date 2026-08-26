@@ -26,6 +26,7 @@ import { APP_KEYS } from '@open-design/sidecar-proto';
 
 import {
   buildPackagedDaemonSpawnEnv,
+  closeManagedChild,
   createPackagedSidecarSpawnOptions,
   createRestartPolicy,
   createWebSidecarSupervisor,
@@ -47,6 +48,45 @@ function slashPath(value: string): string {
 function testStamp(app: "daemon" | "web" = APP_KEYS.DAEMON): SidecarStamp {
   return { app, channel: "stable", mode: "runtime", namespace: "test", source: "packaged" };
 }
+
+describe('packaged sidecar shutdown', () => {
+  it('rejects surviving generation processes and always closes the log handle', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'od-sidecar-close-'));
+    const logPath = join(root, 'latest.log');
+    const closeLog = vi.fn(async () => undefined);
+    const stop = vi.fn(async () => ({
+      alreadyStopped: false,
+      forcedPids: [42],
+      gracefulAccepted: false,
+      matchedPids: [42],
+      remainingPids: [42],
+      stoppedPids: [],
+    }));
+    const child = Object.assign(new EventEmitter(), {
+      exitCode: null,
+      pid: 42,
+      signalCode: null,
+    });
+
+    try {
+      await expect(closeManagedChild({
+        app: APP_KEYS.DAEMON,
+        child,
+        generation: { stop },
+        logHandle: { close: closeLog },
+        logPath,
+        stamp: testStamp(),
+      } as unknown as Parameters<typeof closeManagedChild>[0])).rejects.toThrow(
+        'failed to stop packaged daemon sidecar processes: 42',
+      );
+      expect(closeLog).toHaveBeenCalledOnce();
+      expect(readFileSync(logPath, 'utf8')).toContain('shutdown requested');
+      expect(readFileSync(logPath, 'utf8')).not.toContain('exited app=daemon');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
 
 describe('resolveDaemonStatusTimeoutMs', () => {
   it('uses the 35-second baseline budget on platforms without a known slow-cold-start class', () => {

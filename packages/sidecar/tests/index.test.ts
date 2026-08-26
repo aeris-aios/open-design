@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { lstat, mkdtemp, rm } from "node:fs/promises";
 import { describe, expect, it, vi } from "vitest";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
@@ -157,7 +157,9 @@ describe("generic sidecar JSON IPC", () => {
     const oldRequest = requestJsonIpc(socketPath, { type: "status" });
     await entered;
     const closing = old.close();
-    await rm(socketPath, { force: true });
+    await vi.waitFor(async () => {
+      await expect(lstat(socketPath)).rejects.toMatchObject({ code: "ENOENT" });
+    });
     const replacement = await createJsonIpcServer({
       socketPath,
       handler: async () => ({ generation: "replacement" }),

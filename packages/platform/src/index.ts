@@ -50,6 +50,7 @@ export {
   readFlagValue,
   readProcessStamp,
   readProcessStampFromCommand,
+  signalProcesses,
   spawnBackgroundProcess,
   spawnLoggedProcess,
   stopProcesses,

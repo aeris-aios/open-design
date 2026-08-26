@@ -801,19 +801,24 @@ export function createPackagedSidecarSpawnOptions(input: {
   };
 }
 
-async function closeManagedChild(child: ManagedSidecarChild): Promise<void> {
+export async function closeManagedChild(child: ManagedSidecarChild): Promise<void> {
   const appendLifecycleLog = async (message: string): Promise<void> => appendSidecarLifecycleLog(child.logPath, message);
-  await appendLifecycleLog(`[open-design packaged] shutdown requested app=${child.app} pid=${child.child.pid ?? "unknown"}`);
-  // A daemon may briefly hold shutdown while committing a desktop handoff.
-  // The sidecar generation boundary still owns escalation; packaged only
-  // supplies a bounded grace appropriate for that lifecycle operation.
-  const stop = await child.generation.stop({ termGraceMs: child.app === APP_KEYS.DAEMON ? 30_000 : 5_000 });
-  if (stop.forcedPids.length > 0) {
-    await appendLifecycleLog(`[open-design packaged] graceful shutdown timed out app=${child.app} pid=${child.child.pid ?? "unknown"}; forced=${stop.forcedPids.join(",")}`);
+  try {
+    await appendLifecycleLog(`[open-design packaged] shutdown requested app=${child.app} pid=${child.child.pid ?? "unknown"}`);
+    // A daemon may briefly hold shutdown while committing a desktop handoff.
+    // The sidecar generation boundary still owns escalation; packaged only
+    // supplies a bounded grace appropriate for that lifecycle operation.
+    const stop = await child.generation.stop({ termGraceMs: child.app === APP_KEYS.DAEMON ? 30_000 : 5_000 });
+    if (stop.forcedPids.length > 0) {
+      await appendLifecycleLog(`[open-design packaged] graceful shutdown timed out app=${child.app} pid=${child.child.pid ?? "unknown"}; forced=${stop.forcedPids.join(",")}`);
+    }
+    if (stop.remainingPids.length > 0) {
+      throw new Error(`failed to stop packaged ${child.app} sidecar processes: ${stop.remainingPids.join(", ")}`);
+    }
+    await appendLifecycleLog(`[open-design packaged] exited app=${child.app} pid=${child.child.pid ?? "unknown"} code=${child.child.exitCode ?? "unknown"} signal=${child.child.signalCode ?? "none"}`);
+  } finally {
+    await child.logHandle.close().catch(() => undefined);
   }
-
-  await appendLifecycleLog(`[open-design packaged] exited app=${child.app} pid=${child.child.pid ?? "unknown"} code=${child.child.exitCode ?? "unknown"} signal=${child.child.signalCode ?? "none"}`);
-  await child.logHandle.close().catch(() => undefined);
 }
 
 export async function registerPackagedWebUrl(
@@ -1031,11 +1036,19 @@ export async function startPackagedSidecars(
       web: webStatus,
       currentWebUrl: supervisor.currentUrl,
       async close() {
-        await supervisor.close();
+        const closeErrors: unknown[] = [];
+        await supervisor.close().catch((error: unknown) => {
+          closeErrors.push(error);
+          console.error("failed to close packaged web sidecar", error);
+        });
         for (const child of [...children].reverse()) {
           await closeManagedChild(child).catch((error: unknown) => {
+            closeErrors.push(error);
             console.error(`failed to close packaged ${child.app} sidecar`, error);
           });
+        }
+        if (closeErrors.length > 0) {
+          throw new AggregateError(closeErrors, "failed to close packaged sidecars");
         }
       },
     };

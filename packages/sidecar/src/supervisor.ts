@@ -1,10 +1,9 @@
 import { spawn } from "node:child_process";
-import { setTimeout as sleep } from "node:timers/promises";
 
 import {
   captureProcessSnapshot,
   createProcessStampArgs,
-  isProcessAlive,
+  matchesStampedProcess,
   stopProcesses,
 } from "@open-design/platform";
 
@@ -13,7 +12,7 @@ import {
   SIDECAR_GENERATION_PID_ENV,
   SIDECAR_SUPERVISOR_TARGET_ENV,
 } from "./client.js";
-import { collectSidecarGenerationPids } from "./process-tree.js";
+import { retireFencedSidecarProcessTree } from "./process-retirement.js";
 import { readCurrentSidecarStamp, SIDECAR_STAMP_CONTRACT } from "./stamp.js";
 
 type SupervisorTarget = {
@@ -58,20 +57,32 @@ let ownerShutdownTask: Promise<void> | null = null;
 async function stopTargetAfterOwnerDeath(): Promise<void> {
   if (child.pid == null) return;
   const rootPid = child.pid;
-  try { child.kill("SIGTERM"); } catch {}
-  await sleep(5_000);
-  if (!isProcessAlive(rootPid)) return;
-  let ownedPids = [rootPid];
+  let snapshots;
   try {
-    ownedPids = collectSidecarGenerationPids(await captureProcessSnapshot(), [rootPid], stamp);
+    snapshots = await captureProcessSnapshot();
   } catch {
     // The exact child pid remains a safe fallback when process discovery fails.
+    const stopped = await stopProcesses([rootPid], { killGraceMs: 1_000, termGraceMs: 5_000 });
+    reportOwnerlessSurvivors(stopped.remainingPids);
+    return;
   }
-  const stopped = await stopProcesses(ownedPids, { killGraceMs: 1_000, termGraceMs: 0 });
-  if (stopped.remainingPids.length > 0) {
-    console.error(`sidecar supervisor could not stop ownerless target: ${stopped.remainingPids.join(", ")}`);
-    process.exitCode = 1;
-  }
+  const ownsRoot = snapshots.some((processInfo) =>
+    processInfo.pid === rootPid &&
+    matchesStampedProcess(processInfo, stamp, SIDECAR_STAMP_CONTRACT),
+  );
+  if (!ownsRoot) return;
+  const stopped = await retireFencedSidecarProcessTree({ rootPid, stamp }, {
+    gracefulStopInitiated: false,
+    knownSnapshots: snapshots,
+    stopOptions: { killGraceMs: 1_000, termGraceMs: 5_000 },
+  });
+  reportOwnerlessSurvivors(stopped.remainingPids);
+}
+
+function reportOwnerlessSurvivors(remainingPids: number[]): void {
+  if (remainingPids.length === 0) return;
+  console.error(`sidecar supervisor could not stop ownerless target: ${remainingPids.join(", ")}`);
+  process.exitCode = 1;
 }
 
 const ownerTimer = ownerPid == null ? null : setInterval(() => {

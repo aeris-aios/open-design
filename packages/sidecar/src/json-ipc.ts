@@ -283,8 +283,8 @@ export async function createJsonIpcServer({
 
   return {
     async close() {
-      await closeServer(server);
       await removeOwnedUnixSocket(socketPath, ownedSocket);
+      await closeServer(server);
     },
   };
 }

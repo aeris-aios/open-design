@@ -601,6 +601,33 @@ describe("server-side atomic operations", () => {
     }
   }, 10_000);
 
+  it("sends SIGTERM before waiting when graceful IPC is not accepted", async () => {
+    if (process.platform === "win32") return;
+    const fixture = fileURLToPath(new URL("./fixtures/term-responsive-sidecar.ts", import.meta.url));
+    const root = await mkdtemp(join(tmpdir(), "open-design-sidecar-term-fallback-"));
+    const termStamp = { ...stamp, app: "web", namespace: `term-fallback-${process.pid}` };
+    const endpoint = resolvePrivateIpcPath(termStamp);
+    const marker = join(root, "term.marker");
+    const spawned = await spawnSidecar({
+      args: [fixture],
+      command: process.execPath,
+      env: { ...process.env, OD_TEST_STALE_ENDPOINT: endpoint, OD_TEST_TERM_MARKER: marker },
+      resources: { dataRoot: join(root, "data"), ownerPid: null, port: 0, runtimeRoot: join(root, "runtime") },
+      stamp: termStamp,
+    });
+
+    try {
+      await vi.waitFor(async () => expect((await lstat(endpoint)).isSocket()).toBe(true));
+      const result = await spawned.stop({ killGraceMs: 2_000, termGraceMs: 2_000 });
+      expect(result).toMatchObject({ forcedPids: [], gracefulAccepted: false, remainingPids: [] });
+      await expect(readFile(marker, "utf8")).resolves.toBe("SIGTERM");
+    } finally {
+      await spawned.stop({ killGraceMs: 2_000, termGraceMs: 0 }).catch(() => undefined);
+      await stopSidecar(termStamp, { killGraceMs: 2_000, termGraceMs: 0 }).catch(() => undefined);
+      await rm(root, { force: true, recursive: true });
+    }
+  }, 10_000);
+
   it("lets an owned generation handle retire its stale endpoint without discovering a replacement", async () => {
     if (process.platform === "win32") return;
     const fixture = fileURLToPath(new URL("./fixtures/unresponsive-sidecar.ts", import.meta.url));
@@ -695,6 +722,45 @@ describe("server-side atomic operations", () => {
     }
   }, process.platform === "win32" ? 30_000 : 15_000);
 
+  it("retires fenced descendants when an ownerless target exits on SIGTERM", async () => {
+    const fixture = fileURLToPath(new URL("./fixtures/orphaning-sidecar.ts", import.meta.url));
+    const root = await mkdtemp(join(tmpdir(), "open-design-owner-orphan-"));
+    const readyPath = join(root, "ready.json");
+    const owner = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+    if (owner.pid == null) throw new Error("owner fixture has no pid");
+    const ownerStamp = { ...stamp, app: "web", namespace: `owner-orphan-${process.pid}` };
+    const spawned = await spawnSidecar({
+      args: [fixture],
+      command: process.execPath,
+      env: { ...process.env, OD_TEST_ORPHAN_READY: readyPath },
+      resources: { dataRoot: join(root, "data"), ownerPid: owner.pid, port: 0, runtimeRoot: join(root, "runtime") },
+      stamp: ownerStamp,
+    });
+    let descendantPid: number | null = null;
+    try {
+      await vi.waitFor(async () => {
+        const ready = await readFile(readyPath, "utf8").then((value) => JSON.parse(value)).catch(() => null);
+        descendantPid = Number(ready?.pid);
+        expect(descendantPid).toBeGreaterThan(0);
+        expect(collectProcessTreePids(await captureProcessSnapshot(), [spawned.process.pid])).toContain(descendantPid);
+      }, { interval: 100, timeout: process.platform === "win32" ? 15_000 : 5_000 });
+      const fencedDescendantPid = descendantPid;
+      if (fencedDescendantPid == null) throw new Error("orphan fixture did not report its descendant");
+
+      owner.kill("SIGKILL");
+      await expect(waitForProcessExit(spawned.process.pid, 9_000)).resolves.toBe(true);
+      await expect(waitForProcessExit(fencedDescendantPid, 2_000)).resolves.toBe(true);
+    } finally {
+      try { owner.kill("SIGKILL"); } catch {}
+      if (descendantPid != null) {
+        try { process.kill(descendantPid, "SIGKILL"); } catch {}
+      }
+      await spawned.stop({ killGraceMs: 2_000, termGraceMs: 0 }).catch(() => undefined);
+      await stopSidecar(ownerStamp, { killGraceMs: 2_000, termGraceMs: 0 }).catch(() => undefined);
+      await rm(root, { force: true, recursive: true });
+    }
+  }, process.platform === "win32" ? 30_000 : 15_000);
+
   it("force-stops fenced descendants when the supervisor root exits during retirement", async () => {
     const fixture = fileURLToPath(new URL("./fixtures/stamped-child.ts", import.meta.url));
     const orphanStamp = { ...stamp, namespace: `orphan-retirement-${process.pid}` };
@@ -762,8 +828,6 @@ describe("server-side atomic operations", () => {
       await vi.waitFor(async () => {
         expect((await findSidecarProcesses(replacementStamp)).map(({ pid }) => pid)).toContain(replacement?.pid);
       }, { interval: 100, timeout: process.platform === "win32" ? 10_000 : 1_000 });
-      process.kill(oldPid, "SIGKILL");
-      await waitForProcessExit(oldPid, 2_000);
 
       const result = await stopping;
       expect(result.matchedPids).toContain(oldPid);
