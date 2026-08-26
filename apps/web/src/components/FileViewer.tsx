@@ -11037,11 +11037,12 @@ function HtmlViewer({
     workspaceActive,
   ]);
   useEffect(() => {
+    if (previewRuntimeConvergence) return;
     const urlFrame = urlPreviewIframeRef.current;
     const srcDocFrame = srcDocPreviewIframeRef.current;
     postPreviewObservabilityHostState(urlFrame);
     if (srcDocFrame !== urlFrame) postPreviewObservabilityHostState(srcDocFrame);
-  }, [postPreviewObservabilityHostState]);
+  }, [postPreviewObservabilityHostState, previewRuntimeConvergence]);
   // Only materialized while the in-tab presentation overlay is up — building
   // it eagerly would re-run buildSrcdoc on every source edit for a document
   // nobody is presenting.
@@ -12138,7 +12139,7 @@ function HtmlViewer({
   ]);
 
   useEffect(() => {
-    if (!workspaceActive) return;
+    if (!workspaceActive || previewRuntimeConvergence) return;
     const win = iframeRef.current?.contentWindow;
     if (!win) return;
     win.postMessage({
@@ -12146,10 +12147,10 @@ function HtmlViewer({
       enabled: boardMode,
       mode: boardTool,
     }, '*');
-  }, [boardMode, boardTool, srcDoc, useUrlLoadPreview, workspaceActive]);
+  }, [boardMode, boardTool, previewRuntimeConvergence, srcDoc, useUrlLoadPreview, workspaceActive]);
 
   useEffect(() => {
-    if (!workspaceActive) return;
+    if (!workspaceActive || previewRuntimeConvergence) return;
     const target = iframeRef.current;
     const win = target?.contentWindow;
     if (!win) return;
@@ -12165,6 +12166,7 @@ function HtmlViewer({
     postSelectedManualEditTargetToIframe(manualEditMode ? selectedManualEditTarget?.id ?? null : null);
   }, [
     manualEditMode,
+    previewRuntimeConvergence,
     selectedManualEditTarget?.id,
     srcDoc,
     useUrlLoadPreview,
@@ -12199,11 +12201,11 @@ function HtmlViewer({
   }
 
   useEffect(() => {
-    if (!workspaceActive) return;
+    if (!workspaceActive || previewRuntimeConvergence) return;
     const win = iframeRef.current?.contentWindow;
     if (!win) return;
     win.postMessage({ type: 'od:inspect-mode', enabled: inspectMode }, '*');
-  }, [inspectMode, srcDoc, useUrlLoadPreview, workspaceActive]);
+  }, [inspectMode, previewRuntimeConvergence, srcDoc, useUrlLoadPreview, workspaceActive]);
 
   // Mirror the bridge's `od:comment-targets` broadcast into
   // `liveCommentTargets` whenever EITHER Inspect or Comments mode is
@@ -12519,13 +12521,26 @@ function HtmlViewer({
   }, [activeCommentTarget, boardMode, boardTool, cancelHoverCardDismiss, commentPortalHost, file.name, isOurPreviewIframeSource, previewComments, scheduleHoverCardDismiss, workspaceActive]);
 
   useEffect(() => {
-    if (!workspaceActive || !boardMode || !activeCommentTarget || activeCommentTarget.selectionKind === 'pod') return;
+    if (
+      !workspaceActive
+      || previewRuntimeConvergence
+      || !boardMode
+      || !activeCommentTarget
+      || activeCommentTarget.selectionKind === 'pod'
+    ) return;
     iframeRef.current?.contentWindow?.postMessage({
       type: 'od:comment-active-target',
       elementId: activeCommentTarget.elementId,
       selector: activeCommentTarget.selector,
     }, '*');
-  }, [activeCommentTarget?.elementId, activeCommentTarget?.selector, activeCommentTarget?.selectionKind, boardMode, workspaceActive]);
+  }, [
+    activeCommentTarget?.elementId,
+    activeCommentTarget?.selector,
+    activeCommentTarget?.selectionKind,
+    boardMode,
+    previewRuntimeConvergence,
+    workspaceActive,
+  ]);
 
   useEffect(() => {
     if (!manualEditMode) {
