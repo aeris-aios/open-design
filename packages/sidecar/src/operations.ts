@@ -1,7 +1,7 @@
 import type { ChildProcess } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-import type { SpawnProcessRequest, StopProcessesOptions } from "@open-design/platform";
+import type { SpawnProcessRequest } from "@open-design/platform";
 import {
   createProcessStampArgs,
   isProcessAlive,
@@ -26,6 +26,7 @@ import {
   retireKnownSidecarGeneration,
   retireObservedSidecarGeneration,
   sidecarGenerationRef,
+  type SidecarStopOptions,
   type SidecarStopResult,
 } from "./generation.js";
 import { captureSidecarGenerationSnapshot } from "./process-tree.js";
@@ -42,7 +43,7 @@ import {
   type SidecarStamp,
 } from "./stamp.js";
 
-export type { SidecarStopResult } from "./generation.js";
+export type { SidecarStopOptions, SidecarStopResult } from "./generation.js";
 
 export type SidecarLaunchRequest = Omit<SpawnProcessRequest, "args" | "env"> & {
   args?: readonly string[];
@@ -54,7 +55,7 @@ export type SidecarLaunchRequest = Omit<SpawnProcessRequest, "args" | "env"> & {
 export type SidecarRestartOptions = {
   requireConcretePort?: boolean;
   reuseKnownPort?: boolean;
-  stop?: StopProcessesOptions;
+  stop?: SidecarStopOptions;
 };
 
 export type SidecarLaunchConvergenceOptions = {
@@ -114,7 +115,7 @@ export type SidecarRestartResult = {
 export type SpawnedSidecar = {
   readonly process: ChildProcess & { pid: number };
   readonly stamp: SidecarStamp;
-  stop(options?: StopProcessesOptions): Promise<SidecarStopResult>;
+  stop(options?: SidecarStopOptions): Promise<SidecarStopResult>;
 };
 
 export function registerSidecarProcess(
@@ -389,9 +390,12 @@ export async function invokeSidecar<TResult = unknown>(
   );
 }
 
-export async function stopSidecar(stamp: SidecarStamp, options: StopProcessesOptions = {}): Promise<SidecarStopResult> {
+export async function stopSidecar(stamp: SidecarStamp, options: SidecarStopOptions = {}): Promise<SidecarStopResult> {
   const exact = normalizeSidecarStamp(stamp);
-  return await retireObservedSidecarGeneration(await observeSidecarGeneration(exact), options);
+  return await retireObservedSidecarGeneration(
+    await observeSidecarGeneration(exact, options.gracefulRequestTimeoutMs),
+    options,
+  );
 }
 
 /**

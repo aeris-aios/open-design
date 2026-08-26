@@ -6,6 +6,7 @@ import type { ChildProcess } from "node:child_process";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DesktopStatusSnapshot } from "@open-design/sidecar-proto";
+import type { SidecarStopResult } from "@open-design/sidecar";
 
 import type { ToolPackConfig } from "@/config/index.js";
 import { resolveMacPaths } from "@/mac/paths.js";
@@ -36,14 +37,15 @@ const convergeSidecarLaunch = vi.fn(async (request: { env: NodeJS.ProcessEnv; st
   description: { ready: true, resources: { pid: 1234 }, stamp: request.stamp },
   launcherProcess: await spawnLoggedProcess(request),
 }));
-const stopSidecar = vi.fn(async (stamp: { mode: string; source: string }) => ({
+const defaultStopSidecar = async (stamp: { app: string; mode: string; source: string }): Promise<SidecarStopResult> => ({
   alreadyStopped: stamp.source !== "packaged" || stamp.mode !== "headless",
   forcedPids: [],
   gracefulAccepted: stamp.source === "packaged" && stamp.mode === "headless",
   matchedPids: stamp.source === "packaged" && stamp.mode === "headless" ? [4242] : [],
   remainingPids: [],
   stoppedPids: stamp.source === "packaged" && stamp.mode === "headless" ? [4242] : [],
-}));
+});
+const stopSidecar = vi.fn(defaultStopSidecar);
 
 vi.mock("@open-design/sidecar", async () => ({
   ...(await vi.importActual<typeof import("@open-design/sidecar")>("@open-design/sidecar")),
@@ -64,7 +66,7 @@ vi.mock("@open-design/platform", () => ({
   stopProcesses,
 }));
 
-const { inspectPackedMacApp, startPackedMacApp, stopPackedMacApp } = await import("@/mac/lifecycle.js");
+const { cleanupPackedMacNamespace, inspectPackedMacApp, startPackedMacApp, stopPackedMacApp } = await import("@/mac/lifecycle.js");
 
 function makeConfig(root: string, overrides: Partial<ToolPackConfig> = {}): ToolPackConfig {
   return {
@@ -117,6 +119,7 @@ afterEach(() => {
       rootPids.filter((pid): pid is number => typeof pid === "number"),
   );
   stopProcesses.mockImplementation(async (pids: number[]) => ({ remainingPids: [], stoppedPids: pids }));
+  stopSidecar.mockImplementation(defaultStopSidecar);
 });
 
 describe("startPackedMacApp", () => {
@@ -288,9 +291,53 @@ describe("stopPackedMacApp", () => {
         status: "stopped",
         stoppedPids: [payloadDesktop.pid],
       });
-      expect(stopSidecar).toHaveBeenCalledWith(expect.objectContaining({ namespace: config.namespace, source: "packaged" }));
-      expect(stopSidecar).toHaveBeenCalledWith(expect.objectContaining({ mode: "headless", source: "packaged" }));
+      expect(stopSidecar).toHaveBeenCalledWith(
+        expect.objectContaining({ namespace: config.namespace, source: "packaged" }),
+        expect.any(Object),
+      );
+      expect(stopSidecar).toHaveBeenCalledWith(
+        expect.objectContaining({ mode: "headless", source: "packaged" }),
+        expect.any(Object),
+      );
+      expect(stopSidecar).toHaveBeenCalledWith(
+        expect.objectContaining({ app: "web", mode: "runtime", source: "packaged" }),
+        { gracefulRequestTimeoutMs: 500, killGraceMs: 750, termGraceMs: 750 },
+      );
+      expect(stopSidecar).toHaveBeenCalledWith(
+        expect.objectContaining({ app: "daemon", mode: "runtime", source: "packaged" }),
+        expect.any(Object),
+      );
       expect(stopProcesses).not.toHaveBeenCalled();
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+
+  it("keeps output and runtime roots when a packaged generation survives cleanup", async () => {
+    const root = await mkdtemp(join(tmpdir(), "open-design-tools-pack-mac-lifecycle-"));
+    const config = makeConfig(root);
+    const outputMarker = join(config.roots.output.namespaceRoot, "artifact.txt");
+    const runtimeMarker = join(config.roots.runtime.namespaceRoot, "runtime.txt");
+
+    try {
+      await mkdir(config.roots.output.namespaceRoot, { recursive: true });
+      await mkdir(config.roots.runtime.namespaceRoot, { recursive: true });
+      await writeFile(outputMarker, "artifact", "utf8");
+      await writeFile(runtimeMarker, "runtime", "utf8");
+      stopSidecar.mockImplementation(async (stamp: { app: string; mode: string; source: string }) => ({
+        alreadyStopped: stamp.app !== "web" || stamp.source !== "packaged",
+        forcedPids: [],
+        gracefulAccepted: false,
+        matchedPids: stamp.app === "web" && stamp.source === "packaged" ? [5252] : [],
+        remainingPids: stamp.app === "web" && stamp.source === "packaged" ? [5252] : [],
+        stoppedPids: [],
+      }));
+
+      await expect(cleanupPackedMacNamespace(config)).rejects.toThrow(
+        "cannot cleanup packaged namespace while sidecar processes remain: 5252",
+      );
+      await expect(readFile(outputMarker, "utf8")).resolves.toBe("artifact");
+      await expect(readFile(runtimeMarker, "utf8")).resolves.toBe("runtime");
     } finally {
       await rm(root, { force: true, recursive: true });
     }

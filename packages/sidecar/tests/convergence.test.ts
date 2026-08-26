@@ -918,6 +918,61 @@ describe("server-side atomic operations", () => {
     }
   }, process.platform === "win32" ? 30_000 : 15_000);
 
+  it.skipIf(process.platform === "win32")(
+    "bounds retirement of a frozen runtime with rewritten argv",
+    async () => {
+      const fixture = fileURLToPath(new URL("./fixtures/managed-child.ts", import.meta.url));
+      const root = await mkdtemp(join(tmpdir(), "open-design-sidecar-frozen-"));
+      const frozenStamp = { ...stamp, app: "web", namespace: `frozen-runtime-${process.pid}` };
+      const spawned = await spawnSidecar({
+        args: ["--import", "tsx", fixture],
+        command: process.execPath,
+        env: { ...process.env, OD_TEST_RENAME_RUNTIME: "1" },
+        resources: {
+          dataRoot: join(root, "data"),
+          ownerPid: null,
+          port: 0,
+          runtimeRoot: join(root, "runtime"),
+        },
+        stamp: frozenStamp,
+      });
+      let runtimePid: number | null = null;
+      try {
+        await vi.waitFor(async () => {
+          await expect(getSidecarStatus(frozenStamp)).resolves.toMatchObject({ pid: spawned.process.pid });
+          runtimePid = (await captureProcessSnapshot())
+            .find(({ ppid }) => ppid === spawned.process.pid)?.pid ?? null;
+          expect(runtimePid).toBeGreaterThan(0);
+        }, { interval: 100, timeout: FIXTURE_READY_TIMEOUT_MS });
+        const frozenRuntimePid = runtimePid;
+        if (frozenRuntimePid == null) throw new Error("managed runtime was not discovered");
+        process.kill(frozenRuntimePid, "SIGSTOP");
+
+        const startedAt = Date.now();
+        const stopped = await stopSidecar(frozenStamp, {
+          gracefulRequestTimeoutMs: 300,
+          killGraceMs: 750,
+          termGraceMs: 300,
+        });
+
+        expect(Date.now() - startedAt).toBeLessThan(6_000);
+        expect(stopped.remainingPids).toEqual([]);
+        expect(stopped.stoppedPids).toEqual(expect.arrayContaining([spawned.process.pid, frozenRuntimePid]));
+        await expect(waitForProcessExit(spawned.process.pid, 1_000)).resolves.toBe(true);
+        await expect(waitForProcessExit(frozenRuntimePid, 1_000)).resolves.toBe(true);
+      } finally {
+        if (runtimePid != null) {
+          try { process.kill(runtimePid, "SIGCONT"); } catch {}
+          try { process.kill(runtimePid, "SIGKILL"); } catch {}
+        }
+        await spawned.stop({ killGraceMs: 750, termGraceMs: 0 }).catch(() => undefined);
+        await stopSidecar(frozenStamp, { killGraceMs: 750, termGraceMs: 0 }).catch(() => undefined);
+        await rm(root, { force: true, recursive: true });
+      }
+    },
+    15_000,
+  );
+
   it("quick-fails a managed target when its supervisor disappears", async () => {
     const fixture = fileURLToPath(new URL("./fixtures/managed-child.ts", import.meta.url));
     const root = await mkdtemp(join(tmpdir(), "open-design-supervisor-death-"));

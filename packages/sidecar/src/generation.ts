@@ -24,6 +24,11 @@ export type SidecarStopResult = StopProcessesResult & {
   gracefulAccepted: boolean;
 };
 
+export type SidecarStopOptions = StopProcessesOptions & {
+  /** Bound the graceful lifecycle request before process retirement takes over. */
+  gracefulRequestTimeoutMs?: number;
+};
+
 /** Authority to mutate one concrete supervisor generation of a stamped resource. */
 export type SidecarGenerationRef = Readonly<{
   rootPid: number;
@@ -77,12 +82,16 @@ export async function describeSidecarGeneration(
   return description;
 }
 
-export async function observeSidecarGeneration(stampInput: SidecarStamp): Promise<ObservedSidecarGeneration> {
+export async function observeSidecarGeneration(
+  stampInput: SidecarStamp,
+  descriptionTimeoutMs = 2_000,
+): Promise<ObservedSidecarGeneration> {
   const stamp = normalizeSidecarStamp(stampInput);
+  const normalizedDescriptionTimeoutMs = normalizeGracefulRequestTimeoutMs(descriptionTimeoutMs);
   const deadline = Date.now() + 1_000;
   while (true) {
     try {
-      return await observeSidecarGenerationOnce(stamp);
+      return await observeSidecarGenerationOnce(stamp, normalizedDescriptionTimeoutMs);
     } catch (error) {
       if (!isTransientGenerationObservation(error) || Date.now() >= deadline) throw error;
       await new Promise((resolve) => setTimeout(resolve, 50));
@@ -90,7 +99,10 @@ export async function observeSidecarGeneration(stampInput: SidecarStamp): Promis
   }
 }
 
-async function observeSidecarGenerationOnce(stamp: SidecarStamp): Promise<ObservedSidecarGeneration> {
+async function observeSidecarGenerationOnce(
+  stamp: SidecarStamp,
+  descriptionTimeoutMs: number,
+): Promise<ObservedSidecarGeneration> {
   const endpoint = await readPrivateEndpointIdentity(stamp);
   const snapshot = await captureSidecarGenerationSnapshot(stamp);
   const endpointAfterCapture = await readPrivateEndpointIdentity(stamp);
@@ -102,7 +114,7 @@ async function observeSidecarGenerationOnce(stamp: SidecarStamp): Promise<Observ
       `cannot mutate sidecar with multiple stamped generation roots: ${snapshot.roots.map(({ pid }) => pid).join(", ")}`,
     );
   }
-  const description = await describeSidecarGeneration(stamp);
+  const description = await describeSidecarGeneration(stamp, descriptionTimeoutMs);
   const endpointAfterDescribe = await readPrivateEndpointIdentity(stamp);
   if (!samePrivateEndpointIdentity(endpoint, endpointAfterDescribe)) {
     throw new Error("cannot mutate sidecar because endpoint ownership changed during description");
@@ -130,7 +142,7 @@ function isTransientGenerationObservation(error: unknown): boolean {
 
 export async function retireObservedSidecarGeneration(
   observation: ObservedSidecarGeneration,
-  options: StopProcessesOptions = {},
+  options: SidecarStopOptions = {},
 ): Promise<SidecarStopResult> {
   const result = observation.ref == null
     ? alreadyStoppedResult()
@@ -157,7 +169,7 @@ export async function retireObservedSidecarGeneration(
 /** Retire a generation already owned by the caller without adopting a replacement. */
 export async function retireKnownSidecarGeneration(
   ref: SidecarGenerationRef,
-  options: StopProcessesOptions = {},
+  options: SidecarStopOptions = {},
 ): Promise<SidecarStopResult> {
   const endpoint = await readPrivateEndpointIdentity(ref.stamp);
   const description = await describeSidecarGeneration(ref.stamp);
@@ -183,7 +195,7 @@ export async function retireKnownSidecarGeneration(
 /** Retire exactly the generation named by the stable supervisor root. */
 export async function retireSidecarGeneration(
   ref: SidecarGenerationRef,
-  options: StopProcessesOptions = {},
+  options: SidecarStopOptions = {},
   knownSnapshots?: ProcessSnapshot[],
 ): Promise<SidecarStopResult> {
   const snapshots = knownSnapshots ?? await captureProcessSnapshot();
@@ -197,7 +209,7 @@ export async function retireSidecarGeneration(
     const response = await requestJsonIpc<{ accepted?: unknown }>(
       resolvePrivateIpcPath(ref.stamp),
       { targetPids: [ref.rootPid], type: sidecarProtocol.stop },
-      { timeoutMs: 2_000 },
+      { timeoutMs: normalizeGracefulRequestTimeoutMs(options.gracefulRequestTimeoutMs) },
     );
     gracefulAccepted = response.accepted === true;
   } catch {
@@ -210,6 +222,12 @@ export async function retireSidecarGeneration(
     stopOptions: options,
   });
   return { ...result, gracefulAccepted };
+}
+
+function normalizeGracefulRequestTimeoutMs(value: number | undefined): number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? Math.floor(value)
+    : 2_000;
 }
 
 function alreadyStoppedResult(): SidecarStopResult {

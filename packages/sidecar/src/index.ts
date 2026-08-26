@@ -57,6 +57,7 @@ export type {
   SidecarLaunchConvergenceResult,
   SidecarRestartOptions,
   SidecarRestartResult,
+  SidecarStopOptions,
   SidecarStopResult,
   SpawnedSidecar,
 } from "./operations.js";

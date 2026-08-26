@@ -37,9 +37,11 @@ launches register during packaged startup; tools-pack launches receive the same
 stamp through the sidecar launch atomic. No identity file participates in
 discovery or ownership.
 
-`tools-pack mac stop` scans exact argv stamps for both tools-pack and direct
-packaged sources, requests private graceful teardown, waits for exit, and then
-force-stops only the still-matching process trees.
+`tools-pack mac stop` scans exact argv stamps for desktop, Web, and daemon across
+both tools-pack and direct packaged sources, requests private graceful teardown,
+waits for every captured generation to exit, and then force-stops only the
+still-matching process trees. Cleanup and uninstall refuse to remove artifacts
+while any captured generation remains alive.
 
 This keeps `stop` from killing processes outside the current namespace.
 

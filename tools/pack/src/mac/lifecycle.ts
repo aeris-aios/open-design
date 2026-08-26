@@ -47,8 +47,17 @@ function convergedDesktopStamp(
   source: typeof SIDECAR_SOURCES.TOOLS_PACK | typeof SIDECAR_SOURCES.PACKAGED = SIDECAR_SOURCES.TOOLS_PACK,
   mode: ConvergedSidecarStamp["mode"] = SIDECAR_MODES.RUNTIME,
 ): ConvergedSidecarStamp {
+  return convergedPackagedStamp(config, APP_KEYS.DESKTOP, source, mode);
+}
+
+function convergedPackagedStamp(
+  config: ToolPackConfig,
+  app: ConvergedSidecarStamp["app"],
+  source: typeof SIDECAR_SOURCES.TOOLS_PACK | typeof SIDECAR_SOURCES.PACKAGED,
+  mode: ConvergedSidecarStamp["mode"],
+): ConvergedSidecarStamp {
   return {
-    app: APP_KEYS.DESKTOP,
+    app,
     channel: releaseChannelFromVersion(config.appVersion)
       ?? releaseChannelFromNamespace(config.namespace, "default")
       ?? "stable",
@@ -457,15 +466,27 @@ export async function startPackedMacApp(config: ToolPackConfig): Promise<MacStar
 }
 
 export async function stopPackedMacApp(config: ToolPackConfig): Promise<MacStopResult> {
+  // Desktop owns the user-visible lifecycle, but Web and daemon are detached
+  // stamped generations. Observe and retire all three concurrently so the
+  // outer stop cannot lose a frozen child after Electron itself exits.
+  const stamps = [SIDECAR_SOURCES.TOOLS_PACK, SIDECAR_SOURCES.PACKAGED].flatMap((source) => [
+    convergedPackagedStamp(config, APP_KEYS.DESKTOP, source, SIDECAR_MODES.RUNTIME),
+    convergedPackagedStamp(config, APP_KEYS.WEB, source, SIDECAR_MODES.RUNTIME),
+    convergedPackagedStamp(config, APP_KEYS.DAEMON, source, SIDECAR_MODES.RUNTIME),
+    convergedPackagedStamp(config, APP_KEYS.DESKTOP, source, "headless"),
+  ]);
   const results = await Promise.all(
-    [SIDECAR_SOURCES.TOOLS_PACK, SIDECAR_SOURCES.PACKAGED].flatMap((source) => [
-      stopSidecar(convergedDesktopStamp(config, source, SIDECAR_MODES.RUNTIME)),
-      stopSidecar(convergedDesktopStamp(config, source, "headless")),
-    ]),
+    stamps.map(async (stamp) => await stopSidecar(stamp, stamp.app === APP_KEYS.WEB
+      ? {
+          gracefulRequestTimeoutMs: 500,
+          killGraceMs: 750,
+          termGraceMs: 750,
+        }
+      : {})),
   );
-  const matchedPids = results.flatMap((result) => result.matchedPids);
-  const remainingPids = results.flatMap((result) => result.remainingPids);
-  const stoppedPids = results.flatMap((result) => result.stoppedPids);
+  const matchedPids = [...new Set(results.flatMap((result) => result.matchedPids))];
+  const remainingPids = [...new Set(results.flatMap((result) => result.remainingPids))];
+  const stoppedPids = [...new Set(results.flatMap((result) => result.stoppedPids))];
   const gracefulRequested = results.some((result) => result.gracefulAccepted);
   return {
     gracefulRequested,
@@ -536,6 +557,7 @@ export async function inspectPackedMacApp(config: ToolPackConfig, options: { exp
 export async function uninstallPackedMacApp(config: ToolPackConfig): Promise<MacUninstallResult> {
   const paths = resolveMacPaths(config);
   const stop = await stopPackedMacApp(config);
+  assertMacStopComplete(stop, "uninstall");
   const removed = await pathExists(paths.installedAppPath);
   await rm(paths.installedAppPath, { force: true, recursive: true });
 
@@ -551,6 +573,7 @@ export async function cleanupPackedMacNamespace(config: ToolPackConfig): Promise
   const paths = resolveMacPaths(config);
   const launcher = resolveToolPackLauncherLayout(config);
   const stop = await stopPackedMacApp(config);
+  assertMacStopComplete(stop, "cleanup");
   const detachedMount = await detachMount(paths.mountPoint);
   const removedOutputRoot = await pathExists(config.roots.output.namespaceRoot);
   const removedRuntimeNamespaceRoot = await pathExists(config.roots.runtime.namespaceRoot);
@@ -570,4 +593,11 @@ export async function cleanupPackedMacNamespace(config: ToolPackConfig): Promise
     runtimeNamespaceRoot: config.roots.runtime.namespaceRoot,
     stop,
   };
+}
+
+function assertMacStopComplete(stop: MacStopResult, operation: string): void {
+  if (stop.remainingPids.length === 0) return;
+  throw new Error(
+    `cannot ${operation} packaged namespace while sidecar processes remain: ${stop.remainingPids.join(", ")}`,
+  );
 }

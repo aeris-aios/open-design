@@ -1,6 +1,8 @@
 import { SidecarFactory } from "../../src/index.js";
 import { createServer } from "node:http";
 
+if (process.env.OD_TEST_RENAME_RUNTIME === "1") process.title = "next-server";
+
 type ManagedRuntime = {
   pid: number;
   port: number;
