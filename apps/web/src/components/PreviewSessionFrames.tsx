@@ -32,7 +32,10 @@ export interface PreviewSessionFramesProps extends Omit<
   navigation: PreviewSessionNavigation;
   enabledCapabilities?: readonly PreviewRuntimeCapability[];
   active: boolean;
+  /** Bump to replace an unpromoted standby browsing context at the same URL. */
+  navigationRetryToken?: number;
   onCurrentFrameChange?: (frame: HTMLIFrameElement | null) => void;
+  onStandbyFrameChange?: (frame: HTMLIFrameElement | null) => void;
   onStandbyReady?: (frame: HTMLIFrameElement) => void;
   onCapabilitiesApplied?: (
     frame: HTMLIFrameElement,
@@ -100,7 +103,9 @@ function PreviewSessionFramesForFile({
   navigation,
   enabledCapabilities = EMPTY_CAPABILITIES,
   active,
+  navigationRetryToken = 0,
   onCurrentFrameChange,
+  onStandbyFrameChange,
   onStandbyReady,
   onCapabilitiesApplied,
   onPromoted,
@@ -110,6 +115,7 @@ function PreviewSessionFramesForFile({
   const pool = useIframeKeepAlivePool();
   const callbacksRef = useRef({
     onCurrentFrameChange,
+    onStandbyFrameChange,
     onStandbyReady,
     onCapabilitiesApplied,
     onPromoted,
@@ -118,6 +124,7 @@ function PreviewSessionFramesForFile({
   const standbyTargetRef = useRef<PreviewRuntimeMessageTarget | null>(null);
   callbacksRef.current = {
     onCurrentFrameChange,
+    onStandbyFrameChange,
     onStandbyReady,
     onCapabilitiesApplied,
     onPromoted,
@@ -176,6 +183,17 @@ function PreviewSessionFramesForFile({
 
   const requestedIsCurrent = sameIdentity(current, navigation);
   const standby = requestedIsCurrent ? null : navigation;
+  const previousNavigationRetryTokenRef = useRef(navigationRetryToken);
+
+  useEffect(() => {
+    if (previousNavigationRetryTokenRef.current === navigationRetryToken) return;
+    previousNavigationRetryTokenRef.current = navigationRetryToken;
+    if (!standby) return;
+    // Evicting the exact pooled key replaces only the unpromoted browsing
+    // context. The PreviewSession ref callback discards its old message target
+    // before the fresh frame stages the same document identity again.
+    pool.evict(documentKeepAliveKey(projectId, fileName, standby));
+  }, [fileName, navigationRetryToken, pool, projectId, standby]);
 
   const stageFrame = useCallback((frame: HTMLIFrameElement | null) => {
     if (!frame) {
@@ -183,6 +201,7 @@ function PreviewSessionFramesForFile({
       if (previousTarget) frameByTargetRef.current.delete(previousTarget);
       standbyTargetRef.current = null;
       if (standby) session.discardStandby(standby);
+      callbacksRef.current.onStandbyFrameChange?.(null);
       return;
     }
     if (!standby) return;
@@ -191,6 +210,7 @@ function PreviewSessionFramesForFile({
     standbyTargetRef.current = target;
     frameByTargetRef.current.set(target, frame);
     session.stageDocument({ ...standby, target });
+    callbacksRef.current.onStandbyFrameChange?.(frame);
   }, [session, standby]);
 
   const retainCurrentFrame = useCallback((frame: HTMLIFrameElement | null) => {

@@ -8383,6 +8383,7 @@ function HtmlViewer({
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const urlPreviewIframeRef = useRef<HTMLIFrameElement | null>(null);
   const srcDocPreviewIframeRef = useRef<HTMLIFrameElement | null>(null);
+  const previewRuntimeStandbyIframeRef = useRef<HTMLIFrameElement | null>(null);
   const viewerRootRef = useRef<HTMLDivElement | null>(null);
   const srcDocNavigationCommittedRef = useRef<{
     frame: HTMLIFrameElement;
@@ -8396,6 +8397,8 @@ function HtmlViewer({
     eventId: number;
     keepAliveKey: string;
   } | null>(null);
+  const handledPreviewRuntimeNavigationFailureRef = useRef<string | null>(null);
+  const [previewRuntimeNavigationRetryToken, setPreviewRuntimeNavigationRetryToken] = useState(0);
   const srcDocContentReadyRef = useRef<{
     frame: HTMLIFrameElement;
     generation: string;
@@ -10156,15 +10159,25 @@ function HtmlViewer({
     && liveHtml === undefined
     && routingSourceIdentity === currentSourceIdentity
     && routingHtmlSource !== null;
+  const previewRuntimeRevisionKey = `${sourceSnapshotRefreshKey}:${reloadKey}`;
   const previewRuntimeNavigation = useProjectPreviewSessionNavigation({
     projectId,
     fileName: file.name,
-    revisionKey: `${sourceSnapshotRefreshKey}:${reloadKey}`,
+    revisionKey: previewRuntimeRevisionKey,
     authorizationKey: sourceAuthorizationScopeKey ?? 'pending',
     policy: previewRuntimePolicy,
     enabled: previewRuntimeNavigationEnabled,
     retainLastGoodWhenDisabled: true,
   });
+  const previewRuntimeNavigationGeneration = previewRuntimeNavigation.navigation
+    ? [
+        projectId,
+        file.name,
+        previewRuntimeRevisionKey,
+        previewRuntimeNavigation.navigation.sessionId,
+        previewRuntimeNavigation.navigation.documentVersion,
+      ].join('\u0000')
+    : null;
   const previewRuntimeViewerState = {
     deck: effectiveDeck,
     comment: boardMode,
@@ -11297,6 +11310,36 @@ function HtmlViewer({
       || !Number.isSafeInteger(failure.eventId)
       || !Number.isFinite(failure.occurredAtMs)
     ) return;
+    if (previewRuntimeConvergence) {
+      const frame = previewRuntimeStandbyIframeRef.current;
+      const navigation = previewRuntimeNavigation.navigation;
+      if (
+        !workspaceActiveRef.current
+        || mode !== 'preview'
+        || !frame?.isConnected
+        || !navigation
+        || Date.now() - failure.occurredAtMs > SRC_DOC_PREVIEW_FAILURE_FRESHNESS_MS
+      ) return;
+      let matches = false;
+      try {
+        matches = new URL(failure.validatedUrl).href
+          === new URL(frame.getAttribute('src') ?? '', window.location.href).href;
+      } catch {
+        return;
+      }
+      if (!matches) return;
+      if (
+        previewRuntimeNavigationGeneration === null
+        || handledPreviewRuntimeNavigationFailureRef.current
+          === previewRuntimeNavigationGeneration
+      ) return;
+      handledPreviewRuntimeNavigationFailureRef.current = previewRuntimeNavigationGeneration;
+      // The current frame has already painted and is never replaced here.
+      // Only the hidden, unpromoted frame that owns this exact URL gets one
+      // clean browsing-context retry for this document identity.
+      setPreviewRuntimeNavigationRetryToken((current) => current + 1);
+      return;
+    }
     if (!aboutSrcDocFailure && !localBlobFailure) {
       const frame = urlPreviewIframeRef.current;
       if (
@@ -11389,6 +11432,9 @@ function HtmlViewer({
   }, [
     iframeKeepAlivePool,
     mode,
+    previewRuntimeConvergence,
+    previewRuntimeNavigation.navigation,
+    previewRuntimeNavigationGeneration,
     probeSrcDocTransport,
     recoverUnacknowledgedSrcDocTransport,
     urlPreviewKeepAliveKey,
@@ -17253,6 +17299,7 @@ function HtmlViewer({
                             viewerState={previewRuntimeViewerState}
                             bridgeModeState={previewRuntimeBridgeModeState}
                             active={workspaceActive && mode === 'preview'}
+                            navigationRetryToken={previewRuntimeNavigationRetryToken}
                             title={file.name}
                             data-od-powered={needsPowered ? 'true' : undefined}
                             sandbox={urlFrameSandbox}
@@ -17268,6 +17315,9 @@ function HtmlViewer({
                               }, '*');
                               restorePreviewScrollPosition();
                               scheduleDesktopPreviewContentMeasure(frame);
+                            }}
+                            onStandbyFrameChange={(frame) => {
+                              previewRuntimeStandbyIframeRef.current = frame;
                             }}
                           />
                         ) : (

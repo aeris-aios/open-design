@@ -139,6 +139,39 @@ describe('PreviewSessionFrames', () => {
     expect(frame.getAttribute('src')).toBe(url);
   });
 
+  it('replaces only an unpromoted standby when its navigation retry token changes', () => {
+    const first = navigation('v1');
+    const onStandbyFrameChange = vi.fn();
+    const view = (navigationRetryToken: number) => (
+      <IframeKeepAliveProvider>
+        <PreviewSessionFrames
+          projectId="project-1"
+          fileName="index.html"
+          navigation={first}
+          navigationRetryToken={navigationRetryToken}
+          active
+          onStandbyFrameChange={onStandbyFrameChange}
+        />
+      </IframeKeepAliveProvider>
+    );
+    const { rerender } = render(view(0));
+    const failed = screen.getByTestId('preview-runtime-frame-standby') as HTMLIFrameElement;
+    const url = failed.getAttribute('src');
+
+    rerender(view(1));
+
+    const retry = screen.getByTestId('preview-runtime-frame-standby') as HTMLIFrameElement;
+    expect(retry).not.toBe(failed);
+    expect(retry.getAttribute('src')).toBe(url);
+    expect(onStandbyFrameChange).toHaveBeenCalledWith(null);
+    expect(onStandbyFrameChange).toHaveBeenLastCalledWith(retry);
+
+    settle(retry, first);
+    rerender(view(2));
+    expect(screen.getByTestId('preview-runtime-frame-current')).toBe(retry);
+    expect(retry.getAttribute('src')).toBe(url);
+  });
+
   it('reattaches the same pooled browsing context and stages it for handshaking again', () => {
     const first = navigation('v1');
     function Harness({ shown }: { shown: boolean }) {

@@ -8477,12 +8477,13 @@ describe('FileViewer tweaks toolbar', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const renderViewer = (liveHtml?: string) => (
+    const renderViewer = (liveHtml?: string, workspaceActive = true) => (
       <FileViewer
         projectId="project-1"
         projectKind="prototype"
         file={file}
         liveHtml={liveHtml}
+        workspaceActive={workspaceActive}
         previewRuntimeConvergence
       />
     );
@@ -8537,6 +8538,18 @@ describe('FileViewer tweaks toolbar', () => {
     expect(frame.getAttribute('src')).toBe(initialSrc);
     expect(frame.dataset.odActive).toBe('false');
     fireEvent.click(screen.getByRole('tab', { name: 'Preview' }));
+    expect(screen.getByTestId('preview-runtime-frame-current')).toBe(frame);
+    expect(frame.getAttribute('src')).toBe(initialSrc);
+    expect(frame.dataset.odActive).toBe('true');
+    expect(fetchMock.mock.calls.filter(([input]) => (
+      String(input).includes('/api/projects/project-1/preview-url')
+    ))).toHaveLength(mintCountBeforeModeSwitch);
+
+    rerender(renderViewer(undefined, false));
+    expect(screen.getByTestId('preview-runtime-frame-current')).toBe(frame);
+    expect(frame.getAttribute('src')).toBe(initialSrc);
+    expect(frame.dataset.odActive).toBe('false');
+    rerender(renderViewer());
     expect(screen.getByTestId('preview-runtime-frame-current')).toBe(frame);
     expect(frame.getAttribute('src')).toBe(initialSrc);
     expect(frame.dataset.odActive).toBe('true');
@@ -8682,6 +8695,140 @@ describe('FileViewer tweaks toolbar', () => {
       'src',
       'http://n-scope-0002.localhost:43111/gated.html',
     );
+  });
+
+  it('retries an exact aborted converged standby once without touching a painted frame', async () => {
+    const file = htmlPreviewFile({ name: 'retry.html', path: 'retry.html' });
+    let navigationFailureListener: OpenDesignHostPreviewNavigationFailureListener | null = null;
+    const restoreHost = installMockOpenDesignHost({
+      host: {
+        preview: {
+          subscribeNavigationFailure: (listener) => {
+            navigationFailureListener = listener;
+            return () => undefined;
+          },
+        },
+      },
+    });
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = typeof input === 'string'
+        ? input
+        : input instanceof Request
+          ? input.url
+          : String(input);
+      if (url.startsWith('/api/projects/project-1/raw/retry.html')) {
+        return new Response('<!doctype html><html><body><main>Retry</main></body></html>', {
+          status: 200,
+          headers: { 'Content-Type': 'text/html' },
+        });
+      }
+      if (url === '/api/projects/project-1/files') {
+        return new Response(JSON.stringify({ files: [file] }), { status: 200 });
+      }
+      if (url.includes('/api/projects/project-1/preview-url')) {
+        return new Response(JSON.stringify({
+          url: '/api/projects/project-1/preview/legacy-scope/retry.html',
+          file: 'retry.html',
+          expiresAt: Date.now() + 60 * 60 * 1000,
+          scopedOrigin: {
+            normalUrl: 'http://n-scope-retry.localhost:43111/retry.html',
+            poweredUrl: 'http://p-scope-retry.localhost:43111/retry.html',
+            documentVersion: 'retry-v1',
+          },
+        }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ deployments: [] }), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    try {
+      render(
+        <IframeKeepAliveProvider>
+          <FileViewer
+            projectId="project-1"
+            projectKind="prototype"
+            file={file}
+            previewRuntimeConvergence
+          />
+        </IframeKeepAliveProvider>,
+      );
+      const failed = await waitFor(() => (
+        screen.getByTestId('preview-runtime-frame-standby') as HTMLIFrameElement
+      ));
+      const failedUrl = failed.src;
+
+      act(() => {
+        navigationFailureListener?.({
+          errorCode: -3,
+          eventId: 1,
+          occurredAtMs: Date.now(),
+          validatedUrl: failedUrl,
+        });
+      });
+
+      const retry = await waitFor(() => {
+        const next = screen.getByTestId('preview-runtime-frame-standby') as HTMLIFrameElement;
+        expect(next).not.toBe(failed);
+        return next;
+      });
+      expect(retry.src).toBe(failedUrl);
+
+      act(() => {
+        navigationFailureListener?.({
+          errorCode: -3,
+          eventId: 2,
+          occurredAtMs: Date.now(),
+          validatedUrl: failedUrl,
+        });
+      });
+      expect(screen.getByTestId('preview-runtime-frame-standby')).toBe(retry);
+
+      const capabilities: PreviewRuntimeCapability[] = [
+        'content_measurement',
+        'scroll',
+        'snapshot',
+        'observability',
+        'selection',
+        'tweaks',
+        'palette',
+      ];
+      const runtimeSignal = (
+        type: 'od:preview:hello' | 'od:preview:capabilities-applied' | 'od:preview:visible-paint',
+      ) => {
+        act(() => {
+          window.dispatchEvent(new MessageEvent('message', {
+            source: retry.contentWindow,
+            data: {
+              type,
+              protocolVersion: PREVIEW_RUNTIME_PROTOCOL_VERSION,
+              sessionId: 'scope-retry',
+              documentVersion: 'retry-v1',
+              ...(type === 'od:preview:hello' ? { availableCapabilities: capabilities } : {}),
+              ...(type === 'od:preview:capabilities-applied'
+                ? { enabledCapabilities: capabilities }
+                : {}),
+            },
+          }));
+        });
+      };
+      runtimeSignal('od:preview:hello');
+      runtimeSignal('od:preview:capabilities-applied');
+      runtimeSignal('od:preview:visible-paint');
+      expect(screen.getByTestId('preview-runtime-frame-current')).toBe(retry);
+
+      act(() => {
+        navigationFailureListener?.({
+          errorCode: -3,
+          eventId: 3,
+          occurredAtMs: Date.now(),
+          validatedUrl: failedUrl,
+        });
+      });
+      expect(screen.getByTestId('preview-runtime-frame-current')).toBe(retry);
+      expect(retry.src).toBe(failedUrl);
+    } finally {
+      restoreHost();
+    }
   });
 
   it('navigates a converged deck directly without replacing its real-URL frame', async () => {
