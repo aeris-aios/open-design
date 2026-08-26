@@ -318,6 +318,19 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
           + '<main id="slot">real</main></body></html>',
       ),
     );
+    // Only TAB, LF, FF, CR and SPACE separate tokens. Every other C0 code
+    // point is an ordinary character, so `color\0=x` names an attribute the
+    // parser writes as `color\uFFFD` — not `color`, and therefore not a
+    // `<font>` presentational attribute that breaks out of foreign content.
+    await writeFile(
+      path.join(dir, 'control-char-attr.html'),
+      Buffer.from(
+        '<!doctype html><html><head></head><body>'
+          + `<svg><font color\u0000=x>`
+          + '<![CDATA[q > <\/svg><body>slip</body>]]></font></svg>'
+          + '<main id="slot">real</main></body></html>',
+      ),
+    );
     // A leading BOM is the encoding signature and only counts at byte zero, so
     // the no-boundary fallback has to insert after it rather than in front of
     // it — otherwise the doctype stops applying and the artifact silently
@@ -911,6 +924,16 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
     expect(page('body > [data-od-url-scroll-bridge]').length).toBe(1);
     expect(page('#slot').text()).toBe('real');
     expect(html).toContain('<![CDATA[c > </math><body>slip</body>]]>');
+  });
+
+  it('separates tokens on HTML whitespace only, not the whole C0 range', async () => {
+    const bridged = await fetch(`${rawUrl('control-char-attr.html')}?odPreviewBridge=scroll`);
+    expect(bridged.status).toBe(200);
+    const html = await bridged.text();
+    const page = load(html);
+    expect(page('body > [data-od-url-scroll-bridge]').length).toBe(1);
+    expect(page('#slot').text()).toBe('real');
+    expect(html).toContain('<![CDATA[q > </svg><body>slip</body>]]>');
   });
 
   it('keeps a leading BOM at byte zero when there is no boundary', async () => {

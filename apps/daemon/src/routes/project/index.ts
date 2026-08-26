@@ -1617,7 +1617,7 @@ function scanTag(html: string, from: number): ScannedTag {
   while (i < html.length) {
     // Before attribute name.
     const ch = html.charCodeAt(i);
-    if (ch <= 32) { i += 1; continue; }
+    if (isHtmlWhitespace(ch)) { i += 1; continue; }
     if (ch === 47 /* / */) { selfClosing = true; i += 1; continue; }
     if (ch === 62 /* > */) return { end: i, selfClosing, attrs };
     // A solidus only self-closes when `>` comes next; anything else resumes
@@ -1632,18 +1632,20 @@ function scanTag(html: string, from: number): ScannedTag {
     if (html.charCodeAt(i) === 61 /* = */) i += 1;
     while (i < html.length) {
       const c = html.charCodeAt(i);
-      if (c <= 32 || c === 47 || c === 61 /* = */ || c === 62) break;
+      if (isHtmlWhitespace(c) || c === 47 || c === 61 /* = */ || c === 62) break;
       i += 1;
     }
-    const name = asciiLower(html.slice(nameStart, i));
+    // The tokenizer replaces NUL in an attribute name with U+FFFD, so a name
+    // that carries one is still not the name it looks like without it.
+    const name = asciiLower(html.slice(nameStart, i)).replace(/\0/g, '\uFFFD');
     // After attribute name.
-    while (i < html.length && html.charCodeAt(i) <= 32) i += 1;
+    while (i < html.length && isHtmlWhitespace(html.charCodeAt(i))) i += 1;
     if (i >= html.length) return unterminated;
     let value = '';
     if (html.charCodeAt(i) === 61 /* = */) {
       i += 1;
       // Before attribute value.
-      while (i < html.length && html.charCodeAt(i) <= 32) i += 1;
+      while (i < html.length && isHtmlWhitespace(html.charCodeAt(i))) i += 1;
       if (i >= html.length) return unterminated;
       const quote = html.charCodeAt(i);
       if (quote === 34 /* " */ || quote === 39 /* ' */) {
@@ -1659,7 +1661,7 @@ function scanTag(html: string, from: number): ScannedTag {
         const valueStart = i;
         while (i < html.length) {
           const c = html.charCodeAt(i);
-          if (c <= 32 || c === 62) break;
+          if (isHtmlWhitespace(c) || c === 62) break;
           i += 1;
         }
         value = html.slice(valueStart, i);
@@ -1707,14 +1709,22 @@ function endOfTag(html: string, from: number): number {
  * scan back into the author's string and hand back a boundary from inside it.
  */
 /**
- * HTML ASCII whitespace, `/` or `>` — what may follow a tag name in an end tag.
- * The whitespace set is tab, LF, FF, CR and space; CR is easy to drop because
- * it rarely appears in hand-written HTML, and dropping it means a real
- * `</script\r>` is not recognised as the close.
+ * HTML ASCII whitespace: TAB, LF, FF, CR, SPACE — and nothing else.
+ *
+ * The tokenizer separates tokens on exactly these five. Every other code point
+ * at or below U+0020 is an ordinary character: a NUL inside an attribute name
+ * becomes U+FFFD and stays part of that name, so `color\0=x` is an attribute
+ * called `color\uFFFD`, not `color`. Treating the whole C0 range as whitespace
+ * invents attributes the parser never saw, and an invented `color` on `<font>`
+ * is enough to break out of foreign content early.
  */
+function isHtmlWhitespace(code: number): boolean {
+  return code === 9 || code === 10 || code === 12 || code === 13 || code === 32;
+}
+
+/** A character that ends an end-tag name: ASCII whitespace, `/`, or `>`. */
 function isEndTagBoundary(code: number): boolean {
-  return code === 9 || code === 10 || code === 12 || code === 13 || code === 32
-    || code === 47 || code === 62;
+  return isHtmlWhitespace(code) || code === 47 || code === 62;
 }
 
 function findRawTextClose(lowerHtml: string, tagName: string, from: number): number {
@@ -2163,7 +2173,7 @@ function prependAfterDoctype(html: string, payload: string): string {
   // since `--!>` and the abrupt forms close a comment just as well.
   let i = bom;
   for (;;) {
-    while (i < html.length && html.charCodeAt(i) <= 32) i += 1;
+    while (i < html.length && isHtmlWhitespace(html.charCodeAt(i))) i += 1;
     if (!html.startsWith('<!--', i)) break;
     const end = endOfComment(html, i);
     if (end < 0) return atTop();
