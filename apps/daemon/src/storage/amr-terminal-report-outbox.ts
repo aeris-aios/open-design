@@ -452,9 +452,51 @@ export function createAmrTerminalReportDeliveryService(input: {
 /** Run finalization persists only; remote delivery remains background work. */
 export function createAmrTerminalReportFinalizer(
   outbox: AmrTerminalReportOutboxStore,
+  options: { baseRetryMs?: number; maxRetryMs?: number } = {},
 ): (run: AmrTerminalReportRun, status: string, terminalAt: number) => void {
+  const baseRetryMs = Math.max(1, options.baseRetryMs ?? 1_000);
+  const maxRetryMs = Math.max(baseRetryMs, options.maxRetryMs ?? 60_000);
+  const pending = new Map<string, {
+    report: PendingAmrTerminalReport;
+    attemptCount: number;
+    timer: NodeJS.Timeout | null;
+  }>();
+
+  const scheduleRetry = (runId: string): void => {
+    const entry = pending.get(runId);
+    if (!entry || entry.timer) return;
+    const exponent = Math.max(0, Math.min(30, entry.attemptCount - 1));
+    const delay = Math.min(maxRetryMs, baseRetryMs * (2 ** exponent));
+    entry.timer = setTimeout(() => {
+      entry.timer = null;
+      try {
+        outbox.enqueue(entry.report);
+        pending.delete(runId);
+      } catch {
+        entry.attemptCount += 1;
+        console.warn(
+          `[od] amr_terminal_enqueue_retry runId=${runId} attempt=${entry.attemptCount} code=local_storage`,
+        );
+        scheduleRetry(runId);
+      }
+    }, delay);
+    entry.timer.unref();
+  };
+
   return (run, status, terminalAt) => {
     if (!isBillingTerminalAmrRun(run, status)) return;
-    outbox.enqueue({ runId: run.id, outcome: status, terminalAt });
+    if (pending.has(run.id)) return;
+    const report: PendingAmrTerminalReport = {
+      runId: run.id,
+      outcome: status,
+      terminalAt,
+    };
+    try {
+      outbox.enqueue(report);
+    } catch (error) {
+      pending.set(run.id, { report, attemptCount: 1, timer: null });
+      scheduleRetry(run.id);
+      throw error;
+    }
   };
 }

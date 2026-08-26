@@ -2,9 +2,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import Database from "better-sqlite3";
 
 import { closeDatabase, openDatabase } from "../../src/db.js";
 import {
+  createAmrTerminalReportDeliveryService,
   createAmrTerminalReportFinalizer,
   createAmrTerminalReportOutboxStore,
 } from "../../src/storage/amr-terminal-report-outbox.js";
@@ -195,6 +197,53 @@ describe("AMR terminal report outbox", () => {
     expect(finalized).toHaveBeenCalledOnce();
     expect(run.events.filter((event: { event: string }) => event.event === 'end')).toHaveLength(1);
     await expect(wait).resolves.toMatchObject({ status: 'failed' });
+  });
+
+  it('automatically delivers after a transient SQLite enqueue failure', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-05T04:00:00.000Z'));
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const { db, outbox, runs } = createFixture();
+    const send = vi.fn(async (args: string[]) => JSON.stringify({
+      runId: args[3],
+      outcome: args[5],
+      terminalAt: args[7],
+      recorded: true,
+    }));
+    const delivery = createAmrTerminalReportDeliveryService({
+      store: outbox,
+      run: send,
+      now: Date.now,
+      pollIntervalMs: 1_000,
+    });
+    delivery.start();
+
+    db.pragma('busy_timeout = 0');
+    const blocker = new Database(db.name);
+    blocker.exec('BEGIN IMMEDIATE');
+    const run = runs.create({ agentId: 'amr' });
+    try {
+      runs.finish(run, 'failed', 1, null);
+      expect(outbox.listPending()).toEqual([]);
+      expect(run.events.at(-1)).toMatchObject({
+        event: 'end',
+        data: { status: 'failed', terminalAt: run.terminalAt },
+      });
+
+      blocker.exec('ROLLBACK');
+      await vi.advanceTimersByTimeAsync(2_000);
+
+      expect(send).toHaveBeenCalledOnce();
+      expect(outbox.diagnostics(Date.now())).toMatchObject({
+        pending: 0,
+        delivered: 1,
+      });
+    } finally {
+      if (blocker.inTransaction) blocker.exec('ROLLBACK');
+      blocker.close();
+      delivery.stop();
+      warning.mockRestore();
+    }
   });
 
   it('persists artifact metadata added by the terminal finalizer before publishing end', () => {
