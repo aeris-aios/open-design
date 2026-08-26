@@ -8530,6 +8530,30 @@ describe('FileViewer tweaks toolbar', () => {
     signal('od:preview:visible-paint', baseCapabilities);
     expect(screen.getByTestId('preview-runtime-frame-current')).toBe(frame);
 
+    postMessage.mockImplementation((message: unknown) => {
+      const data = message as { type?: string; id?: string } | null;
+      if (data?.type !== 'od:snapshot' || !data.id) return;
+      window.dispatchEvent(new MessageEvent('message', {
+        source: frame.contentWindow,
+        data: {
+          type: 'od:snapshot:result',
+          id: data.id,
+          dataUrl: TEST_SNAPSHOT_DATA_URL,
+          w: 2,
+          h: 2,
+        },
+      }));
+    });
+    postMessage.mockClear();
+    fireEvent.click(screen.getByTestId('edit-screenshot-to-chat-button'));
+    await waitFor(() => {
+      expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({
+        type: 'od:snapshot',
+      }), '*');
+    });
+    expect(screen.getByTestId('preview-runtime-frame-current')).toBe(frame);
+    expect(frame.getAttribute('src')).toBe(initialSrc);
+
     const mintCountBeforeModeSwitch = fetchMock.mock.calls.filter(([input]) => (
       String(input).includes('/api/projects/project-1/preview-url')
     )).length;
@@ -8595,6 +8619,40 @@ describe('FileViewer tweaks toolbar', () => {
       enabled: true,
       mode: 'inspect',
     }, '*');
+
+    const foreignFrame = document.createElement('iframe');
+    document.body.appendChild(foreignFrame);
+    act(() => {
+      window.dispatchEvent(new MessageEvent('message', {
+        source: foreignFrame.contentWindow,
+        data: {
+          type: 'od:comment-target',
+          elementId: 'foreign',
+          selector: '#foreign',
+          label: 'Foreign',
+          text: 'Foreign',
+          position: { x: 8, y: 12, width: 120, height: 48 },
+          htmlHint: '<main id="foreign">Foreign</main>',
+        },
+      }));
+    });
+    expect(screen.queryByTestId('comment-popover')).toBeNull();
+    act(() => {
+      window.dispatchEvent(new MessageEvent('message', {
+        source: frame.contentWindow,
+        data: {
+          type: 'od:comment-target',
+          elementId: 'hero',
+          selector: '[data-od-id="hero"]',
+          label: 'Hero',
+          text: 'Hero',
+          position: { x: 8, y: 12, width: 120, height: 48 },
+          htmlHint: '<main data-od-id="hero">Hero</main>',
+        },
+      }));
+    });
+    expect(await screen.findByTestId('comment-popover')).toBeTruthy();
+    foreignFrame.remove();
 
     fireEvent.click(screen.getByTestId('board-mode-toggle'));
     signal('od:preview:capabilities-applied', baseCapabilities);
