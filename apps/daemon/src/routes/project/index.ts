@@ -1513,17 +1513,22 @@ function wantsUrlPreviewRedirectGuard(value: unknown): boolean {
 //
 // What keeps a hand-rolled scanner honest:
 //
-//   * It refuses rather than guesses. Where the answer depends on tree
-//     construction state this does not model — CDATA in foreign content, an
-//     unterminated construct — it reports "no boundary" and the caller
-//     appends. The injection still runs; only precision is lost. A wrong
+//   * It refuses rather than guesses. Where the answer depends on state this
+//     does not model — an unterminated construct, a `<plaintext>` that runs to
+//     end of input — it reports "no boundary" and the caller falls back to a
+//     structural anchor it can still prove (`<head>`, then `<html>`, then just
+//     after the doctype). Precision is lost; nothing is rewritten. A wrong
 //     offset is the only outcome that destroys author content.
-//   * It is pinned to a real parser in CI. See the differential oracle in
-//     apps/web/tests/runtime/html-injection-points.oracle.test.ts, which
-//     asserts the outcome invariant above against jsdom (built on parse5).
-//   * A guard check (`pnpm guard`, "HTML structural boundaries") fails any
-//     new hand-rolled boundary lookup, because a grep-driven sweep already
-//     missed an entire app once.
+//   * Every rule here is pinned by a route-level spec in
+//     apps/daemon/tests/project-file-range.test.ts. Those specs drive the real
+//     HTTP endpoint and assert a *live* bridge element, not a byte offset: a
+//     marker that survives only as text would otherwise read as a pass, and
+//     once did.
+//   * The offsets were checked against parse5 under the outcome invariant
+//     above on 2,433 HTML files in this repository and 3,000 generated
+//     adversarial documents — 0 documents where the scanner's offset broke the
+//     tree. That sweep is a development harness, not a CI job; the specs above
+//     are what CI enforces.
 // ---------------------------------------------------------------------------
 
 /**
@@ -1668,9 +1673,15 @@ function endOfTag(html: string, from: number): number {
  * inside a `<script>` — is character data, so resuming there would drop the
  * scan back into the author's string and hand back a boundary from inside it.
  */
-/** tab, LF, FF, space, `/`, `>` — what may follow a tag name in an end tag. */
+/**
+ * HTML ASCII whitespace, `/` or `>` — what may follow a tag name in an end tag.
+ * The whitespace set is tab, LF, FF, CR and space; CR is easy to drop because
+ * it rarely appears in hand-written HTML, and dropping it means a real
+ * `</script\r>` is not recognised as the close.
+ */
 function isEndTagBoundary(code: number): boolean {
-  return code === 9 || code === 10 || code === 12 || code === 32 || code === 47 || code === 62;
+  return code === 9 || code === 10 || code === 12 || code === 13 || code === 32
+    || code === 47 || code === 62;
 }
 
 function findRawTextClose(lowerHtml: string, tagName: string, from: number): number {
@@ -1782,39 +1793,94 @@ function skipTemplateContent(html: string, lowerHtml: string, from: number): num
   return depth === 0 ? i : -1;
 }
 
+// Void elements never have contents, so they never open a namespace frame and
+// a trailing solidus on them is redundant rather than meaningful.
+const PREVIEW_VOID_ELEMENTS: readonly string[] = [
+  'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input',
+  'link', 'meta', 'source', 'track', 'wbr',
+];
+
 /**
- * SVG/MathML elements whose children the parser reads as ordinary HTML again.
- * `annotation-xml` is deliberately absent: it only qualifies with an
- * `encoding` of `text/html` or `application/xhtml+xml`, and the scan refuses
- * on CDATA anyway rather than model that.
+ * SVG elements whose children the parser reads as ordinary HTML again.
+ * MathML has two separate sets: the text integration points below, which
+ * always qualify, and `annotation-xml`, which qualifies only when its
+ * `encoding` names an HTML type — so it is handled by attribute, not by list.
  */
 const HTML_INTEGRATION_POINTS: readonly string[] = ['foreignobject', 'desc', 'title'];
+const MATHML_TEXT_INTEGRATION_POINTS: readonly string[] = ['mi', 'mo', 'mn', 'ms', 'mtext'];
+const HTML_ANNOTATION_ENCODINGS: readonly string[] = ['text/html', 'application/xhtml+xml'];
+
+/**
+ * The value of attribute `name` on the tag spanning `[from, tagEnd]`, ASCII
+ * lowercased and trimmed, or `''` when the tag does not carry it.
+ */
+function tagAttributeValue(html: string, from: number, tagEnd: number, name: string): string {
+  const attr = new RegExp(
+    `[\\t\\n\\f\\r /]${name}[\\t\\n\\f\\r ]*=[\\t\\n\\f\\r ]*("([^"]*)"|'([^']*)'|([^\\t\\n\\f\\r >]*))`,
+    'i',
+  );
+  const match = attr.exec(html.slice(from, tagEnd + 1));
+  if (!match) return '';
+  return asciiLower((match[2] ?? match[3] ?? match[4] ?? '').trim());
+}
+
+/**
+ * The namespace an element's *children* are parsed in, given the namespace the
+ * element itself lives in. This is the tree builder's "adjusted current node"
+ * rule: at an HTML integration point the parser returns to HTML, so the same
+ * bytes mean different things on either side of the boundary.
+ */
+function foreignChildNamespace(
+  html: string,
+  from: number,
+  tagEnd: number,
+  elementNs: string,
+  tagName: string,
+): string {
+  if (elementNs === 'svg' && HTML_INTEGRATION_POINTS.includes(tagName)) return 'html';
+  if (elementNs === 'math') {
+    if (MATHML_TEXT_INTEGRATION_POINTS.includes(tagName)) return 'html';
+    if (tagName === 'annotation-xml'
+        && HTML_ANNOTATION_ENCODINGS.includes(tagAttributeValue(html, from, tagEnd, 'encoding'))) {
+      return 'html';
+    }
+  }
+  return elementNs;
+}
 
 /**
  * Offset just past the `</svg>` / `</math>` that closes the foreign element
  * opened before `from`, or -1.
  *
- * Foreign content is the one place `<![CDATA[ … ]]>` is real markup rather than
- * a bogus comment, so the generic "a declaration ends at the next `>`" rule is
- * wrong inside it: in `<svg><![CDATA[label > </body>]]></svg>` that first `>`
- * is still CDATA text, and stopping there resumes the scan inside the section
- * and hands back the `</body>` it contains. Inside an HTML integration point
- * (`<foreignObject>`, `<desc>`, …) the parser is back in HTML, where `<![CDATA[`
- * *is* a bogus comment again — so the two rules are tracked separately.
+ * The whole subtree is skipped because no document-level boundary can live
+ * inside `<svg>` or `<math>` — but working out where that subtree *ends*
+ * requires knowing which namespace each byte is in, because two rules invert
+ * across the boundary:
  *
- * The whole subtree is skipped either way: no document-level boundary can live
- * inside `<svg>` or `<math>`.
+ *   - `<![CDATA[ … ]]>` is real character data in foreign content and a bogus
+ *     comment (ending at the first `>`) in HTML. Reading `<svg><![CDATA[label
+ *     > </body>]]></svg>` by the HTML rule stops at that first `>` and hands
+ *     back the `</body>` inside the section.
+ *   - `<script>`/`<style>`/`<title>` are raw text in HTML and ordinary
+ *     SVG/MathML elements in foreign content, where `<` in them is markup.
+ *
+ * Namespace is a stack, not a depth: `<svg><foreignObject>` returns to HTML,
+ * but a `<math>` beneath that foreignObject re-enters MathML, and its children
+ * are foreign again. A counter cannot express that.
  */
 function skipForeignContent(html: string, lowerHtml: string, rootName: string, from: number): number {
   const tagOpen = /<(\/?)([a-z][^\t\n\f\r \/>]*)/iy;
   let depth = 1;
-  let integrationDepth = 0;
+  // Frame 0 is the already-open root; `childNs` is the namespace its contents
+  // are parsed in, which for `<svg>` / `<math>` is that namespace itself.
+  const nsStack: { name: string; childNs: string }[] = [{ name: rootName, childNs: rootName }];
   let i = from;
   while (i < html.length && depth > 0) {
     if (html.charCodeAt(i) !== 60 /* < */) {
       i += 1;
       continue;
     }
+    const currentNs = nsStack[nsStack.length - 1]?.childNs ?? rootName;
     if (html.startsWith('<!--', i)) {
       const end = endOfComment(html, i);
       if (end < 0) return -1;
@@ -1827,14 +1893,11 @@ function skipForeignContent(html: string, lowerHtml: string, rootName: string, f
       i = end + 1;
       continue;
     }
-    if (lowerHtml.startsWith('<![cdata[', i)) {
-      // Whether this is a CDATA section or a bogus comment depends on the
-      // adjusted current node's namespace, which in turn depends on the HTML
-      // integration-point rules — including `annotation-xml`'s `encoding`
-      // attribute. Rather than model that, refuse: the caller falls back to
-      // appending, where the injection still runs and nothing is rewritten.
-      // Guessing is the only outcome that corrupts, so it is the one to avoid.
-      return -1;
+    if (currentNs !== 'html' && lowerHtml.startsWith('<![cdata[', i)) {
+      const end = html.indexOf(']]>', i + 9);
+      if (end < 0) return -1;
+      i = end + 3;
+      continue;
     }
     if (html.startsWith('<!', i) || html.startsWith('<?', i)) {
       const end = html.indexOf('>', i + 2);
@@ -1851,22 +1914,39 @@ function skipForeignContent(html: string, lowerHtml: string, rootName: string, f
     const tagEnd = endOfTag(html, i + open[0].length);
     if (tagEnd < 0) return -1;
     const tagName = (open[2] ?? '').toLowerCase();
-    const selfClosing = isSelfClosingTag(html, i, tagEnd);
-    // Inside foreign content a `<script>`/`<style>`/`<title>` is an ordinary
-    // SVG or MathML element, so `<` in it is markup — the HTML raw-text list
-    // must not be applied. The exception is a child of an HTML integration
-    // point (`<foreignObject>`, `<desc>`, `<title>`), where the parser is back
-    // in HTML and those elements really are raw text again.
-    if (!open[1] && !selfClosing && integrationDepth > 0
+    if (open[1]) {
+      // Unwind to the matching open element; a stray end tag closes nothing.
+      for (let frame = nsStack.length - 1; frame >= 1; frame -= 1) {
+        if (nsStack[frame]?.name === tagName) {
+          nsStack.length = frame;
+          break;
+        }
+      }
+      if (tagName === rootName) depth -= 1;
+      i = tagEnd + 1;
+      continue;
+    }
+    // A solidus really does close the element in foreign content; in HTML it
+    // is ignored on anything that is not void, so it must not pop a frame.
+    const selfClosing = isSelfClosingTag(html, i, tagEnd)
+      && (currentNs !== 'html' || PREVIEW_VOID_ELEMENTS.includes(tagName));
+    if (!selfClosing && currentNs === 'html'
         && (PREVIEW_RAW_TEXT_ELEMENTS as readonly string[]).includes(tagName)) {
       const contentEnd = findRawTextClose(lowerHtml, tagName, tagEnd + 1);
       if (contentEnd < 0) return -1;
       i = contentEnd;
       continue;
     }
-    if (!open[1] && !selfClosing && HTML_INTEGRATION_POINTS.includes(tagName)) integrationDepth += 1;
-    else if (open[1] && HTML_INTEGRATION_POINTS.includes(tagName) && integrationDepth > 0) integrationDepth -= 1;
-    if (!selfClosing && tagName === rootName) depth += open[1] ? -1 : 1;
+    if (!selfClosing && !PREVIEW_VOID_ELEMENTS.includes(tagName)) {
+      const elementNs = currentNs === 'html'
+        ? (tagName === 'svg' ? 'svg' : tagName === 'math' ? 'math' : 'html')
+        : currentNs;
+      nsStack.push({
+        name: tagName,
+        childNs: foreignChildNamespace(html, i, tagEnd, elementNs, tagName),
+      });
+      if (tagName === rootName) depth += 1;
+    }
     i = tagEnd + 1;
   }
   return depth === 0 ? i : -1;

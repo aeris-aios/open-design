@@ -226,11 +226,34 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
           + '<main id="slot">real</main></body></html>',
       ),
     );
+    // CR delimits a tag name at *both* ends: it opens `<script\r>` and it
+    // closes `</textarea\r>`. Missing the closing half leaves the scan inside
+    // the raw text, where the authored `</body>` reads as a real end tag.
+    // Namespace is a stack, not a depth. `<![CDATA[` is character data in
+    // foreign content and a bogus comment in HTML, and `<script>` inverts the
+    // same way, so both rules have to follow the adjusted current node —
+    // including a `<math>` that re-enters MathML beneath an HTML integration
+    // point, and `annotation-xml`, which is only an integration point when its
+    // `encoding` names an HTML type.
+    await writeFile(
+      path.join(dir, 'foreign-namespaces.html'),
+      Buffer.from(
+        '<!doctype html><html><head></head><body>'
+          + '<svg><![CDATA[label > <\/body>]]></svg>'
+          + '<svg><foreignObject><math><ms><![CDATA[y > <\/body>]]></ms></math></foreignObject></svg>'
+          + '<svg><foreignObject><script>var q = "<\/body>";<\/script></foreignObject></svg>'
+          + '<math><annotation-xml encoding="text/html"><script>var r = "<\/body>";<\/script></annotation-xml></math>'
+          + '<math><annotation-xml><![CDATA[z > <\/body>]]></annotation-xml></math>'
+          + '<template><svg><![CDATA[x > </template><body>slip</body>]]></svg></template>'
+          + '<main id="slot">real</main></body></html>',
+      ),
+    );
     await writeFile(
       path.join(dir, 'cr-delimiter.html'),
       Buffer.from(
         '<!doctype html><html><head></head><body>'
           + '<script\r>const doc = "<body>slip</body>";<\/script>'
+          + '<textarea>note </textarea\r>'
           + '<main id="slot">real</main></body></html>',
       ),
     );
@@ -668,16 +691,20 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
     const injectedAt = html.indexOf('data-od-url-scroll-bridge');
     expect(injectedAt).toBeGreaterThan(-1);
     // Whether these are CDATA sections or bogus comments depends on the
-    // adjusted current node's namespace, so the scan refuses to pick a
-    // boundary and the bridge is appended instead — it still runs, and every
-    // authored section survives byte for byte.
-    expect(html).toContain('<![CDATA[x > </svg><body>slip</body>]]>');
+    // adjusted current node's namespace, and the two spellings disagree about
+    // where the body ends. Beneath `<template><svg>` and `<math>` the parser is
+    // in foreign content, so those sections are character data and the
+    // `</body>` inside each is text — both survive byte for byte.
     expect(html).toContain('<![CDATA[x > </template><body>slip</body>]]>');
     expect(html).toContain('<![CDATA[x > </math><body>slip</body>]]>');
-    // No boundary is picked here, so the bridge goes in at the top of the
-    // document rather than at the end of body — it still exists as an element,
-    // which is what actually matters, and every authored section is untouched.
-    expect(load(html)('[data-od-url-scroll-bridge]').length).toBe(1);
+    // Beneath `<foreignObject>` the parser is back in HTML, where `<![CDATA[x >`
+    // is a bogus comment and the `</body>` after it really does close the body.
+    // The scan stops at that first real boundary, which is what the tree builder
+    // does, so the bridge lands in body ahead of it.
+    const page = load(html);
+    expect(page('[data-od-url-scroll-bridge]').length).toBe(1);
+    expect(page('body > [data-od-url-scroll-bridge]').length).toBe(1);
+    expect(page('#slot').text()).toBe('real');
   });
 
   it('appends the URL preview scroll bridge rather than splicing into plaintext', async () => {
@@ -727,6 +754,20 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
     expect(load(html)('[data-od-url-scroll-bridge]').length).toBe(1);
   });
 
+  it('follows the adjusted current node through foreign content', async () => {
+    const bridged = await fetch(`${rawUrl('foreign-namespaces.html')}?odPreviewBridge=scroll`);
+    expect(bridged.status).toBe(200);
+    const html = await bridged.text();
+    const page = load(html);
+    // A live bridge, in body, with every authored section still intact.
+    expect(page('[data-od-url-scroll-bridge]').length).toBe(1);
+    expect(page('#slot').text()).toBe('real');
+    expect(page('body > [data-od-url-scroll-bridge]').length).toBe(1);
+    // None of the six `</body>` spellings above may be read as a boundary.
+    expect(html.indexOf('data-od-url-scroll-bridge'))
+      .toBeGreaterThan(html.indexOf('<main id="slot">real</main>'));
+  });
+
   it('treats a carriage return as a tag-name delimiter', async () => {
     const bridged = await fetch(`${rawUrl('cr-delimiter.html')}?odPreviewBridge=scroll`);
     expect(bridged.status).toBe(200);
@@ -736,6 +777,11 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
     expect(html).toContain('const doc = "<body>slip</body>";');
     expect(injectedAt).toBeGreaterThan(html.indexOf('<main id="slot">real</main>'));
     expect(injectedAt).toBeLessThan(html.lastIndexOf('</body>'));
+    // The bridge is a live element in body — not pushed into the head by a
+    // raw-text region the scan failed to close.
+    const page = load(html);
+    expect(page('body > [data-od-url-scroll-bridge]').length).toBe(1);
+    expect(page('#slot').text()).toBe('real');
   });
 
   it('injects the URL preview selection bridge only when requested', async () => {
