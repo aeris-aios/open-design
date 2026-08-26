@@ -1510,6 +1510,28 @@ function endOfTag(html: string, from: number): number {
  * other markup declarations, raw-text element content, attribute values, and
  * `<template>` content.
  */
+/**
+ * Offset of the end tag that actually closes a raw-text element, or -1 when it
+ * never closes.
+ *
+ * The tokenizer only leaves raw text on `</name` followed by whitespace, `/`,
+ * or `>`. A longer name that merely starts with it — `</script-template>`
+ * inside a `<script>` — is character data, so resuming there would drop the
+ * scan back into the author's string and hand back a boundary from inside it.
+ */
+function findRawTextClose(lowerHtml: string, tagName: string, from: number): number {
+  const needle = `</${tagName}`;
+  let at = lowerHtml.indexOf(needle, from);
+  while (at >= 0) {
+    const next = lowerHtml.charCodeAt(at + needle.length);
+    // tab, LF, FF, space, '/', '>'. NaN past end of input fails every test,
+    // which is correct: an unterminated end tag does not close the element.
+    if (next === 9 || next === 10 || next === 12 || next === 32 || next === 47 || next === 62) return at;
+    at = lowerHtml.indexOf(needle, at + needle.length);
+  }
+  return -1;
+}
+
 function findRealTagOffset(html: string, pattern: RegExp): number {
   const anchored = new RegExp(pattern.source, `${pattern.flags.replace(/[gy]/g, '')}y`);
   const tagOpen = /<(\/?)([a-z][a-z0-9]*)/iy;
@@ -1548,7 +1570,7 @@ function findRealTagOffset(html: string, pattern: RegExp): number {
     if (tagEnd < 0) return -1;
     const tagName = (open[2] ?? '').toLowerCase();
     if (!open[1] && (PREVIEW_RAW_TEXT_ELEMENTS as readonly string[]).includes(tagName)) {
-      const contentEnd = lower.indexOf(`</${tagName}`, tagEnd + 1);
+      const contentEnd = findRawTextClose(lower, tagName, tagEnd + 1);
       // Unclosed raw text runs to the end of the document — same as above.
       if (contentEnd < 0) return -1;
       i = contentEnd;

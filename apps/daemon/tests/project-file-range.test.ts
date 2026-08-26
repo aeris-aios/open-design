@@ -213,6 +213,19 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
           + '<main id="slot"></main></body></html>',
       ),
     );
+    // A raw-text element only closes on `</name` followed by whitespace, `/` or
+    // `>`. A longer name that merely starts with it stays character data, so a
+    // scan that accepts the prefix resumes inside the author's script and hands
+    // back a boundary from inside their string.
+    await writeFile(
+      path.join(dir, 'raw-text-prefix.html'),
+      Buffer.from(
+        '<!doctype html><html><head></head><body>'
+          + '<script>const doc = "</script-template><body>slip</body>";<\/script>'
+          + '<textarea id="t"></textarea-note></textarea>'
+          + '<main id="slot"></main></body></html>',
+      ),
+    );
     // The other places a `</body>` is character data rather than a boundary:
     // raw-text elements the parser never reads as markup, and `<template>`
     // content, which the tree builder keeps out of the document entirely (an
@@ -543,6 +556,20 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
     expect(html).toContain('<xmp></body></xmp>');
     // Injected into the real body, after every inert copy.
     expect(injectedAt).toBeGreaterThan(html.indexOf('<xmp>'));
+    expect(injectedAt).toBeLessThan(html.lastIndexOf('</body>'));
+  });
+
+  it('injects the URL preview scroll bridge after a raw-text close-tag prefix', async () => {
+    const bridged = await fetch(`${rawUrl('raw-text-prefix.html')}?odPreviewBridge=scroll`);
+    expect(bridged.status).toBe(200);
+    const html = await bridged.text();
+    const injectedAt = html.indexOf('data-od-url-scroll-bridge');
+    expect(injectedAt).toBeGreaterThan(-1);
+    // `</script-template>` does not close the script, so the `</body>` it
+    // contains is still the author's string, not this document's boundary.
+    expect(html).toContain('const doc = "</script-template><body>slip</body>";');
+    expect(html).toContain('<textarea id="t"></textarea-note></textarea>');
+    expect(injectedAt).toBeGreaterThan(html.indexOf('<main id="slot">'));
     expect(injectedAt).toBeLessThan(html.lastIndexOf('</body>'));
   });
 
