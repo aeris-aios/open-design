@@ -1824,6 +1824,47 @@ const FOREIGN_BREAKOUT_TAGS: readonly string[] = [
 const HTML_ANNOTATION_ENCODINGS: readonly string[] = ['text/html', 'application/xhtml+xml'];
 
 /**
+ * The only named character references that can appear in an encoding this
+ * scanner accepts. `text/html` and `application/xhtml+xml` are letters plus
+ * `/`, `+` and `.`, and HTML has no named reference for an ASCII letter — so
+ * with numeric references handled below, this table is complete for that
+ * comparison rather than a sample of a larger one.
+ */
+const ATTRIBUTE_NAMED_REFERENCES: ReadonlyMap<string, string> = new Map([
+  ['sol', '/'],
+  ['plus', '+'],
+  ['period', '.'],
+]);
+
+/**
+ * An attribute value with its character references resolved, as the tokenizer
+ * resolves them before the tree builder ever compares the value.
+ *
+ * A numeric reference is consumed with or without its semicolon, which is what
+ * the tokenizer does in an attribute value. A named one is only a reference
+ * when terminated by `;`: without it, an alphanumeric or `=` following makes it
+ * an ambiguous ampersand, which stays literal.
+ */
+function decodeAttributeValue(value: string): string {
+  if (!value.includes('&')) return value;
+  return value.replace(
+    /&(?:#([0-9]+);?|#[xX]([0-9a-fA-F]+);?|([a-zA-Z][a-zA-Z0-9]*);)/g,
+    (whole, dec: string | undefined, hex: string | undefined, name: string | undefined) => {
+      if (dec !== undefined || hex !== undefined) {
+        const code = dec !== undefined ? Number.parseInt(dec, 10) : Number.parseInt(hex!, 16);
+        if (!Number.isFinite(code) || code <= 0 || code > 0x10ffff) return whole;
+        try {
+          return String.fromCodePoint(code);
+        } catch {
+          return whole;
+        }
+      }
+      return ATTRIBUTE_NAMED_REFERENCES.get(asciiLower(name ?? '')) ?? whole;
+    },
+  );
+}
+
+/**
  * The attributes of the tag spanning `[from, tagEnd]`, names ASCII lowercased
  * and mapped to their ASCII lowercased values.
  *
@@ -1875,9 +1916,10 @@ function parseTagAttributes(html: string, from: number, tagEnd: number): Map<str
         value = html.slice(valueStart, i);
       }
     }
-    // Not trimmed: the parser compares `encoding` against `text/html` exactly,
-    // so a padded value is not a match and must not be smoothed into one.
-    if (!attrs.has(name)) attrs.set(name, asciiLower(value));
+    // Decoded but not trimmed: the tokenizer resolves references before the
+    // tree builder sees the value, but the comparison against `text/html` is
+    // exact — a padded value is not a match and must not be smoothed into one.
+    if (!attrs.has(name)) attrs.set(name, asciiLower(decodeAttributeValue(value)));
   }
   return attrs;
 }

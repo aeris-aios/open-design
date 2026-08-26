@@ -275,6 +275,11 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
           + '<svg><font data-note=" color=red"><![CDATA[x > <\/svg><body>slip</body>]]></font></svg>'
           + '<math><annotation-xml data-note=" encoding=text/html">'
           + '<![CDATA[x > <\/math><body>slip</body>]]></annotation-xml></math>'
+          // The mirror case: the tokenizer resolves character references in a
+          // value, so this one *is* an integration point and its `<script>` is
+          // HTML raw text — reading the source spelling keeps it MathML.
+          + '<math><annotation-xml encoding="text&#x2f;html">'
+          + '<script>const enc = "<\/math><body>slip</body>";<\/script></annotation-xml></math>'
           + '<main id="slot">real</main></body></html>',
       ),
     );
@@ -835,6 +840,7 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
     // foreign and the `</body>` inside each is character data.
     expect(html).toContain('<![CDATA[x > </svg><body>slip</body>]]>');
     expect(html).toContain('<![CDATA[x > </math><body>slip</body>]]>');
+    expect(html).toContain('const enc = "</math><body>slip</body>";');
   });
 
   it('keeps a leading BOM at byte zero when there is no boundary', async () => {
