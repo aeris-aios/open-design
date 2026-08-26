@@ -1536,6 +1536,16 @@ export function DesignFilesPanel({
               </div>
             </div>
           ) : null}
+          {files.length === 0 && liveArtifacts.length === 0 && (folders?.length ?? 0) === 0 && !filesAuthoritative ? (
+            // The list has not arrived. Saying nothing reads as "stuck"; saying
+            // "no designs yet" would be a guess. Say we are working instead.
+            <div className="df-empty df-empty-syncing" data-testid="design-files-loading">
+              <div className="df-empty-pill">
+                <FileSyncBadge state="downloading" size={20} />
+                <span className="df-empty-title">{t('common.loading')}</span>
+              </div>
+            </div>
+          ) : null}
           {files.length === 0 && liveArtifacts.length === 0 && (folders?.length ?? 0) === 0 && filesAuthoritative ? (
             downloadPending ? (
               // A shared project whose local mirror has not caught up yet

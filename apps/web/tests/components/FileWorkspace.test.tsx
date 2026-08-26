@@ -4370,6 +4370,28 @@ describe('FileWorkspace empty-project generation contract', () => {
     expect(screen.queryByTestId('design-files-empty')).toBeNull();
   });
 
+  // Suppressing the empty-state CTAs removed a false claim but left the panel
+  // blank, which reads as "stuck" rather than "loading" -- a worse first
+  // impression than the wrong copy it replaced. Say we are working instead.
+  it('shows a loading placeholder while the file list is still unknown', () => {
+    render(
+      <FileWorkspace
+        projectId="project-1"
+        projectKind="prototype"
+        files={[]}
+        liveArtifacts={[]}
+        onRefreshFiles={vi.fn()}
+        isDeck={false}
+        tabsState={{ tabs: [], active: null }}
+        onTabsStateChange={vi.fn()}
+        filesAuthoritative={false}
+      />,
+    );
+
+    expect(screen.queryByTestId('design-files-empty')).toBeNull();
+    expect(screen.getByTestId('design-files-loading')).toBeTruthy();
+  });
+
   it('offers them once the list is known to be empty', () => {
     render(
       <FileWorkspace
