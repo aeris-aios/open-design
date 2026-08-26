@@ -15,6 +15,15 @@ type BridgeEvent = {
 type BridgeRequest = {
   sourceSurface: 'wallet' | 'dashboard';
   sessionId: string;
+  attribution?: {
+    sourceProduct: 'open_design';
+    entryId: string;
+    sourceDetail: string;
+    entryOccurredAt: string;
+    campaignId?: string;
+    conversionSource?: string;
+    odDeviceId?: string;
+  };
   events: BridgeEvent[];
 };
 
@@ -446,7 +455,14 @@ describe('authenticated Pricing compatibility browser wiring', { concurrency: fa
   it('preserves wallet attribution for a direct Chinese Vela locale handoff', async (t) => {
     const targetHref =
       '/zh/pricing/?od_locale=zh&cloud_console_base=' +
-      encodeURIComponent('https://open-design.ai/cloud/');
+      encodeURIComponent('https://open-design.ai/cloud/') +
+      '&od_origin=open_design' +
+      '&od_entry_id=od-amr-entry-1' +
+      '&od_entry_source=home_balance_gate_upgrade' +
+      '&od_entry_at=2026-08-25T12%3A00%3A00.000Z' +
+      '&od_campaign_id=go_plan_sunset_202608' +
+      '&od_conversion_source=go_plan_sunset_modal' +
+      '&od_device_id=device-1';
     const { page, requests, navigations } = await openPricing({
       browserLocale: 'zh-CN',
       sourcePath: '/wallet',
@@ -461,11 +477,20 @@ describe('authenticated Pricing compatibility browser wiring', { concurrency: fa
     ]);
     assert.equal(
       page.url(),
-      `${baseUrl}/zh/pricing/?cloud_console_base=${encodeURIComponent('https://open-design.ai/cloud/')}`,
+      `${baseUrl}${targetHref.replace('od_locale=zh&', '')}`,
     );
     assert.equal(await page.evaluate(() => document.documentElement.lang), 'zh-CN');
     assert.equal(await page.evaluate(() => document.referrer), `${baseUrl}/wallet`);
     assert.equal(requests[0]?.sourceSurface, 'wallet');
+    assert.deepEqual(requests[0]?.attribution, {
+      sourceProduct: 'open_design',
+      entryId: 'od-amr-entry-1',
+      sourceDetail: 'home_balance_gate_upgrade',
+      entryOccurredAt: '2026-08-25T12:00:00.000Z',
+      campaignId: 'go_plan_sunset_202608',
+      conversionSource: 'go_plan_sunset_modal',
+      odDeviceId: 'device-1',
+    });
     assert.deepEqual(
       requests[0]?.events.map((event) => event.payload.planId),
       ['go', 'plus', 'pro', 'max'],

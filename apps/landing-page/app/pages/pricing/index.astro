@@ -1228,6 +1228,7 @@ const jsonLd = [
       createPricingCompatibilityAnalytics,
     } from '../../_lib/pricing-compat-analytics';
     import {
+      resolvePricingBridgeAttribution,
       resolvePricingBridgeSource,
     } from '../../_lib/pricing-analytics-bridge';
     import type {
@@ -1240,6 +1241,9 @@ const jsonLd = [
       search: new URLSearchParams(window.location.search),
       referrer: document.referrer,
     });
+    const attribution = resolvePricingBridgeAttribution(
+      new URLSearchParams(window.location.search),
+    );
     if (compatibilityRoot && sourceSurface) {
       const apiOrigin = compatibilityRoot.getAttribute('data-billing-api-origin') || '';
       const sessionId = typeof globalThis.crypto?.randomUUID === 'function'
@@ -1248,6 +1252,7 @@ const jsonLd = [
       const compatibility = createPricingCompatibilityAnalytics({
         apiOrigin,
         sessionId,
+        attribution: attribution ?? undefined,
       });
       const readAudience = () =>
         compatibilityRoot.getAttribute('data-audience') === 'team'

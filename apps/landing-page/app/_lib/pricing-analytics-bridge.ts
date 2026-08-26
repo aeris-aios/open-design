@@ -9,6 +9,16 @@ import {
 
 export type PricingBridgeSource = 'wallet' | 'dashboard';
 
+export type PricingBridgeAttribution = {
+  sourceProduct: 'open_design';
+  entryId: string;
+  sourceDetail: string;
+  entryOccurredAt: string;
+  campaignId?: string;
+  conversionSource?: string;
+  odDeviceId?: string;
+};
+
 export type PlanExposureInput = {
   planId: PlanTier;
   billingInterval: BillingInterval;
@@ -104,7 +114,6 @@ const sourceOverrideKeys = [
   'pricingSource',
   'pricing_source',
   'source',
-  'od_entry_source',
 ] as const;
 
 const sourceByPath: Readonly<Record<string, PricingBridgeSource>> = {
@@ -169,6 +178,61 @@ const velaDateTimePattern = new RegExp(
   'u',
 );
 
+// Mirrors the Vela pricing bridge allowlists. This app cannot import Vela or
+// product-runtime contracts, so the public handoff is validated at this
+// standalone boundary before it reaches Vela's stricter server schema.
+const pricingAttributionSourceDetails = new Set([
+  'onboarding_amr_card',
+  'onboarding_amr_sign_in_continue',
+  'inline_model_switcher_amr_row',
+  'settings_amr_agent_card',
+  'settings_amr_authorize',
+  'settings_cloud_callout',
+  'settings_amr_console',
+  'settings_amr_install',
+  'avatar_amr_console',
+  'settings_config_failure_amr',
+  'chat_preflight_amr_hint',
+  'chat_preflight_amr_continue',
+  'chat_error_authorize_retry',
+  'chat_error_recharge',
+  'chat_error_upgrade',
+  'chat_balance_gate_upgrade',
+  'home_balance_gate_upgrade',
+  'chat_low_balance_warn_recharge',
+  'home_low_balance_warn_recharge',
+  'chat_balance_gate_sign_in',
+  'home_balance_gate_sign_in',
+  'chat_error_switch_retry_card',
+  'generation_preview_authorize_retry',
+  'generation_preview_recharge',
+  'generation_preview_switch_retry_card',
+  'artifact_success_upgrade',
+  'home_artifact_upgrade',
+  'settings_amr_upgrade',
+  'inline_amr_upgrade',
+  'avatar_amr_upgrade',
+  'avatar_amr_agent_card',
+  'handoff_amr_website',
+  'go_plan_sunset_modal',
+  'deepseek_unpaid_modal',
+  'deepseek_workbench_badge',
+  'deepseek_model_switcher_upgrade',
+  'landing_home_banner',
+  'landing_pricing_personal_plan',
+  'landing_pricing_team_plan',
+]);
+
+const pricingAttributionConversionSources = new Set([
+  'go_plan_sunset_modal',
+  'deepseek_unpaid_modal',
+  'deepseek_workbench_badge',
+  'deepseek_model_switcher_upgrade',
+  'landing_home_banner',
+  'landing_pricing_personal_plan',
+  'landing_pricing_team_plan',
+]);
+
 function isBoundedId(value: unknown): value is string {
   return (
     typeof value === 'string' &&
@@ -176,6 +240,87 @@ function isBoundedId(value: unknown): value is string {
     value.length <= idMaxLength &&
     value.trim() === value
   );
+}
+
+function optionalBoundedParam(
+  search: URLSearchParams,
+  key: string,
+): string | undefined {
+  const value = search.get(key);
+  return isBoundedId(value) ? value : undefined;
+}
+
+/** Preserve a complete first-touch tuple; partial or untrusted state is ignored. */
+export function resolvePricingBridgeAttribution(
+  search: URLSearchParams,
+): PricingBridgeAttribution | null {
+  if (search.get('od_origin') !== 'open_design') return null;
+  const entryId = optionalBoundedParam(search, 'od_entry_id');
+  const sourceDetail = optionalBoundedParam(search, 'od_entry_source');
+  const entryOccurredAt = search.get('od_entry_at');
+  if (
+    !entryId ||
+    !sourceDetail ||
+    !pricingAttributionSourceDetails.has(sourceDetail) ||
+    !entryOccurredAt ||
+    !velaDateTimePattern.test(entryOccurredAt)
+  ) {
+    return null;
+  }
+
+  const campaignId = optionalBoundedParam(search, 'od_campaign_id');
+  const rawConversionSource = optionalBoundedParam(
+    search,
+    'od_conversion_source',
+  );
+  const conversionSource = rawConversionSource &&
+    pricingAttributionConversionSources.has(rawConversionSource)
+    ? rawConversionSource
+    : undefined;
+  const odDeviceId = optionalBoundedParam(search, 'od_device_id');
+  return {
+    sourceProduct: 'open_design',
+    entryId,
+    sourceDetail,
+    entryOccurredAt,
+    ...(campaignId ? { campaignId } : {}),
+    ...(conversionSource ? { conversionSource } : {}),
+    ...(odDeviceId ? { odDeviceId } : {}),
+  };
+}
+
+function sanitizedAttribution(
+  value: unknown,
+): PricingBridgeAttribution | null {
+  if (!value || typeof value !== 'object') return null;
+  const input = value as Record<string, unknown>;
+  if (
+    input.sourceProduct !== 'open_design' ||
+    !isBoundedId(input.entryId) ||
+    !isBoundedId(input.sourceDetail) ||
+    !pricingAttributionSourceDetails.has(input.sourceDetail) ||
+    typeof input.entryOccurredAt !== 'string' ||
+    !velaDateTimePattern.test(input.entryOccurredAt)
+  ) {
+    return null;
+  }
+  if (
+    input.campaignId !== undefined &&
+    !isBoundedId(input.campaignId)
+  ) {
+    return null;
+  }
+  if (
+    input.conversionSource !== undefined &&
+    (!isBoundedId(input.conversionSource) ||
+      !pricingAttributionConversionSources.has(input.conversionSource))
+  ) {
+    return null;
+  }
+  if (input.odDeviceId !== undefined && !isBoundedId(input.odDeviceId)) {
+    return null;
+  }
+  return input as PricingBridgeAttribution;
 }
 
 function isPlanTier(value: unknown): value is PlanTier {
@@ -375,6 +520,7 @@ export async function postPricingBridgeEvents(input: {
   apiOrigin: string;
   sourceSurface: PricingBridgeSource;
   sessionId: string;
+  attribution?: PricingBridgeAttribution;
   events: readonly PricingBridgeEvent[];
   fetcher?: typeof fetch;
 }): Promise<boolean> {
@@ -401,6 +547,10 @@ export async function postPricingBridgeEvents(input: {
       eventIds.add(sanitized.eventId);
       events.push(sanitized);
     }
+    const attribution = input.attribution === undefined
+      ? null
+      : sanitizedAttribution(input.attribution);
+    if (input.attribution !== undefined && !attribution) return false;
 
     const abortController = new AbortController();
     timeout = setTimeout(
@@ -420,6 +570,7 @@ export async function postPricingBridgeEvents(input: {
         body: JSON.stringify({
           sourceSurface: input.sourceSurface,
           sessionId: input.sessionId,
+          ...(attribution ? { attribution } : {}),
           events,
         }),
         signal: abortController.signal,
