@@ -11,6 +11,7 @@ import {
   pullMessageCenter,
   readAnonymousMessages,
   readAnonymousReadIds,
+  recordAnonymousRead,
   type MessageCenterMessage,
   writeAnonymousState,
 } from '../message-center-client';
@@ -269,8 +270,21 @@ export function MessageCenter({
       locale,
       run: Promise.resolve(),
     };
-    entry.run = sync()
-      .catch(() => setSyncState('error'))
+    // `sync` claims its request id synchronously, before its first await, so
+    // reading the ref straight after the call gives THIS run's id.
+    const started = sync();
+    const issuedRequestId = syncRequestIdRef.current;
+    entry.run = started
+      .catch(() => {
+        // Only the run that is still this host's current request may report a
+        // failure. An overlapping open/visibility retry — or a run issued under
+        // a previous account — can reject after a newer one has already
+        // succeeded, and painting the error banner then contradicts what is on
+        // screen.
+        if (issuedRequestId !== syncRequestIdRef.current) return;
+        if (generation !== currentWorkspaceAccountGeneration()) return;
+        setSyncState('error');
+      })
       .finally(() => retireInFlightSync(entry));
     publishInFlightSync(entry);
     void entry.run;
@@ -320,19 +334,27 @@ export function MessageCenter({
       setPriorityMessage(snapshot.loggedIn ? findGoPlanSunsetMessage(snapshot.messages) : null);
       setSyncState('ready');
     };
+    // A settled snapshot is shown FIRST when there is one, so a remount never
+    // flashes empty — but it is not the end of the story. An in-flight run is
+    // by definition fresher than the snapshot that preceded it, and nothing
+    // pushes its result into a host that merely adopted: module state updates
+    // and this component never hears about it, leaving it stale until an open,
+    // a visibility change, or the 60s poll. So adopt AND then take that run's
+    // result when it lands.
     const adopted = adoptableSnapshot(locale);
-    if (adopted) {
-      adopt(adopted);
-    } else if (joinableSync(locale)) {
+    if (adopted) adopt(adopted);
+    const running = joinableSync(locale);
+    if (running) {
       // Someone else's sync is already on the wire for this same data and the
       // same account; take its result rather than racing a second copy of it.
-      if (messagesRef.current.length === 0) setSyncState('loading');
-      void joinableSync(locale)!.run.then(() => {
+      if (!adopted && messagesRef.current.length === 0) setSyncState('loading');
+      void running.run.then(() => {
+        if (cancelled) return;
         const settled = adoptableSnapshot(locale);
         if (settled) adopt(settled);
-        else if (!cancelled) retrySync();
+        else if (!adopted) retrySync();
       });
-    } else {
+    } else if (!adopted) {
       retrySync();
     }
     const interval = window.setInterval(retrySync, 60_000);
@@ -439,7 +461,12 @@ export function MessageCenter({
       clearAnonymousState(window.localStorage);
     }
     invalidateSyncResponses();
-    commitState(nextMessages, nextIds, { persistAnonymous: !account });
+    // Component state only — the durable anonymous cache is shared, so it takes
+    // a delta below rather than this host's whole row set. Persisting the full
+    // array here dropped a read a successor had already written while this
+    // continuation was awaiting.
+    commitState(nextMessages, nextIds);
+    if (!account) recordAnonymousRead(window.localStorage, messageId, readAt);
     // A durable read outranks every pull issued before it, and the snapshot
     // patch itself is a delta — both live in `message-center-snapshot` because
     // both are shared across hosts, unlike everything committed above.

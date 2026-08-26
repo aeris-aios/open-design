@@ -59,6 +59,33 @@ export function writeAnonymousState(
   storage.setItem(READ_KEY, JSON.stringify([...readIds]));
 }
 
+/**
+ * Record ONE anonymous read against whatever is already persisted.
+ *
+ * `writeAnonymousState` replaces both keys with a host's whole view, which is
+ * correct for a settled sync but wrong for a read: a `markRead` continuation
+ * can pause across its awaits, its host can unmount, and a successor can
+ * persist a read of its own in the meantime. Writing the full array on resume
+ * dropped that read from the durable cache — the in-memory snapshot delta hid
+ * it until the snapshot expired or the page reloaded, at which point the badge
+ * came back.
+ *
+ * Re-reads storage at write time so it composes with whatever landed while the
+ * caller was awaiting.
+ */
+export function recordAnonymousRead(
+  storage: Storage,
+  messageId: string,
+  readAt: string,
+): void {
+  const messages = readAnonymousMessages(storage).map((message) => (
+    message.id === messageId ? { ...message, readAt: message.readAt ?? readAt } : message
+  ));
+  const readIds = readAnonymousReadIds(storage);
+  readIds.add(messageId);
+  writeAnonymousState(storage, messages, readIds);
+}
+
 export function clearAnonymousState(storage: Storage): void {
   storage.removeItem(MESSAGES_KEY);
   storage.removeItem(READ_KEY);

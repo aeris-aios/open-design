@@ -14,6 +14,7 @@ import { flushSync } from 'react-dom';
 
 import { I18nProvider, useI18n } from '../../src/i18n';
 import { MessageCenter } from '../../src/components/MessageCenter';
+import { recordAnonymousRead } from '../../src/message-center-client';
 import { resetMessageCenterSnapshot } from '../../src/components/message-center-snapshot';
 import { advanceWorkspaceAccountGeneration } from '../../src/collab/workspace-identity';
 
@@ -555,6 +556,181 @@ describe('MessageCenter remount snapshot', () => {
     await waitFor(() => expect(pendingAfter.length).toBeGreaterThan(0));
     expect(messageCalls).toBe(afterFirst);
     expect(pendingAfter[pendingAfter.length - 1]).toBe(true);
+  });
+
+  it('keeps a successor\'s anonymous read when an older continuation lands after it', async () => {
+    // `markRead` used to persist this host's WHOLE row set. A continuation can
+    // pause across its awaits, its host can unmount, and a successor can
+    // persist a read of its own meanwhile — the full-array write on resume then
+    // dropped it from the durable cache, and the badge came back after the
+    // snapshot expired or the page reloaded.
+    // Gated by an explicit flag, not by call ordinal: opening the panel fires a
+    // sync of its own, so "the second status call" was that one and the read's
+    // continuation never actually paused — which is why the first version of
+    // this spec passed against the unfixed code.
+    const hold = { armed: false, release: null as (() => void) | null };
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/integrations/vela/status')) {
+        if (hold.armed) {
+          hold.armed = false;
+          await new Promise<void>((resolve) => {
+            hold.release = resolve;
+          });
+        }
+        return Response.json({ loggedIn: false });
+      }
+      if (url.includes('/message-center') && url.includes('/messages')) {
+        messageCalls += 1;
+        return Response.json({
+          messages: [row('anon-one', null), row('anon-two', null)],
+          nextCursor: null,
+          unreadCount: 2,
+        });
+      }
+      return Response.json({});
+    }));
+
+    const host = render(
+      <I18nProvider initial="zh-CN">
+        <MessageCenter />
+      </I18nProvider>,
+    );
+    await waitFor(() => expect(messageCalls).toBeGreaterThan(0));
+    fireEvent.click(screen.getByTestId('message-center-trigger'));
+    const target = await screen.findByRole('button', { name: /anon-one/ });
+    // Let the open effect's own sync settle first, THEN arm the gate.
+    await new Promise((r) => setTimeout(r, 30));
+    hold.armed = true;
+    fireEvent.click(target);
+    await waitFor(() => expect(hold.release).not.toBeNull());
+
+    // While that read is parked, a successor persists a different one.
+    recordAnonymousRead(window.localStorage, 'anon-two', '2026-07-16T13:00:00.000Z');
+
+    hold.release!();
+    await new Promise((r) => setTimeout(r, 30));
+    host.unmount();
+
+    const persisted = window.localStorage.getItem('open-design.message-center.anonymous-read-ids.v1') ?? '';
+    expect(persisted).toContain('anon-two');
+    expect(persisted).toContain('anon-one');
+  });
+
+  it('takes an in-flight refresh even when a settled snapshot was adopted', async () => {
+    // Adoption showed the older rows and stopped there: the run already on the
+    // wire is fresher, but nothing pushes its result into a host that merely
+    // adopted, so it stayed stale until an open, a visibility change or the 60s
+    // poll.
+    let releaseSecond: (() => void) | null = null;
+    let pulls = 0;
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/integrations/vela/status')) {
+        statusCalls += 1;
+        return Response.json({ loggedIn: false });
+      }
+      if (url.includes('/message-center') && url.includes('/messages')) {
+        messageCalls += 1;
+        pulls += 1;
+        if (pulls === 1) {
+          return Response.json({
+            messages: [row('stale-a', null), row('stale-b', null)],
+            nextCursor: null,
+            unreadCount: 2,
+          });
+        }
+        if (pulls === 2) {
+          await new Promise<void>((resolve) => {
+            releaseSecond = resolve;
+          });
+        }
+        return Response.json({ messages: [row('stale-a', null)], nextCursor: null, unreadCount: 1 });
+      }
+      return Response.json({});
+    }));
+
+    const seed = mount();
+    await waitFor(() => expect(messageCalls).toBe(1));
+
+    // A refresh goes on the wire and is held there.
+    document.dispatchEvent(new Event('visibilitychange'));
+    await waitFor(() => expect(messageCalls).toBe(2));
+    seed.unmount();
+
+    // The successor adopts the settled snapshot (2 unread) while that refresh
+    // is still pending.
+    const counts: number[] = [];
+    render(
+      <I18nProvider initial="zh-CN">
+        <MessageCenter
+          hideTrigger
+          open={false}
+          onOpenChange={() => {}}
+          onUnreadCountChange={(n) => counts.push(n)}
+        />
+      </I18nProvider>,
+    );
+    await waitFor(() => expect(counts[counts.length - 1]).toBe(2));
+
+    // When the refresh lands, this host must move to its result.
+    releaseSecond!();
+    await waitFor(() => expect(counts[counts.length - 1]).toBe(1));
+    expect(messageCalls).toBe(2);
+  });
+
+  it('does not paint an error when a superseded run rejects after a newer one succeeds', async () => {
+    // Overlapping runs are normal — open, visibility and the 60s poll all call
+    // `retrySync`. The catch was unconditional, so a slow first run failing
+    // after a fast second one succeeded put the error banner over rows that
+    // were on screen and correct.
+    let failFirst: (() => void) | null = null;
+    let pulls = 0;
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/integrations/vela/status')) {
+        statusCalls += 1;
+        return Response.json({ loggedIn: false });
+      }
+      if (url.includes('/message-center') && url.includes('/messages')) {
+        messageCalls += 1;
+        pulls += 1;
+        if (pulls === 1) {
+          await new Promise<void>((resolve) => {
+            failFirst = resolve;
+          });
+          throw new Error('first run failed late');
+        }
+        return Response.json({
+          messages: [row('survivor', null)],
+          nextCursor: null,
+          unreadCount: 1,
+        });
+      }
+      return Response.json({});
+    }));
+
+    render(
+      <I18nProvider initial="zh-CN">
+        <MessageCenter />
+      </I18nProvider>,
+    );
+    await waitFor(() => expect(messageCalls).toBe(1));
+
+    // A second run overtakes it and succeeds.
+    document.dispatchEvent(new Event('visibilitychange'));
+    await waitFor(() => expect(messageCalls).toBe(2));
+    fireEvent.click(screen.getByTestId('message-center-trigger'));
+    expect(await screen.findByRole('button', { name: /survivor/ })).toBeTruthy();
+
+    // Only now does the superseded run reject.
+    failFirst!();
+    await new Promise((r) => setTimeout(r, 40));
+
+    expect(screen.queryByRole('button', { name: /survivor/ })).not.toBeNull();
+    // The real banner copy, not a guessed regex — the first version of this
+    // spec matched nothing and passed against the unfixed code.
+    expect(screen.queryByText('检查失败，请重试')).toBeNull();
   });
 
   it('does not re-sync when it is remounted straight away', async () => {
