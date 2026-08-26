@@ -19,6 +19,7 @@ import os from 'node:os';
 import net from 'node:net';
 import { executionProfileFromStreamFormat, PLUGIN_SHARE_ACTION_PLUGIN_IDS } from '@open-design/contracts';
 import { isTodoWriteToolName, stopReasonIsTruncation, todoItemsFromTodoWriteInput } from '@open-design/contracts';
+import { renderDoneMarker } from '@open-design/contracts';
 import type {
   CollabCloudMemberDirectoryEntry,
   TeamProject,
@@ -10543,6 +10544,33 @@ export async function startServer({
           'Do not mention this title task to the user. Continue with the normal answer after the title marker.',
         ].join('\n')
       : '';
+    /*
+     * This turn's done-marker contract.
+     *
+     * It lives in the per-turn slice for the same reason the connected-MCP
+     * directive does (see the note just below): the key is a fresh nonce every
+     * run, so putting it in `daemonSystemPrompt` would move the cached stable
+     * prefix on EVERY turn of EVERY conversation — a guaranteed
+     * `stable-prompt-changed` miss that also invalidates the upstream cache for
+     * the whole conversation history downstream of it. The rules are cheap to
+     * restate per turn; the prefix is not cheap to lose.
+     *
+     * Wording mirrors the `<od-title>` task above it — same shape of contract
+     * (emit one inline marker the host parses and strips), same "don't narrate
+     * this to the user" clause.
+     */
+    const doneMarkerPrompt = typeof run.doneKey === 'string' && run.doneKey
+      ? [
+          'Turn completion marker:',
+          `This turn's key is ${run.doneKey}.`,
+          'When you finish working and are about to write the part the user actually reads — your answer, summary, or delivery note — emit exactly one marker immediately before it:',
+          renderDoneMarker(run.doneKey),
+          'Everything before the marker is filed as working narration into a collapsed execution log; everything after it is shown to the user directly. Emit it at most once, and only when the work is done.',
+          'The key is different every turn: copy the one above verbatim, never reuse an earlier one, and never invent one.',
+          'Skip the marker when you are ending the turn with a <question-form> or an <artifact> block — those already close the working phase on their own.',
+          'The marker is protocol, not prose: do not mention it, do not explain it, and do not wrap it in a code fence (a fenced marker is deliberately ignored).',
+        ].join('\n')
+      : '';
     // The connected-external-MCP directive reflects live OAuth token state,
     // which flips mid-conversation as Bearers expire/refresh. Keeping it out of
     // the cached stable prefix (daemonSystemPrompt) and re-sending it here in
@@ -10551,8 +10579,8 @@ export async function startServer({
     // giving the model the current MCP auth state on every turn.
     const mcpConnectedDirective = renderConnectedExternalMcpDirective(connectedExternalMcp);
     const clientInstructionParts = includeStableInstructions
-      ? [researchCommandContract, runContextPrompt, mcpConnectedDirective, browserUsePromptGuard, titleGenerationPrompt, systemPrompt]
-      : [researchCommandContract, runContextPrompt, mcpConnectedDirective, browserUsePromptGuard, titleGenerationPrompt];
+      ? [researchCommandContract, runContextPrompt, mcpConnectedDirective, browserUsePromptGuard, titleGenerationPrompt, doneMarkerPrompt, systemPrompt]
+      : [researchCommandContract, runContextPrompt, mcpConnectedDirective, browserUsePromptGuard, titleGenerationPrompt, doneMarkerPrompt];
     const clientInstructionPrompt = clientInstructionParts
       .map((part) => (typeof part === 'string' ? part.trim() : ''))
       .filter(Boolean)
@@ -12144,6 +12172,20 @@ export async function startServer({
       serviceTier: safeServiceTier,
       toolTokenExpiresAt: toolTokenGrant?.expiresAt ?? null,
     });
+    /*
+     * This turn's done key, published BEFORE the child is spawned.
+     *
+     * Ordering is the whole contract: the chat client only honours a
+     * `<od-done key="…"/>` marker whose key matches the one it has already
+     * seen for this turn, so the key event must land ahead of the first
+     * `text_delta` on both the live stream and the persisted event list. It is
+     * emitted as a normal agent event so it rides the same path as everything
+     * else — persisted into the assistant message and replayed on reconnect —
+     * rather than needing a message column of its own.
+     */
+    if (typeof run.doneKey === 'string' && run.doneKey) {
+      send('agent', { type: 'done_key', key: run.doneKey });
+    }
     noteAgentActivity();
 
     let child;
