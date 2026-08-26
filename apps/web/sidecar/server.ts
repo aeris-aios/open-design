@@ -11,7 +11,13 @@ import { Agent as HttpsAgent, request as createHttpsRequest } from "node:https";
 import { existsSync, readFileSync } from "node:fs";
 import { readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { createConnection, createServer as createTcpServer, type AddressInfo, type Server as TcpServer } from "node:net";
+import {
+  createConnection,
+  createServer as createTcpServer,
+  type AddressInfo,
+  type Server as TcpServer,
+  type Socket,
+} from "node:net";
 import { dirname, isAbsolute, join, relative } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -34,6 +40,7 @@ const WEB_STANDALONE_ROOT_ENV = "OD_WEB_STANDALONE_ROOT";
 const STANDALONE_PARENT_PID_ENV = "OD_STANDALONE_PARENT_PID";
 const STANDALONE_STARTUP_TIMEOUT_ENV = "OD_STANDALONE_STARTUP_TIMEOUT_MS";
 const SHUTDOWN_TIMEOUT_MS = 3000;
+const WEB_HTTP_DRAIN_MS = 250;
 const STANDALONE_READINESS_POLL_MS = 150;
 const STANDALONE_TCP_READINESS_GRACE_MS = STANDALONE_READINESS_POLL_MS;
 const require = createRequire(import.meta.url);
@@ -604,6 +611,67 @@ async function closeServer(server: HttpServer | TcpServer): Promise<void> {
   });
 }
 
+/**
+ * Own every accepted web-sidecar connection so shutdown cannot be held open by
+ * a renderer keep-alive, SSE request, or upgraded socket. Short requests get a
+ * small drain window; the remaining connections are no longer useful after the
+ * sidecar has entered its stopped state and are closed deterministically.
+ */
+export function createWebHttpServerShutdown(
+  server: HttpServer,
+  drainMs = WEB_HTTP_DRAIN_MS,
+): () => Promise<void> {
+  const sockets = new Set<Socket>();
+  const trackSocket = (socket: Socket): void => {
+    sockets.add(socket);
+    socket.once("close", () => sockets.delete(socket));
+  };
+  server.on("connection", trackSocket);
+
+  let task: Promise<void> | null = null;
+  return () => {
+    task ??= (async () => {
+      try {
+        if (!server.listening) {
+          for (const socket of sockets) socket.destroy();
+          return;
+        }
+
+        const closed = new Promise<void>((resolveClose, rejectClose) => {
+          server.close((error) => (error == null ? resolveClose() : rejectClose(error)));
+        });
+        server.closeIdleConnections();
+
+        let timeout: NodeJS.Timeout | undefined;
+        let drained: boolean;
+        try {
+          drained = await Promise.race([
+            closed.then(() => true),
+            new Promise<false>((resolveTimeout) => {
+              timeout = setTimeout(() => resolveTimeout(false), drainMs);
+            }),
+          ]);
+        } finally {
+          if (timeout != null) clearTimeout(timeout);
+        }
+
+        if (!drained) server.closeAllConnections();
+
+        // server.close and closeAllConnections intentionally exclude upgraded
+        // sockets. The connection fence covers those and older Node behavior
+        // as well, including when server.close resolves before the drain timer.
+        for (const socket of sockets) socket.destroy();
+        if (!drained) {
+          await closed;
+        }
+      } finally {
+        server.off("connection", trackSocket);
+      }
+    })();
+    return task;
+  };
+}
+
 async function reserveTcpPort(host = HOST): Promise<number> {
   const server = createTcpServer();
   try {
@@ -898,6 +966,7 @@ async function createWebSidecarHandle(
   portRequest: number,
   isRuntimeRunning?: () => boolean,
 ): Promise<WebSidecarHandle> {
+  const closeHttpServer = createWebHttpServerShutdown(httpServer);
   const port = await listen(httpServer, portRequest);
   const state: WebStatusSnapshot = {
     pid: process.pid,
@@ -923,7 +992,7 @@ async function createWebSidecarHandle(
     stopped = true;
     state.state = "stopped";
     state.updatedAt = new Date().toISOString();
-    await settleShutdownTask(closeServer(httpServer));
+    await closeHttpServer();
     await settleShutdownTask(Promise.resolve().then(closeRuntime));
     resolveStopped();
   }
