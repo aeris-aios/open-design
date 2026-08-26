@@ -3482,6 +3482,7 @@ export const id: Dict = {
   'assistant.copyMarkdown': 'Salin Markdown respons',
   'assistant.forkConversation': 'Fork dari sini',
   'assistant.forkingConversation': 'Membuat fork…',
+  'assistant.forkNote': 'Konteks di atas ikut terbawa — lanjutkan saja.',
   'assistant.shareToOpenDesign': 'Bagikan ke OpenDesign',
   'assistant.shareToOpenDesignBusy': 'Menyiapkan paket…',
   'assistant.feedbackPrompt': 'Masukan',

@@ -321,6 +321,36 @@ describe('AssistantMessage feedback gate', () => {
     expect(onShare).toHaveBeenCalledTimes(1);
   });
 
+  it('lands a fork divider carrying the inherited title plus the "context came with you" note', () => {
+    // 设计稿第 38 格:Fork 不是跳走 —— 点完必须在这条回复下面**原地**留下痕迹,
+    // 否则人只会以为按钮没反应。分界线中间是承接过来的会话标题,
+    // 线下面那行脚注告诉人上文已经带过去了。
+    render(
+      <AssistantMessage
+        message={baseMessage({
+          forkedInto: { title: 'Storefront prototype', conversationId: 'conv-fork' },
+        })}
+        streaming={false}
+        projectId="proj-1"
+      />,
+    );
+
+    const divider = screen.getByTestId('assistant-fork-divider');
+    expect(divider.textContent).toContain('Storefront prototype');
+    expect(screen.getByTestId('assistant-fork-note').textContent).toContain(
+      'Context above came along',
+    );
+  });
+
+  it('leaves the fork divider out of turns that were never forked', () => {
+    render(
+      <AssistantMessage message={baseMessage()} streaming={false} projectId="proj-1" />,
+    );
+
+    expect(screen.queryByTestId('assistant-fork-divider')).toBeNull();
+    expect(screen.queryByTestId('assistant-fork-note')).toBeNull();
+  });
+
   it('does not show the fork action while the assistant is streaming', () => {
     render(
       <AssistantMessage

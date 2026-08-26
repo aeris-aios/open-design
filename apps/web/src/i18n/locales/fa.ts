@@ -3482,6 +3482,7 @@ export const fa: Dict = {
   'assistant.copyMarkdown': 'کپی Markdown پاسخ',
   'assistant.forkConversation': 'فورک از اینجا',
   'assistant.forkingConversation': 'در حال فورک…',
+  'assistant.forkNote': 'زمینهٔ بالا همراهت آمد — فقط ادامه بده.',
   'assistant.shareToOpenDesign': 'اشتراک‌گذاری در OpenDesign',
   'assistant.shareToOpenDesignBusy': 'در حال آماده‌سازی بسته…',
   'assistant.feedbackPrompt': 'بازخورد',

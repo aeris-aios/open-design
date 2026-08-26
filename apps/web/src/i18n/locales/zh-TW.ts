@@ -3687,6 +3687,7 @@ export const zhTW: Dict = {
   "assistant.copyMarkdown": "複製回覆 Markdown",
   "assistant.forkConversation": "從這裡分叉",
   "assistant.forkingConversation": "正在分叉…",
+  "assistant.forkNote": "上文已帶過來,接著說就行",
   "assistant.shareToOpenDesign": "分享到 OpenDesign",
   "assistant.shareToOpenDesignBusy": "正在準備投稿…",
   "assistant.feedbackPrompt": "意見回饋",

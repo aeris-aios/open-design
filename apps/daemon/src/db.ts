@@ -443,6 +443,13 @@ function migrate(db: SqliteDb): void {
   if (!messageCols.some((c: DbRow) => c.name === 'telemetry_finalized_at')) {
     db.exec(`ALTER TABLE messages ADD COLUMN telemetry_finalized_at INTEGER`);
   }
+  // Fork divider (delivered design, cell 38): the marker that says "this turn
+  // was forked, and here is the title the new conversation inherited". It has
+  // to be a stored column, not a client-side flag — the divider is only
+  // honest if it is still there after a reload.
+  if (!messageCols.some((c: DbRow) => c.name === 'forked_into_json')) {
+    db.exec(`ALTER TABLE messages ADD COLUMN forked_into_json TEXT`);
+  }
   const routineRunCols = db.prepare(`PRAGMA table_info(routine_runs)`).all() as DbRow[];
   if (!routineRunCols.some((c: DbRow) => c.name === 'error_code')) {
     db.exec(`ALTER TABLE routine_runs ADD COLUMN error_code TEXT`);
@@ -2593,6 +2600,7 @@ export function listMessages(db: SqliteDb, conversationId: string) {
               run_context_json AS runContextJson,
               task_analytics_json AS taskAnalyticsJson,
               applied_plugin_snapshot_json AS appliedPluginSnapshotJson,
+              forked_into_json AS forkedIntoJson,
               created_at AS createdAt, started_at AS startedAt, ended_at AS endedAt,
               position
          FROM messages
@@ -2625,6 +2633,7 @@ export function getMessage(db: SqliteDb, id: string, conversationId?: string) {
               session_mode AS sessionMode,
               run_context_json AS runContextJson,
               applied_plugin_snapshot_json AS appliedPluginSnapshotJson,
+              forked_into_json AS forkedIntoJson,
               created_at AS createdAt, started_at AS startedAt, ended_at AS endedAt,
               position
          FROM messages
@@ -2709,7 +2718,7 @@ export function upsertMessage(db: SqliteDb, conversationId: string, m: DbRow) {
               produced_files_json = ?, trace_object_files_json = ?, feedback_json = ?,
               pre_turn_file_names_json = ?,
               session_mode = ?, run_context_json = ?, task_analytics_json = ?,
-              applied_plugin_snapshot_json = ?,
+              applied_plugin_snapshot_json = ?, forked_into_json = ?,
               telemetry_finalized_at = CASE
                 WHEN ? THEN COALESCE(telemetry_finalized_at, ?)
                 ELSE telemetry_finalized_at
@@ -2736,6 +2745,7 @@ export function upsertMessage(db: SqliteDb, conversationId: string, m: DbRow) {
       m.runContext ? JSON.stringify(m.runContext) : null,
       m.taskAnalytics ? JSON.stringify(m.taskAnalytics) : null,
       m.appliedPluginSnapshot ? JSON.stringify(m.appliedPluginSnapshot) : null,
+      normalizeForkedIntoForStorage(m.forkedInto),
       m.telemetryFinalized === true ? 1 : 0,
       now,
       m.startedAt ?? null,
@@ -2752,11 +2762,11 @@ export function upsertMessage(db: SqliteDb, conversationId: string, m: DbRow) {
     const createdAt = typeof m.createdAt === 'number' && Number.isFinite(m.createdAt)
       ? m.createdAt
       : now;
-    // 25 values: id, conversation_id, role, content, agent_id, agent_name,
+    // 27 values: id, conversation_id, role, content, agent_id, agent_name,
     // run_id, run_status, result_delivery_state, last_run_event_id, events_json, attachments_json,
     // comment_attachments_json, produced_files_json, trace_object_files_json,
     // feedback_json, pre_turn_file_names_json, session_mode, run_context_json,
-    // task_analytics_json, applied_plugin_snapshot_json,
+    // task_analytics_json, applied_plugin_snapshot_json, forked_into_json,
     // telemetry_finalized_at, started_at, ended_at, position, created_at.
     db.prepare(
       `INSERT INTO messages
@@ -2765,9 +2775,9 @@ export function upsertMessage(db: SqliteDb, conversationId: string, m: DbRow) {
           attachments_json, comment_attachments_json, produced_files_json,
           trace_object_files_json, feedback_json, pre_turn_file_names_json,
           session_mode, run_context_json, task_analytics_json,
-          applied_plugin_snapshot_json,
+          applied_plugin_snapshot_json, forked_into_json,
           telemetry_finalized_at, started_at, ended_at, position, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       m.id,
       conversationId,
@@ -2790,6 +2800,7 @@ export function upsertMessage(db: SqliteDb, conversationId: string, m: DbRow) {
       m.runContext ? JSON.stringify(m.runContext) : null,
       m.taskAnalytics ? JSON.stringify(m.taskAnalytics) : null,
       m.appliedPluginSnapshot ? JSON.stringify(m.appliedPluginSnapshot) : null,
+      normalizeForkedIntoForStorage(m.forkedInto),
       m.telemetryFinalized === true ? now : null,
       m.startedAt ?? null,
       m.endedAt ?? null,
@@ -2819,6 +2830,7 @@ export function upsertMessage(db: SqliteDb, conversationId: string, m: DbRow) {
               run_context_json AS runContextJson,
               task_analytics_json AS taskAnalyticsJson,
               applied_plugin_snapshot_json AS appliedPluginSnapshotJson,
+              forked_into_json AS forkedIntoJson,
               created_at AS createdAt, started_at AS startedAt, ended_at AS endedAt,
               position
          FROM messages WHERE id = ?`,
@@ -4135,6 +4147,7 @@ function normalizeMessage(db: SqliteDb, row: DbRow, eventBatches?: DbRow[][]) {
     runContext: parseJsonOrUndef(row.runContextJson),
     taskAnalytics: parseJsonOrUndef(row.taskAnalyticsJson),
     appliedPluginSnapshot: parseJsonOrUndef(row.appliedPluginSnapshotJson),
+    forkedInto: normalizeForkedInto(parseJsonOrUndef(row.forkedIntoJson)),
     createdAt: row.createdAt ?? undefined,
     startedAt: row.startedAt ?? undefined,
     endedAt: row.endedAt ?? undefined,
@@ -4161,6 +4174,30 @@ function normalizeResultDeliveryStateForStorage(
 
 function normalizeMessageSessionModeForStorage(value: unknown): ChatSessionMode | null {
   return value === 'chat' || value === 'design' || value === 'plan' ? value : null;
+}
+
+/**
+ * The fork divider marker is only meaningful when it carries the title the
+ * divider prints. A shape without a usable title would render an empty line
+ * between two hairlines, so it is stored as "not forked" instead.
+ */
+function normalizeForkedInto(
+  value: unknown,
+): { title: string; conversationId?: string } | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const candidate = value as { title?: unknown; conversationId?: unknown };
+  if (typeof candidate.title !== 'string' || !candidate.title) return undefined;
+  return {
+    title: candidate.title,
+    ...(typeof candidate.conversationId === 'string' && candidate.conversationId
+      ? { conversationId: candidate.conversationId }
+      : {}),
+  };
+}
+
+function normalizeForkedIntoForStorage(value: unknown): string | null {
+  const normalized = normalizeForkedInto(value);
+  return normalized ? JSON.stringify(normalized) : null;
 }
 
 function parseJsonOrUndef(s: unknown): any {

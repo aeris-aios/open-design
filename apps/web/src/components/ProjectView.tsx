@@ -9408,6 +9408,24 @@ export function ProjectView({
           },
           { requestId },
         );
+        // Fork is "branch from this reply", not "jump away" — so the branch has
+        // to stay visible where it was taken. Stamp the source turn with the
+        // divider marker and write it back to the SOURCE conversation (this
+        // still runs before activeConversationId moves to the fork), otherwise
+        // the divider only lives in memory and is gone after a reload.
+        // The divider prints the title the fork inherited, i.e. the original
+        // conversation's title — not the "… fork" title the new row carries.
+        const forkDividerTitle = sourceTitle || fresh.title?.trim();
+        if (forkDividerTitle) {
+          updateMessageById(
+            assistantMessage.id,
+            (prev) => ({
+              ...prev,
+              forkedInto: { title: forkDividerTitle, conversationId: fresh.id },
+            }),
+            true,
+          );
+        }
         setMessages([]);
         commitPreviewComments([]);
         setAttachedComments([]);
@@ -9466,6 +9484,7 @@ export function ProjectView({
       project.metadata,
       projectMutationReadOnly,
       t,
+      updateMessageById,
     ],
   );
 

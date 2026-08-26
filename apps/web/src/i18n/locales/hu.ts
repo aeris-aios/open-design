@@ -3482,6 +3482,7 @@ export const hu: Dict = {
   'assistant.copyMarkdown': 'Válasz Markdown másolása',
   'assistant.forkConversation': 'Fork innen',
   'assistant.forkingConversation': 'Fork létrehozása…',
+  'assistant.forkNote': 'A fenti előzmény átjött – csak folytasd.',
   'assistant.shareToOpenDesign': 'Megosztás az OpenDesignnal',
   'assistant.shareToOpenDesignBusy': 'Csomag előkészítése…',
   'assistant.feedbackPrompt': 'Visszajelzés',

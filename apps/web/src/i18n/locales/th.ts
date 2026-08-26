@@ -3482,6 +3482,7 @@ export const th: Dict = {
   'assistant.copyMarkdown': 'คัดลอก Markdown ของคำตอบ',
   'assistant.forkConversation': 'Fork จากตรงนี้',
   'assistant.forkingConversation': 'กำลัง fork…',
+  'assistant.forkNote': 'บริบทด้านบนติดมาด้วยแล้ว — คุยต่อได้เลย',
   'assistant.shareToOpenDesign': 'แชร์ไปยัง OpenDesign',
   'assistant.shareToOpenDesignBusy': 'กำลังเตรียมแพ็กเกจ…',
   'assistant.feedbackPrompt': 'ข้อเสนอแนะ',

@@ -4353,6 +4353,8 @@ export interface Dict {
   'assistant.copyMarkdown': string;
   'assistant.forkConversation': string;
   'assistant.forkingConversation': string;
+  /** 分叉分界线下面那行脚注 —— 告诉人 Fork 不是跳走,上文已经带过去了。 */
+  'assistant.forkNote': string;
   'assistant.shareToOpenDesign': string;
   'assistant.shareToOpenDesignBusy': string;
   'assistant.feedbackPrompt': string;

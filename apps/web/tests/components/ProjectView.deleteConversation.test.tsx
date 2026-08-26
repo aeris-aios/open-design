@@ -492,6 +492,51 @@ describe('ProjectView conversation fork analytics', () => {
     );
   });
 
+  it('marks the forked assistant turn with forkedInto and persists it to the source conversation', async () => {
+    // 设计稿第 38 格:Fork 之后那条回复下面要**原地**留一条分界。分界靠
+    // `ChatMessage.forkedInto` 渲染,而这个字段之前没有任何代码写过 ——
+    // 所以这一态在产品里永远出不来。写回源会话才能「刷新之后还在」。
+    prepareForkHarness();
+    createConversation.mockResolvedValue({ id: 'conv-fork', title: 'Conversation 1 fork' });
+
+    renderProjectView(vi.fn());
+
+    await waitFor(() => expect(chatPaneProps.messages).toEqual(sourceMessages));
+    await act(async () => {
+      await chatPaneProps.onForkFromMessage?.(sourceMessages[1]!);
+    });
+
+    expect(saveMessage).toHaveBeenCalledWith(
+      'project-1',
+      'conv-1',
+      expect.objectContaining({
+        id: 'assistant-1',
+        // 分界上写的是**承接过来的**会话标题,不是「… 分叉」那个新标题。
+        forkedInto: { title: 'Conversation 1', conversationId: 'conv-fork' },
+      }),
+      expect.anything(),
+    );
+  });
+
+  it('leaves forkedInto unset when the fork never produced a conversation', async () => {
+    prepareForkHarness();
+    createConversation.mockRejectedValue(new TypeError('Failed to fetch'));
+
+    renderProjectView(vi.fn());
+
+    await waitFor(() => expect(chatPaneProps.messages).toEqual(sourceMessages));
+    await act(async () => {
+      await chatPaneProps.onForkFromMessage?.(sourceMessages[1]!);
+    });
+
+    expect(saveMessage).not.toHaveBeenCalledWith(
+      'project-1',
+      'conv-1',
+      expect.objectContaining({ forkedInto: expect.anything() }),
+      expect.anything(),
+    );
+  });
+
   it('tracks a failed fork result without reporting success', async () => {
     prepareForkHarness();
     createConversation.mockRejectedValue(new TypeError('Failed to fetch'));

@@ -277,6 +277,77 @@ describe('GET /api/projects/:id resolvedDir', () => {
     expect(forkMessagesBody.messages[1]?.lastRunEventId).toBeUndefined();
   });
 
+  it('round-trips forkedInto on an assistant message so the fork divider survives a reload', async () => {
+    // 设计稿第 38 格:分叉之后在原会话那条助手消息上**原地**落一条分界。
+    // 分界只有落库才「刷新之后还在」—— 契约上的 `ChatMessage.forkedInto`
+    // 之前没有对应的存储列,PUT 上来的值在 upsert 里被整个丢掉。
+    const projectId = `fork-divider-${Date.now()}`;
+    const createProjectResp = await fetch(`${baseUrl}/api/projects`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: projectId,
+        name: 'Fork divider fixture',
+        skillId: null,
+        designSystemId: null,
+      }),
+    });
+    expect(createProjectResp.status).toBe(200);
+
+    const convResp = await fetch(`${baseUrl}/api/projects/${projectId}/conversations`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 'Source', sessionMode: 'chat' }),
+    });
+    expect(convResp.status).toBe(200);
+    const convId = ((await convResp.json()) as { conversation: { id: string } }).conversation.id;
+
+    const messageId = 'fork-divider-assistant-1';
+    const forkedInto = { title: 'Source', conversationId: 'conv-fork-target' };
+    const saveResp = await fetch(
+      `${baseUrl}/api/projects/${projectId}/conversations/${convId}/messages/${messageId}`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: messageId,
+          role: 'assistant',
+          content: 'answer',
+          forkedInto,
+        }),
+      },
+    );
+    expect(saveResp.status).toBe(200);
+    const savedBody = (await saveResp.json()) as {
+      message: { forkedInto?: { title: string; conversationId?: string } };
+    };
+    expect(savedBody.message.forkedInto).toEqual(forkedInto);
+
+    const listResp = await fetch(
+      `${baseUrl}/api/projects/${projectId}/conversations/${convId}/messages`,
+    );
+    expect(listResp.status).toBe(200);
+    const listBody = (await listResp.json()) as {
+      messages: Array<{ id: string; forkedInto?: { title: string; conversationId?: string } }>;
+    };
+    expect(listBody.messages.find((m) => m.id === messageId)?.forkedInto).toEqual(forkedInto);
+
+    // A later snapshot that carries no fork marker must clear it, otherwise an
+    // undone fork would leave a permanent divider.
+    const clearResp = await fetch(
+      `${baseUrl}/api/projects/${projectId}/conversations/${convId}/messages/${messageId}`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: messageId, role: 'assistant', content: 'answer' }),
+      },
+    );
+    expect(clearResp.status).toBe(200);
+    expect(
+      ((await clearResp.json()) as { message: { forkedInto?: unknown } }).message.forkedInto,
+    ).toBeUndefined();
+  });
+
   it('forks from a client-supplied snapshot when the fork point was never persisted', async () => {
     // Regression: forking an assistant turn whose run errored / had its
     // connection reset before the message reached the database used to 404 on

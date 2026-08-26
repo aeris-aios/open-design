@@ -3482,6 +3482,7 @@ export const tr: Dict = {
   'assistant.copyMarkdown': 'Yanıt Markdown\'unu kopyala',
   'assistant.forkConversation': 'Buradan fork et',
   'assistant.forkingConversation': 'Fork ediliyor…',
+  'assistant.forkNote': 'Yukarıdaki bağlam seninle geldi — devam etmen yeterli.',
   'assistant.shareToOpenDesign': 'OpenDesign\'a paylaş',
   'assistant.shareToOpenDesignBusy': 'Paket hazırlanıyor…',
   'assistant.feedbackPrompt': 'Geri bildirim',

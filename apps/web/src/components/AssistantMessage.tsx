@@ -1192,11 +1192,19 @@ function AssistantMessageImpl({
         {/* 分叉分界(稿子第 38 格):点过「新开会话」之后**原地**落一条线,
             中间那行字是承接过来的会话标题。不留痕迹的话,人只会以为按钮没反应。 */}
         {message.forkedInto ? (
-          <div className="fork-sep" data-testid="assistant-fork-divider">
-            <i aria-hidden />
-            <span title={message.forkedInto.title}>{message.forkedInto.title}</span>
-            <i aria-hidden />
-          </div>
+          <>
+            <div className="fork-sep" data-testid="assistant-fork-divider">
+              <i aria-hidden />
+              <span title={message.forkedInto.title}>{message.forkedInto.title}</span>
+              <i aria-hidden />
+            </div>
+            {/* 脚注跟着分界线【居中】:它是这条线的注解,不是新会话里的第一句话。
+                左对齐会让人读成「新会话已经开口说了一句」。 */}
+            <div className="fork-note" data-testid="assistant-fork-note">
+              <Icon name="fork" size={12} />
+              {t('assistant.forkNote')}
+            </div>
+          </>
         ) : null}
         {showNextStepActions ? (
           <NextStepActions

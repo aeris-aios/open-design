@@ -3482,6 +3482,7 @@ export const ko: Dict = {
   'assistant.copyMarkdown': '응답 Markdown 복사',
   'assistant.forkConversation': '여기서 포크',
   'assistant.forkingConversation': '포크 중…',
+  'assistant.forkNote': '위 맥락은 그대로 넘어왔어요. 이어서 말씀하세요.',
   'assistant.shareToOpenDesign': 'OpenDesign에 공유',
   'assistant.shareToOpenDesignBusy': '패키지 준비 중…',
   'assistant.feedbackPrompt': '피드백',

@@ -3482,6 +3482,7 @@ export const uk: Dict = {
   'assistant.copyMarkdown': 'Скопіювати Markdown відповіді',
   'assistant.forkConversation': 'Створити форк звідси',
   'assistant.forkingConversation': 'Створення форка…',
+  'assistant.forkNote': 'Контекст вище перенесено — просто продовжуйте.',
   'assistant.shareToOpenDesign': 'Поділитися з OpenDesign',
   'assistant.shareToOpenDesignBusy': 'Готуємо пакет…',
   'assistant.feedbackPrompt': 'Відгук',

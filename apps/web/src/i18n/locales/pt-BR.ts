@@ -3482,6 +3482,7 @@ export const ptBR: Dict = {
   'assistant.copyMarkdown': 'Copiar Markdown da resposta',
   'assistant.forkConversation': 'Bifurcar daqui',
   'assistant.forkingConversation': 'Bifurcando…',
+  'assistant.forkNote': 'O contexto acima veio junto — é só continuar.',
   'assistant.shareToOpenDesign': 'Compartilhar com OpenDesign',
   'assistant.shareToOpenDesignBusy': 'Preparando pacote…',
   'assistant.feedbackPrompt': 'Feedback',

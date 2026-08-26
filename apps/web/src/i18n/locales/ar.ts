@@ -3482,6 +3482,7 @@ export const ar: Dict = {
   'assistant.copyMarkdown': 'نسخ Markdown الرد',
   'assistant.forkConversation': 'تفرع من هنا',
   'assistant.forkingConversation': 'جارٍ التفرع…',
+  'assistant.forkNote': 'السياق أعلاه جاء معك — تابع الحديث فحسب.',
   'assistant.shareToOpenDesign': 'المشاركة على OpenDesign',
   'assistant.shareToOpenDesignBusy': 'جارٍ تجهيز الحزمة…',
   'assistant.feedbackPrompt': 'ملاحظات',

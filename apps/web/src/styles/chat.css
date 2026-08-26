@@ -3819,3 +3819,19 @@ body.od-quick-switcher-open .chat-composer-fixed-layer .composer-att .msg-att-de
   font-weight: 500;
   color: var(--brand-text);
 }
+/* 分界脚注(同一格):跟着上面那条线【居中】—— 它是这条线的注解,
+   不是新会话里的第一条消息;左对齐会读成「新会话已经开口说了一句」。 */
+.fork-note {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding-bottom: 2px;
+  font-size: var(--font-size-12);
+  color: var(--text-soft);
+}
+.fork-note svg {
+  flex: none;
+  width: 12px;
+  height: 12px;
+}
