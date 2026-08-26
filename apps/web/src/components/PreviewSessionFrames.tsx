@@ -14,7 +14,10 @@ import {
   PreviewSession,
   type PreviewSessionDocument,
 } from '../runtime/preview-session';
-import type { PreviewSessionNavigation } from '../runtime/preview-session-navigation';
+import {
+  previewSessionFramePolicy,
+  type PreviewSessionNavigation,
+} from '../runtime/preview-session-navigation';
 export type { PreviewSessionNavigation } from '../runtime/preview-session-navigation';
 import type { PreviewRuntimeMessageTarget } from '../runtime/preview-runtime-controller';
 import {
@@ -25,7 +28,7 @@ import {
 
 export interface PreviewSessionFramesProps extends Omit<
   ComponentPropsWithoutRef<'iframe'>,
-  'src' | 'srcDoc' | 'onLoad' | 'ref'
+  'src' | 'srcDoc' | 'onLoad' | 'ref' | 'sandbox' | 'allow'
 > {
   projectId: string;
   fileName: string;
@@ -237,6 +240,11 @@ function PreviewSessionFramesForFile({
           ref={retainCurrentFrame}
           cacheKey={documentKeepAliveKey(projectId, fileName, current)}
           src={current.url}
+          sandbox={previewSessionFramePolicy(current.sandboxProfile).sandbox}
+          allow={previewSessionFramePolicy(current.sandboxProfile).allow}
+          data-od-powered={
+            previewSessionFramePolicy(current.sandboxProfile).powered ? 'true' : undefined
+          }
           data-testid="preview-runtime-frame-current"
           data-od-active={active ? 'true' : 'false'}
           aria-hidden={active ? undefined : true}
@@ -250,6 +258,11 @@ function PreviewSessionFramesForFile({
           ref={stageFrame}
           cacheKey={documentKeepAliveKey(projectId, fileName, standby)}
           src={standby.url}
+          sandbox={previewSessionFramePolicy(standby.sandboxProfile).sandbox}
+          allow={previewSessionFramePolicy(standby.sandboxProfile).allow}
+          data-od-powered={
+            previewSessionFramePolicy(standby.sandboxProfile).powered ? 'true' : undefined
+          }
           data-testid="preview-runtime-frame-standby"
           data-od-active="false"
           aria-hidden

@@ -16,12 +16,15 @@ import {
 
 afterEach(cleanup);
 
-function navigation(version: string): PreviewSessionNavigation {
+function navigation(
+  version: string,
+  sandboxProfile: PreviewSessionNavigation['sandboxProfile'] = 'normal',
+): PreviewSessionNavigation {
   return {
     sessionId: 'scope-0001',
     documentVersion: version,
-    url: `http://n-scope-0001.localhost:17456/index.html?v=${version}`,
-    sandboxProfile: 'normal',
+    url: `http://${sandboxProfile === 'powered' ? 'p' : 'n'}-scope-0001.localhost:17456/index.html?v=${version}`,
+    sandboxProfile,
   };
 }
 
@@ -113,6 +116,38 @@ describe('PreviewSessionFrames', () => {
     settle(secondFrame, second);
     expect(screen.getByTestId('preview-runtime-frame-current')).toBe(secondFrame);
     expect(document.body.contains(firstFrame)).toBe(false);
+  });
+
+  it('keeps iframe privileges bound to each document during a profile replacement', () => {
+    const normal = navigation('v1');
+    const powered = navigation('v2', 'powered');
+    const view = (next: PreviewSessionNavigation) => (
+      <IframeKeepAliveProvider>
+        <PreviewSessionFrames
+          projectId="project-1"
+          fileName="index.html"
+          navigation={next}
+          active
+        />
+      </IframeKeepAliveProvider>
+    );
+    const { rerender } = render(view(normal));
+    const normalFrame = screen.getByTestId('preview-runtime-frame-standby') as HTMLIFrameElement;
+    settle(normalFrame, normal);
+
+    rerender(view(powered));
+    const retained = screen.getByTestId('preview-runtime-frame-current') as HTMLIFrameElement;
+    const replacement = screen.getByTestId('preview-runtime-frame-standby') as HTMLIFrameElement;
+    expect(retained).toBe(normalFrame);
+    expect(retained.getAttribute('sandbox') ?? '').not.toContain('allow-same-origin');
+    expect(retained).not.toHaveAttribute('data-od-powered');
+    expect(replacement.getAttribute('sandbox')).toContain('allow-same-origin');
+    expect(replacement.getAttribute('allow')).toContain('cross-origin-isolated');
+    expect(replacement).toHaveAttribute('data-od-powered', 'true');
+
+    settle(replacement, powered);
+    expect(screen.getByTestId('preview-runtime-frame-current')).toBe(replacement);
+    expect(replacement.getAttribute('sandbox')).toContain('allow-same-origin');
   });
 
   it('suspends and resumes by visibility without changing the retained URL', () => {

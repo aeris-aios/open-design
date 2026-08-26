@@ -16,6 +16,29 @@ export interface PreviewSessionNavigationPolicy {
   deck: boolean;
 }
 
+export const NORMAL_PREVIEW_FRAME_SANDBOX = 'allow-scripts allow-downloads';
+export const POWERED_PREVIEW_FRAME_SANDBOX =
+  'allow-scripts allow-same-origin allow-downloads allow-popups allow-forms allow-modals allow-pointer-lock';
+export const POWERED_PREVIEW_FRAME_ALLOW =
+  'accelerometer; autoplay; camera; cross-origin-isolated; fullscreen; gamepad; gyroscope; microphone; xr-spatial-tracking';
+
+/** Bind browser privileges to the document profile chosen before navigation. */
+export function previewSessionFramePolicy(
+  sandboxProfile: PreviewSessionNavigation['sandboxProfile'],
+): { sandbox: string; allow: string | undefined; powered: boolean } {
+  return sandboxProfile === 'powered'
+    ? {
+        sandbox: POWERED_PREVIEW_FRAME_SANDBOX,
+        allow: POWERED_PREVIEW_FRAME_ALLOW,
+        powered: true,
+      }
+    : {
+        sandbox: NORMAL_PREVIEW_FRAME_SANDBOX,
+        allow: undefined,
+        powered: false,
+      };
+}
+
 /**
  * Select the one real document URL for an exact preview version.
  *

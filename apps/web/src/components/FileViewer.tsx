@@ -32,6 +32,11 @@ import {
 } from '../runtime/replay-preview-bridge-modes';
 import { useProjectPreviewSessionNavigation } from '../runtime/use-project-preview-session-navigation';
 import {
+  NORMAL_PREVIEW_FRAME_SANDBOX,
+  POWERED_PREVIEW_FRAME_ALLOW,
+  POWERED_PREVIEW_FRAME_SANDBOX,
+} from '../runtime/preview-session-navigation';
+import {
   appendResourceQuery,
   workspaceIdentityCacheKey,
   workspaceProjectHeaders,
@@ -381,10 +386,6 @@ const MAX_BRIDGE_COORDINATE = 1_000_000;
 // `allow` list delegates the permissions a GPU/compute artifact typically
 // wants, including `cross-origin-isolated` so the isolated document keeps
 // SharedArrayBuffer.
-const POWERED_PREVIEW_SANDBOX =
-  'allow-scripts allow-same-origin allow-downloads allow-popups allow-forms allow-modals allow-pointer-lock';
-const POWERED_PREVIEW_ALLOW =
-  'accelerometer; autoplay; camera; cross-origin-isolated; fullscreen; gamepad; gyroscope; microphone; xr-spatial-tracking';
 const BASE_PREVIEW_BRIDGE_QUERY = 'odPreviewBridge=scroll&odPreviewBridge=selection&odPreviewBridge=snapshot&odPreviewBridge=observability';
 // Generic runtime UI state carried across the URL-load -> srcDoc transport
 // switch. This preserves the current page of multi-page prototypes while
@@ -11782,22 +11783,9 @@ function HtmlViewer({
     : activePoweredPreviewSrcOverride ?? computedUrlFrameSrc;
   lastRenderedUrlFrameSrcRef.current = urlFrameSrc;
   const urlFrameSandbox = usePoweredPreview
-    ? POWERED_PREVIEW_SANDBOX
-    : 'allow-scripts allow-downloads';
-  const urlFrameAllow = usePoweredPreview ? POWERED_PREVIEW_ALLOW : undefined;
-  // The converged transport selects its scoped origin from
-  // `previewRuntimePolicy`; derive the iframe privileges from that same
-  // decision. The legacy powered-isolation probe belongs only to the legacy
-  // URL route and can resolve later (or report unsupported) even though the
-  // scoped `p-<session>.localhost` capability is already authoritative.
-  const previewRuntimeSandboxProfile = previewRuntimeNavigation.navigation?.sandboxProfile
-    ?? previewRuntimePolicy.sandboxProfile;
-  const previewRuntimeFrameSandbox = previewRuntimeSandboxProfile === 'powered'
-    ? POWERED_PREVIEW_SANDBOX
-    : 'allow-scripts allow-downloads';
-  const previewRuntimeFrameAllow = previewRuntimeSandboxProfile === 'powered'
-    ? POWERED_PREVIEW_ALLOW
-    : undefined;
+    ? POWERED_PREVIEW_FRAME_SANDBOX
+    : NORMAL_PREVIEW_FRAME_SANDBOX;
+  const urlFrameAllow = usePoweredPreview ? POWERED_PREVIEW_FRAME_ALLOW : undefined;
   // Arm the first-load overlay only for URL-load previews this pane has never
   // painted (per keep-alive key, so tab revisits and pooled re-attaches skip
   // it). about:blank parks (powered probe, srcDoc-active) never arm.
@@ -17327,13 +17315,6 @@ function HtmlViewer({
                             active={workspaceActive && mode === 'preview'}
                             navigationRetryToken={previewRuntimeNavigationRetryToken}
                             title={file.name}
-                            data-od-powered={
-                              previewRuntimeNavigation.navigation.sandboxProfile === 'powered'
-                                ? 'true'
-                                : undefined
-                            }
-                            sandbox={previewRuntimeFrameSandbox}
-                            allow={previewRuntimeFrameAllow}
                             onCurrentFrameChange={(frame) => {
                               iframeRef.current = frame;
                               if (!frame) return;
