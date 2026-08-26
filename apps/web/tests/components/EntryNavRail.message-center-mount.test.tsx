@@ -19,11 +19,15 @@ import type { WorkspaceCollabContext } from '@open-design/contracts';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { I18nProvider } from '../../src/i18n';
+import {
+  workspaceIdentityStillResolving,
+  type WorkspaceContextState,
+} from '../../src/collab/useWorkspaceContext';
 
 const workspaceContextState = {
   context: null as WorkspaceCollabContext | null,
   loading: true,
-  failure: null,
+  failure: undefined as WorkspaceContextState['failure'],
   identityChangePending: false,
   accountGeneration: 0,
   resourceReadIdentity: null,
@@ -76,7 +80,7 @@ async function renderRail() {
         onNewProject={() => {}}
         open
         context={workspaceContextState.context}
-        workspaceContextResolving={workspaceContextState.loading}
+        workspaceContextResolving={workspaceIdentityStillResolving(workspaceContextState)}
         billing={null}
       />
     </I18nProvider>,
@@ -88,6 +92,7 @@ beforeEach(() => {
   mountCounter.mounts = 0;
   workspaceContextState.context = null;
   workspaceContextState.loading = true;
+  workspaceContextState.failure = undefined;
   vi.stubGlobal('fetch', vi.fn(async () => Response.json({ items: [] })));
 });
 
@@ -160,6 +165,30 @@ describe('EntryNavRail message-center mounting', () => {
       </I18nProvider>,
     );
     expect(screen.getByTestId('entry-nav-message-center')).toBeEnabled();
+    expect(mountCounter.mounts).toBe(1);
+  });
+
+  it('stays closed when a cold context read fails transiently', async () => {
+    // The failure branch settles to `loading: false`, `failure: 'unavailable'`
+    // and a null `context` — there is no cached context on a first launch — so
+    // a gate reading `loading` alone opened during an unresolved identity.
+    // `isAmrLoggedIn()` maps the 503 to `false`, so this host would fetch and
+    // publish an ANONYMOUS snapshot; when the retry then resolves to a signed-in
+    // context without an account-generation bump, the signed-in host adopts the
+    // public rows for the length of the window.
+    workspaceContextState.loading = false;
+    workspaceContextState.failure = 'unavailable';
+    await renderRail();
+    expect(mountCounter.mounts).toBe(0);
+  });
+
+  it('opens for the authoritative failures, which are real answers', async () => {
+    // 404 means a daemon with no workspace endpoint and 401/403 means the
+    // server rejecting these credentials. Both are answers, not outages, so the
+    // signed-out panel belongs on screen.
+    workspaceContextState.loading = false;
+    workspaceContextState.failure = 'unsupported';
+    await renderRail();
     expect(mountCounter.mounts).toBe(1);
   });
 

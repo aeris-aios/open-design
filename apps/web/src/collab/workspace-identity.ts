@@ -80,10 +80,45 @@ export function currentWorkspaceAccountGeneration(): number {
   return workspaceAccountGeneration;
 }
 
+/**
+ * Listeners for account-boundary changes. The counter alone only lets a caller
+ * ASK which account it is on; it cannot tell a component that the answer
+ * changed. A host that stays mounted across a sign-in/sign-out — which
+ * `notifyWorkspaceContextRefresh` deliberately allows by retaining the previous
+ * context while it resolves — therefore kept rendering the previous account's
+ * data until some unrelated refresh happened to fire.
+ */
+const workspaceAccountGenerationListeners = new Set<() => void>();
+
+/**
+ * Subscribe to account-boundary changes. Returns an unsubscribe function, and
+ * is shaped for `useSyncExternalStore` so a component can simply depend on the
+ * generation the way it depends on any other reactive value.
+ */
+export function subscribeWorkspaceAccountGeneration(listener: () => void): () => void {
+  workspaceAccountGenerationListeners.add(listener);
+  return () => {
+    workspaceAccountGenerationListeners.delete(listener);
+  };
+}
+
+function notifyWorkspaceAccountGenerationListeners(): void {
+  for (const listener of [...workspaceAccountGenerationListeners]) {
+    try {
+      listener();
+    } catch {
+      // One bad subscriber must not stop the rest from learning the boundary
+      // moved — a listener that throws is strictly less harmful than a
+      // component left rendering the previous account's data.
+    }
+  }
+}
+
 export function advanceWorkspaceAccountGeneration(stamp: string): void {
   if (workspaceAccountGenerationStamp === stamp) return;
   workspaceAccountGenerationStamp = stamp;
   workspaceAccountGeneration += 1;
+  notifyWorkspaceAccountGenerationListeners();
 }
 
 export function resetWorkspaceAccountGeneration(): void {

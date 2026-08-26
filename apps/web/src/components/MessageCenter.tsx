@@ -1,5 +1,5 @@
 import { Button } from '@open-design/components';
-import { useCallback, useEffect, useId, useRef, useState, type RefObject } from 'react';
+import { useCallback, useEffect, useId, useRef, useState, type RefObject , useSyncExternalStore} from 'react';
 import { createPortal } from 'react-dom';
 
 import { useI18n, type Locale } from '../i18n';
@@ -13,7 +13,10 @@ import {
   type MessageCenterMessage,
   writeAnonymousState,
 } from '../message-center-client';
-import { currentWorkspaceAccountGeneration } from '../collab/workspace-identity';
+import {
+  currentWorkspaceAccountGeneration,
+  subscribeWorkspaceAccountGeneration,
+} from '../collab/workspace-identity';
 import { Icon } from './Icon';
 import styles from './MessageCenter.module.css';
 
@@ -155,6 +158,20 @@ export function MessageCenter({
   const readIdsRef = useRef<Set<string>>(new Set());
   const pendingReadIdsRef = useRef<Set<string>>(new Set());
   const syncRequestIdRef = useRef(0);
+  // Reactive view of the account boundary. Capturing the generation inside
+  // `sync` stops a stale RESPONSE from landing, but it cannot tell a host that
+  // is already mounted that the account changed underneath it — the mount
+  // effect's dependencies never mentioned the boundary, and
+  // `notifyWorkspaceContextRefresh` retains the previous context while a
+  // sign-in/sign-out resolves, so the host is not remounted either. The
+  // previous account's rows and unread count simply stayed on screen until an
+  // open, a visibility change, or the 60s poll happened along.
+  const accountGeneration = useSyncExternalStore(
+    subscribeWorkspaceAccountGeneration,
+    currentWorkspaceAccountGeneration,
+    currentWorkspaceAccountGeneration,
+  );
+  const seenAccountGenerationRef = useRef(accountGeneration);
 
   const commitState = useCallback(
     (nextMessages: MessageCenterMessage[], nextReadIds: Set<string>, options?: { persistAnonymous?: boolean }) => {
@@ -276,6 +293,19 @@ export function MessageCenter({
   }, [commitState]);
 
   useEffect(() => {
+    // A boundary crossed under a host that stayed mounted: drop the previous
+    // account's rows before deciding anything, so they are never shown to
+    // whoever signed in. Initialised to the current generation, so a first
+    // mount does not wipe the anonymous state restored just above.
+    if (seenAccountGenerationRef.current !== accountGeneration) {
+      seenAccountGenerationRef.current = accountGeneration;
+      messagesRef.current = [];
+      readIdsRef.current = new Set();
+      pendingReadIdsRef.current = new Set();
+      setMessages([]);
+      setReadIds(new Set());
+      setSyncState('loading');
+    }
     // A remount that lands within the window adopts what the previous mount
     // already fetched; everything else below still goes to the network.
     let cancelled = false;
@@ -316,7 +346,7 @@ export function MessageCenter({
       window.clearInterval(interval);
       document.removeEventListener('visibilitychange', onVisibility);
     };
-  }, [retrySync, commitState, locale]);
+  }, [retrySync, commitState, locale, accountGeneration]);
 
   useEffect(() => {
     if (open) retrySync();

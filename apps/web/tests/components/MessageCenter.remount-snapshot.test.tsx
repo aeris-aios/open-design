@@ -386,6 +386,53 @@ describe('MessageCenter remount snapshot', () => {
     expect(counts[counts.length - 1]).toBe(0);
   });
 
+  it('drops the previous account\'s rows on a boundary crossed while mounted', async () => {
+    // `notifyWorkspaceContextRefresh` retains the previous context while a
+    // sign-in/sign-out resolves, so the host is NOT remounted. Capturing the
+    // generation inside `sync` only stops a stale response from landing; a
+    // settled list was left on screen for whoever signed in, until an open, a
+    // visibility change or the 60s poll happened along.
+    let pulls = 0;
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/integrations/vela/status')) {
+        statusCalls += 1;
+        return Response.json({ loggedIn: false });
+      }
+      if (url.includes('/message-center') && url.includes('/messages')) {
+        messageCalls += 1;
+        pulls += 1;
+        return pulls === 1
+          ? Response.json({
+              messages: [row('previous-account', null), row('previous-account-2', null)],
+              nextCursor: null,
+              unreadCount: 2,
+            })
+          : Response.json({ messages: [], nextCursor: null, unreadCount: 0 });
+      }
+      return Response.json({});
+    }));
+
+    const counts: number[] = [];
+    render(
+      <I18nProvider initial="zh-CN">
+        <MessageCenter
+          hideTrigger
+          open={false}
+          onOpenChange={() => {}}
+          onUnreadCountChange={(n) => counts.push(n)}
+        />
+      </I18nProvider>,
+    );
+    await waitFor(() => expect(counts[counts.length - 1]).toBe(2));
+
+    // The account changes under the still-mounted host.
+    const before = messageCalls;
+    advanceWorkspaceAccountGeneration('mounted-host-account-switch');
+    await waitFor(() => expect(messageCalls).toBeGreaterThan(before));
+    await waitFor(() => expect(counts[counts.length - 1]).toBe(0));
+  });
+
   it('does not re-sync when it is remounted straight away', async () => {
     const first = await mountAndSettle();
     const afterFirst = { status: statusCalls, messages: messageCalls };
