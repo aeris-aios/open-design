@@ -1,0 +1,116 @@
+/*
+ * 联系支持弹窗(设计稿组件 19 · 第 80 格)。
+ *
+ * 稿子 `.ovl` + `.modal`:居中的小弹窗,标题一行(带关闭)+ 一条分割线 + 几行渠道。
+ * 每行是「图标 + 名字 + 一颗『加入』」。
+ */
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: color-mix(in srgb, var(--chat-text-strong) 26%, transparent);
+}
+
+/*
+ * 就地形态(`inline`)—— 陈列页那一格,以及任何把弹窗摆进文档流里看的场合。
+ *
+ * 原来 `inline` 只是跳过 portal,遮罩仍然是 `position: fixed` ——
+ * 于是它铺满整张陈列页,把**每一格**都糊上一层灰(用户看到的「为啥半边灰色的」就是它)。
+ * 稿子的 `.ovl` 本来就不是 fixed:它是一个带圆角和内距的**在流盒子**,
+ * 只在自己那一格里画那层灰。这里照搬。
+ */
+.overlayInline {
+  position: static;
+  inset: auto;
+  z-index: auto;
+  border-radius: var(--chat-radius);
+}
+
+/* 稿子 `.modal { width:100%; max-width:316px; border-radius: var(--radius-lg);
+   background: var(--bg); box-shadow: var(--shadow-lg); overflow: hidden }` */
+.modal {
+  width: 100%;
+  max-width: 316px;
+  border-radius: var(--chat-radius-lg);
+  background: var(--chat-bg);
+  box-shadow: var(--chat-shadow-lg);
+  overflow: hidden;
+}
+
+/* 稿子 `.modal .mh` —— 分割线是 `::after` 画的,左右各留 13px,不是整条通到边 */
+.head {
+  position: relative;
+  display: flex;
+  align-items: center;
+  padding: 11px 13px;
+  font-size: var(--chat-t-mini);
+  color: var(--chat-text-strong);
+}
+.head::after {
+  content: '';
+  position: absolute;
+  inset-inline: 13px;
+  bottom: 0;
+  height: 1px;
+  background: var(--chat-border-soft);
+}
+.head b {
+  font-weight: 600;
+}
+
+/* 稿子 `.modal .mh .x { margin-inline-start:auto; display:grid; place-items:center;
+   width:24px; height:24px; border-radius: var(--radius-sm); color: var(--text-soft) }` */
+.close {
+  margin-inline-start: auto;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--chat-radius-sm);
+  background: none;
+  color: var(--chat-text-soft);
+  cursor: pointer;
+  transition: background-color var(--chat-dur-quick) var(--chat-ease-out),
+    color var(--chat-dur-quick) var(--chat-ease-out);
+}
+.close:hover {
+  background: var(--chat-bg-fill-secondary);
+  color: var(--chat-text-strong);
+}
+
+/* 稿子 `.modal .mb { padding: 0 13px 13px }` */
+.body {
+  padding: 0 13px 13px;
+}
+
+/* 稿子 `.chan { display:flex; align-items:center; gap:9px; padding:7px 0 }` */
+.channel {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 0;
+}
+.channelIcon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+}
+.channelIcon svg {
+  width: 24px;
+  height: 24px;
+}
+/* 稿子 `.chan .cn { flex:1; min-width:0; font-size: var(--t-mini); font-weight:500 }` */
+.channelName {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--chat-t-mini);
+  font-weight: 500;
+  color: var(--chat-text-strong);
+}

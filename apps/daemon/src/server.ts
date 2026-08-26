@@ -218,6 +218,7 @@ import { loadMmdRouteLaunchEnv } from './runtimes/mmd-routes.js';
 import { preflightCodexDefaultModel } from './runtimes/codex-model-preflight.js';
 import { preparePromptFileForAgent } from './runtimes/prompt-file.js';
 import { TerminalControlSequenceStripper } from './runtimes/terminal-control.js';
+import { stampToolTiming } from './runtimes/tool-timing.js';
 import {
   buildOpenCodeByokProviderConfig,
   BYOK_OPENCODE_PROVIDER_REQUIRED_MESSAGE,
@@ -12878,6 +12879,12 @@ export async function startServer({
     // follows the result that triggered it in the stream. (PR #3375 review:
     // Copilot and ACP bypassed the guard by calling send('agent', …) directly.)
     function emitAgentEvent(ev: any) {
+      // Stamp tool call start/finish time here — the one choke point every runtime
+      // funnels through — so all 27 adapters get per-call durations without each
+      // one growing its own clock. Only fills what is missing (ACP already carries
+      // `startedAt`). See `runtimes/tool-timing.ts` for why both ends can be absent
+      // and why the web treats a sub-100ms difference as "unknown", not "fast".
+      stampToolTiming(ev);
       // Fold work-completeness signals (TodoWrite snapshot / truncation) off the
       // stream BEFORE the send, so run.lastTodoSnapshot / run.truncatedMidTurn are
       // set by the time finish() derives run.endedWithUnfinishedWork (#1247/#1060).

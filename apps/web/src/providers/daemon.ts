@@ -282,7 +282,49 @@ export interface DaemonStreamHandlers extends StreamHandlers {
    * tool name so the UI can gate the live preview to code-writing tools.
    */
   onToolInputDelta?: (id: string, name: string, delta: string) => void;
+  /**
+   * SSE 重连的进度。UI(设计稿组件 22)靠它画「正在重新连接 N/5」那一行。
+   *
+   * 只在**掉线期间**发,恢复就发一条 `cleared` 让调用方把那一行撤掉
+   * ——设计稿明说「恢复后整行消失,不留『已恢复』」。
+   */
+  onReconnect?: (state: DaemonReconnectState) => void;
 }
+
+/**
+ * 传输层给 UI 的重连读数。
+ *
+ * `attempt` 在**一段掉线**里单调递增,从不倒退 —— 这一点与传输层内部的重连预算
+ * 刻意不同:预算看到流上有动静就归零(`shouldResetReconnects`),包括只收到
+ * keepalive 注释帧的那种「连上了但什么也没来」。那种情况下预算回到 0,可用户
+ * 眼里这条连接一次都没真正恢复过,读数跟着回到 1/5 就是倒退。
+ * 所以这里另记一份「掉线段」的计数:只有真正收到**运行事件**才算恢复,
+ * 才把它清零并发 `cleared`。
+ *
+ * `attempt` 因此可能超过 `max`(keepalive 空转会不断续预算)。这是如实上报,
+ * 显示层自己夹到 `max`(见 `Reconnect.tsx`),不要在这里造一个假的上限。
+ */
+export interface DaemonReconnectState {
+  /** 本段掉线里的第几次重连尝试,1 起。单调递增。 */
+  attempt: number;
+  /** 传输层的重连预算(设计稿的「共几次」)。 */
+  max: number;
+  /**
+   * `reconnecting` 还在重试 · `cleared` 不再重连中,把那一行撤掉(流通了、这一轮
+   * 已落终态、或改由报错接管)· `exhausted` 预算用尽,自动重连停止,交回给人
+   * (组件 22-3)。
+   *
+   * 用 `cleared` 而不是 `recovered`:设计稿要求「恢复后整行消失,**不留『已恢复』**」,
+   * 而这条信号也用在「没恢复但轮到别人说话」的场合,不该自称恢复。
+   */
+  phase: 'reconnecting' | 'cleared' | 'exhausted';
+}
+
+/**
+ * 传输层最多重连几次。设计稿的「N/5」就是这个数,导出给 UI 与测试共用,
+ * 免得两边各写一个 5。
+ */
+export const DAEMON_STREAM_RECONNECT_LIMIT = 5;
 
 export interface DaemonStreamOptions {
   agentId: string;
@@ -1273,6 +1315,31 @@ async function consumeDaemonRun({
     }).catch(() => {});
   };
 
+  /**
+   * 掉线段的重连读数 —— **只服务 UI,不参与任何重连决策**(决策仍由下面循环里的
+   * `reconnects` 预算说了算)。0 = 此刻没在掉线,那一行不该在屏幕上。
+   * 为什么要单独记一份而不是直接把 `reconnects` 抛出去:见 DaemonReconnectState。
+   */
+  let reconnectAttempt = 0;
+  const emitReconnect = (phase: DaemonReconnectState['phase']): void => {
+    handlers.onReconnect?.({
+      attempt: reconnectAttempt,
+      max: DAEMON_STREAM_RECONNECT_LIMIT,
+      phase,
+    });
+  };
+  /** 一次连接没能带回运行事件:读数 +1,把那一行推给 UI。 */
+  const noteReconnectAttempt = (): void => {
+    reconnectAttempt += 1;
+    emitReconnect('reconnecting');
+  };
+  /** 不再重连中:撤掉那一行、读数归零。从没显示过就什么也不发。 */
+  const clearReconnect = (): void => {
+    if (reconnectAttempt === 0) return;
+    reconnectAttempt = 0;
+    emitReconnect('cleared');
+  };
+
   cancelSignal?.addEventListener('abort', cancelRun, { once: true });
   try {
     if (cancelSignal?.aborted) {
@@ -1280,7 +1347,7 @@ async function consumeDaemonRun({
       return;
     }
 
-    for (let reconnects = 0; endStatus === null && reconnects < 5;) {
+    for (let reconnects = 0; endStatus === null && reconnects < DAEMON_STREAM_RECONNECT_LIMIT;) {
       const qs = lastEventId ? `?after=${encodeURIComponent(lastEventId)}` : '';
       let resp: Response;
       try {
@@ -1294,11 +1361,13 @@ async function consumeDaemonRun({
       } catch (err) {
         if ((err as Error).name === 'AbortError') throw err;
         reconnects += 1;
+        noteReconnectAttempt();
         continue;
       }
 
       if (!resp.ok || !resp.body) {
         const text = await resp.text().catch(() => '');
+        clearReconnect();
         handlers.onError(new Error(`daemon ${resp.status}: ${text || 'no body'}`));
         return;
       }
@@ -1307,6 +1376,12 @@ async function consumeDaemonRun({
       const decoder = new TextDecoder();
       let buf = '';
       let sawStreamProgress = false;
+      /**
+       * 比 `sawStreamProgress` 严一档:**只有真的运行事件**才算数,keepalive 注释帧不算。
+       * 预算那边(`shouldResetReconnects`)刻意把 keepalive 也当进度 —— 一条安静但活着的
+       * 流不该被判死;但对用户来说那次「连上了什么也没来」不是恢复,所以 UI 读数不跟它走。
+       */
+      let sawRunEvent = false;
 
       while (true) {
         let readResult: ReadableStreamReadResult<Uint8Array>;
@@ -1337,6 +1412,7 @@ async function consumeDaemonRun({
           }
           if (parsed.kind !== 'event') continue;
           sawStreamProgress = true;
+          sawRunEvent = true;
           trackRunProgress(runId);
           if (parsed.id) {
             lastEventId = parsed.id;
@@ -1445,6 +1521,7 @@ async function consumeDaemonRun({
         }
         if (!status) {
           onRunStatus?.('failed');
+          clearReconnect();
           handlers.onError(pendingStructuredError);
           return;
         }
@@ -1454,8 +1531,13 @@ async function consumeDaemonRun({
         // the budget forever.
         shouldResetReconnects = false;
       }
+      // UI 读数与预算分头算:预算认 keepalive,读数只认运行事件(见 sawRunEvent)。
+      if (sawRunEvent) clearReconnect(); else noteReconnectAttempt();
       reconnects = shouldResetReconnects ? 0 : reconnects + 1;
     }
+
+    // 循环里 break 出来的都是已经拿到终态的路径 —— 那一行该撤了。
+    if (endStatus !== null) clearReconnect();
 
     if (endStatus === null) {
       const status = await fetchChatRunStatus(runId, workspaceContext);
@@ -1474,8 +1556,13 @@ async function consumeDaemonRun({
         reportArtifactCount(status.artifactCount);
         reportArtifactPaths(status.artifactPaths);
         onRunStatus?.(endStatus);
+        clearReconnect();
       } else {
         onRunStatus?.('failed');
+        // 预算用尽、这一轮还没落终态 —— 组件 22-3:停止自动重连,交回给人。
+        // 这条要在 onError 之前发:报错卡与重连行今天在抢同一件事(盘点 R9),
+        // 先把「已经交回给人」这个事实摆出来,分流由消费方决定。
+        emitReconnect('exhausted');
         handlers.onError(createGenericDaemonDisconnectError());
         return;
       }
@@ -1669,7 +1756,18 @@ function translateAgentEvent(data: DaemonAgentPayload): AgentEvent | null {
     };
   }
   if (t === 'tool_use' && typeof data.id === 'string' && typeof data.name === 'string') {
-    return { kind: 'tool_use', id: data.id, name: data.name, input: normalizeToolInput(data.input) };
+    // Carry the call's start/finish clock through. The daemon stamps both at its
+    // single agent-event choke point; dropping them here was the second place the
+    // timing was lost (the first was the SSE payload), which is why tool rows never
+    // showed a duration. Only pass numbers — a missing end means "unknown", and the
+    // UI must render nothing rather than `0.0s`.
+    return {
+      kind: 'tool_use',
+      id: data.id,
+      name: data.name,
+      input: normalizeToolInput(data.input),
+      ...(typeof data.startedAt === 'number' ? { startedAt: data.startedAt } : {}),
+    };
   }
   if (t === 'tool_result' && typeof data.toolUseId === 'string') {
     return {
@@ -1677,6 +1775,7 @@ function translateAgentEvent(data: DaemonAgentPayload): AgentEvent | null {
       toolUseId: data.toolUseId,
       content: String(data.content ?? ''),
       isError: Boolean(data.isError),
+      ...(typeof data.completedAt === 'number' ? { completedAt: data.completedAt } : {}),
     };
   }
   if (t === 'usage') {

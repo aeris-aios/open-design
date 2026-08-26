@@ -1,0 +1,110 @@
+/*
+ * 引用芯片(设计稿组件 23 · 第 67 / 68 / 69 格)。
+ *
+ * 稿子 `.refs`:输入框上方的一枚小芯片,写着「N 条注释」——
+ * **不占写字的地方**,而且一条和五条一样高(第 69 格的意义就是证明这件事)。
+ * hover 时右侧露出移除、上方浮出全文。
+ */
+.refs {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin: 9px 9px 0;
+  padding: 4px 9px;
+  border: var(--chat-stroke) solid var(--chat-border);
+  border-radius: var(--chat-radius);
+  font-size: var(--chat-t-mini);
+  color: var(--chat-text-strong);
+  cursor: default;
+}
+
+/* 稿子 `.refs .ic { flex:none; width:13px; height:13px; color: var(--text-soft) }` */
+.icon {
+  flex: none;
+  width: 13px;
+  height: 13px;
+  color: var(--chat-text-soft);
+}
+
+/* 稿子 `.refs .del { position: static; flex:none; width:16px; height:16px;
+   margin-inline-start:1px; opacity:0 }` + `.refs:hover .del { opacity: 1 }`
+   —— 静止时不摆「×」,和待发送附件那一枚同一条规矩 */
+.remove {
+  position: static;
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  margin-inline-start: 1px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--chat-dur-quick) var(--chat-ease-out);
+}
+.refs:hover .remove,
+.remove:focus-visible {
+  opacity: 1;
+}
+/* 触屏没有 hover,一律常驻 —— 不然「×」永远等不出来 */
+@media (hover: none) {
+  .remove {
+    opacity: 1;
+  }
+}
+
+/* 稿子 `.refs .pop { position:absolute; left:0; bottom: calc(100% + 7px); z-index:7;
+   width: max-content; max-width: 300px; padding: 9px 11px; ... opacity: 0 }` */
+.pop {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 7px);
+  z-index: 7;
+  width: max-content;
+  max-width: 300px;
+  padding: 9px 11px;
+  border-radius: var(--chat-radius);
+  background: var(--chat-overlay-glass);
+  border: var(--chat-stroke) solid var(--chat-overlay-glass-edge);
+  -webkit-backdrop-filter: blur(var(--chat-glass-blur));
+  backdrop-filter: blur(var(--chat-glass-blur));
+  box-shadow: var(--chat-shadow-md);
+  color: var(--chat-overlay-glass-text);
+  font-size: var(--chat-t-mini);
+  line-height: var(--chat-lh-body);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--chat-dur-quick) var(--chat-ease-out);
+}
+.refs:hover .pop {
+  opacity: 1;
+}
+
+/* 稿子 `.refs .pop ol { list-style: none; counter-reset: r }` + `li::before { counter(r) "." }`
+   —— 序号是 counter 画的,不是文本,所以「1.」永远跟着条数走 */
+.pop ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: r;
+}
+.pop li {
+  display: flex;
+  gap: 8px;
+  overflow-wrap: anywhere;
+}
+.pop li + li {
+  margin-top: 6px;
+}
+.pop li::before {
+  counter-increment: r;
+  content: counter(r) '.';
+  flex: none;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.6;
+}

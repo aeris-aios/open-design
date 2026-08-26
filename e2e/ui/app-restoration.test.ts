@@ -2148,7 +2148,7 @@ test('[P1] Browser Inspiration page_info carries a loaded page title into the ne
   expect(runBodies[0]?.message).toContain('- title: Browser Fixture Title');
 });
 
-test('[P1] inline question form Skip all sends structured skipped answers into the next run request', async ({ page }) => {
+test('[P1] inline question form Skip — you decide sends structured skipped answers into the next run request', async ({ page }) => {
   await routeMockAgents(page);
 
   const runBodies: Array<Record<string, unknown>> = [];
@@ -2165,7 +2165,7 @@ test('[P1] inline question form Skip all sends structured skipped answers into t
   await expect(form).toBeVisible();
   await expect(form.getByText('Audience')).toBeVisible();
 
-  const skipAll = form.getByRole('button', { name: /Skip all/i });
+  const skipAll = form.getByRole('button', { name: /Skip — you decide/i });
   await expect(skipAll).toBeEnabled();
   await Promise.all([
     page.waitForResponse(isCreateRunResponse, { timeout: 5_000 }),
@@ -2218,7 +2218,7 @@ test('[P1] inline question form submits selected answers into the next run reque
   const audienceQuestion = form.locator('.qf-field', { has: page.getByText('Audience') });
   await audienceQuestion.locator('input.qf-input').fill('Product marketers');
 
-  const submitButton = form.getByRole('button', { name: 'Send answers' });
+  const submitButton = form.getByRole('button', { name: 'Next' });
   await expect(submitButton).toBeEnabled();
   await Promise.all([
     page.waitForResponse(isCreateRunResponse, { timeout: 5_000 }),

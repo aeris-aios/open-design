@@ -1,17 +1,20 @@
+/*
+ * 稿子 `.nexts { border-radius: var(--radius); background: var(--bg); overflow: hidden }`
+ * —— **不画外框、不留外距、不留内距**,几条建议行自己铺满这一块;
+ * 行与行之间也没有缝(每行自己 `padding: 9px 11px`,hover 时整行换底)。
+ *
+ * 我们原来是一张有 1px 边框 + 渐变底、还留着 10px/12px 内距的卡。
+ * 内容那一层还卡在 T12(契约里没有「本轮相关建议」字段),但**容器的样子不需要等裁决**。
+ */
 .root {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin-top: 10px;
-  padding: 10px 12px;
+  gap: 0;
   font-size: 12px;
-  border: 1px solid var(--border-soft);
+  border: 0;
   border-radius: var(--radius);
-  background: linear-gradient(
-    135deg,
-    color-mix(in srgb, var(--accent-tint) 50%, var(--bg-panel)) 0%,
-    var(--bg-panel) 60%
-  );
+  overflow: hidden;
+  background: var(--bg);
   animation: next-step-in 200ms cubic-bezier(0.23, 1, 0.32, 1) both;
 }
 
@@ -32,7 +35,11 @@
   }
 }
 
+/* 容器按稿子去掉内距之后,这一行自己贴着行的内距走,才不会顶到边上。
+   `9px 11px` 就是稿子 `.nexts button` 的内距 —— 用同一个值,不另发明一个。
+   (稿子里没有这一行标题;它是我们多出来的,归属见 T12 那条) */
 .label {
+  padding: 9px 11px 0;
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.02em;
@@ -123,29 +130,35 @@
 }
 
 
+/* 稿子里行与行**不留缝**(`.nexts` 只给圆角和 overflow,行自己撑高) */
 .toolboxList {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 0;
 }
 
 .toolboxRowWrap {
   position: relative;
 }
 
+/*
+ * 稿子 `.nexts button { display:flex; align-items:center; gap:8px; width:100%;
+ * padding: 9px 11px; border: none; background: none; font-size: var(--t-mini);
+ * color: var(--text) }` —— **无框行**,一行贴着一行,不画分割线也不留缝。
+ * 原来这里是「带 1px 边框的独立胶囊」。内容那一层还卡在 T12,但**行的形态不需要等裁决**。
+ */
 .toolboxRow,
 .moreRow {
   display: flex;
   align-items: center;
   gap: 8px;
   width: 100%;
-  padding: 6px 10px;
+  padding: 9px 11px;
   font-size: 12px;
-  color: var(--text-default);
-  background: var(--bg-panel);
-  border: 1px solid var(--border-soft);
-  /* Full capsule, matching the quick pills above the composer. */
-  border-radius: 999px;
+  color: var(--text);
+  background: none;
+  border: 0;
+  border-radius: 0;
   cursor: pointer;
   text-align: left;
   transition:
@@ -153,10 +166,12 @@
     border-color 140ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 
+/* 稿子 `.nexts button:hover { background: var(--bg-panel); color: var(--text-strong) }`
+   —— 只换底和字色,不动边框(它本来就没有边框) */
 .toolboxRow:hover,
 .moreRow:hover {
-  background: var(--accent-tint);
-  border-color: var(--border);
+  background: var(--bg-panel);
+  color: var(--text-strong);
 }
 
 .toolboxRow:disabled,
@@ -167,8 +182,7 @@
 
 .toolboxRow:disabled:hover,
 .moreRow:disabled:hover {
-  background: var(--bg-panel);
-  border-color: var(--border-soft);
+  background: none;
 }
 
 .toolboxRow:focus-visible,

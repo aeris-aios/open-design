@@ -173,6 +173,39 @@ const optionalFinalFileForm = {
   ],
 } as QuestionForm;
 
+/**
+ * 按文案取一颗选项。
+ *
+ * 选项已按交付稿改成 `<button class="opt">`(原来是 `<label>` 套一枚真 `<input aria-label>`),
+ * `getByLabelText` 于是取不到了 —— 但这些用例要守的行为(点它就选中、选中态可读)一个字没变,
+ * 只是入口换成「按文案找那颗按钮」。
+ */
+/**
+ * 按标题取一张视觉方向卡。
+ * 卡片也按稿子改成了 `<button class="vopt">`(D52 同一条),`getByLabelText` 取不到了;
+ * 要守的行为(点它就选中、选中态与禁用态可读)一个字没变。
+ */
+function card(title: string): HTMLElement {
+  const hit = [...document.querySelectorAll<HTMLElement>('.qf-visual-card')]
+    .find((el) => el.getAttribute('title') === title || (el.textContent ?? '').includes(title));
+  if (!hit) throw new Error(`没有标题是「${title}」的视觉卡`);
+  return hit;
+}
+
+function chip(text: string): HTMLElement {
+  const hit = [...document.querySelectorAll<HTMLElement>('.qf-chip')]
+    .find((el) => (el.textContent ?? '').includes(text));
+  if (!hit) throw new Error(`没有文案含「${text}」的选项`);
+  return hit;
+}
+
+/**
+ * 选中的选项。原来数 `input:checked`,现在选中态写在 `aria-checked` 上。
+ * 别退回去数 `input` —— 那种查询现在**永远是 0 条**,断言会变成永真(白守)。
+ */
+const chosen = (root: ParentNode): NodeListOf<Element> =>
+  root.querySelectorAll('.qf-chip[aria-checked="true"]');
+
 describe('QuestionFormView', () => {
   afterEach(() => cleanup());
 
@@ -182,7 +215,7 @@ describe('QuestionFormView', () => {
       <QuestionFormView form={form} interactive submittedAnswers={undefined} onSubmit={onSubmit} />,
     );
 
-    expect(container.querySelectorAll('input[type="checkbox"]:checked')).toHaveLength(0);
+    expect(chosen(container)).toHaveLength(0);
 
     rerender(
       <QuestionFormView
@@ -193,8 +226,13 @@ describe('QuestionFormView', () => {
       />,
     );
 
-    expect(screen.getByText('answered')).toBeTruthy();
-    expect(container.querySelectorAll('input[type="checkbox"]:checked')).toHaveLength(2);
+    // 交付稿 #23–#25:回答完收成一条「已确认」陈述,不再把表单锁住置灰。
+    // 原意(提交历史到达后要被反映出来)不变,换成在陈述里找那两条答案。
+    const answered = container.querySelector('.answered');
+    expect(answered, '已回答态应当收成 .answered 陈述').not.toBeNull();
+    expect(answered?.textContent).toContain('Editorial / magazine');
+    expect(answered?.textContent).toContain('Modern minimal');
+    expect(container.querySelector('.qf-chip')).toBeNull();
   });
 
   it('renders select options with labels and submits the selected voice id', () => {
@@ -207,7 +245,7 @@ describe('QuestionFormView', () => {
     expect(container.querySelector('option[value="21m00Tcm4TlvDq8ikWAM"]')?.textContent).toBe(
       'Rachel — american · female',
     );
-    expect(screen.queryByLabelText('Custom answer')).toBeNull();
+    expect(screen.queryByTestId('qf-input')).toBeNull();
 
     fireEvent.change(select, { target: { value: '21m00Tcm4TlvDq8ikWAM' } });
     fireEvent.click(screen.getByRole('button', { name: 'Use voice' }));
@@ -227,8 +265,10 @@ describe('QuestionFormView', () => {
       />,
     );
 
-    expect((screen.getByRole('combobox') as HTMLSelectElement).value).toBe(
-      '21m00Tcm4TlvDq8ikWAM',
+    // 同上:已回答态不再渲染下拉,收成陈述 —— 断言选中的那个人声出现在陈述里
+    expect(screen.queryByRole('combobox')).toBeNull();
+    expect(document.querySelector('.answered')?.textContent).toContain(
+      'Rachel — american · female',
     );
   });
 
@@ -253,8 +293,8 @@ describe('QuestionFormView', () => {
     expect(screen.getByText('Phone-first app prototype')).toBeTruthy();
     expect(screen.getByText('Desktop web')).toBeTruthy();
 
-    fireEvent.click(screen.getByLabelText('Mobile (iOS/Android)'));
-    fireEvent.click(screen.getByRole('button', { name: 'Send answers' }));
+    fireEvent.click(chip('Mobile (iOS/Android)'));
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
 
     expect(onSubmit).toHaveBeenCalledTimes(1);
     expect(onSubmit.mock.calls[0]?.[0]).toContain(
@@ -267,11 +307,11 @@ describe('QuestionFormView', () => {
     const onSubmit = vi.fn();
     render(<QuestionFormView form={richForm} interactive onSubmit={onSubmit} />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Other' }));
-    fireEvent.change(screen.getByLabelText('Custom answer'), {
+    fireEvent.click(screen.getByRole('button', { name: 'Write your own' }));
+    fireEvent.change(screen.getByTestId('qf-input'), {
       target: { value: 'Wearable kiosk' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Send answers' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
 
     expect(onSubmit).toHaveBeenCalledWith(
       expect.stringContaining('- Primary surface: Wearable kiosk'),
@@ -288,16 +328,19 @@ describe('QuestionFormView', () => {
       <QuestionFormView form={richForm} interactive onSubmit={vi.fn()} />,
     );
 
-    const chip = screen.getByRole('button', { name: 'Other' });
-    expect(chip.tagName).toBe('BUTTON');
-    expect(chip.getAttribute('aria-pressed')).toBe('false');
-    chip.focus();
-    expect(document.activeElement).toBe(chip);
+    const own = screen.getByRole('button', { name: 'Write your own' });
+    expect(own.tagName).toBe('BUTTON');
+    expect(own.getAttribute('aria-pressed')).toBe('false');
+    own.focus();
+    expect(document.activeElement).toBe(own);
 
-    fireEvent.click(chip);
-    expect(chip.getAttribute('aria-pressed')).toBe('true');
-    const collapsible = container.querySelector('.qf-custom-collapsible');
-    expect(collapsible?.classList.contains('open')).toBe(true);
+    fireEvent.click(own);
+    // 展开后这一项按稿子换成了 `<div class="opt mod-own is-open">`,原来那颗按钮已脱离文档,
+    // 必须重新取 —— 拿旧引用问 aria-pressed 会永远读到 false(白守)。
+    expect(screen.getByLabelText('Write your own').getAttribute('aria-pressed')).toBe('true');
+    // 交付稿 `.opt.mod-own`:输入框**内嵌在这一项里**,不再是下面单独一块折叠容器
+    expect(container.querySelector('.qf-custom-collapsible')).toBeNull();
+    expect(container.querySelector('.qf-chip-other textarea')).not.toBeNull();
   });
 
   it('keeps the custom input collapsed behind the Other chip until clicked', () => {
@@ -305,15 +348,15 @@ describe('QuestionFormView', () => {
       <QuestionFormView form={richForm} interactive onSubmit={vi.fn()} />,
     );
 
-    const collapsible = container.querySelector('.qf-custom-collapsible');
-    if (!collapsible) throw new Error('expected collapsible custom field');
-    expect(collapsible.classList.contains('open')).toBe(false);
-    expect((screen.getByLabelText('Custom answer') as HTMLInputElement).disabled).toBe(true);
+    // 原意不变:点开之前不给填。稿子把它做成「选中这一项才出现输入框」,
+    // 而不是「一直在那儿但禁用」—— 所以判据从 disabled 换成在不在。
+    expect(screen.queryByTestId('qf-input')).toBeNull();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Other' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Write your own' }));
 
-    expect(collapsible.classList.contains('open')).toBe(true);
-    expect((screen.getByLabelText('Custom answer') as HTMLInputElement).disabled).toBe(false);
+    const input = screen.getByTestId('qf-input') as HTMLTextAreaElement;
+    expect(input.disabled).toBe(false);
+    expect(container.querySelector('.qf-chip-other')?.contains(input)).toBe(true);
   });
 
   it('deselects fixed options when Other opens and collapses when one is picked', () => {
@@ -321,16 +364,14 @@ describe('QuestionFormView', () => {
       <QuestionFormView form={richForm} interactive onSubmit={vi.fn()} />,
     );
 
-    fireEvent.click(screen.getByLabelText('Mobile (iOS/Android)'));
-    fireEvent.click(screen.getByRole('button', { name: 'Other' }));
+    fireEvent.click(chip('Mobile (iOS/Android)'));
+    fireEvent.click(screen.getByRole('button', { name: 'Write your own' }));
     // Opening "Other" on a single-choice question means "none of these".
-    expect(container.querySelectorAll('input[type="radio"]:checked')).toHaveLength(0);
+    expect(chosen(container)).toHaveLength(0);
 
-    fireEvent.click(screen.getByLabelText('Desktop web'));
-    // Picking a fixed option collapses the still-empty custom field.
-    expect(
-      container.querySelector('.qf-custom-collapsible')?.classList.contains('open'),
-    ).toBe(false);
+    fireEvent.click(chip('Desktop web'));
+    // 原意不变:选回固定项,还空着的自填框收起来 —— 现在的形态是「输入框消失」
+    expect(screen.queryByTestId('qf-input')).toBeNull();
   });
 
   it('shows the custom input expanded for a submitted custom answer', () => {
@@ -343,12 +384,10 @@ describe('QuestionFormView', () => {
       />,
     );
 
-    expect(
-      container.querySelector('.qf-custom-collapsible')?.classList.contains('open'),
-    ).toBe(true);
-    expect((screen.getByLabelText('Custom answer') as HTMLInputElement).value).toBe(
-      'Wearable kiosk',
-    );
+    // 已回答态收成陈述:自己填的那句话要照样看得见,只是不再是一个可编辑的输入框
+    expect(container.querySelector('.qf-custom-collapsible')).toBeNull();
+    expect(screen.queryByTestId('qf-input')).toBeNull();
+    expect(container.querySelector('.answered')?.textContent).toContain('Wearable kiosk');
   });
 
   it('reveals the custom input from the select Other… entry', () => {
@@ -374,12 +413,12 @@ describe('QuestionFormView', () => {
     const onSubmit = vi.fn();
     render(<QuestionFormView form={checkboxObjectForm} interactive onSubmit={onSubmit} />);
 
-    fireEvent.click(screen.getByLabelText('Editorial / magazine'));
-    fireEvent.click(screen.getByRole('button', { name: 'Other' }));
-    fireEvent.change(screen.getByLabelText('Custom answer'), {
+    fireEvent.click(chip('Editorial / magazine'));
+    fireEvent.click(screen.getByRole('button', { name: 'Write your own' }));
+    fireEvent.change(screen.getByTestId('qf-input'), {
       target: { value: 'Neo-museum, Field notebook' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Send answers' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
 
     expect(onSubmit.mock.calls[0]?.[0]).toContain('Editorial / magazine [value: editorial]');
     expect(onSubmit.mock.calls[0]?.[0]).toContain('Neo-museum');
@@ -397,8 +436,8 @@ describe('QuestionFormView', () => {
 
     render(<QuestionFormView form={exactForm} interactive onSubmit={vi.fn()} />);
 
-    expect(screen.queryByLabelText('Custom answer')).toBeNull();
-    expect(screen.queryByLabelText('Other')).toBeNull();
+    expect(screen.queryByTestId('qf-input')).toBeNull();
+    expect(screen.queryByLabelText('Write your own')).toBeNull();
   });
 
   it('submits required checkbox object options with stable values', () => {
@@ -407,16 +446,16 @@ describe('QuestionFormView', () => {
       <QuestionFormView form={checkboxObjectForm} interactive onSubmit={onSubmit} />,
     );
 
-    const submit = screen.getByRole('button', { name: 'Send answers' });
+    const submit = screen.getByRole('button', { name: 'Next' });
     // Required field unanswered → submit stays disabled (regression guard:
     // the Questions-tab refactor must not make required fields optional on the
     // standard submit path).
     expect((submit as HTMLButtonElement).disabled).toBe(true);
 
-    fireEvent.click(screen.getByLabelText('Editorial / magazine'));
-    fireEvent.click(screen.getByLabelText('Soft gradients'));
+    fireEvent.click(chip('Editorial / magazine'));
+    fireEvent.click(chip('Soft gradients'));
 
-    expect(container.querySelectorAll('input[type="checkbox"]:checked')).toHaveLength(2);
+    expect(chosen(container)).toHaveLength(2);
     expect((submit as HTMLButtonElement).disabled).toBe(false);
 
     fireEvent.click(submit);
@@ -444,9 +483,11 @@ describe('QuestionFormView', () => {
       <QuestionFormView form={mixedForm} interactive hideInternalSubmit onSubmit={onSubmit} />,
     );
 
-    const fields = container.querySelectorAll('.qf-field');
-    expect(fields[0]?.querySelector('.qf-required')?.textContent).toBe('required');
-    expect(fields[1]?.querySelector('.qf-required')).toBeNull();
+    // 稿子的问题行没有外层包裹(`.cbody > .q` 直接就是问题),`.qf-field` 已经拿掉;
+    // 这条用例要守的是「必填角标是看得懂的词、不是红星号」,改按标签行取。
+    const labels = container.querySelectorAll('.qf-label');
+    expect(labels[0]?.querySelector('.qf-required')?.textContent).toBe('required');
+    expect(labels[1]?.querySelector('.qf-required')).toBeNull();
   });
 
   it('submits required select object options with stable values', () => {
@@ -455,7 +496,7 @@ describe('QuestionFormView', () => {
       <QuestionFormView form={selectObjectForm} interactive onSubmit={onSubmit} />,
     );
 
-    const submit = screen.getByRole('button', { name: 'Send answers' });
+    const submit = screen.getByRole('button', { name: 'Next' });
     // Required select unanswered → submit stays disabled (regression guard).
     expect((submit as HTMLButtonElement).disabled).toBe(true);
 
@@ -517,16 +558,14 @@ describe('QuestionFormView', () => {
     const { container, rerender } = render(
       <QuestionFormView form={partial} interactive onSubmit={vi.fn()} />,
     );
-    expect(container.querySelectorAll('input:checked')).toHaveLength(0);
+    expect(chosen(container)).toHaveLength(0);
 
     rerender(<QuestionFormView form={complete} interactive onSubmit={vi.fn()} />);
 
-    expect(
-      (container.querySelector('input[type="radio"][value="display"]') as HTMLInputElement)
-        ?.checked,
-    ).toBe(true);
+    // 选项已经是稿子的 `<button class="opt">`,不再带 value 属性;按文案取那一项。
+    expect(chip('诊所门口/室内展示').getAttribute('aria-checked')).toBe('true');
     fireEvent.click(screen.getByRole('button', { name: 'Next step' }));
-    expect(container.querySelectorAll('input[type="checkbox"]:checked')).toHaveLength(2);
+    expect(chosen(container)).toHaveLength(2);
   });
 
   it('never lets a late default clobber an answer the user touched', () => {
@@ -557,13 +596,13 @@ describe('QuestionFormView', () => {
     const { container, rerender } = render(
       <QuestionFormView form={partial} interactive onSubmit={vi.fn()} />,
     );
-    fireEvent.click(screen.getByLabelText('Editorial'));
-    fireEvent.click(screen.getByLabelText('Editorial'));
-    expect(container.querySelectorAll('input[type="checkbox"]:checked')).toHaveLength(0);
+    fireEvent.click(chip('Editorial'));
+    fireEvent.click(chip('Editorial'));
+    expect(chosen(container)).toHaveLength(0);
 
     rerender(<QuestionFormView form={complete} interactive onSubmit={vi.fn()} />);
 
-    expect(container.querySelectorAll('input[type="checkbox"]:checked')).toHaveLength(0);
+    expect(chosen(container)).toHaveLength(0);
   });
 
   it('renders host strings in the form language, not the UI locale', () => {
@@ -577,9 +616,10 @@ describe('QuestionFormView', () => {
 
     render(<QuestionFormView form={zhForm} interactive onSubmit={vi.fn()} />);
 
-    expect(screen.getByRole('button', { name: '其他' })).toBeTruthy();
-    expect(screen.queryByLabelText('Other')).toBeNull();
-    expect(screen.getByLabelText('自定义填写')).toBeTruthy();
+    // 原意不变:卡内的宿主文案跟着表单声明的语言走,不跟 UI locale。
+    // 文案本身按交付稿从「其他」改成了「自己填」。
+    expect(screen.getByRole('button', { name: '自己填' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Write your own' })).toBeNull();
   });
 
   it('submits native defaults for required color and defaultless range controls', () => {
@@ -598,7 +638,7 @@ describe('QuestionFormView', () => {
     expect(next.disabled).toBe(false);
     fireEvent.click(next);
 
-    const submit = screen.getByRole('button', { name: 'Send answers' }) as HTMLButtonElement;
+    const submit = screen.getByRole('button', { name: 'Next' }) as HTMLButtonElement;
     expect(submit.disabled).toBe(false);
 
     fireEvent.click(submit);
@@ -614,14 +654,14 @@ describe('QuestionFormView', () => {
     );
   });
 
-  it('offers Skip all when a single-question form contains required questions', () => {
+  it('offers Skip — you decide when a single-question form contains required questions', () => {
     const onSubmit = vi.fn();
     render(<QuestionFormView form={richForm} interactive onSubmit={onSubmit} />);
 
-    expect((screen.getByRole('button', { name: 'Send answers' }) as HTMLButtonElement).disabled).toBe(
+    expect((screen.getByRole('button', { name: 'Next' }) as HTMLButtonElement).disabled).toBe(
       true,
     );
-    fireEvent.click(screen.getByRole('button', { name: 'Skip all' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Skip — you decide' }));
 
     expect(onSubmit).toHaveBeenCalledWith(
       expect.stringContaining('- Primary surface: (skipped)'),
@@ -630,7 +670,7 @@ describe('QuestionFormView', () => {
     );
   });
 
-  it('keeps Skip all for a form containing only optional questions', () => {
+  it('keeps Skip — you decide for a form containing only optional questions', () => {
     const onSubmit = vi.fn();
     const optionalForm = {
       id: 'optional',
@@ -639,7 +679,7 @@ describe('QuestionFormView', () => {
     } as QuestionForm;
     render(<QuestionFormView form={optionalForm} interactive onSubmit={onSubmit} />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Skip all' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Skip — you decide' }));
     expect(onSubmit).toHaveBeenCalledWith(
       expect.stringContaining('[form answers — optional]'),
       {},
@@ -673,7 +713,7 @@ describe('QuestionFormView', () => {
       />,
     );
 
-    const submit = screen.getByRole('button', { name: 'Send answers' }) as HTMLButtonElement;
+    const submit = screen.getByRole('button', { name: 'Next' }) as HTMLButtonElement;
     expect(submit.disabled).toBe(true);
 
     const input = container.querySelector('input[type="file"]') as HTMLInputElement | null;
@@ -771,7 +811,7 @@ describe('QuestionFormView', () => {
 
     expect(screen.getByText('2 / 3')).toBeTruthy();
     expect(screen.queryByText('Who will see this deck?')).toBeNull();
-    fireEvent.click(screen.getByLabelText('Standard · 12 slides'));
+    fireEvent.click(chip('Standard · 12 slides'));
     fireEvent.click(screen.getByRole('button', { name: 'Back' }));
     expect(onInteraction).toHaveBeenCalledWith({
       element: 'step_back',
@@ -784,14 +824,14 @@ describe('QuestionFormView', () => {
       'Leadership and product team',
     );
     fireEvent.click(screen.getByRole('button', { name: 'Next step' }));
-    expect((screen.getByLabelText('Standard · 12 slides') as HTMLInputElement).checked).toBe(true);
+    expect(chip('Standard · 12 slides').getAttribute('aria-checked')).toBe('true');
     fireEvent.click(screen.getByRole('button', { name: 'Next step' }));
 
     expect(screen.getByText('3 / 3')).toBeTruthy();
     fireEvent.change(screen.getByRole('textbox'), {
       target: { value: 'Include speaker notes' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Send answers' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
 
     expect(onSubmit).toHaveBeenCalledWith(
       expect.stringContaining('- Who will see this deck?: Leadership and product team'),
@@ -826,15 +866,15 @@ describe('QuestionFormView', () => {
 
     expect(screen.getByText('2 / 3')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Skip' })).toBeTruthy();
-    fireEvent.click(screen.getByLabelText('Concise · 8 slides'));
+    fireEvent.click(chip('Concise · 8 slides'));
     fireEvent.click(screen.getByRole('button', { name: 'Next step' }));
 
     expect(screen.getByText('3 / 3')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Skip' })).toBeTruthy();
-    expect((screen.getByRole('button', { name: 'Send answers' }) as HTMLButtonElement).disabled).toBe(
+    expect((screen.getByRole('button', { name: 'Next' }) as HTMLButtonElement).disabled).toBe(
       false,
     );
-    fireEvent.click(screen.getByRole('button', { name: 'Send answers' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
 
     expect(onSubmit).toHaveBeenCalledWith(
       expect.stringContaining('- Who will see this deck?: (skipped)'),
@@ -927,10 +967,10 @@ describe('QuestionFormView', () => {
     ).toBe('https://repo-assets.open-design.ai/style-catalog/v1/deck-product-keynote-v1.webp');
     expect(document.querySelector('[data-artifact-type="deck"]')).toBeTruthy();
 
-    fireEvent.click(screen.getByLabelText('Editorial narrative'));
-    fireEvent.click(screen.getByLabelText('Bold storytelling'));
-    expect((screen.getByLabelText('Product keynote') as HTMLInputElement).disabled).toBe(true);
-    fireEvent.click(screen.getByRole('button', { name: 'Send answers' }));
+    fireEvent.click(card('Editorial narrative'));
+    fireEvent.click(card('Bold storytelling'));
+    expect((card('Product keynote') as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
 
     expect(onSubmit.mock.calls[0]?.[1]).toEqual({
       tone: ['deck-editorial-narrative', 'deck-bold-storytelling'],
@@ -959,10 +999,10 @@ describe('QuestionFormView', () => {
       />,
     );
 
-    expect((screen.getByLabelText('Editorial narrative') as HTMLInputElement).checked).toBe(true);
-    expect((screen.getByLabelText('Premium pitch') as HTMLInputElement).checked).toBe(true);
+    expect(card('Editorial narrative').getAttribute('aria-checked')).toBe('true');
+    expect(card('Premium pitch').getAttribute('aria-checked')).toBe('true');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Send answers' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
     expect(onSubmit).toHaveBeenCalledWith(
       expect.stringContaining(
         'Editorial narrative [value: deck-editorial-narrative], Premium pitch [value: deck-premium-pitch]',
@@ -982,8 +1022,8 @@ describe('QuestionFormView', () => {
       />,
     );
 
-    expect((screen.getByLabelText('Editorial narrative') as HTMLInputElement).checked).toBe(true);
-    expect((screen.getByLabelText('Premium pitch') as HTMLInputElement).checked).toBe(true);
+    expect(card('Editorial narrative').getAttribute('aria-checked')).toBe('true');
+    expect(card('Premium pitch').getAttribute('aria-checked')).toBe('true');
   });
 
   it('keeps the visual picker compact, shuffles unselected styles, and expands on demand', () => {
@@ -1020,17 +1060,18 @@ describe('QuestionFormView', () => {
       />,
     );
 
+    // 卡片按稿子改成了 `<button class="vopt">`(D52),标题在 `title` 上,不再有隐藏 input
     const visibleLabels = () =>
-      Array.from(container.querySelectorAll<HTMLInputElement>('.qf-visual-card input')).map(
-        (input) => input.getAttribute('aria-label'),
+      Array.from(container.querySelectorAll<HTMLElement>('.qf-visual-card')).map(
+        (el) => el.getAttribute('title'),
       );
     const firstPage = visibleLabels();
     expect(firstPage).toHaveLength(4);
-    expect(screen.queryByLabelText('Custom answer')).toBeNull();
-    expect(screen.queryByText('Refresh')).toBeNull();
+    expect(screen.queryByTestId('qf-input')).toBeNull();
     expect(screen.getByText('+21')).toBeTruthy();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    // 「换一批」在新稿子里是页脚左侧那个动作，不再是右上角的刷新图标。
+    fireEvent.click(container.querySelector('[data-action="reshuffle"]')!);
     expect(onInteraction).toHaveBeenCalledWith({
       element: 'visual_style_refresh',
       questionId: 'tone',
@@ -1046,15 +1087,16 @@ describe('QuestionFormView', () => {
       styleContext: 'deck',
     });
     const dialog = screen.getByRole('dialog', { name: 'Visual direction' });
-    expect(dialog.querySelectorAll('.qf-visual-card input')).toHaveLength(25);
+    expect(dialog.querySelectorAll('.qf-visual-card')).toHaveLength(25);
     expect(
       dialog.querySelector(
         'img[src="https://repo-assets.open-design.ai/style-catalog/v1/deck-editorial-narrative-v1.webp"]',
       ),
     ).toBeTruthy();
-    expect(dialog.querySelector('[aria-label="Bento modular"]')).toBeTruthy();
+    // 标题现在挂在卡片的 title 上(卡片就是按钮,不再有 aria-label 的隐藏 input)
+    expect(dialog.querySelector('[title="Bento modular"]')).toBeTruthy();
     expect(visibleLabels()).toHaveLength(4);
-    const customInput = screen.getByLabelText('Custom answer') as HTMLInputElement;
+    const customInput = screen.getByTestId('qf-input') as HTMLInputElement;
     fireEvent.change(customInput, { target: { value: 'Warm Japanese editorial' } });
     expect(customInput.value).toBe('Warm Japanese editorial');
     expect(container.querySelector('.qf-visual-custom-summary')?.textContent).toContain(
@@ -1068,10 +1110,10 @@ describe('QuestionFormView', () => {
       styleContext: 'deck',
       categoryId: 'business',
     });
-    expect(dialog.querySelectorAll('.qf-visual-card input')).toHaveLength(6);
-    expect(dialog.querySelector('[aria-label="Data briefing"]')).toBeTruthy();
-    expect(dialog.querySelector('[aria-label="Premium pitch"]')).toBeTruthy();
-    fireEvent.click(dialog.querySelector('[aria-label="Premium pitch"]')!);
+    expect(dialog.querySelectorAll('.qf-visual-card')).toHaveLength(6);
+    expect(dialog.querySelector('[title="Data briefing"]')).toBeTruthy();
+    expect(dialog.querySelector('[title="Premium pitch"]')).toBeTruthy();
+    fireEvent.click(dialog.querySelector('[title="Premium pitch"]')!);
     expect(onInteraction).toHaveBeenCalledWith({
       element: 'visual_style_card',
       questionId: 'tone',
@@ -1083,15 +1125,233 @@ describe('QuestionFormView', () => {
     expect(container.querySelector('.qf-visual-custom-summary')).toBeNull();
 
     fireEvent.click(screen.getByRole('tab', { name: 'All' }));
-    expect(dialog.querySelectorAll('.qf-visual-card input')).toHaveLength(25);
+    expect(dialog.querySelectorAll('.qf-visual-card')).toHaveLength(25);
 
     fireEvent.click(screen.getByRole('button', { name: /done/i }));
     expect(screen.queryByRole('dialog', { name: 'Visual direction' })).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Send answers' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
     expect(onSubmit.mock.calls[0]?.[1]).toEqual({ tone: 'deck-premium-pitch' });
     expect(onSubmit.mock.calls[0]?.[0]).toContain(
       'Premium pitch [value: deck-premium-pitch]',
     );
+  });
+
+  // 视觉方向卡的新版式(交付稿第 21 / 22 格):默认叠成一沓、左右箭头翻页、
+  // 右上角切成网格、页脚多出「换一批」「随机」两个出口。
+  // 注:切换/箭头/随机的按钮文案走新增的 qf.visual* i18n key,合并前 t() 会
+  // 回落成 key 本身,所以这里按 data-action / data-nav 定位,不按文案。
+  describe('visual direction stack', () => {
+    const stackForm = {
+      id: 'discovery',
+      title: 'Choose a visual direction',
+      questions: [
+        {
+          id: 'tone',
+          label: 'Visual direction',
+          type: 'radio',
+          required: true,
+          allowCustom: false,
+          options: [
+            { label: 'Editorial / magazine', value: 'editorial' },
+            { label: 'Modern minimal', value: 'minimal' },
+          ],
+        },
+      ],
+    } as QuestionForm;
+
+    const topCardTitle = (root: HTMLElement) =>
+      root.querySelector('.qf-visual-stack .qf-visual-card')?.getAttribute('title');
+
+    it('stacks four previews by default and pages the stack with the arrows', () => {
+      const { container } = render(
+        <QuestionFormView
+          form={stackForm}
+          interactive
+          visualStyleContext="deck"
+          onSubmit={vi.fn()}
+        />,
+      );
+
+      const picker = container.querySelector<HTMLElement>('.qf-visual-picker')!;
+      expect(picker.getAttribute('data-view')).toBe('fan');
+      expect(container.querySelectorAll('.qf-visual-stack .qf-visual-card')).toHaveLength(4);
+
+      // 压在下面那几张不参与 Tab 序 —— 它们在视觉上还没露出来。
+      // 卡片按稿子改成了 `<button class="vopt">`(D52),tabIndex 现在挂在卡片自己身上。
+      const stack = Array.from(
+        container.querySelectorAll<HTMLElement>('.qf-visual-stack .qf-visual-card'),
+      );
+      expect(stack[0]!.getAttribute('tabindex')).toBeNull();
+      expect(stack.slice(1).every((el) => el.getAttribute('tabindex') === '-1')).toBe(true);
+
+      const first = topCardTitle(container);
+      fireEvent.click(container.querySelector('[data-nav="next"]')!);
+      const second = topCardTitle(container);
+      expect(second).not.toBe(first);
+
+      // 上一张 = 把队尾那张提回最前面,两条路必须走回同一个结果
+      fireEvent.click(container.querySelector('[data-nav="prev"]')!);
+      expect(topCardTitle(container)).toBe(first);
+    });
+
+    it('switches between the stack and the grid, and drops the arrows in the grid', () => {
+      const { container } = render(
+        <QuestionFormView
+          form={stackForm}
+          interactive
+          visualStyleContext="deck"
+          onSubmit={vi.fn()}
+        />,
+      );
+
+      const picker = container.querySelector<HTMLElement>('.qf-visual-picker')!;
+      expect(container.querySelector('.qf-visual-nav')).toBeTruthy();
+
+      fireEvent.click(container.querySelector('[data-action="toggle-view"]')!);
+      expect(picker.getAttribute('data-view')).toBe('grid');
+      expect(container.querySelector('.qf-visual-nav')).toBeNull();
+      expect(
+        Array.from(
+          container.querySelectorAll<HTMLInputElement>('.qf-visual-stack .qf-visual-card input'),
+        ).every((input) => input.getAttribute('tabindex') === null),
+      ).toBe(true);
+
+      fireEvent.click(container.querySelector('[data-action="toggle-view"]')!);
+      expect(picker.getAttribute('data-view')).toBe('fan');
+    });
+
+    it('picks a style for the user from the footer "random" action', () => {
+      const onInteraction = vi.fn();
+      const onSubmit = vi.fn();
+      const { container } = render(
+        <QuestionFormView
+          form={stackForm}
+          interactive
+          visualStyleContext="deck"
+          onInteraction={onInteraction}
+          onSubmit={onSubmit}
+        />,
+      );
+
+      fireEvent.click(container.querySelector('[data-action="random"]')!);
+
+      const picked = onInteraction.mock.calls.find(
+        (call) => call[0]?.element === 'visual_style_card',
+      )?.[0];
+      expect(picked?.source).toBe('inline');
+      expect(picked?.styleContext).toBe('deck');
+      // 随机选中的那张被翻到最前面,不然选完还压在底下看不见
+      expect(container.querySelector('.qf-visual-stack .qf-visual-card')).toHaveClass(
+        'qf-visual-card-on',
+      );
+
+      fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+      expect(onSubmit.mock.calls[0]?.[1]).toEqual({ tone: picked!.styleId });
+    });
+
+    // agent 自己在表单里开的 direction-cards 走同一套外壳，只是预览面是占位块、
+    // 页脚只给「随机」（卡就这么几张，没有下一批可换）。
+    const agentCardsForm = {
+      id: 'q5',
+      title: '视觉方向',
+      questions: [
+        {
+          id: 'style',
+          label: '挑一个看着最像的',
+          type: 'direction-cards',
+          required: true,
+          allowCustom: false,
+          options: [
+            { label: '克制的编辑感', value: 'editorial' },
+            { label: '干净的产品感', value: 'product' },
+          ],
+          cards: [
+            {
+              id: 'editorial',
+              label: '克制的编辑感',
+              mood: '大留白、衬线标题。',
+              references: ['Monocle'],
+              palette: ['#1a1a1a'],
+              displayFont: 'Georgia, serif',
+              bodyFont: 'system-ui, sans-serif',
+            },
+            {
+              id: 'product',
+              label: '干净的产品感',
+              mood: '高对比、方正网格。',
+              references: ['Linear'],
+              palette: ['#0b0b0b'],
+              displayFont: 'system-ui, sans-serif',
+              bodyFont: 'system-ui, sans-serif',
+            },
+          ],
+        },
+      ],
+    } as QuestionForm;
+
+    it('renders agent-authored direction cards through the same stack, on placeholders', () => {
+      const onSubmit = vi.fn();
+      const { container } = render(
+        <QuestionFormView form={agentCardsForm} interactive onSubmit={onSubmit} />,
+      );
+
+      expect(container.querySelector('.qf-visual-picker')?.getAttribute('data-view')).toBe('fan');
+      const cards = container.querySelectorAll('.qf-visual-stack .qf-visual-card');
+      expect(cards).toHaveLength(2);
+      // 预览面是占位块，不接真实图片链路
+      expect(container.querySelectorAll('.qf-visual-preview-blank')).toHaveLength(2);
+      expect(container.querySelector('.qf-visual-preview-image')).toBeNull();
+      // 「换一批」在这条路上不出现 —— 卡就这么几张
+      expect(container.querySelector('[data-action="reshuffle"]')).toBeNull();
+
+      fireEvent.click(card('干净的产品感'));
+      fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+      expect(onSubmit.mock.calls[0]?.[1]).toEqual({ style: 'product' });
+    });
+
+    it('surfaces the randomly picked direction card to the front of the stack', () => {
+      const onSubmit = vi.fn();
+      const { container } = render(
+        <QuestionFormView form={agentCardsForm} interactive onSubmit={onSubmit} />,
+      );
+
+      fireEvent.click(container.querySelector('[data-action="random"]')!);
+
+      // 替人挑完还压在底下等于没挑：选中的那张必须就是最前面那张
+      const front = container.querySelector('.qf-visual-stack .qf-visual-card');
+      expect(front?.classList.contains('qf-visual-card-on')).toBe(true);
+
+      fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+      expect(onSubmit.mock.calls[0]?.[1]).toEqual({ style: front?.getAttribute('title') === '克制的编辑感' ? 'editorial' : 'product' });
+    });
+
+    it('selects the front card with Enter', () => {
+      const { container } = render(
+        <QuestionFormView
+          form={stackForm}
+          interactive
+          visualStyleContext="deck"
+          onSubmit={vi.fn()}
+        />,
+      );
+
+      /*
+       * 卡片按稿子改成了 `<button class="vopt">`(D52),里面不再有隐藏的 input。
+       * 要守的行为没变 —— 「回车能选中最前面那张」;但**实现它的东西变了**:
+       * 原来靠组件自己挂 `onKeyDown`(因为原生 radio 只认空格),现在是按钮的原生行为
+       * (回车 / 空格都会触发 click)。jsdom 不会替 keyDown 合成 click,所以这里
+       * 守两件事:它确实是个 `<button>`(原生键盘可达),以及激活之后确实选中了。
+       */
+      const front = container.querySelector<HTMLElement>('.qf-visual-stack .qf-visual-card')!;
+      expect(front.tagName).toBe('BUTTON');
+      expect(front.getAttribute('aria-checked')).toBe('false');
+      fireEvent.click(front);
+      expect(
+        container
+          .querySelector('.qf-visual-stack .qf-visual-card')
+          ?.classList.contains('qf-visual-card-on'),
+      ).toBe(true);
+    });
   });
 
   it('exposes all uploaded style previews for every supported artifact type', () => {

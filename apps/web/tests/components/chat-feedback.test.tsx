@@ -174,10 +174,10 @@ describe('chat assistant feedback', () => {
       messages: [completedArtifactAssistant()],
     });
     const feedbackGroup = screen.getByRole('group', { name: 'Feedback' });
-    const footer = document.querySelector('.assistant-footer');
+    const footer = screen.getByTestId('assistant-footer');
 
     expect(feedbackGroup.textContent).not.toContain('Feedback');
-    expect(footer?.contains(feedbackGroup)).toBe(true);
+    expect(footer.contains(feedbackGroup)).toBe(true);
 
     fireEvent.click(screen.getByRole('button', { name: 'Helpful' }));
     expect(onAssistantFeedback).toHaveBeenLastCalledWith(
@@ -190,7 +190,7 @@ describe('chat assistant feedback', () => {
       expect.objectContaining({ id: 'assistant-1' }),
       { rating: 'negative' },
     );
-    expect(document.querySelector('.assistant-feedback-burst')).toBeTruthy();
+    expect(screen.getByTestId('assistant-feedback-burst')).toBeTruthy();
   });
 
   it('shows feedback after completed artifact edits without newly produced files', () => {
@@ -294,8 +294,8 @@ describe('chat assistant feedback', () => {
     ).toBe('https://discord.gg/mHAjSMV6gz');
     expect(screen.getByText(/Share what you made with the/i)).toBeTruthy();
 
-    fireEvent.click(screen.getByLabelText('Understood my request'));
-    fireEvent.click(screen.getByLabelText('Other'));
+    fireEvent.click(screen.getByRole('button', { name: 'Understood my request' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Other' }));
     fireEvent.change(screen.getByPlaceholderText('Add a short note...'), {
       target: { value: 'The layout is ready to present.' },
     });
@@ -319,7 +319,7 @@ describe('chat assistant feedback', () => {
     });
 
     fireEvent.click(screen.getByRole('button', { name: 'Helpful' }));
-    expect(screen.queryByLabelText('Followed the design system')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Followed the design system' })).toBeNull();
     unmount();
 
     const { onAssistantFeedback } = renderChatPane({
@@ -328,7 +328,7 @@ describe('chat assistant feedback', () => {
     });
 
     fireEvent.click(screen.getByRole('button', { name: 'Helpful' }));
-    fireEvent.click(screen.getByLabelText('Followed the design system'));
+    fireEvent.click(screen.getByRole('button', { name: 'Followed the design system' }));
     fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
 
     expect(onAssistantFeedback).toHaveBeenLastCalledWith(
@@ -340,23 +340,30 @@ describe('chat assistant feedback', () => {
     );
 
     fireEvent.click(screen.getByRole('button', { name: 'Not helpful' }));
-    expect(screen.getByLabelText('Did not follow the design system')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Did not follow the design system' })).toBeTruthy();
   });
 
-  it('clears custom reason when Other is deselected', () => {
+  /*
+   * 交付稿第 40 格里补充框是**常驻**的,不再挂在「其他」这颗胶囊上。
+   * 所以这条规格从「取消勾选就清空」改成:框一直在、人写的话一直留着、提交时一定带走。
+   * 原来那套的代价是人把话打完了,顺手取消一颗胶囊就被悄悄丢掉。
+   */
+  it('keeps the note when Other is deselected, and still submits it', () => {
     const { onAssistantFeedback } = renderChatPane({
       messages: [completedArtifactAssistant()],
     });
 
     fireEvent.click(screen.getByRole('button', { name: 'Helpful' }));
-    fireEvent.click(screen.getByLabelText('Other'));
     fireEvent.change(screen.getByPlaceholderText('Add a short note...'), {
-      target: { value: 'This note should not be submitted.' },
+      target: { value: 'This note must survive.' },
     });
-    fireEvent.click(screen.getByLabelText('Other'));
-    expect(screen.queryByPlaceholderText('Add a short note...')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Other' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Other' }));
+    expect(
+      (screen.getByPlaceholderText('Add a short note...') as HTMLTextAreaElement).value,
+    ).toBe('This note must survive.');
 
-    fireEvent.click(screen.getByLabelText('Understood my request'));
+    fireEvent.click(screen.getByRole('button', { name: 'Understood my request' }));
     fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
 
     expect(onAssistantFeedback).toHaveBeenLastCalledWith(
@@ -364,7 +371,7 @@ describe('chat assistant feedback', () => {
       expect.objectContaining({
         rating: 'positive',
         reasonCodes: ['matched_request'],
-        customReason: undefined,
+        customReason: 'This note must survive.',
         reasonsSubmittedAt: expect.any(Number),
       }),
     );
@@ -377,7 +384,9 @@ describe('chat assistant feedback', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Not helpful' }));
 
-    expect(screen.getByText('Tell us why')).toBeTruthy();
+    // 点踩这一路用交付稿第 40 格的问句,点赞仍是中性的「Tell us why」
+    expect(screen.getByText('What went wrong?')).toBeTruthy();
+    expect(screen.queryByText('Tell us why')).toBeNull();
     expect(screen.getByText('😔')).toBeTruthy();
     expect(
       screen.getByTestId('assistant-feedback-discord-negative').getAttribute('href'),

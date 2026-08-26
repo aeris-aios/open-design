@@ -63,12 +63,27 @@ export function HtmlProjectCoverFrame({
   iframeClassName,
   glyphClassName,
   diagnostic,
+  ungated = false,
 }: {
   src: string | undefined;
   initial: string;
   iframeClassName: string;
   glyphClassName: string;
   diagnostic: string;
+  /**
+   * 跳过全局缩略图加载闸。**只给「前台主内容」用**。
+   *
+   * 那道闸是为首页项目网格建的:几十张卡各开一个 iframe 打本地 daemon,会把
+   * HTTP/1.1 的连接池占满。所以 `App.tsx` 里写着
+   * `if (route.kind === 'project') suspendThumbnailLoads()` —— 一进项目就挂起,
+   * 背景封面别跟前台抢。
+   *
+   * 可聊天就活在项目路由里:回答里的产物卡**自己就是用户要看的东西**,一轮也就一两张。
+   * 让它继承那条挂起,结果是永远拿不到 slot、卡面永远一块灰。
+   *
+   * 传这个的地方要满足两条:① 数量有界(不是网格);② 它就是当前路由的前台内容。
+   */
+  ungated?: boolean;
 }) {
   const [failed, setFailed] = useState(false);
   const [verified, setVerified] = useState(false);
@@ -118,10 +133,10 @@ export function HtmlProjectCoverFrame({
   }, [src, diagnostic, inView]);
 
   const { canLoad, settle } = useThumbnailLoadSlot(
-    Boolean(src) && inView && verified && !failed,
+    !ungated && Boolean(src) && inView && verified && !failed,
   );
 
-  if (!src || failed || !verified || !canLoad) {
+  if (!src || failed || !verified || (!ungated && !canLoad)) {
     return (
       <span ref={inViewRef} className={glyphClassName}>
         {initial}

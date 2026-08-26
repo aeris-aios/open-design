@@ -1,0 +1,55 @@
+/*
+ * 报错卡(设计稿组件 19 · 第 78 / 79 格)。
+ *
+ * 稿子 `.errb`:白卡、380px 定宽,**红只留在标题那一行**,正文走 `--text-muted`,
+ * 动作靠右排成一行(`justify-content: flex-end`)。
+ *
+ * 这一层只管**长什么样**。「该出哪几颗按钮」是策略,留在 ChatPane ——
+ * 那里才知道这一轮是授权失败、余额不够、还是本地环境跑不动。
+ */
+.card {
+  width: 380px;
+  max-width: 100%;
+  padding: 10px 11px;
+  border: var(--chat-stroke) solid var(--chat-border);
+  border-radius: var(--chat-radius-lg);
+  background: var(--chat-bg);
+}
+
+/* 稿子 `.errb .t { display:flex; align-items:center; gap:7px; padding-bottom:8px;
+   border-bottom: 1px solid var(--border-soft); font-size: var(--t-head);
+   font-weight:600; color: var(--red) }` —— 红只在这一行 */
+.title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding-bottom: 8px;
+  border-bottom: var(--chat-stroke) solid var(--chat-border-soft);
+  font-size: var(--chat-t-head);
+  font-weight: 600;
+  color: var(--chat-red);
+}
+.title svg {
+  flex: none;
+  width: 16px;
+  height: 16px;
+}
+
+/* 稿子 `.errb .d { margin-top: 8px; font-size: var(--t-mini);
+   line-height: var(--lh-body); color: var(--text-muted) }` */
+.description {
+  margin-top: 8px;
+  font-size: var(--chat-t-mini);
+  line-height: var(--chat-lh-body);
+  color: var(--chat-text-muted);
+}
+
+/* 稿子 `.errb .ops { display:flex; flex-wrap:wrap; justify-content:flex-end;
+   gap:6px; margin-top:9px }` —— 动作靠右 */
+.ops {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 9px;
+}

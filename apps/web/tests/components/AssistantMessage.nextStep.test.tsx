@@ -153,9 +153,11 @@ describe('AssistantMessage next-step affordance', () => {
         {...h}
       />,
     );
-    // #5517 shape: a turn with produced files but no tool ops renders the flat
-    // produced-files block, not the collapsible tool-op summary.
-    expect(document.querySelector('.produced-files')?.textContent).toContain('notes.md');
+    // #5517 shape: a turn with produced files but no tool ops renders the produced
+    // artifact itself, not the collapsible tool-op summary.
+    // 2026-08-26:拿不出预览图的产出(md/txt)也走产物卡了(`doc` 档),
+    // 不再退化成一行灰列表 —— 所以这里改看卡片。
+    expect(document.querySelector('[data-testid="artifact-card-notes.md"]')).toBeTruthy();
     expect(screen.queryByTestId('file-ops-summary')).toBeNull();
     expect(screen.getByTestId('next-step-actions')).toBeTruthy();
     expect(screen.getByText(en['nextStep.projectGenerateArtifactTitle'])).toBeTruthy();

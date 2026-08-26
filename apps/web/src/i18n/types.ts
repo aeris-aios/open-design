@@ -3030,6 +3030,19 @@ export interface Dict {
   'chat.messageRail.jumpAria': string;
   'chat.messageRail.empty': string;
   'chat.you': string;
+  'chat.record.retryImage': string;
+  'chat.quote.add': string;
+  'chat.quote.count': string;
+  'chat.quote.removeAria': string;
+  'chat.support.title': string;
+  'chat.support.join': string;
+  'chat.sendFailedRetryAria': string;
+  'chat.audio.play': string;
+  'chat.audio.pause': string;
+  'chat.audio.download': string;
+  'chat.upgrade.balance': string;
+  'chat.upgrade.whyLow': string;
+  'chat.upgrade.whyOut': string;
   'chat.openFile': string;
   'chat.copyPrompt': string;
   'chat.copyErrorDiagnostic': string;
@@ -3489,14 +3502,11 @@ export interface Dict {
   'chat.linkedFolderNotFound': string;
   'chat.linkedFolderAlready': string;
   'chat.linkedFolderPickError': string;
-  'chat.queuedHeader': string;
-  'chat.queuedToSend': string;
   'chat.queuedEditQueuedTaskAria': string;
   'chat.queuedSave': string;
   'chat.queuedCancel': string;
   'chat.queuedReorder': string;
   'chat.queuedEdit': string;
-  'chat.queuedMore': string;
   'chat.queuedFollowUpFallback': string;
   'chat.send': string;
   'chat.stop': string;
@@ -4349,6 +4359,11 @@ export interface Dict {
   'assistant.feedbackPositive': string;
   'assistant.feedbackNegative': string;
   'assistant.feedbackReasonTitle': string;
+  /** 点踩那一路的问句(交付稿第 40 格写的是「哪里不对?」);点赞仍用上面那条中性文案 */
+  'assistant.feedbackReasonTitleNegative': string;
+  /** 社区入口那一句。`{discord}` 会被替换成可点的 Discord 链接 */
+  'assistant.feedbackDiscordNegative': string;
+  'assistant.feedbackDiscordPositive': string;
   'assistant.feedbackReasonPositiveMatched': string;
   'assistant.feedbackReasonPositiveVisual': string;
   'assistant.feedbackReasonPositiveUseful': string;
@@ -4436,10 +4451,37 @@ export interface Dict {
 
   // Question form labels
   'qf.answered': string;
+  /** 「已回答」陈述块的标题(交付稿 `.answered .k`) */
+  'qf.answeredConfirmed': string;
+  'chat.att.cancelUpload': string;
+  'chat.att.retry': string;
+  'chat.attachments.scrollNext': string;
+  'chat.attachments.scrollPrev': string;
+  'chat.input.collapse': string;
+  'chat.input.expandFull': string;
+  'chat.input.viewAll': string;
+  'chat.artifact.export': string;
+  'chat.artifact.pending': string;
+  'chat.artifact.publish': string;
+  'chat.edge.paused': string;
+  'chat.edge.reconnectCta': string;
+  'chat.edge.reconnectDetail': string;
+  'chat.edge.reconnectFailed': string;
+  'chat.edge.reconnecting': string;
+  'qf.visualNext': string;
+  'qf.visualPrev': string;
+  'qf.visualRandom': string;
+  'qf.visualReshuffle': string;
+  'qf.visualViewFan': string;
+  'qf.visualViewGrid': string;
+  'qf.confirmed': string;
+  'qf.picked': string;
   'qf.choose': string;
   'qf.customLabel': string;
   'qf.customPlaceholder': string;
   'qf.otherOption': string;
+  /** 「自己填」—— 选项列表最后一项的标签(交付稿 `.own-l`) */
+  'qf.ownAnswer': string;
   'qf.required': string;
   'qf.lockedSubmitted': string;
   'qf.lockedPrev': string;
@@ -4447,9 +4489,6 @@ export interface Dict {
   'qf.submitDefault': string;
   'qf.submitDisabledTitle': string;
   'qf.submitTitle': string;
-  'qf.cardSelected': string;
-  'qf.cardRefs': string;
-  'qf.cardSampleText': string;
   'questions.tabLabel': string;
   'questions.banner': string;
   'questions.bannerAnswered': string;
@@ -5451,4 +5490,22 @@ export interface Dict {
   'experienceSurvey.skip': string;
   'experienceSurvey.thanksTitle': string;
   'experienceSurvey.thanksBody': string;
+
+  /* 执行记录(chat 重构):动词、状态词、计数。数值与措辞来自 wangchenglong 交付稿 */
+  'chat.record.verb.read': string;
+  'chat.record.verb.write': string;
+  'chat.record.verb.edit': string;
+  'chat.record.verb.search': string;
+  'chat.record.verb.exec': string;
+  'chat.record.failed': string;
+  'chat.record.hits': string;
+  'chat.record.running': string;
+  'chat.record.thinking': string;
+  'chat.record.done': string;
+  'chat.record.failedTurn': string;
+  'chat.record.plan': string;
+  'chat.record.imageBatch': string;
+  'chat.record.imageCount': string;
+  'chat.record.retry': string;
+  'chat.record.viewImage': string;
 }

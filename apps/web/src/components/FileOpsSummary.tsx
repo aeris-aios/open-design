@@ -15,14 +15,19 @@
  * AssistantMessage's render shape.
  */
 import { useState } from 'react';
+import { VisuallyHidden } from '@open-design/components';
 import { useT } from '../i18n';
 import type { Dict } from '../i18n/types';
+import { projectFileUrl } from '../providers/registry';
+import { useProjectCollabContext } from '../collab/collab-context';
+import { artifactKind, type ArtifactKind } from '../runtime/chat/format';
 import {
   countArtifactFileOps,
   type FileOpEntry,
   type FileOpKind,
 } from '../runtime/file-ops';
 import { Icon, type IconName } from './Icon';
+import { HtmlProjectCoverFrame } from './project-cover';
 
 interface Props {
   entries: FileOpEntry[];
@@ -31,6 +36,14 @@ interface Props {
    *  to opt out of the existence check (button always shown). */
   projectFileNames?: Set<string> | undefined;
   onRequestOpenFile?: ((name: string) => void) | undefined;
+  /** Enables the design's artifact cards (component 14, grids 30-33). The
+   *  thumbnail and the export href are both project-scoped URLs, so without a
+   *  project id every entry keeps rendering as a text row. */
+  projectId?: string | undefined;
+  /** D28 "publish" — HTML artifacts only. */
+  onPublish?: ((name: string) => void) | undefined;
+  /** D28 "export". Falls back to a direct `download` link when absent. */
+  onExport?: ((name: string) => void) | undefined;
 }
 
 type ArtifactOpKind = Extract<FileOpKind, 'write' | 'edit'>;
@@ -51,25 +64,61 @@ export function FileOpsSummary({
   entries,
   projectFileNames,
   onRequestOpenFile,
+  projectId,
+  onPublish,
+  onExport,
 }: Props) {
   const t = useT();
   const [expanded, setExpanded] = useState(false);
 
   if (entries.length === 0) return null;
 
+  // Component 14 (grids 30-33): a produced artifact is a picture, not a path.
+  // Everything the card cannot answer with a thumbnail — .md, .csv, source
+  // files, deletions — stays in the text list below it.
+  const cardItems: ArtifactCardItem[] = projectId
+    ? entries.flatMap((entry) => {
+        if (entry.ops.includes('delete')) return [];
+        const kind = artifactCardKind(entry.path);
+        if (!kind) return [];
+        return [{ name: entry.path, kind, pending: entry.status === 'running' }];
+      })
+    : [];
+  const cardNames = new Set(cardItems.map((item) => item.name));
+  const rowEntries = cardNames.size
+    ? entries.filter((entry) => !cardNames.has(entry.path))
+    : entries;
+
+  const cards = projectId && cardItems.length > 0 ? (
+    <ArtifactCards
+      items={cardItems}
+      projectId={projectId}
+      onOpen={onRequestOpenFile}
+      onPublish={onPublish}
+      onExport={onExport}
+    />
+  ) : null;
+
+  // 全都进了卡片、没有剩下的行:仍然要挂 `file-ops-summary` 这个身份。
+  // 它标的是「这一轮的产物面板」,不是「文本列表那种画法」——
+  // 丢掉它,「一条消息只出一个产物面板」那条不变量就没人守得住了(P0 recvqaerXd82bE)。
+  if (rowEntries.length === 0) {
+    return cards ? <div className="file-ops-cards-only" data-testid="file-ops-summary">{cards}</div> : null;
+  }
+
   // Keep the first four results immediately legible. Once a run touches more
   // files, only rows after the fourth start hidden; expanding reveals the
   // remainder without making the entire result set disappear by default.
-  const isCollapsible = entries.length > COLLAPSE_AFTER_ENTRY_COUNT;
-  const hiddenEntryCount = Math.max(0, entries.length - COLLAPSE_AFTER_ENTRY_COUNT);
+  const isCollapsible = rowEntries.length > COLLAPSE_AFTER_ENTRY_COUNT;
+  const hiddenEntryCount = Math.max(0, rowEntries.length - COLLAPSE_AFTER_ENTRY_COUNT);
   const visibleEntries = isCollapsible && !expanded
-    ? entries.slice(0, COLLAPSE_AFTER_ENTRY_COUNT)
-    : entries;
+    ? rowEntries.slice(0, COLLAPSE_AFTER_ENTRY_COUNT)
+    : rowEntries;
 
   // Count unique produced files (one row per file), not write operations — a
   // file touched several times must count once in a "Files from this turn"
   // header (#5909).
-  const counts = countArtifactFileOps(entries);
+  const counts = countArtifactFileOps(rowEntries);
   const summaryParts: string[] = [];
   if (counts.write > 0) summaryParts.push(`${t('tool.write')} ${counts.write}`);
   if (counts.edit > 0) summaryParts.push(`${t('tool.edit')} ${counts.edit}`);
@@ -85,7 +134,7 @@ export function FileOpsSummary({
         <>
           <span className="file-ops-more">
             {expanded
-              ? entries.length
+              ? rowEntries.length
               : t('assistant.unfinishedMore', { n: hiddenEntryCount })}
           </span>
           <span className={`file-ops-chev${expanded ? ' is-expanded' : ''}`} aria-hidden>
@@ -96,26 +145,31 @@ export function FileOpsSummary({
     </>
   );
 
-  if (entries.length === 1) {
-    const onlyEntry = entries[0];
-    if (!onlyEntry) return null;
+  if (rowEntries.length === 1) {
+    const onlyEntry = rowEntries[0];
+    if (!onlyEntry) return cards;
     return (
-      <div
-        className="file-ops"
-        data-testid="file-ops-summary"
-      >
-        <ul className="file-ops-list file-ops-list--single" role="list">
-          <FileOpRow
-            entry={onlyEntry}
-            projectFileNames={projectFileNames}
-            onRequestOpenFile={onRequestOpenFile}
-          />
-        </ul>
-      </div>
+      <>
+        {cards}
+        <div
+          className="file-ops"
+          data-testid="file-ops-summary"
+        >
+          <ul className="file-ops-list file-ops-list--single" role="list">
+            <FileOpRow
+              entry={onlyEntry}
+              projectFileNames={projectFileNames}
+              onRequestOpenFile={onRequestOpenFile}
+            />
+          </ul>
+        </div>
+      </>
     );
   }
 
   return (
+    <>
+    {cards}
     <div
       className="file-ops"
       data-testid="file-ops-summary"
@@ -151,6 +205,7 @@ export function FileOpsSummary({
         ))}
       </ul>
     </div>
+    </>
   );
 }
 
@@ -217,5 +272,232 @@ function FileOpRow({
         <div className="file-ops-row-main">{content}</div>
       )}
     </li>
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * Component 14 — artifact cards (design matrix grids 30-33)
+ * ------------------------------------------------------------------ */
+
+/** Kinds that a 16:10 thumbnail can actually answer "is this the version I
+ *  wanted?" for. `.md` / `.csv` are not primary artifacts (W12), and audio is
+ *  component 24's own player, not a picture card. */
+/**
+ * 产物卡认哪几种。
+ *
+ * `doc` 是**稿子没画的那一档**:markdown / 文本这类没有预览图的产出。
+ * 稿子第 30–33 格里每张产物卡都有一块缩略图位(非 HTML 那格也是),但它没考虑
+ * 「拿不出缩略图」的产物 —— 产品里这类原来退化成一行灰列表
+ * (用户 2026-08-26 真机指认「变成上面卡片形式才对」)。
+ * 用同一张卡的骨架,缩略图位换成「图标 + 文件名」的封面。
+ */
+export type ArtifactCardKind = Extract<ArtifactKind, 'html' | 'image' | 'video'> | 'doc';
+
+export interface ArtifactCardItem {
+  /** Project-relative name; also the key passed to open / publish / export. */
+  name: string;
+  kind: ArtifactCardKind;
+  /** D37: the run is still writing this file — grey breathing placeholder and
+   *  no actions in the corner. The design sheet has no such state; product
+   *  asked for it on 2026-08-21 so a turn does not sit silent and then pop an
+   *  artifact out of nowhere. */
+  pending?: boolean;
+}
+
+/** 文档卡封面上那枚图标 —— 只按后缀分「代码 / 普通文件」两档,不另立一套映射 */
+function docCardIcon(name: string): IconName {
+  return /\.(ts|tsx|js|jsx|css|scss|json|py|rb|go|rs|java|sh|yml|yaml|toml)$/i.test(name)
+    ? 'file-code'
+    : 'file';
+}
+
+export function artifactCardKind(path: string): ArtifactCardKind | null {
+  const kind = artifactKind(path);
+  return kind === 'html' || kind === 'image' || kind === 'video' ? kind : null;
+}
+
+/**
+ * **本轮产出**那一块的准入 —— 比上面这条宽:拿不出预览图的产出(md / txt / json …)
+ * 也出卡,走 `doc` 档(用户 2026-08-26:「变成上面卡片形式才对」)。
+ *
+ * 为什么不把 `artifactCardKind` 直接改宽:它还管着**工具操作清单**那一列,
+ * 那里有「删除」这种操作 —— 一个已经被删掉的文件当然不能摆成一张带预览的卡。
+ * 两个问题不同,判据就该是两条。
+ */
+export function producedArtifactCardKind(path: string): ArtifactCardKind {
+  return artifactCardKind(path) ?? 'doc';
+}
+
+/**
+ * The card carries the picture and nothing else: no filename, no toolbar, no
+ * "preview" button (the card *is* the preview entry) and no overflow menu.
+ * Actions live in the top-right corner because the bottom strip of a UI
+ * screenshot is still content, while the top-right corner is the emptiest part
+ * of almost any interface capture (D28 / B19).
+ */
+export function ArtifactCards({
+  items,
+  projectId,
+  onOpen,
+  onPublish,
+  onExport,
+}: {
+  items: ArtifactCardItem[];
+  projectId: string;
+  onOpen?: ((name: string) => void) | undefined;
+  onPublish?: ((name: string) => void) | undefined;
+  onExport?: ((name: string) => void) | undefined;
+}) {
+  if (items.length === 0) return null;
+  return (
+    <div className="artifact-cards" data-testid="artifact-cards">
+      {items.map((item) => (
+        <ArtifactCard
+          key={item.name}
+          item={item}
+          projectId={projectId}
+          onOpen={onOpen}
+          onPublish={onPublish}
+          onExport={onExport}
+        />
+      ))}
+    </div>
+  );
+}
+
+function ArtifactCard({
+  item,
+  projectId,
+  onOpen,
+  onPublish,
+  onExport,
+}: {
+  item: ArtifactCardItem;
+  projectId: string;
+  onOpen?: ((name: string) => void) | undefined;
+  onPublish?: ((name: string) => void) | undefined;
+  onExport?: ((name: string) => void) | undefined;
+}) {
+  const t = useT();
+  const { workspaceContext } = useProjectCollabContext();
+  const src = projectFileUrl(projectId, item.name, workspaceContext);
+  const pending = item.pending === true;
+  // Publish is an HTML-only affordance, so a `.png` card carries one button and
+  // an `.html` card carries two. The row is flex/end aligned precisely so that
+  // unevenness stays right-aligned instead of shifting the export button.
+  const canPublish = !pending && item.kind === 'html' && !!onPublish;
+
+  return (
+    <div
+      /* 每张卡自己的 testid 带文件名(见下面那行),所以数卡片要另给一个稳定钩子 */
+      data-artifact-card=""
+      className={`artifact-card${item.kind === 'video' ? ' artifact-card--video' : ''}${
+        pending ? ' is-pending' : ''
+      }`}
+      data-kind={item.kind}
+      data-testid={`artifact-card-${item.name}`}
+    >
+      <span className="artifact-card-thumb">
+        {pending ? (
+          <span className="artifact-card-mini" />
+        ) : item.kind === 'html' ? (
+          <HtmlProjectCoverFrame
+            src={src}
+            initial=""
+            iframeClassName="artifact-card-frame"
+            glyphClassName="artifact-card-mini"
+            diagnostic={`${projectId}:${item.name}`}
+            /* 产物卡是这条回答的主角,不是背景封面 —— 不受「进项目就挂起」那道闸约束,
+               否则卡面永远是一块灰(见 project-cover.tsx 的 `ungated` 注释) */
+            ungated
+          />
+        ) : item.kind === 'doc' ? (
+          /* 拿不出预览的产物:卡面写「图标 + 文件名」,不留一块空灰 */
+          <span className="artifact-card-doc">
+            <Icon name={docCardIcon(item.name)} size={22} />
+            <span className="artifact-card-doc-name" title={item.name}>{item.name}</span>
+          </span>
+        ) : item.kind === 'video' ? (
+          <video
+            className="artifact-card-media"
+            src={src}
+            muted
+            preload="metadata"
+            playsInline
+          />
+        ) : (
+          <img className="artifact-card-media" src={src} alt="" loading="lazy" />
+        )}
+      </span>
+      {pending ? (
+        <VisuallyHidden role="status">{t('chat.artifact.pending')}</VisuallyHidden>
+      ) : null}
+      {onOpen && !pending ? (
+        <button
+          type="button"
+          className="artifact-card-open"
+          onClick={() => onOpen(item.name)}
+          aria-label={`${t('assistant.openFile')}: ${item.name}`}
+          data-testid={`artifact-card-open-${item.name}`}
+        />
+      ) : null}
+      {pending ? null : (
+        <span className="artifact-card-acts">
+          {canPublish ? (
+            <button
+              type="button"
+              className="artifact-card-act"
+              onClick={() => onPublish?.(item.name)}
+              data-testid={`artifact-card-publish-${item.name}`}
+            >
+              <ArtifactPublishIcon />
+              {t('chat.artifact.publish')}
+            </button>
+          ) : null}
+          {onExport ? (
+            <button
+              type="button"
+              className="artifact-card-act"
+              onClick={() => onExport(item.name)}
+              data-testid={`artifact-card-export-${item.name}`}
+            >
+              <ArtifactExportIcon />
+              {t('chat.artifact.export')}
+            </button>
+          ) : (
+            <a
+              className="artifact-card-act"
+              href={src}
+              download={item.name}
+              data-testid={`artifact-card-export-${item.name}`}
+            >
+              <ArtifactExportIcon />
+              {t('chat.artifact.export')}
+            </a>
+          )}
+        </span>
+      )}
+    </div>
+  );
+}
+
+// Both glyphs are lifted verbatim from `docs/design/chat-panel-next.html`
+// rather than routed through `Icon`: the export ring-arrow is not one of the
+// 152 glyphs in `remix-icon-paths.ts`, and keeping its sibling inline means the
+// pair cannot drift apart. Sizing lives in CSS (12px, -1px inline start) so the
+// ring and the label read as the same height (D39).
+function ArtifactPublishIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M4 19H20V12H22V20C22 20.5523 21.5523 21 21 21H3C2.44772 21 2 20.5523 2 20V12H4V19ZM13 9V16H11V9H6L12 3L18 9H13Z" />
+    </svg>
+  );
+}
+
+function ArtifactExportIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M12 2C17.52 2 22 6.48 22 12C22 17.52 17.52 22 12 22C6.48 22 2 17.52 2 12C2 6.48 6.48 2 12 2ZM12 20C16.42 20 20 16.42 20 12C20 7.58 16.42 4 12 4C7.58 4 4 7.58 4 12C4 16.42 7.58 20 12 20ZM13 12H16L12 16L8 12H11V8H13V12Z" />
+    </svg>
   );
 }

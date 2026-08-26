@@ -296,19 +296,23 @@
 }
 
 .assistant-feedback-wrap {
-  display: inline-flex;
+  display: flex;
   flex-direction: column;
-  align-items: flex-start;
+  align-items: stretch;
   gap: 6px;
+  /* 不限宽:稿子里这一行是满宽的,时间靠中间的弹簧顶到右端。
+     原来是 inline-flex + max-width:min(360px,100%),整行只有两百来像素,
+     弹簧没有空间可撑,时间就永远贴不到右边(footer-time.test.tsx 钉住)。
+     下面的原因面板本来靠这条限宽,改成它自己限。 */
+  width: 100%;
+}
+.assistant-feedback-reasons {
   max-width: min(360px, 100%);
 }
 .assistant-feedback {
   display: inline-flex;
   align-items: center;
   gap: 2px;
-  margin-left: 2px;
-  padding-left: 8px;
-  border-left: 1px solid var(--border);
   color: var(--text-muted);
 }
 .assistant-footer-controls {
@@ -316,8 +320,6 @@
   align-items: center;
   gap: 2px;
   margin-left: 2px;
-  padding-left: 8px;
-  border-left: 1px solid var(--border);
   color: var(--text-muted);
 }
 .assistant-footer-controls .assistant-feedback {
@@ -325,24 +327,27 @@
   padding-left: 0;
   border-left: 0;
 }
+/* 稿子 `.fb button { display: grid; place-items: center; width: 26px; height: 26px;
+   border-radius: var(--radius-sm); color: var(--text-soft) }`;字号跟稿子的全局
+   `button { font-size: var(--font-size-13) }`(我们全局是 14px)。 */
 .assistant-copy-button {
   position: relative;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  font-size: var(--font-size-13);
+  color: var(--text-soft);
   padding: 0;
-  border: 1px solid transparent;
-  border-radius: var(--radius-pill);
+  border: 0;
+  border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--text-muted);
   cursor: pointer;
   overflow: visible;
 }
 .assistant-copy-button:hover {
-  background: var(--bg-subtle);
-  border-color: var(--border);
+  /* 稿子只上一层底色,不描边 —— 一排小按钮各自套一圈框会像四个独立控件 */
+  background: var(--bg-fill-secondary);
   color: var(--text-strong);
 }
 .assistant-copy-button:disabled {
@@ -363,33 +368,39 @@
   background: var(--accent-tint);
   border-color: var(--accent-soft);
 }
+/* 稿子 `.fb button { display: grid; place-items: center; width: 26px; height: 26px;
+   border-radius: var(--radius-sm); color: var(--text-soft) }`;字号跟稿子的全局
+   `button { font-size: var(--font-size-13) }`(我们全局是 14px)。 */
 .assistant-feedback-button {
   position: relative;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  font-size: var(--font-size-13);
+  color: var(--text-soft);
   padding: 0;
-  border: 1px solid transparent;
-  border-radius: var(--radius-pill);
+  border: 0;
+  border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--text-muted);
   cursor: pointer;
   overflow: visible;
 }
 .assistant-feedback-button:hover {
-  background: var(--bg-subtle);
-  border-color: var(--border);
+  /* 稿子只上一层底色,不描边 —— 一排小按钮各自套一圈框会像四个独立控件 */
+  background: var(--bg-fill-secondary);
   color: var(--text-strong);
 }
 .assistant-feedback-button[data-selected="true"] {
-  color: var(--accent);
-  background: var(--accent-tint);
-  border-color: var(--accent-soft);
+  color: var(--brand-text);
+  /* #00FF04 掺 55% 底色:这枚底是 26×26 的实心方块,而完成勾那枚底片只有 14px,
+     同一个饱和度铺在近四倍面积上就重了一档 */
+  background: color-mix(in srgb, var(--chat-brand-weak, var(--brand-weak, var(--brand))) 45%, var(--bg));
 }
-.assistant-feedback-button[data-selected="true"] svg {
-  fill: currentColor;
+/* 踩不跟赞共用一套颜色:一浓一淡并排,两枚本该对称的按钮看着不像一对 */
+.assistant-feedback-button[data-selected="true"][data-rating="down"] {
+  color: var(--red);
+  background: var(--red-bg);
 }
 .assistant-copy-button:not(.od-tooltip)[data-tooltip]::after,
 .assistant-feedback-button:not(.od-tooltip)[data-tooltip]::after {
@@ -481,111 +492,106 @@
   }
 }
 
+/* ── 反馈原因面板(交付稿第 40 格 `.rsn`)───────────────────────────
+   值逐条对着稿子搬:面板 10/11 内距、标题 --t-lead/600、胶囊排 gap 5 上距 7、
+   补充框「无框 + 一条底线」、底部动作 gap 7 上距 9 右对齐。 */
 .assistant-feedback-reasons {
   width: min(340px, 100%);
-  padding: 8px;
+  margin-top: 8px;
+  padding: 10px 11px;
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg-panel);
-  box-shadow: var(--shadow-xs);
+  border-radius: var(--radius-lg);
+  background: var(--bg);
 }
 .assistant-feedback-reason-title {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  margin-bottom: 7px;
-  font-size: 12px;
+  font-size: var(--font-size-14);
   font-weight: 600;
-  color: var(--text-muted);
+  color: var(--text-strong);
 }
 .assistant-feedback-reason-emoji {
-  font-size: 12px;
+  font-size: var(--font-size-14);
   line-height: 1;
 }
 .assistant-feedback-reason-options {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 5px;
+  margin-top: 7px;
 }
+/* 稿子的 `.chip.mod-sm`:药丸、1px 灰边、3/9 内距、--t-cap 字号 */
 .assistant-feedback-reason-option {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  min-height: 26px;
-  padding: 4px 8px;
+  padding: 3px 9px;
   border: 1px solid var(--border);
   border-radius: var(--radius-pill);
-  background: var(--bg-subtle);
-  color: var(--text-muted);
-  font-size: 12px;
-  line-height: 1.2;
+  background: var(--bg);
+  color: var(--text);
+  font-size: var(--font-size-12);
   cursor: pointer;
   user-select: none;
+  transition: border-color var(--duration-faster) var(--ease-out),
+    color var(--duration-faster) var(--ease-out);
 }
 .assistant-feedback-reason-option:hover {
   border-color: var(--border-strong);
   color: var(--text-strong);
 }
+/* 稿子 `.chip.is-on`:选中态**不画描边** —— 底色已经把「选中」说完了。
+   用 transparent 而不是 border:none,保住那 1px 的位置,切换时这一颗不会跳。 */
 .assistant-feedback-reason-option[data-selected="true"] {
-  border-color: var(--accent-soft);
-  background: var(--accent-tint);
+  border-color: transparent;
+  background: color-mix(in srgb, var(--accent-tint) 88%, var(--bg-panel));
   color: var(--accent);
+  font-weight: 600;
 }
-.assistant-feedback-reason-option input {
-  width: 12px;
-  height: 12px;
-  margin: 0;
-  accent-color: var(--accent);
-}
+/* 补充那一栏不套框,只在底下留一条线(稿子 `.ta`)。
+   这个面板里已经有一圈框(面板自己)和一排框(原因胶囊);补充框再套一个,
+   同一小块地方三层框,而它还是最不重要的可选项。
+   `field-sizing: content` 让它随输入自己长高,不支持的浏览器保持一行、多出来的滚动 ——
+   两种都不会把那条线甩开。 */
 .assistant-feedback-custom {
+  display: block;
   width: 100%;
   margin-top: 8px;
-  padding: 7px 8px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg-subtle);
-  color: var(--text);
-  font: inherit;
-  font-size: 12px;
-  line-height: 1.4;
-  resize: vertical;
+  padding: 2px 0 5px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: none;
+  color: var(--text-strong);
+  font-family: inherit;
+  font-size: var(--font-size-12);
+  line-height: var(--chat-lh-row, 1.45);
+  field-sizing: content;
+  resize: none;
+  outline: none;
+}
+.assistant-feedback-custom::placeholder {
+  color: var(--text-faint);
 }
 .assistant-feedback-custom:focus {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px var(--accent-tint);
-}
-.assistant-feedback-submit {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 26px;
-  padding: 4px 10px;
-  border: 1px solid var(--accent-soft);
-  border-radius: var(--radius-pill);
-  background: var(--accent);
-  color: #fff;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-}
-.assistant-feedback-submit:hover:not(:disabled) {
-  background: var(--accent-hover);
-}
-.assistant-feedback-submit:disabled {
-  opacity: 0.45;
-  cursor: default;
+  border-bottom-color: var(--border-strong);
 }
 .assistant-feedback-actions {
   display: flex;
+  gap: 7px;
   justify-content: flex-end;
-  margin-top: 8px;
+  margin-top: 9px;
 }
+/* Discord 那一句是稿子之后才加的产品入口(社区引流,带埋点与测试),
+   所以保留 —— 但压到稿子的字号节奏里,不让它抢走「取消 / 提交」的位置。
+   这条是本格唯一一处与稿子的有意分歧,记在
+   `specs/current/chat-panel-feedback.md` 的 B4 行里。 */
 .assistant-feedback-discord-note {
   margin: 7px 0 0;
   color: var(--text-muted);
-  font-size: 12px;
-  line-height: 1.35;
+  font-size: var(--font-size-12);
+  line-height: var(--chat-lh-row, 1.45);
 }
 .assistant-feedback-discord-note a {
   color: #5865f2;
@@ -2102,4 +2108,47 @@ body.desktop-pet-shell .pet-task-item {
 @keyframes pet-bubble-in {
   from { opacity: 0; transform: translateY(4px) scale(0.96); }
   to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* ── 回合状态行 · 对齐设计稿组件 15 ─────────────────────────────────
+   稿子:整行满宽,左边「✓ 已完成」,右边贴着时间,中间四枚动作。
+   与旧版三处不同:①记号从 5px 灰点换成 13px 绿勾 ②不再画分隔线(见上面)
+   ③时间贴右端(数据来自 message.createdAt,拿不到就整块不出)。
+   注:`.assistant-footer` 的底子在 composio.css,这里只覆盖被稿子改掉的那几条。 */
+.assistant-footer {
+  display: flex;
+  width: 100%;
+}
+/* 跑完了:一枚勾,和执行记录里那枚是同一张图(--tick-img,全局 token) */
+/* 稿子 `.fb .fin > .tick { flex: none; width: 13px; height: 13px; color: var(--brand-weak) }`
+   —— 勾本身是 background 画的,`color` 只是把这枚记号归到「这件事过了」那一档色上。
+   走 `--chat-brand-weak`(稿子把浅色档从 #d0ffb5 改成了 #00ff04),不是全局 token:
+   全局那份还服务着聊天面板以外的地方。 */
+.assistant-footer:not([data-streaming="true"]):not([data-unfinished="true"]):not([data-canceled="true"]) .dot {
+  flex: none;
+  width: 13px;
+  height: 13px;
+  border-radius: 0;
+  color: var(--chat-brand-weak, var(--brand-weak));
+  background: var(--tick-img) center / contain no-repeat;
+}
+.assistant-footer:not([data-streaming="true"]):not([data-unfinished="true"]):not([data-canceled="true"]) .assistant-label {
+  color: var(--brand-text);
+}
+.assistant-footer-gap {
+  flex: 1;
+}
+.assistant-footer-time {
+  margin-left: 6px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-soft);
+}
+
+/* 中断:灰点 + 中性字。这一轮没跑完,绿勾和绿字都是在说假话(稿子 15-6) */
+.assistant-footer[data-canceled="true"] .dot {
+  background: var(--text-faint);
+}
+.assistant-footer[data-canceled="true"] .assistant-label {
+  color: var(--text-muted);
 }

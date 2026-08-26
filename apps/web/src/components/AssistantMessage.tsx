@@ -1,6 +1,15 @@
 import { Fragment, memo, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { TodoCard, ToolCard } from "./ToolCard";
-import { FileOpsSummary } from "./FileOpsSummary";
+import { useCharReveal } from "./chat/useCharReveal";
+import { ExecutionShell } from "./chat/ExecutionShell";
+import { buildTurnBlocks } from "../runtime/chat/build-turn-blocks";
+import type { ExecutionShell as ExecutionShellData } from "../runtime/chat/contract";
+import {
+  ArtifactCards,
+  artifactCardKind,
+  producedArtifactCardKind,
+  FileOpsSummary,
+  type ArtifactCardItem,
+} from "./FileOpsSummary";
 import {
   renderMarkdown,
   type MarkdownLinkClickHandler,
@@ -10,6 +19,7 @@ import {
   isPathLikeChatHref,
   resolveChatFileLink,
 } from "../runtime/in-project-link";
+import { Button } from "@open-design/components";
 import { navigate } from "../router";
 import { deleteProjectFile, projectFileUrl, uploadProjectFiles } from "../providers/registry";
 import { useProjectCollabContext } from "../collab/collab-context";
@@ -360,6 +370,11 @@ interface Props {
   // `resolveChatFileLink`.
   projectResolvedDir?: string | null;
   onRequestOpenFile?: (name: string) => void;
+  /**
+   * 生图失败格的「重试」。这一层不知道怎么重发,只把「第几张砸了」交给 ChatPane ——
+   * 由它组一句话走正常发送路径(规格 D59)。
+   */
+  onRetryImage?: (row: { total: number; done: number; failed: number }, index: number) => void;
   // Client-side action for a <od-card type="brand-browser-assist"> button: open
   // or focus the Browser tab so the user can clear verification. Excluded from
   // the memo comparison (routed through ChatPane's stable callbacks ref).
@@ -498,6 +513,27 @@ export const AssistantMessage = memo(AssistantMessageImpl, areAssistantMessagePr
  *     the individual tool cards. Mirrors the chat surface in screenshot 9.
  *   - status pills
  */
+/**
+ * 「现在」按秒往前推,只在 `active` 期间。不活动时返回 undefined ——
+ * 让调用方退回「按事件时间戳算」那条路,已经结束的轮次不该有任何定时器。
+ *
+ * 为什么不用 `Date.now()` 直接读:React 不会因为墙上时间变了就重渲染。
+ * 秒表要自己走,就得有人每秒推它一下。
+ */
+function useTickingNow(active: boolean): number | undefined {
+  const [now, setNow] = useState<number | undefined>(undefined);
+  useEffect(() => {
+    if (!active) {
+      setNow(undefined);
+      return;
+    }
+    setNow(Date.now());
+    const id = setInterval(() => { setNow(Date.now()); }, 1000);
+    return () => { clearInterval(id); };
+  }, [active]);
+  return now;
+}
+
 function AssistantMessageImpl({
   message,
   streaming,
@@ -510,6 +546,7 @@ function AssistantMessageImpl({
   projectFileNames,
   projectResolvedDir,
   onRequestOpenFile,
+  onRetryImage,
   onBrandBrowserAssistConfirm,
   onRequestPluginFolderAgentAction,
   activePluginActionPaths = new Set(),
@@ -548,12 +585,6 @@ function AssistantMessageImpl({
   nextStepVariant = 'default',
 }: Props) {
   const t = useT();
-  // Thinking text renders markdown too — its file links must route in-app
-  // exactly like prose links (ProseBlock builds the same handler itself).
-  const thinkingLinkClick = useMemo(
-    () => chatFileLinkClickHandler(onRequestOpenFile, projectFileNames, projectId, projectResolvedDir),
-    [onRequestOpenFile, projectFileNames, projectId, projectResolvedDir],
-  );
   const events =
     (message.events?.length ?? 0) > 0
       ? message.events!
@@ -587,18 +618,89 @@ function AssistantMessageImpl({
       stripEmptyThinkingBlocks(suppressDuplicateQuestionForms(rawBlocks)),
     );
   }, [displayEvents, liveCodeBlocks]);
-  // A task gets one execution-record disclosure. This keeps answer prose
-  // readable when an agent has alternated between many tools, while retaining
-  // every command, file operation, and streaming code preview for review.
-  // TodoWrite has already been removed because ChatPane owns the single
-  // conversation-level progress card outside message history.
-  const { contentBlocks, taskActivity } = useMemo(
-    () => splitTaskActivity(blocks),
-    [blocks],
+  /**
+   * 这一轮对执行记录来说算什么状态。
+   *
+   * 三条都不是 `message.runStatus` 自己说得清的:
+   *  · **还在流** → 一定是 running,不管落库里写的是什么;
+   *  · **不流了但没有 runStatus** → 历史/遗留消息。它已经结束了,只是没人给它盖过章。
+   *    当成 running 的话壳永远转下去,而且 D43 的兜底(结论提到壳外)不会触发 ——
+   *    整段回答会被关在壳里,`<od-card>` 这类交互块跟着一起消失。
+   *  · **产物没送达**(`no_result` / `delivery_failed`)→ 用户视角就是这一轮失败了,
+   *    与老链路的 `runFailed` 判据保持一致;失败原因交给下面的报错卡(B18)。
+   *
+   * 还有一条只对没有 runStatus 的历史消息生效,见 `legacyTurnFailed`。
+   */
+  const turnRunStatus = streaming
+    ? 'running'
+    : message.resultDeliveryState === 'no_result' ||
+        message.resultDeliveryState === 'delivery_failed' ||
+        (!message.runStatus && legacyTurnFailed(displayEvents, message.endedAt))
+      ? 'failed'
+      : (message.runStatus ?? 'succeeded');
+  /**
+   * 这一轮的执行记录(规格 `chat-panel-next.md`)。
+   *
+   * 壳内装过程(thinking / 工具行 / done 之前的叙述),壳外只留结论 —— 归属规则全在
+   * `buildTurnBlocks` 里,这里不做任何判断。
+   */
+  /**
+   * 壳头那颗秒表的「现在」。跑着的时候每秒往前推一格。
+   *
+   * 不喂这个的话,耗时只能算到「最后一次结束时间」—— 一次长工具调用期间没有新事件落下来,
+   * 秒数就冻在那儿不动,页面上看着像卡死;而设计稿里这颗秒表是一直在走的。
+   */
+  const nowMs = useTickingNow(streaming);
+  const nextTurn = useMemo(() => {
+    const turn = buildTurnBlocks({
+      events: displayEvents,
+      runStatus: turnRunStatus,
+      ...(nowMs != null ? { nowMs } : {}),
+    });
+    return {
+      shells: turn.filter((b): b is ExecutionShellData => b.kind === 'shell'),
+      /** 壳【外】的结论(D43)—— done 之后的那几段 */
+      prose: turn.filter((b) => b.kind === 'prose').map((b) => (b as { text: string }).text),
+    };
+  }, [displayEvents, turnRunStatus, nowMs]);
+  /**
+   * 执行记录里**真的有东西**。
+   *
+   * 壳本身是永远出现的(D10),所以「有没有壳」问不出这个 —— 要问壳里有没有内容。
+   * 两处消费方靠它,语义都是老链路 `taskActivity !== null` 的那一条:
+   *  · 页脚的「准备中 → 进行中」翻面判据(有内容了就不再是准备中);
+   *  · 回合状态行的去重(有执行记录时状态在壳头上,页脚不再重复一遍)。
+   *    稿子要两处都显示,但那是待决项 T19,产品没拍 —— 这里保持现状。
+   */
+  const recordHasContent = nextTurn.shells.some(
+    (shell) => shell.items.length > 0 || shell.segments.length > 0,
   );
-  const hasConclusion = contentBlocks.some(
-    (block) => block.kind === "text" && block.text.trim().length > 0,
-  );
+  /**
+   * 壳外要渲染的块。
+   *
+   * 执行记录已经拥有 thinking、工具调用与 done 之前的过程叙述,这三种块不能再出现在壳外
+   * (出现就是同一件事画两遍)。剩下的 —— 问答表单、`<od-card>`、产物面板、插件候选、
+   * 状态行 —— 原样留在这一层,因为它们挂着交互,不属于执行记录。
+   *
+   * 正文只有一个来源:`buildTurnBlocks` 算出来的结论段。它必须走**和消息层同一条加工链**
+   * (去重表单 / 丢空 thinking / 剥 TodoWrite 快照),直接把字符串塞进去会绕过去重,
+   * 同一张表单会渲染两次(`next-record-integration.test.tsx` 钉住了这一点)。
+   */
+  const outerBlocks = useMemo(() => {
+    const conclusion = nextTurn.prose.join('\n\n').trim();
+    const prose = conclusion
+      ? stripTodoToolGroups(
+          stripEmptyThinkingBlocks(
+            suppressDuplicateQuestionForms(buildBlocks([{ kind: 'text', text: conclusion }])),
+          ),
+        )
+      : [];
+    const rest = blocks.filter(
+      (b) => b.kind !== 'text' && b.kind !== 'thinking' && b.kind !== 'tool-group',
+    );
+    return [...prose, ...rest];
+  }, [nextTurn, blocks]);
+
   const fileOps = useMemo(() => deriveFileOps(displayEvents), [displayEvents]);
   const produced = message.producedFiles ?? [];
   const displayedProduced = useMemo(
@@ -852,8 +954,8 @@ function AssistantMessageImpl({
   // flips to "Working". The elapsed clock stays anchored to the persisted run
   // start so switching project tabs or remounting the message cannot restart it.
   const hasContent =
-    contentBlocks.some((b) => b.kind !== "status") ||
-    taskActivity !== null ||
+    outerBlocks.some((b) => b.kind !== "status") ||
+    recordHasContent ||
     turnFileOps.length > 0;
   const preparing = streaming && !hasContent;
   const preparingStatus = preparing && events.some((e) => e.kind === "status" && e.label === "thinking")
@@ -863,8 +965,8 @@ function AssistantMessageImpl({
   // Index of the trailing text block — the streaming caret rides the end of
   // the last prose block so it tracks the final character as tokens arrive.
   let lastTextBlockIndex = -1;
-  for (let i = contentBlocks.length - 1; i >= 0; i--) {
-    if (contentBlocks[i]?.kind === "text") {
+  for (let i = outerBlocks.length - 1; i >= 0; i--) {
+    if (outerBlocks[i]?.kind === "text") {
       lastTextBlockIndex = i;
       break;
     }
@@ -874,40 +976,22 @@ function AssistantMessageImpl({
     <div
       id={`assistant-message-${message.id}`}
       className={`msg assistant${showRole ? '' : ' assistant-continuation'}`}
+      /* 「接上一条,不再重复报名字」是状态,不是样式的私事 —— 给它自己的出口 */
+      data-continuation={showRole ? 'false' : 'true'}
       data-assistant-message-id={message.id}
       tabIndex={-1}
     >
       {showRole ? (
-        <div className="role">
+        <div className="role" data-testid="assistant-role">
           <AgentIcon id={roleIconId} size={20} className="role-agent-icon" />
           <span className="role-name">{roleName}</span>
         </div>
       ) : null}
-      <div className="assistant-flow">
-        {taskActivity ? (
-          <TaskActivityCard
-            entries={taskActivity.entries}
-            trailingThinking={taskActivity.trailingThinking}
-            hasConclusion={hasConclusion}
-            runStreaming={streaming}
-            runSucceeded={runSucceeded}
-            terminalRunSucceeded={message.runStatus === "succeeded"}
-            runCanceled={message.runStatus === "canceled"}
-            runFailed={
-              !streaming &&
-              (message.runStatus === "failed" ||
-                message.runStatus === "canceled" ||
-                hasResultDeliveryFailure)
-            }
-            startedAt={message.startedAt}
-            endedAt={message.endedAt}
-            durationMs={usage?.durationMs}
-            projectFileNames={projectFileNames}
-            onRequestOpenFile={onRequestOpenFile}
-            onThinkingLinkClick={thinkingLinkClick}
-          />
-        ) : null}
-        {contentBlocks.map((b, i) => {
+      <div className="assistant-flow" data-testid="assistant-flow">
+        {nextTurn.shells.map((shell) => (
+          <ExecutionShell key={shell.id} shell={shell} onOpenFile={onRequestOpenFile} />
+        ))}
+        {outerBlocks.map((b, i) => {
           if (b.kind === "text")
             return (
               <ProseBlock
@@ -932,35 +1016,16 @@ function AssistantMessageImpl({
                 onBrandBrowserAssistConfirm={onBrandBrowserAssistConfirm}
               />
             );
-          if (b.kind === "thinking")
-            // Thinking is only "in progress" while this is the trailing block.
-            // Once any block (prose / tools) lands after it, the model has
-            // moved past thinking, so the block flips to its finished state.
-            return (
-              <ThinkingBlock
-                key={i}
-                text={b.text}
-                streaming={streaming && i === contentBlocks.length - 1}
-                onLinkClick={thinkingLinkClick}
-              />
-            );
-          if (b.kind === "tool-group") {
-            return (
-              <ToolGroupCard
-                key={i}
-                items={b.items}
-                runStreaming={streaming}
-                runSucceeded={runSucceeded}
-                projectFileNames={projectFileNames}
-                onRequestOpenFile={onRequestOpenFile}
-              />
-            );
-          }
           if (b.kind === "live-tool") {
-            // splitTaskActivity moves live code into the same execution
-            // disclosure as settled tools. Keep this branch defensive in
-            // case a future block type opts out of that collection.
-            return null;
+            /**
+             * 还在流的 Write / Edit 代码预览。
+             *
+             * **执行记录暂时接不住它**:`buildTurnBlocks` 只读已落库的事件,
+             * `liveToolInput`(尚未成为事件的半截工具入参)没有落点,而 D3 又规定
+             * 调用跑完才落行。老链路是把它塞进同一张卡里的 —— 那个位置新链路还没有。
+             * 在设计给出落点之前先原地渲染,**宁可位置不对也不能把这块能力弄丢**。
+             */
+            return <LiveCodeBox key={b.id} name={b.name} raw={b.raw} />;
           }
           if (b.kind === "plugin-candidate") {
             return (
@@ -1011,6 +1076,9 @@ function AssistantMessageImpl({
             entries={summaryArtifactOps}
             projectFileNames={projectFileNames}
             onRequestOpenFile={onRequestOpenFile}
+            projectId={projectId ?? undefined}
+            onPublish={isLast ? onArtifactShare : undefined}
+            onExport={isLast ? onArtifactDownload : undefined}
           />
         ) : null}
         {/* Exactly one "files from this turn" panel per message. When the
@@ -1028,6 +1096,8 @@ function AssistantMessageImpl({
             files={displayedProduced}
             projectId={projectId}
             onRequestOpenFile={onRequestOpenFile}
+            onPublish={isLast ? onArtifactShare : undefined}
+            onExport={isLast ? onArtifactDownload : undefined}
           />
         ) : null}
         {!streaming && projectId && pluginActionFolders.length > 0 ? (
@@ -1090,10 +1160,15 @@ function AssistantMessageImpl({
                   forking,
                   forceVisible: true,
                   isLast: !!isLast,
-                  hideRunStatus:
-                    taskActivity !== null ||
-                    hasTodoSnapshot ||
-                    message.id === errorCardOwnerId,
+                  createdAt: message.createdAt,
+                  /*
+                   * 跑完之后这一行**要**报终态(稿子:绿勾 + 已完成)。
+                   * 原来只要壳里有内容就把状态词整个藏掉,于是跑完也不出 ——
+                   * 用户 2026-08-26 指认「这个状态你好像也丢了」。
+                   * 运行中的去重已经由 `showCompletionRow` 整行不出来解决。
+                   * 只在报错卡那一轮仍然让位:原因和下一步由报错卡说。
+                   */
+                  hideRunStatus: streaming || message.id === errorCardOwnerId,
                 }}
               />
             ) : (
@@ -1108,13 +1183,19 @@ function AssistantMessageImpl({
                 onFork={canFork ? onForkFromMessage : undefined}
                 forking={forking}
                 isLast={!!isLast}
-                hideRunStatus={
-                  taskActivity !== null ||
-                  hasTodoSnapshot ||
-                  message.id === errorCardOwnerId
-                }
+                createdAt={message.createdAt}
+                hideRunStatus={streaming || message.id === errorCardOwnerId}
               />
             )}
+          </div>
+        ) : null}
+        {/* 分叉分界(稿子第 38 格):点过「新开会话」之后**原地**落一条线,
+            中间那行字是承接过来的会话标题。不留痕迹的话,人只会以为按钮没反应。 */}
+        {message.forkedInto ? (
+          <div className="fork-sep" data-testid="assistant-fork-divider">
+            <i aria-hidden />
+            <span title={message.forkedInto.title}>{message.forkedInto.title}</span>
+            <i aria-hidden />
           </div>
         ) : null}
         {showNextStepActions ? (
@@ -1612,9 +1693,13 @@ interface AssistantFooterProps {
   // When the turn has an execution disclosure, its run state lives at the top
   // of the answer. The footer keeps only actions so run state is not repeated.
   hideRunStatus?: boolean;
+  /** 这一轮的时间,靠右端(设计稿 15-1 的 `.tm`)。拿不到就不显示,不估算 */
+  createdAt?: number;
 }
 
-function AssistantFooter({
+/** 导出只为验收:镜像陈列页要单挂这一行去对第 34–39 格。产品里的消费方仍是
+ *  `AssistantMessageImpl` 与下面的 `AssistantFeedback`。 */
+export function AssistantFooter({
   streaming,
   hasUnfinishedTodos,
   hasEmptyResponse,
@@ -1628,6 +1713,7 @@ function AssistantFooter({
   forceVisible = false,
   isLast = false,
   hideRunStatus = false,
+  createdAt,
 }: AssistantFooterProps) {
   const t = useT();
   if (
@@ -1643,14 +1729,28 @@ function AssistantFooter({
   return (
     <div
       className="assistant-footer"
+      data-testid="assistant-footer"
       data-unfinished={hasUnfinishedTodos ? "true" : "false"}
       data-streaming={streaming ? "true" : "false"}
+      // 中断的那一轮不能戴完成勾:它并没有跑完(稿子 15-6「绿点转灰」)
+      data-canceled={canceled ? "true" : "false"}
       data-last={isLast ? "true" : "false"}
     >
+      {/* 稿子这一行的头是**一个**元素:`<span class="fin"><svg class="tick"/>已完成</span>` ——
+          勾在字里面,不是它旁边的兄弟。原来 dot 和文字是平级的两个 span,
+          逐元素比样式时从这里就错开一位。 */}
       {!hideRunStatus ? (
         <>
-          <span className="dot" data-active={streaming ? "true" : "false"} />
-          <span className={`assistant-label${streaming && preparing ? " shimmer-text shimmer-prepare" : ""}`}>
+          <span className={`assistant-label${streaming && preparing ? " shimmer-text shimmer-prepare" : ""}`} data-testid="assistant-label">
+            {/* 跑完那一档稿子用的是 `<svg class="tick">`(勾其实是 background 画的,
+                里面的 path 被 `.tick > * { display:none }` 关掉了),没跑完那几档用的是 `<i>`。
+                标记本身的样子全在 `.dot` 的 CSS 里,这里只决定用哪个标签 —— 标签不一样,
+                逐元素比样式时后面整列都要错位。 */}
+            {!streaming && !canceled && !hasUnfinishedTodos ? (
+              <svg className="dot" viewBox="0 0 24 24" aria-hidden />
+            ) : (
+              <i className="dot" data-active={streaming ? "true" : "false"} />
+            )}
             {streaming
               ? preparing
                 ? preparingStatus === "thinking"
@@ -1669,6 +1769,8 @@ function AssistantFooter({
       ) : null}
       {copyMarkdown || onFork || feedbackControls ? (
         <span className="assistant-footer-controls">
+          {/* 稿子的顺序是 赞 → 踩 → 复制 → Fork:先是「这答案好不好」,再是「拿它做点什么」 */}
+          {feedbackControls}
           {copyMarkdown ? <AssistantMarkdownCopyButton markdown={copyMarkdown} /> : null}
           {onFork ? (
             <AssistantForkButton
@@ -1676,11 +1778,27 @@ function AssistantFooter({
               onFork={onFork}
             />
           ) : null}
-          {feedbackControls}
         </span>
+      ) : null}
+      {/* 弹簧 + 时间:稿子里这一行是满宽的,时间贴右端。拿不到时间就两样都不出。
+          **跑的过程中不出时间** —— 那一刻这一行只该留复制 / Fork 这类动作;
+          状态由壳头报,时间等落定了再说(用户 2026-08-26 真机指认「运行中没有这个了」)。 */}
+      {createdAt != null && !streaming ? (
+        <>
+          <span className="assistant-footer-gap" />
+          <time className="assistant-footer-time" dateTime={new Date(createdAt).toISOString()}>
+            {formatClock(createdAt)}
+          </time>
+        </>
       ) : null}
     </div>
   );
+}
+
+/** 「14:32」—— 只给时分,和稿子一致;跨天与否不在这一行表达 */
+function formatClock(at: number): string {
+  const d = new Date(at);
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
 function AssistantForkButton({
@@ -1753,7 +1871,9 @@ function AssistantMarkdownCopyButton({ markdown }: { markdown: string }) {
   );
 }
 
-function AssistantFeedback({
+/** 导出只为验收:第 34 / 36 / 37 / 39 格要的是「状态行 + 赞踩」整条,
+ *  赞踩两枚是这里注入 `AssistantFooter` 的,单挂 footer 出不来。 */
+export function AssistantFeedback({
   feedback,
   onFeedback,
   hasDesignSystemContext,
@@ -1903,8 +2023,12 @@ function AssistantFeedback({
   const toggleReasonCode = (code: ChatMessageFeedbackReasonCode) => {
     const next = new Set(draftReasonCodes);
     if (next.has(code)) {
+      /*
+       * 取消勾选「其他」**不再清空补充框**。补充框现在是常驻的(稿子第 40 格),
+       * 它和「其他」这一颗胶囊已经没有绑定关系;人写完一句话再顺手取消了那颗胶囊,
+       * 就把他的话删掉,是在替他做决定。
+       */
       next.delete(code);
-      if (code === "other") setCustomReason("");
     } else {
       next.add(code);
     }
@@ -1915,7 +2039,7 @@ function AssistantFeedback({
     const trimmedCustomReason = customReason.trim();
     const reasonCodes = [...draftReasonCodes];
     const reasonJoined = reasonCodes.length > 0 ? reasonCodes.join(",") : undefined;
-    const hasCustomReason = draftReasonCodes.has("other") && trimmedCustomReason.length > 0;
+    const hasCustomReason = trimmedCustomReason.length > 0;
     const requestId = analytics.newRequestId();
     // P0 ui_click element=assistant_feedback_reason_submit_button — fires
     // synchronously on the user gesture so the click count never depends on
@@ -2015,10 +2139,11 @@ function AssistantFeedback({
     onFeedback({
       rating: reasonRating,
       reasonCodes,
-      customReason:
-        draftReasonCodes.has("other") && trimmedCustomReason
-          ? trimmedCustomReason
-          : undefined,
+      /*
+       * 补充框常驻之后,这里也不能再要求「勾了『其他』才算数」——
+       * 人把话写进去了却因为没勾那一项被丢掉,是我们把他的输入扔了。
+       */
+      customReason: trimmedCustomReason || undefined,
       reasonsSubmittedAt: Date.now(),
     });
     setReasonRating(null);
@@ -2027,9 +2152,12 @@ function AssistantFeedback({
     ? feedbackReasonOptions(reasonRating, t, hasDesignSystemContext)
     : [];
   const reasonEmoji = reasonRating === "positive" ? "😊" : "😔";
-  const showOtherInput = draftReasonCodes.has("other");
-  const canSubmit =
-    draftReasonCodes.size > 0 || (showOtherInput && customReason.trim().length > 0);
+  /*
+   * 补充框现在常驻(见 `AssistantFeedbackReasons`),所以「能不能提交」也跟着松开:
+   * 只写了一句补充、一个原因都没勾,同样是有效反馈 —— 原来那条 `has('other')` 的门
+   * 会把这种人挡在外面,而他已经把话打完了。
+   */
+  const canSubmit = draftReasonCodes.size > 0 || customReason.trim().length > 0;
   const controls = (
     <span
       className="assistant-feedback"
@@ -2040,6 +2168,7 @@ function AssistantFeedback({
         type="button"
         className="assistant-feedback-button od-tooltip"
         data-testid="assistant-feedback-positive"
+        data-rating="up"
         data-selected={selected === "positive" ? "true" : "false"}
         data-tooltip={t("assistant.feedbackPositive")}
         data-tooltip-placement="top"
@@ -2053,6 +2182,7 @@ function AssistantFeedback({
           <span
             key={burstKey}
             className="assistant-feedback-burst"
+            data-testid="assistant-feedback-burst"
             aria-hidden="true"
           >
             <span />
@@ -2068,6 +2198,7 @@ function AssistantFeedback({
         type="button"
         className="assistant-feedback-button od-tooltip"
         data-testid="assistant-feedback-negative"
+        data-rating="down"
         data-selected={selected === "negative" ? "true" : "false"}
         data-tooltip={t("assistant.feedbackNegative")}
         data-tooltip-placement="top"
@@ -2084,78 +2215,30 @@ function AssistantFeedback({
     <div className="assistant-feedback-wrap">
       <AssistantFooter {...footerProps} feedbackControls={controls} />
       {reasonRating ? (
-        <div className="assistant-feedback-reasons" ref={reasonsRef}>
-          <div className="assistant-feedback-reason-title">
-            <span>{t("assistant.feedbackReasonTitle")}</span>
-            <span className="assistant-feedback-reason-emoji" aria-hidden="true">
-              {reasonEmoji}
-            </span>
-          </div>
-          <div className="assistant-feedback-reason-options">
-            {reasonOptions.map((option) => (
-              <label
-                key={option.code}
-                className="assistant-feedback-reason-option"
-                data-selected={draftReasonCodes.has(option.code) ? "true" : "false"}
-              >
-                <input
-                  type="checkbox"
-                  checked={draftReasonCodes.has(option.code)}
-                  onChange={() => toggleReasonCode(option.code)}
-                />
-                <span>{option.label}</span>
-              </label>
-            ))}
-          </div>
-          {showOtherInput ? (
-            <textarea
-              className="assistant-feedback-custom"
-              value={customReason}
-              placeholder={t("assistant.feedbackReasonPlaceholder")}
-              rows={2}
-              onChange={(event) => setCustomReason(event.target.value)}
-            />
-          ) : null}
-          {reasonRating === "positive" ? (
-            <p className="assistant-feedback-discord-note">
-              Share what you made with the{" "}
-              <a
-                href={DISCORD_INVITE_URL}
-                data-testid="assistant-feedback-discord-positive"
-              >
-                Discord
-              </a>{" "}
-              community, or drop a screenshot and tell us what worked well.
-            </p>
-          ) : (
-            <p className="assistant-feedback-discord-note">
-              Share more context in{" "}
-              <a
-                href={DISCORD_INVITE_URL}
-                data-testid="assistant-feedback-discord-negative"
-              >
-                Discord
-              </a>{" "}
-              so the team can understand what went wrong and follow up directly.
-            </p>
-          )}
-          <div className="assistant-feedback-actions">
-            <button
-              type="button"
-              className="assistant-feedback-submit"
-              disabled={!canSubmit}
-              onClick={submitReasons}
-            >
-              {t("assistant.feedbackReasonSubmit")}
-            </button>
-          </div>
-        </div>
+        <AssistantFeedbackReasons
+          rating={reasonRating}
+          emoji={reasonEmoji}
+          options={reasonOptions}
+          selected={draftReasonCodes}
+          onToggle={(code) => toggleReasonCode(code as never)}
+          customReason={customReason}
+          onCustomReasonChange={setCustomReason}
+          canSubmit={canSubmit}
+          onSubmit={submitReasons}
+          onCancel={() => setReasonRating(null)}
+          panelRef={reasonsRef}
+          t={t as never}
+        />
       ) : null}
     </div>
   );
 }
 
-function feedbackReasonOptions(
+/**
+ * 导出只为**验收**:镜像陈列页第 40 格要摆产品**真实**的原因项,
+ * 不许在夹具里手抄一份稿子的四个词冒充 —— 那样比出来的是夹具,不是实现。
+ */
+export function feedbackReasonOptions(
   rating: ChatMessageFeedbackRating,
   t: TranslateFn,
   hasDesignSystemContext: boolean,
@@ -2212,22 +2295,60 @@ function feedbackReasonLabel(
   return code;
 }
 
+/**
+ * Fallback "files from this turn" surface.
+ *
+ * Component 14 (design matrix grids 30-33): anything a 16:10 thumbnail can
+ * answer "is this the version I wanted?" for — HTML, image, video — leaves the
+ * text list and becomes an artifact card. `.md` / `.csv` / source files are not
+ * primary artifacts (W12) and audio belongs to component 24's own player, so
+ * both keep the name / size / Open / Download row they have today.
+ */
 function ProducedFiles({
   files,
   projectId,
   onRequestOpenFile,
+  onPublish,
+  onExport,
 }: {
   files: ProjectFile[];
   projectId: string;
   onRequestOpenFile?: (name: string) => void;
+  /** D28 "publish" — HTML artifacts only. */
+  onPublish?: (name: string) => void;
+  /** D28 "export". Without it the card exports through a direct download. */
+  onExport?: (name: string) => void;
 }) {
   const t = useT();
   const { workspaceContext } = useProjectCollabContext();
+  /*
+   * 本轮产出**一律出卡**(用户 2026-08-26:「变成上面卡片形式才对」)——
+   * 拿不出预览图的走 `doc` 档,不再退化成一行灰列表。
+   * `rowFiles` 因此永远是空的,留着是为了下面那段回退分支还在(万一以后又要分流)。
+   */
+  const cardItems: ArtifactCardItem[] = [];
+  const rowFiles: ProjectFile[] = [];
+  for (const file of files) {
+    cardItems.push({ name: file.name, kind: producedArtifactCardKind(file.name) });
+  }
+  const cards =
+    cardItems.length > 0 ? (
+      <ArtifactCards
+        items={cardItems}
+        projectId={projectId}
+        onOpen={onRequestOpenFile}
+        onPublish={onPublish}
+        onExport={onExport}
+      />
+    ) : null;
+  if (rowFiles.length === 0) return cards;
   return (
-    <div className="produced-files">
+    <>
+    {cards}
+    <div className="produced-files" data-testid="produced-files">
       <div className="produced-files-label">{t("assistant.producedFiles")}</div>
       <div className="produced-files-list">
-        {files.map((f) => (
+        {rowFiles.map((f) => (
           <div
             key={f.name}
             className={`produced-file${onRequestOpenFile ? " produced-file-openable" : ""}`}
@@ -2275,6 +2396,7 @@ function ProducedFiles({
         ))}
       </div>
     </div>
+    </>
   );
 }
 
@@ -2589,6 +2711,12 @@ function ProseBlock({
     [visibleText, streaming]
   );
   const segments = useMemo(() => splitOnQuestionForms(head), [head]);
+  /**
+   * 逐字化开(W9):稿子把流式光标删了,新到的字自己化开就是流式的样子。
+   * 判据挂在「这是最后一条且还在流」上 —— 历史消息重渲染时不能再化开一遍。
+   */
+  const proseRef = useRef<HTMLDivElement>(null);
+  useCharReveal(proseRef, Boolean(isLastAssistant && streaming));
   // Route file-link clicks away from the default target="_blank" behavior.
   // Without this, Electron's window-open handler creates a new app window
   // whose href can't resolve, and the user lands on the home screen — the
@@ -2628,9 +2756,21 @@ function ProseBlock({
       }));
     });
   });
-  if (renderable.length === 0 && !live) return null;
+  /**
+   * 一段正文可以「看上去空但仍有东西要画」:还没闭合的 `<question-form>` 被剥掉之后,
+   * 留下来的加载框才是这一块此刻的全部内容。
+   *
+   * 老链路里这种情况不会发生 —— 表单前面的引导语和表单在同一个 text 块里,剥完还剩字。
+   * 新执行记录按 D43 把表单之前的过程叙述收进壳内,壳外只剩这半截标记,
+   * 于是 `renderable` 真的是空的;在这里返回 null 就把加载框一起吞了。
+   */
+  if (renderable.length === 0 && !live && !hadOpenForm) return null;
   return (
-    <div className="prose-block" data-stream-cursor={showStreamCursor && !live ? "true" : undefined}>
+    <div
+      ref={proseRef}
+      className="prose-block"
+      data-stream-cursor={showStreamCursor && !live ? "true" : undefined}
+    >
       {renderable.map((seg) => {
         if (seg.kind === "reminder") {
           return <SystemReminderBlock key={seg.key} text={seg.text} variant="injection" />;
@@ -2660,7 +2800,7 @@ function ProseBlock({
         }
         if (seg.kind === "suppressed-direction") {
           return (
-            <div key={seg.key} className="status-pill">
+            <div key={seg.key} className="status-pill" data-testid="status-pill">
               <span className="status-label">
                 Active design system selected. Visual direction is already locked.
               </span>
@@ -3043,48 +3183,53 @@ function FormBlock({
   );
 
   if (submittedFromHistory) {
+    const flat = submittedSummary.items;
+    const single = flat.length === 1 && submittedSummary.visualItems.length === 0;
     return (
+      /*
+       * 已回答的收口(稿子第 23 / 24 / 25 格)。
+       *
+       * 稿子这一块**没有卡**:一行绿色的「已确认」,底下是 `标签 值` 的纯文本行,
+       * 多选就列成几行,视觉方向那格再挂一张 57px 的缩略图。
+       * 原来这里是灰底圆角卡 + 一枚 ✓ 圆圈 + 一排胶囊 —— 那是稿子之前的形态。
+       *
+       * 类名与 `QuestionForm` 里的 `AnsweredSummary` 共用(`.answered / .k / .ab / .ak / .al / .av`),
+       * 两条路径(历史回放 vs 当轮提交)长得一样,不再各画一套。
+       */
       <div
-        className="question-form-summary"
+        className="answered"
         data-testid="question-form-summary"
         data-form-id={form.id}
         data-message-id={assistantMessageId}
       >
-        <span className="question-form-summary-icon" aria-hidden>
-          <Icon name="check" size={14} />
-        </span>
-        <div className="question-form-summary-body">
-          <div className="question-form-summary-title">{t("questions.bannerAnswered")}</div>
-          {submittedSummary.items.length > 0 || submittedSummary.visualItems.length > 0 ? (
-            <>
-              {submittedSummary.visualItems.map((item) => (
-                <div key={item.label} className="question-form-summary-visuals">
-                  <span className="question-form-summary-visual-label">{item.label}</span>
-                  <div className="question-form-summary-visual-cards">
-                    {item.cards.map((card) => (
-                      <figure key={card.src} className="question-form-summary-visual-card">
-                        <img src={card.src} alt={`${item.label}: ${card.title}`} />
-                        <figcaption>{card.title}</figcaption>
-                      </figure>
-                    ))}
-                  </div>
-                </div>
-              ))}
-              {submittedSummary.items.length > 0 ? (
-                <div className="question-form-summary-items">
-                  {submittedSummary.items.map((item) => (
-                    <span key={item.label} className="question-form-summary-item">
-                      <span>{item.label}</span>
-                      <strong>{item.value}</strong>
-                    </span>
-                  ))}
-                </div>
-              ) : null}
-            </>
-          ) : (
-            <div className="question-form-summary-empty">{t("qf.lockedSubmitted")}</div>
-          )}
-        </div>
+        <div className="k">{t("qf.answeredConfirmed")}</div>
+        {flat.length === 0 && submittedSummary.visualItems.length === 0 ? (
+          <div className="ab">{t("qf.lockedSubmitted")}</div>
+        ) : null}
+        {single ? (
+          <div className="ab">
+            <span className="ak">{flat[0]!.label}</span>
+            <b>{flat[0]!.value}</b>
+          </div>
+        ) : flat.length > 0 ? (
+          <ul className="al">
+            {flat.map((item) => (
+              <li key={`${item.label}-${item.value}`}>
+                <span className="ak">{item.label}</span>
+                <b>{item.value}</b>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        {submittedSummary.visualItems.map((item) => (
+          <div key={item.label} className="ab">
+            <span className="ak">{item.label}</span>
+            <b>{item.cards.map((c) => c.title).join(" / ")}</b>
+            {item.cards.map((card) => (
+              <img key={card.src} className="av" src={card.src} alt={`${item.label}: ${card.title}`} />
+            ))}
+          </div>
+        ))}
       </div>
     );
   }
@@ -3285,6 +3430,14 @@ function SystemReminderBlock({
   );
 }
 
+/**
+ * 推理段落的 markdown 形态(可展开、按 markdown 渲染、文件链接在应用内打开)。
+ *
+ * **当前没有消费方,故意留着**:新执行记录把 thinking 放进壳内,走 `SayText` 的纯文字形态
+ * (`chat/primitives/SayText.tsx`),所以「推理里的链接可以点」这条能力在新链路里
+ * **还没有对应实现**。删掉它等于把这条能力一起删掉,所以先停在这儿等设计/产品拍板:
+ * 壳内文字要不要按 markdown 渲染。删除之前不要动。
+ */
 function ThinkingBlock({
   text,
   streaming,
@@ -3318,7 +3471,7 @@ function ThinkingBlock({
       ? t("assistant.thoughtFor", { s: elapsedSec })
       : t("assistant.thought");
   return (
-    <div className="thinking-block">
+    <div className="thinking-block" data-testid="thinking-block">
       <button className="thinking-toggle" onClick={() => setOpen((o) => !o)}>
         <span className={`thinking-status${isThinking ? ' op-status-running' : open ? ' thinking-status-active' : ''}`} aria-hidden>
           {isThinking
@@ -3355,10 +3508,11 @@ function StatusPill({
   return (
     <div
       className={`status-pill${variant ? ` is-${variant}` : ""}`}
+      data-testid="status-pill"
       data-status={label}
     >
       <span className="status-label">{displayLabel}</span>
-      {detail ? <span className="status-detail">{renderStatusDetail(detail)}</span> : null}
+      {detail ? <span className="status-detail" data-testid="status-detail">{renderStatusDetail(detail)}</span> : null}
     </div>
   );
 }
@@ -3407,51 +3561,6 @@ function splitStatusDetailUrlPunctuation(url: string): [string, string] {
 interface ToolItem {
   use: Extract<AgentEvent, { kind: "tool_use" }>;
   result?: Extract<AgentEvent, { kind: "tool_result" }>;
-}
-
-// Snapshot tools (the call IS the state, later calls supersede earlier
-// ones) and tools the model retries verbatim under headless-mode errors
-// are noisy when stacked. Collapse identical-input neighbors to the most
-// recent. Currently:
-//   - TodoWrite / todowrite: the input replaces the previous list, so the
-//     latest call is the only one worth showing; older identical or
-//     superseded snapshots are pure duplication.
-// Other tool names pass through untouched.
-const SNAPSHOT_TOOL_NAMES = new Set([
-  "TodoWrite",
-  "todowrite",
-  "todo_write",
-  "update_plan",
-]);
-
-function dedupeSnapshotToolRetries(items: ToolItem[]): ToolItem[] {
-  if (items.length <= 1) return items;
-  const allSnapshot = items.every((it) => SNAPSHOT_TOOL_NAMES.has(it.use.name));
-  if (!allSnapshot) return items;
-  // For TodoWrite specifically, the LATEST call always wins regardless of
-  // input — it is a state replace, not an append. The cheap unifying
-  // behavior: keep the last item per `(name, JSON.stringify(input))` key;
-  // for TodoWrite a single name+input is the snapshot identity.
-  const lastByKey = new Map<string, ToolItem>();
-  for (const it of items) {
-    let key: string;
-    try {
-      key = `${it.use.name}:${JSON.stringify(it.use.input)}`;
-    } catch {
-      key = it.use.id;
-    }
-    lastByKey.set(key, it);
-  }
-  // For TodoWrite groups, additionally collapse to just the most recent
-  // item overall (a later call supersedes an earlier one even when inputs
-  // differ). We detect by checking whether all items share a TodoWrite
-  // name after the input-key dedupe above.
-  const collapsed = Array.from(lastByKey.values());
-  const allTodoWrite = collapsed.every((it) => isTodoWriteToolName(it.use.name));
-  if (allTodoWrite && collapsed.length > 1) {
-    return [collapsed[collapsed.length - 1]!];
-  }
-  return collapsed;
 }
 
 // Tools whose streaming JSON input is worth previewing as live code. Other
@@ -3544,7 +3653,7 @@ function StreamingCodeCard({
     if (el) el.scrollTop = el.scrollHeight;
   }, [code]);
   return (
-    <div className="op-card op-file live-code-box">
+    <div className="op-card op-file live-code-box" data-testid="live-code-box">
       <div className="op-card-head live-code-head">
         <span className="op-status op-status-category op-status-running" aria-hidden>
           <Icon name={icon} size={14} />
@@ -3590,324 +3699,6 @@ function LiveCodeBox({ name, raw }: { name: string; raw: string }) {
   );
 }
 
-function ToolGroupCard({
-  items,
-  runStreaming,
-  runSucceeded,
-  projectFileNames,
-  onRequestOpenFile,
-}: {
-  items: ToolItem[];
-  runStreaming: boolean;
-  runSucceeded: boolean;
-  projectFileNames?: Set<string>;
-  onRequestOpenFile?: (name: string) => void;
-}) {
-  const t = useT();
-  // While a task is running, expose the current execution detail. Once it
-  // settles, retain just the activity summary and let the user expand it for
-  // command-level evidence. This gives a task one readable progress line
-  // instead of a stack of finished tool cards.
-  const [open, setOpen] = useState(runStreaming);
-  const [userToggled, setUserToggled] = useState(false);
-
-  useEffect(() => {
-    if (!userToggled) setOpen(runStreaming);
-  }, [runStreaming, userToggled]);
-
-  // Snapshot-style tools (TodoWrite and friends) replace their whole state on
-  // each call, so a turn that wrote the list several times would otherwise
-  // render a stack of superseded cards. Collapse those retries to the latest
-  // snapshot; every other tool passes through untouched.
-  items = dedupeSnapshotToolRetries(items);
-
-  // Fallback for direct ActionGroup use: keep a Todo summary as the first
-  // disclosure level instead of nesting it under the generic tool accordion.
-  if (items.length > 0 && items.every((item) => isTodoWriteToolName(item.use.name))) {
-    const latestTodo = items[items.length - 1]!;
-    return (
-      <TodoCard
-        input={latestTodo.use.input}
-        runStreaming={runStreaming}
-        runSucceeded={runSucceeded}
-      />
-    );
-  }
-
-  const summary = summarizeGroup(items, t, runStreaming, runSucceeded);
-  const running = runStreaming && items.some((it) => !it.result);
-  const hasError =
-    items.some((it) => it.result?.isError) || (!runStreaming && !runSucceeded);
-  return (
-    <div className="action-card">
-      <button
-        type="button"
-        className={`action-card-toggle ${running ? "running" : ""}`}
-        onClick={() => {
-          setUserToggled(true);
-          setOpen((value) => !value);
-        }}
-        aria-expanded={open}
-      >
-        <span className={`action-card-status ${running ? 'op-status-running' : hasError ? 'op-status-error' : 'op-status-ok'}`} aria-hidden>
-          {running
-            ? <Icon name="spinner" size={14} />
-            : hasError
-            ? <Icon name="close" size={14} />
-            : <Icon name="check" size={14} />
-          }
-        </span>
-        <span className={`summary${running ? ' shimmer-text' : ''}`}>
-          {summary.label}
-        </span>
-        <span className="chev" aria-hidden>
-          <Icon name={open ? "chevron-down" : "chevron-right"} size={11} />
-        </span>
-      </button>
-      <div className={`accordion-collapsible${open ? ' open' : ''}`}>
-        <div className="accordion-collapsible-inner">
-          <div className="action-card-body">
-            {items.map((it, i) => (
-              <ToolCard
-                key={i}
-                use={it.use}
-                result={it.result}
-                runStreaming={runStreaming}
-                runSucceeded={runSucceeded}
-                projectFileNames={projectFileNames}
-                onRequestOpenFile={onRequestOpenFile}
-              />
-            ))}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/**
- * One compact, per-turn audit trail for thinking and every non-progress tool.
- * The default view keeps the overall run state above the answer; opening it
- * restores the chronological evidence with a semantic icon for each activity.
- */
-function TaskActivityCard({
-  entries,
-  trailingThinking,
-  hasConclusion,
-  runStreaming,
-  runSucceeded,
-  terminalRunSucceeded,
-  runCanceled,
-  runFailed,
-  startedAt,
-  endedAt,
-  durationMs,
-  projectFileNames,
-  onRequestOpenFile,
-  onThinkingLinkClick,
-}: {
-  entries: TaskActivityEntry[];
-  trailingThinking: boolean;
-  hasConclusion: boolean;
-  runStreaming: boolean;
-  runSucceeded: boolean;
-  terminalRunSucceeded: boolean;
-  runCanceled: boolean;
-  runFailed: boolean;
-  startedAt: number | undefined;
-  endedAt: number | undefined;
-  durationMs: number | undefined;
-  projectFileNames?: Set<string>;
-  onRequestOpenFile?: (name: string) => void;
-  onThinkingLinkClick?: MarkdownLinkClickHandler;
-}) {
-  const t = useT();
-  const [open, setOpen] = useState(runStreaming);
-  const [userToggled, setUserToggled] = useState(false);
-  useEffect(() => {
-    if (!userToggled) setOpen(runStreaming);
-  }, [runStreaming, userToggled]);
-  const toolItems = entries
-    .filter((entry): entry is Extract<TaskActivityEntry, { kind: "tool" }> => entry.kind === "tool")
-    .map((entry) => entry.item);
-  const settledItems = dedupeSnapshotToolRetries(toolItems);
-  const visibleTools = new Set(settledItems);
-  const visibleEntries = entries.filter(
-    (entry) => entry.kind !== "tool" || visibleTools.has(entry.item),
-  );
-  const currentIndex = visibleEntries.length - 1;
-  const currentEntry = currentIndex >= 0 ? visibleEntries[currentIndex] : undefined;
-  const running = runStreaming;
-  const hasError =
-    !runStreaming &&
-    (runFailed ||
-      (!terminalRunSucceeded &&
-        settledItems.some(
-          (item) => item.result?.isError || (!item.result && !runSucceeded),
-        )));
-  const stateLabel = running
-    ? t("assistant.workingLabel")
-    : runCanceled
-      ? t("assistant.canceledLabel")
-      : hasError
-        ? t("critiqueTheater.failedHeading")
-        : t("assistant.doneLabel");
-  const runState = running
-    ? "running"
-    : runCanceled
-      ? "canceled"
-      : hasError
-        ? "error"
-        : "completed";
-  const elapsed = useLiveElapsed(runStreaming, startedAt, endedAt, durationMs);
-
-  if (running && !hasConclusion && currentEntry) {
-    return (
-      <div
-        className="action-card task-activity task-activity-current"
-        data-run-state="running"
-        data-testid="task-activity-current"
-        aria-live="polite"
-        aria-atomic="true"
-      >
-        <div
-          key={taskActivityEntryKey(currentEntry, currentIndex)}
-          className="task-activity-current-row"
-        >
-          <CurrentTaskActivityRow
-            entry={currentEntry}
-            projectFileNames={projectFileNames}
-            onRequestOpenFile={onRequestOpenFile}
-            onThinkingLinkClick={onThinkingLinkClick}
-          />
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className={`action-card task-activity${open ? " is-open" : ""}`}>
-      <button
-        type="button"
-        className={`action-card-toggle task-state-${runState}${running ? " running" : ""}`}
-        onClick={() => {
-          setUserToggled(true);
-          setOpen((value) => !value);
-        }}
-        aria-expanded={open}
-        data-run-state={runState}
-        data-testid="task-activity-toggle"
-      >
-        <span className={`summary${running ? " shimmer-text" : ""}`}>{stateLabel}</span>
-        {elapsed ? <span className="task-activity-elapsed">{elapsed}</span> : null}
-        <span className="chev" aria-hidden>
-          <Icon name="chevron-down" size={13} />
-        </span>
-      </button>
-      <div className={`accordion-collapsible${open ? " open" : ""}`}>
-        <div className="accordion-collapsible-inner">
-          <div className="action-card-body">
-            {visibleEntries.map((entry, index) => {
-              if (entry.kind === "thinking") {
-                return (
-                  <ThinkingBlock
-                    key={`thinking-${index}`}
-                    text={entry.text}
-                    streaming={runStreaming && trailingThinking && index === visibleEntries.length - 1}
-                    onLinkClick={onThinkingLinkClick}
-                  />
-                );
-              }
-              if (entry.kind === "live-tool") {
-                return <LiveCodeBox key={entry.id} name={entry.name} raw={entry.raw} />;
-              }
-              return (
-                <ToolCard
-                  key={entry.item.use.id || index}
-                  use={entry.item.use}
-                  result={entry.item.result}
-                  runStreaming={runStreaming}
-                  runSucceeded={runSucceeded}
-                  projectFileNames={projectFileNames}
-                  onRequestOpenFile={onRequestOpenFile}
-                />
-              );
-            })}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function taskActivityEntryKey(entry: TaskActivityEntry, index: number): string {
-  if (entry.kind === "thinking") return `thinking-${index}`;
-  if (entry.kind === "live-tool") return `live-${entry.id}`;
-  return `tool-${entry.item.use.id || index}`;
-}
-
-function CurrentTaskActivityRow({
-  entry,
-  projectFileNames,
-  onRequestOpenFile,
-  onThinkingLinkClick,
-}: {
-  entry: TaskActivityEntry;
-  projectFileNames?: Set<string>;
-  onRequestOpenFile?: (name: string) => void;
-  onThinkingLinkClick?: MarkdownLinkClickHandler;
-}) {
-  if (entry.kind === "thinking") {
-    // The compact running view keeps one current row (#5667), but thinking
-    // must stay expandable mid-run: a user parked on a long "Thinking…" (or a
-    // hung provider, incident recvqgLmAkUM6G) needs to open the streamed
-    // reasoning to judge progress. ThinkingBlock is the same disclosure the
-    // settled card uses, so the affordance matches before and after the run
-    // completes.
-    return (
-      <ThinkingBlock
-        text={entry.text}
-        streaming
-        onLinkClick={onThinkingLinkClick}
-      />
-    );
-  }
-  if (entry.kind === "live-tool") {
-    return <LiveCodeBox name={entry.name} raw={entry.raw} />;
-  }
-  return (
-    <ToolCard
-      use={entry.item.use}
-      result={entry.item.result}
-      runStreaming
-      runSucceeded={false}
-      projectFileNames={projectFileNames}
-      onRequestOpenFile={onRequestOpenFile}
-    />
-  );
-}
-
-function summarizeGroup(
-  items: ToolItem[],
-  t: (k: keyof Dict, vars?: Record<string, string | number>) => string,
-  runStreaming: boolean,
-  runSucceeded: boolean
-): { label: string; icon: string } {
-  // All items share a tool family because the grouper only merges by name.
-  const name = items[0]?.use.name ?? "";
-  const family = toolFamily(name);
-  const icon = familyIcon(family);
-  const verbs = items.map((it) =>
-    verbForState(it, t, runStreaming, runSucceeded)
-  );
-  // Roll the verbs into a comma-list with deduplicated last-state. So three
-  // edits whose results are all 'Done' render as "Editing ×3, Done"; mixed
-  // states render as "Editing, Reading, Done".
-  const head = countLabel(family, items.length, t);
-  const tail = lastStateLabel(verbs, t);
-  return { label: tail ? `${head}, ${tail}` : head, icon };
-}
-
 function toolFamily(name: string): string {
   if (name === "Edit" || name === "str_replace_edit") return "edit";
   if (name === "Write" || name === "write" || name === "create_file") return "write";
@@ -3919,62 +3710,6 @@ function toolFamily(name: string): string {
   if (name === "WebFetch" || name === "web_fetch" || name === "webfetch") return "fetch";
   if (name === "WebSearch" || name === "web_search" || name === "websearch") return "search";
   return name.toLowerCase();
-}
-
-function familyIcon(family: string): string {
-  if (family === "edit") return "✎";
-  if (family === "write") return "+";
-  if (family === "read") return "↗";
-  if (family === "glob" || family === "grep" || family === "search") return "⌕";
-  if (family === "bash") return "$";
-  if (family === "todo") return "☐";
-  if (family === "fetch") return "↬";
-  return "·";
-}
-
-function countLabel(
-  family: string,
-  n: number,
-  t: (k: keyof Dict) => string
-): string {
-  const verb =
-    family === "edit"
-      ? t("assistant.verbEditing")
-      : family === "write"
-      ? t("assistant.verbWriting")
-      : family === "read"
-      ? t("assistant.verbReading")
-      : family === "glob" || family === "grep" || family === "search"
-      ? t("assistant.verbSearching")
-      : family === "bash"
-      ? t("assistant.verbRunning")
-      : family === "todo"
-      ? t("assistant.verbTodos")
-      : family === "fetch"
-      ? t("assistant.verbFetching")
-      : t("assistant.verbCalling");
-  return n > 1 ? `${verb} ×${n}` : verb;
-}
-
-function verbForState(
-  it: ToolItem,
-  t: (k: keyof Dict) => string,
-  runStreaming = false,
-  runSucceeded = false
-): string {
-  if (!it.result && runStreaming) return t("assistant.verbRunning");
-  if (!it.result && !runSucceeded) return t("tool.error");
-  if (it.result?.isError) return t("tool.error");
-  return t("tool.done");
-}
-
-function lastStateLabel(verbs: string[], t: (k: keyof Dict) => string): string {
-  const set = new Set(verbs);
-  if (set.size === 1) return verbs[verbs.length - 1] ?? "";
-  // Mixed states: surface error first, else running, else any.
-  if (set.has(t("tool.error"))) return t("tool.error");
-  if (set.has(t("assistant.verbRunning"))) return t("assistant.verbRunning");
-  return verbs[verbs.length - 1] ?? "";
 }
 
 type Block =
@@ -3992,60 +3727,33 @@ type Block =
     }
   | { kind: "status"; label: string; detail?: string | undefined };
 
-type TaskActivityEntry =
-  | Extract<Block, { kind: "thinking" }>
-  | Extract<Block, { kind: "live-tool" }>
-  | { kind: "tool"; item: ToolItem };
-
-type TaskActivity = {
-  entries: TaskActivityEntry[];
-  trailingThinking: boolean;
-};
-
-function splitTaskActivity(blocks: Block[]): {
-  contentBlocks: Block[];
-  taskActivity: TaskActivity | null;
-} {
-  const contentBlocks: Block[] = [];
-  const entries: TaskActivityEntry[] = [];
-
-  for (const block of blocks) {
-    if (block.kind === "thinking") {
-      entries.push(block);
-      continue;
-    }
-    if (block.kind === "live-tool") {
-      entries.push(block);
-      continue;
-    }
-    if (block.kind === "tool-group") {
-      // The canonical TodoWrite display is kept above the composer. It
-      // remains the one task-progress surface, rather than becoming another
-      // item inside the execution audit trail.
-      if (block.items.every((item) => isTodoWriteToolName(item.use.name))) {
-        contentBlocks.push(block);
-      } else {
-        entries.push(...block.items.map((item) => ({ kind: "tool" as const, item })));
-      }
-      continue;
-    }
-    contentBlocks.push(block);
-  }
-
-  return {
-    contentBlocks,
-    taskActivity: entries.length > 0
-      ? { entries, trailingThinking: blocks.at(-1)?.kind === "thinking" }
-      : null,
-  };
-}
-
 /**
  * Walk the event stream and build the rendering layout list. We additionally
  * collapse runs of consecutive tool_uses sharing the same tool family into a
  * single tool-group block so the chat surface stays compact during chains
  * of edits / reads.
  */
+/**
+ * 没有 `runStatus` 的历史消息:这一轮到底成没成,只能从事件里看。
+ *
+ * 判据原样来自老的执行记录卡(`TaskActivityCard` 的 `hasError`),搬过来是为了不把
+ * 已经在线上的行为弄丢 —— 少了它,那些消息会顶着「已完成」,壳里却摆着一行红的失败调用。
+ * 两种情况算失败:**有调用报错**,或者**这一轮连结束时间都没有、还挂着没回来的调用**。
+ *
+ * 新规格没给这条派生规则编决策号(壳的三态是按 run 状态定的),先按现状保留。
+ */
+function legacyTurnFailed(events: AgentEvent[], endedAt: number | undefined): boolean {
+  const settled = new Set<string>();
+  for (const event of events) {
+    if (event.kind === "tool_result") settled.add(event.toolUseId);
+  }
+  return events.some((event) => {
+    if (event.kind === "tool_result") return event.isError === true;
+    if (event.kind !== "tool_use") return false;
+    return endedAt === undefined && !settled.has(event.id);
+  });
+}
+
 function stripTodoToolGroups(blocks: Block[]): Block[] {
   return blocks.filter(
     (block) =>
@@ -4215,31 +3923,129 @@ function splitSystemReminders(input: string): ProseSegment[] {
     .filter((seg) => seg.kind === "reminder" || seg.text.trim().length > 0);
 }
 
-function useLiveElapsed(
-  streaming: boolean,
-  startedAt: number | undefined,
-  endedAt: number | undefined,
-  fixedDurationMs: number | undefined,
-): string {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!streaming) return;
-    const id = window.setInterval(() => setNow(Date.now()), 200);
-    return () => window.clearInterval(id);
-  }, [streaming]);
-  if (!streaming && endedAt === undefined && typeof fixedDurationMs === "number") {
-    return formatElapsedMs(fixedDurationMs);
-  }
-  if (!startedAt || (!streaming && endedAt === undefined)) return "";
-  const end = streaming ? now : endedAt;
-  const ms = Math.max(0, (end ?? now) - startedAt);
-  return formatElapsedMs(ms);
-}
-
-function formatElapsedMs(ms: number): string {
-  const s = ms / 1000;
-  if (s < 60) return `${s.toFixed(s < 10 ? 1 : 0)}s`;
-  const m = Math.floor(s / 60);
-  const rem = Math.floor(s - m * 60);
-  return `${m}m ${rem.toString().padStart(2, "0")}s`;
+/**
+ * 反馈原因面板(设计稿第 40 格)。
+ *
+ * 抽出来的原因:它原来长在 `AssistantFeedback` 里、由 `reasonRating` 这个 React state 驱动 ——
+ * 只有**真的点一下**赞或踩才置上,静态渲染的镜像陈列页永远够不着它,
+ * 于是那一格只能空着写「这一页够不着」。抽成组件之后它能被单独渲染、单独比对。
+ * 行为(什么时候弹、提交去哪)仍然留在 `AssistantFeedback`。
+ */
+export function AssistantFeedbackReasons({
+  rating,
+  emoji,
+  options,
+  selected,
+  onToggle,
+  customReason,
+  onCustomReasonChange,
+  canSubmit,
+  onSubmit,
+  onCancel,
+  panelRef,
+  t,
+}: {
+  rating: 'positive' | 'negative';
+  emoji: string;
+  options: Array<{ code: string; label: string }>;
+  selected: Set<string>;
+  onToggle: (code: string) => void;
+  customReason: string;
+  onCustomReasonChange: (next: string) => void;
+  canSubmit: boolean;
+  onSubmit: () => void;
+  /** 稿子第 40 格右下角那颗「取消」—— 收起面板,不提交 */
+  onCancel?: () => void;
+  panelRef?: React.Ref<HTMLDivElement>;
+  t: (key: never, vars?: Record<string, unknown>) => string;
+}) {
+  return (
+    <div className="assistant-feedback-reasons" ref={panelRef}>
+      <div className="assistant-feedback-reason-title">
+        <span>
+          {t(
+            (rating === "negative"
+              ? "assistant.feedbackReasonTitleNegative"
+              : "assistant.feedbackReasonTitle") as never,
+          )}
+        </span>
+        <span className="assistant-feedback-reason-emoji" aria-hidden="true">
+          {emoji}
+        </span>
+      </div>
+      <div className="assistant-feedback-reason-options">
+        {options.map((option) => (
+          /*
+           * 稿子这一排是**胶囊**(`.chip.mod-sm`),不是「方框 + 文字」的复选框。
+           * 换成 button + `aria-pressed` 而不是留着 `<input type=checkbox>` 藏起来:
+           * 原生方框在这一排里是唯一有直角的东西,而且它自带的 12px 方块把每颗
+           * 胶囊撑宽一截,整排的节奏和稿子对不上。多选语义由 `aria-pressed` 承担。
+           */
+          <button
+            key={option.code}
+            type="button"
+            className="assistant-feedback-reason-option"
+            aria-pressed={selected.has(option.code)}
+            data-selected={selected.has(option.code) ? "true" : "false"}
+            onClick={() => onToggle(option.code)}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+      {/*
+        补充框**常驻**,不再等「勾了『其他』才出」(稿子第 40 格里它一直在)。
+        原来那条门的代价是:面板会在勾选「其他」的瞬间长高一截,把下面的按钮推走;
+        而它本来就是可选项,躲起来并不会让人少填,只会让人以为没有这个入口。
+      */}
+      <textarea
+        className="assistant-feedback-custom"
+        value={customReason}
+        placeholder={t("assistant.feedbackReasonPlaceholder" as never)}
+        rows={1}
+        onChange={(event) => onCustomReasonChange(event.target.value)}
+      />
+      {/*
+        社区入口那一句。原来是**硬编码英文** —— 整个面板 19 种语言都翻了,只有它一句
+        英文戳在那儿(用户 2026-08-26 指认)。现在走语言包,`{discord}` 这个占位
+        在译文里的位置各语言不同,所以按占位切开再把链接塞回去,而不是拼字符串。
+      */}
+      <p className="assistant-feedback-discord-note">
+        {(() => {
+          const key = rating === "positive"
+            ? "assistant.feedbackDiscordPositive"
+            : "assistant.feedbackDiscordNegative";
+          const [head = "", tail = ""] = t(key as never).split("{discord}");
+          return (
+            <>
+              {head}
+              <a
+                href={DISCORD_INVITE_URL}
+                data-testid={`assistant-feedback-discord-${rating}`}
+              >
+                Discord
+              </a>
+              {tail}
+            </>
+          );
+        })()}
+      </p>
+      <div className="assistant-feedback-actions">
+        {onCancel ? (
+          <Button variant="ghost" size="sm" onClick={onCancel}>
+            {t("common.cancel" as never)}
+          </Button>
+        ) : null}
+        <Button
+          variant="primary"
+          size="sm"
+          className="assistant-feedback-submit"
+          disabled={!canSubmit}
+          onClick={onSubmit}
+        >
+          {t("assistant.feedbackReasonSubmit" as never)}
+        </Button>
+      </div>
+    </div>
+  );
 }

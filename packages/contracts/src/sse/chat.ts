@@ -134,7 +134,7 @@ export type DaemonAgentPayload =
    * `daemonAgentPayloadToPersistedAgentEvent`.
    */
   | { type: 'tool_input_delta'; id: string; name: string; delta: string }
-  | { type: 'tool_result'; toolUseId: string; content: string; isError?: boolean }
+  | { type: 'tool_result'; toolUseId: string; content: string; isError?: boolean; completedAt?: number }
   | { type: 'usage'; usage?: { input_tokens?: number; output_tokens?: number }; costUsd?: number; durationMs?: number; stopReason?: string | null }
   | { type: 'fabricated_role_marker'; marker: string; messageId?: string }
   // The agent is stuck repeating failing tool calls (see tool-loop-guard.ts).

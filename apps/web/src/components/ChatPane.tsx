@@ -1,3 +1,5 @@
+import { QuoteBar } from './chat/QuoteBar';
+import { appendQuote, type ChatQuote } from '../runtime/chat/quote-selection';
 import {
   Fragment,
   memo,
@@ -39,6 +41,17 @@ import {
   type DesignToolboxActionId,
 } from '../runtime/design-toolbox';
 import { isRetryableAssistantTerminalFailure } from '../runtime/design-delivery';
+import {
+  formatAttachmentSize,
+  formatMessageClock,
+  middleTruncateFileName,
+  splitFileName,
+} from '../runtime/chat/attachment';
+import {
+  attachmentNavDelta,
+  attachmentNavState,
+  type AttachmentNavState,
+} from '../runtime/chat/attachment-nav';
 import type { Dict } from '../i18n/types';
 import { copyToClipboard } from '../lib/copy-to-clipboard';
 import { useLiquidGlass } from '../hooks/useLiquidGlass';
@@ -66,13 +79,13 @@ import {
 } from '../design-system-auto-prompt';
 import {
   isTodoWriteToolName,
-  latestTodoWriteInputForPinnedCard,
   unfinishedTodosFromEvents,
 } from '../runtime/todos';
 import type { AppConfig, ChatAttachment, ChatCommentAttachment, ChatMessage, ChatMessageFeedbackChange, Conversation, DesignSystemSummary, PreviewComment, Project, ProjectFile, ProjectMetadata, SkillSummary } from '../types';
 import { agentDisplayName } from '../utils/agentLabels';
 import { commentTargetDisplayName, commentsToAttachments, simplePositionLabel } from '../comments';
 import { AssistantMessage, type QuestionFormSubmitHandler } from './AssistantMessage';
+import { chatSeam } from './chat/ChatRoot';
 import { TodoCard } from './ToolCard';
 import type { BrandBrowserAssistConfirm } from './OdCard';
 import {
@@ -113,6 +126,7 @@ import { listDesignArtifactCandidates } from './design-files/designArtifacts';
 import type { PluginFolderAgentAction } from './design-files/pluginFolderActions';
 import { Icon, type IconName } from './Icon';
 import { UserActionCard, type UserActionCardTone } from './UserActionCard';
+import { RunErrorCard } from './chat/RunErrorCard';
 import { repoConnectCopy } from './design-system-github-evidence';
 import { isRenderableSketchJson, SketchPreview } from './SketchPreview';
 import type { SettingsSection } from './SettingsDialog';
@@ -1026,7 +1040,6 @@ export function ChatPane({
   const composerRef = useRef<ChatComposerHandle | null>(null);
   const composerSlotRef = useRef<HTMLDivElement | null>(null);
   const composerLayerRef = useRef<HTMLDivElement | null>(null);
-  const pinnedTodoRef = useRef<HTMLDivElement | null>(null);
   const queuedSendStripRef = useRef<HTMLDivElement | null>(null);
   const didInitialScrollRef = useRef(false);
   const runFailedToastSurfaceKeysRef = useRef<Set<string>>(new Set());
@@ -1172,6 +1185,33 @@ export function ChatPane({
   const handlePickSkill = useCallback((skillId: string) => {
     composerRef.current?.applyDesignToolboxSkill(skillId);
   }, []);
+  /**
+   * 生图失败格的「重试」(设计稿组件 12 · 第 11 格)。
+   *
+   * 事件流里既没有「重发第 N 张」这条动作,也没有「哪一张砸了」的顺序信息 ——
+   * 拿得到的只有「这一行一共几张、成了几张、砸了几张」。所以重试走**正常的发送路径**:
+   * 组一句人话交给 agent(它知道刚才在生成什么),而不是伪造一条工具调用。
+   * 这是今天能真正接上的做法;等 daemon 补了逐张重发的动作再换成直连(规格 D59)。
+   */
+  /**
+   * 正文取词(设计稿组件 23)。在助手正文里选中一段话 → 浮条 →「添加到对话」→
+   * 输入框上方多一枚芯片。发送时把这几段话作为**引文前缀**带给 agent。
+   */
+  const [quotes, setQuotes] = useState<ChatQuote[]>([]);
+  const handleQuote = useCallback((text: string, messageId: string | null) => {
+    setQuotes((prev) => appendQuote(prev, {
+      id: `${Date.now()}-${prev.length}`,
+      text,
+      messageId: messageId ?? '',
+    }));
+    // 收掉选区,浮条跟着消失 —— 不然它会一直浮在那儿
+    window.getSelection()?.removeAllRanges();
+  }, []);
+  const clearQuotes = useCallback(() => setQuotes([]), []);
+
+  const handleRetryImage = useCallback((row: { total: number; done: number; failed: number }) => {
+    void onSend(t('chat.record.retryImage', { count: Math.max(1, row.failed) }), [], []);
+  }, [onSend, t]);
   const latestAssistantForBrandState = useMemo(() => {
     for (let i = displayMessages.length - 1; i >= 0; i -= 1) {
       const message = displayMessages[i]!;
@@ -2121,20 +2161,7 @@ export function ChatPane({
       }
     };
 
-    let observedPinnedTodo: Element | null = null;
     let observedQueuedSendStrip: Element | null = null;
-    const syncPinnedTodo = () => {
-      if (!resizeObserver) return;
-      const pinnedEl = pinnedTodoRef.current;
-      if (pinnedEl && observedPinnedTodo !== pinnedEl) {
-        if (observedPinnedTodo) resizeObserver.unobserve(observedPinnedTodo);
-        resizeObserver.observe(pinnedEl);
-        observedPinnedTodo = pinnedEl;
-      } else if (!pinnedEl && observedPinnedTodo) {
-        resizeObserver.unobserve(observedPinnedTodo);
-        observedPinnedTodo = null;
-      }
-    };
     const syncQueuedSendStrip = () => {
       if (!resizeObserver) return;
       const queuedEl = queuedSendStripRef.current;
@@ -2151,14 +2178,12 @@ export function ChatPane({
     };
 
     syncObservedChildren();
-    syncPinnedTodo();
     syncQueuedSendStrip();
 
     const mutationObserver =
       typeof MutationObserver !== 'undefined'
         ? new MutationObserver(() => {
             syncObservedChildren();
-            syncPinnedTodo();
             syncQueuedSendStrip();
             followLatestIfPinned();
           })
@@ -2171,9 +2196,9 @@ export function ChatPane({
       childList: true,
       subtree: true,
     });
-    // PinnedTodoSlot and QueuedSendStrip live outside the chat-log subtree.
-    // Watch their nearest common ancestor so resize observation follows those
-    // surfaces when they mount or unmount.
+    // QueuedSendStrip lives outside the chat-log subtree. Watch its nearest
+    // common ancestor so resize observation follows it when it mounts or
+    // unmounts. (The pinned TodoCard that used to sit here retired with B17.)
     const paneEl = el.parentElement?.parentElement ?? null;
     if (paneEl && mutationObserver) {
       mutationObserver.observe(paneEl, { childList: true });
@@ -2385,6 +2410,8 @@ export function ChatPane({
           hover to expand); they no longer sit as quick pills above the input. */}
     <ChatComposer
       ref={composerRef}
+      quotes={quotes}
+      onClearQuotes={clearQuotes}
       designSystemPicker={designSystemPicker}
       projectId={projectId}
       projectFiles={projectFiles}
@@ -2480,628 +2507,657 @@ export function ChatPane({
     : undefined;
 
   return (
-    <div className="pane">
-      <div className="chat-project-header">
-        {collapseControlLifted ? null : onCollapse ? (
-          <button
-            type="button"
-            className="chat-project-back od-tooltip"
-            onClick={onCollapse}
-            title={t('chat.collapsePane')}
-            aria-label={t('chat.collapsePane')}
-            data-tooltip={t('chat.collapsePane')}
-            data-tooltip-placement="bottom"
-            data-testid="chat-collapse-toggle"
-          >
-            <Icon name="panel-left" size={16} />
-          </button>
-        ) : onBack ? (
-          <button
-            type="button"
-            className="chat-project-back"
-            onClick={onBack}
-            title={backLabel}
-            aria-label={backLabel}
-          >
-            <Icon name="arrow-left" size={16} />
-          </button>
-        ) : null}
-        {projectHeader ? (
-          <span className="chat-project-header-title">{projectHeader}</span>
-        ) : null}
-        <div
-          className={`chat-history-wrap chat-session-switcher${showConvList ? ' open' : ''}`}
-          ref={historyWrapRef}
-        >
-          <button
-            type="button"
-            className="chat-session-trigger icon-only"
-            data-testid="conversation-history-trigger"
-            title={
-              activeConversation?.title
-                ? `${t('chat.conversationsTitle')} · ${activeConversation.title}`
-                : t('chat.conversationsTitle')
-            }
-            aria-label={t('chat.conversationsAria')}
-            aria-haspopup="menu"
-            aria-expanded={showConvList}
-            onClick={() => {
-              setShowConvList((v) => {
-                const next = !v;
-                if (next) {
-                  trackChatPanelClick(analytics.track, {
-                    page_name: 'chat_panel',
-                    area: 'chat_panel',
-                    element: 'history',
-                  });
-                }
-                return next;
-              });
-            }}
-          >
-            <Icon name="comment" size={16} />
-          </button>
-          {showConvList ? (
-            <div className="chat-history-menu" role="menu" data-testid="conversation-history-menu">
-              <div className="chat-history-menu-head">
-                <span className="chat-history-menu-title">
-                  {t('chat.conversationsHeading')}
-                  <span className="chat-history-menu-count">
-                    <span data-testid="conversation-history-count">
-                    {filteredConversations.length === conversations.length
-                      ? compactCount(conversations.length)
-                      : `${compactCount(filteredConversations.length)} / ${compactCount(conversations.length)}`}
-                    </span>
-                  </span>
-                </span>
-                {onNewConversation ? (
-                  <button
-                    type="button"
-                    className="chat-history-new"
-                    data-testid="conversation-history-new"
-                    disabled={newConversationDisabled}
-                    onClick={() => {
-                      if (newConversationDisabled) return;
-                      trackChatPanelClick(analytics.track, {
-                        page_name: 'chat_panel',
-                        area: 'chat_panel',
-                        element: 'new_chat',
-                      });
-                      onNewConversation();
-                      setShowConvList(false);
-                    }}
-                  >
-                    <Icon name="plus" size={11} />
-                    <span>{t('chat.new')}</span>
-                  </button>
-                ) : null}
-              </div>
-              <label className="chat-history-search">
-                <Icon name="search" size={12} />
-                <input
-                  type="search"
-                  value={conversationSearch}
-                  onChange={(event) => setConversationSearch(event.currentTarget.value)}
-                  placeholder="Search conversations"
-                  data-testid="conversation-history-search"
-                />
-                {conversationSearch ? (
-                  <button
-                    type="button"
-                    className="chat-history-search-clear"
-                    onClick={() => setConversationSearch('')}
-                    aria-label={t('chat.comments.clear')}
-                  >
-                    <Icon name="close" size={10} />
-                  </button>
-                ) : null}
-              </label>
-              <div className="chat-history-list" data-testid="conversation-list">
-                {conversations.length === 0 ? (
-                  <div className="chat-history-empty">
-                    {t('chat.emptyConversations')}
-                  </div>
-                ) : filteredConversations.length === 0 ? (
-                  <div className="chat-history-empty">
-                    No conversations match.
-                  </div>
-                ) : (
-                  filteredConversations.map((c) => (
-                    <ConversationRow
-                      key={c.id}
-                      conversation={c}
-                      active={c.id === activeConversationId}
-                      messageCount={conversationMessageCount(c, activeConversationId, messagesConversationId, messages.length)}
-                      onSelect={() => {
-                        onSelectConversation(c.id);
-                        setShowConvList(false);
-                      }}
-                      onDelete={() => onDeleteConversation(c.id)}
-                      t={t}
-                    />
-                  ))
-                )}
-              </div>
-            </div>
-          ) : null}
-        </div>
-      </div>
-      {tab === 'chat' ? (
-        <>
-          <div className={`chat-log-wrap${chatLogTray ? ' has-chat-log-tray' : ''}`}>
-            <ChatMessageRail
-              messages={displayMessages}
-              loading={loading}
-              logRef={logRef}
-              activeConversationKey={activeConversationId ?? 'no-conversation'}
-              onNavigate={handleChatRailNavigate}
-              t={t}
-            />
-            <div
-              className={[
-                'chat-log',
-                loading ? 'is-loading' : '',
-                chatLogScrollable ? 'is-scrollable' : '',
-                chatLogScrolling ? 'is-scrolling' : '',
-                shouldBalanceFinishedTranscript ? 'is-balanced-transcript' : '',
-              ].filter(Boolean).join(' ')}
-              ref={logRef}
-              aria-busy={loading}
-              onClickCapture={(e) => {
-                // Expanding an accordion (tool card / thinking block) should
-                // grow downward with the clicked header staying put. While a
-                // run is glued to the bottom, the ResizeObserver would re-pin
-                // to the bottom on the height change and push the header up,
-                // so unpin the moment the user toggles one open.
-                const toggle = (e.target as HTMLElement).closest(
-                  '.thinking-toggle, .action-card-toggle, button.op-card-head, [aria-expanded]',
-                );
-                if (toggle && logRef.current?.contains(toggle)) {
-                  pinnedToBottomRef.current = false;
-                  anchorActiveRef.current = false;
-                  setScrolledFromBottom(true);
-                }
-              }}
-            >
-              {loading ? <ChatConversationLoading t={t} /> : null}
-              {displayMessages.length === 0 && !loading ? (
-                <div className="chat-empty-wrap">
-                  {showImportedFolderArtifacts ? (
-                    <ImportedFolderArtifacts
-                      projectId={projectId}
-                      files={importedFolderArtifacts}
-                      onOpenFile={onRequestOpenFile}
-                      t={t}
-                    />
-                  ) : (
-                    <>
-                      {/* #5517 leaves the empty conversation pane clean — no
-                          "start a conversation" title or starter template
-                          cards; only the connect-repo note below survives. */}
-                      {connectRepoNeeded ? (
-                        <div className="chat-connect-repo" role="note">
-                          <span className="chat-connect-repo-icon" aria-hidden>
-                            <Icon name="github" size={18} />
-                          </span>
-                          <span className="chat-connect-repo-body">
-                            <span className="chat-connect-repo-title">
-                              {repoConnectCopy(t, githubConnected).cardTitle}
-                            </span>
-                            <span className="chat-connect-repo-text">
-                              {repoConnectCopy(t, githubConnected).cardBody}
-                            </span>
-                          </span>
-                          <button
-                            type="button"
-                            className="primary-ghost"
-                            disabled={githubConnected === undefined}
-                            onClick={() => onConnectRepo?.()}
-                          >
-                            <Icon name="github" size={13} />
-                            {repoConnectCopy(t, githubConnected).buttonLabel}
-                          </button>
-                        </div>
-                      ) : null}
-                    </>
-                  )}
-                </div>
-              ) : null}
-              <ChatRows
-                messages={displayMessages}
-                streaming={streaming}
-                liveToolInput={liveToolInput}
-                projectId={projectId}
-                projectKindForTracking={projectKindForTracking}
-                activeConversationId={activeConversationId}
-                activeConversationKey={activeConversationId ?? 'no-conversation'}
-                projectFiles={projectFiles}
-                projectMetadata={projectMetadata}
-                projectFileNames={projectFileNames}
-                projectResolvedDir={projectResolvedDir}
-                onRequestOpenFile={onRequestOpenFile}
-                onRequestPluginDetails={onRequestPluginDetails}
-                onRequestDesignSystemDetails={onRequestDesignSystemDetails}
-                onRequestPluginFolderAgentAction={onRequestPluginFolderAgentAction}
-                activePluginActionPaths={activePluginActionPaths}
-                hiddenPluginActionPaths={hiddenPluginActionPaths}
-                onShareToOpenDesign={onShareToOpenDesign}
-                shareToOpenDesignBusyMessageId={shareToOpenDesignBusyMessageId}
-                forceStreamingMessageIds={forceStreamingMessageIds}
-                lastAssistantId={lastAssistantId}
-                activePluginSnapshot={activePluginSnapshot}
-                activeDesignSystem={activeDesignSystem}
-                hasActiveDesignSystem={hasActiveDesignSystem}
-                errorCardOwnerId={errorCardOwnerId}
-                nextUserContentByAssistantId={nextUserContentByAssistantId}
-                assistantCallbacksRef={assistantCallbacksRef}
-                onBrandBrowserAssistConfirm={onBrandBrowserAssistConfirm}
-                onArtifactShare={onArtifactShare}
-                onToolboxAction={handleToolboxAction}
-                onNextStepPromptAction={handleNextStepPromptAction}
-                onNextStepAiOptimize={onContinueBrandEnrichment}
-                nextStepAiOptimizeBusy={brandEnrichmentBusy}
-                onNextStepContinueExtraction={onContinueBrandExtraction}
-                nextStepContinueExtractionBusy={continueBrandExtractionBusy}
-                onNextStepContinueAiExtraction={onContinueBrandAgentExtraction}
-                nextStepContinueAiExtractionBusy={continueBrandAgentExtractionBusy}
-                onNextStepCreateDesign={onCreateDesignFromActiveDesignSystem}
-                nextStepCreateDesignBusy={createDesignFromActiveDesignSystemBusy}
-                onNextStepCreateDesignSystem={onCreateDesignSystemFromProject}
-                nextStepCreateDesignSystemBusy={createDesignSystemFromProjectBusy}
-                onPickSkill={handlePickSkill}
-                onArtifactDownload={onArtifactDownload}
-                nextStepSkills={skills}
-                toolboxSkillNames={featuredToolboxSkillNames}
-                nextStepVariant={nextStepVariant}
-                onForkFromMessage={viewerOnly ? undefined : onForkFromMessage}
-                onAssistantFeedback={onAssistantFeedback}
-                forkingMessageId={forkingMessageId}
-                t={t}
-                onSubmitQuestionForm={onSubmitQuestionForm}
-                questionFormSubmitDisabled={questionFormSubmitDisabled}
-                scrollContainerRef={logRef}
-                highlightedUserMessageId={chatRailHighlightedMessageId}
-              />
-              {displayError ? (
-                <UserActionCard
-                  dataKind="run-recovery"
-                  icon="alert-triangle"
-                  tone={runErrorTone}
-                  title={
-                    runFailureUi
-                      ? t(runFailureUi.titleKey)
-                      : t('chat.runError.title.generic')
-                  }
-                  open={errorSourceOpen}
-                  onOpenChange={setErrorSourceOpen}
-                  detailsLabel={t('brand.viewDetails')}
-                  details={
-                    <div className="run-error__details">
-                      <p className="run-error__description">{displayError}</p>
-                      {errorDiagnosticText ? (
-                        <div className="run-error__diagnostic">
-                          <div className="run-error__diagnostic-head">
-                            <span>{t('chat.runError.sourceLabel')}</span>
-                            <button
-                              type="button"
-                              className="run-error__source-copy"
-                              onClick={() => void copyErrorDiagnostic()}
-                              aria-label={copiedErrorDiagnostic ? t('chat.copyDone') : t('chat.copyErrorDiagnostic')}
-                              title={copiedErrorDiagnostic ? t('chat.copyDone') : t('chat.copyErrorDiagnostic')}
-                            >
-                              <Icon name={copiedErrorDiagnostic ? 'check' : 'copy'} size={13} />
-                            </button>
-                          </div>
-                          <pre>{errorDiagnosticText}</pre>
-                        </div>
-                      ) : null}
-                    </div>
-                  }
-                  footerActions={showErrorActions ? (
-                    <>
-                      {showByokRecoveryCta ? (
-                        <button
-                          type="button"
-                          className="chat-error-action"
-                          onClick={onSwitchToLocalCli}
-                        >
-                          {t('avatar.useLocal')}
-                        </button>
-                      ) : null}
-                      {retryAssistant && onRetry && runFailureUi ? (
-                        <>
-                          {runFailureUi.primaryAction === 'authorize' ? (
-                            // Sign in to AMR inline — the pill drives vela login,
-                            // surfaces the activation URL/code when the browser
-                            // doesn't auto-open, and on success we retry the run
-                            // without bouncing the user out to Settings.
-                            <AmrLoginPill
-                              className="chat-error-amr-login"
-                              signInLabel={t('chat.amrError.authorizeCta')}
-                              amrEntrySourceDetail="chat_error_authorize_retry"
-                              initialStatus={inlineAmrLoginStatus}
-                              skipInitialRefresh
-                              metricsConsent={config?.telemetry?.metrics === true}
-                              installationId={config?.installationId}
-                              showActivationDetails
-                              hideSignedOutStatus
-                              revealPendingCancelAction
-                              onSignInStarted={() => {
-                                trackRecoveryClick(
-                                  retryAssistant,
-                                  'authorize_and_retry',
-                                );
-                                if (
-                                  projectId
-                                  && activeConversationId
-                                  && amrAuthRetryMountId
-                                  && amrAuthRetryWorkspaceIdentityKey
-                                  && onArmAmrAuthRetryContinuation
-                                ) {
-                                  onArmAmrAuthRetryContinuation({
-                                    projectId,
-                                    conversationId: activeConversationId,
-                                    assistantId: retryAssistant.id,
-                                    workspaceIdentityKey: amrAuthRetryWorkspaceIdentityKey,
-                                    originMountId: amrAuthRetryMountId,
-                                  });
-                                }
-                              }}
-                              onStatusChange={(loginStatus) => {
-                                consumeAmrAuthRetryIfAuthorized(loginStatus);
-                              }}
-                            />
-                          ) : runFailureUi.primaryAction === 'launch-terminal-auth' ? (
-                            <button
-                              type="button"
-                              className="chat-error-action"
-                              onClick={() => {
-                                onLaunchAntigravityOauth?.();
-                              }}
-                            >
-                              {t('chat.antigravityError.launchTerminalCta')}
-                            </button>
-                          ) : runFailureUi.primaryAction === 'launch-terminal-switch-model' ? (
-                            <button
-                              type="button"
-                              className="chat-error-action"
-                              onClick={() => {
-                                onLaunchAntigravityOauth?.();
-                              }}
-                            >
-                              {t('chat.antigravityError.launchSwitchModelCta')}
-                            </button>
-                          ) : runFailureUi.primaryAction === 'recharge' ? (
-                            <button
-                              type="button"
-                              className="chat-error-action"
-                              onClick={() => {
-                                const attribution = recordAmrEntry(
-                                  analytics.track,
-                                  'chat_error_recharge',
-                                  new Date(),
-                                  {
-                                    metricsConsent:
-                                      config?.telemetry?.metrics === true,
-                                  },
-                                );
-                                // Forward the canonical telemetry device id to
-                                // AMR only on metrics opt-in (see
-                                // amrHandoffDeviceId). Sourced from the current
-                                // config.installationId / resolved device id,
-                                // not the mount-time bootstrap UUID, so the join
-                                // key matches the telemetry identity even across
-                                // a Delete-my-data rotation.
-                                const deviceId = amrHandoffDeviceId({
-                                  metricsConsent:
-                                    config?.telemetry?.metrics === true,
-                                  resolvedDeviceId: getResolvedDeviceId(),
-                                  installationId: config?.installationId,
-                                });
-                                window.open(
-                                  attributedAmrUrl(
-                                    amrRechargeUrlForProfile(amrProfile),
-                                    attribution,
-                                    deviceId,
-                                  ),
-                                  '_blank',
-                                  'noopener,noreferrer',
-                                );
-                              }}
-                            >
-                              {t('chat.amrError.rechargeCta')}
-                            </button>
-                          ) : runFailureUi.primaryAction === 'upgrade' ? (
-                            <button
-                              type="button"
-                              className="chat-error-action"
-                              onClick={() => {
-                                const attribution = recordAmrEntry(
-                                  analytics.track,
-                                  'chat_error_upgrade',
-                                  new Date(),
-                                  {
-                                    metricsConsent:
-                                      config?.telemetry?.metrics === true,
-                                  },
-                                );
-                                const deviceId = amrHandoffDeviceId({
-                                  metricsConsent:
-                                    config?.telemetry?.metrics === true,
-                                  resolvedDeviceId: getResolvedDeviceId(),
-                                  installationId: config?.installationId,
-                                });
-                                window.open(
-                                  attributedAmrUrl(
-                                    amrPlansUrlForProfile(amrProfile),
-                                    attribution,
-                                    deviceId,
-                                  ),
-                                  '_blank',
-                                  'noopener,noreferrer',
-                                );
-                              }}
-                            >
-                              {t('chat.amrBalanceGate.plansCta')}
-                            </button>
-                          ) : null}
-                          {canResumeFailedRun ? (
-                            // Resumable failure: continue the agent's existing
-                            // CLI session instead of restarting from scratch, so
-                            // partial work is kept. Replaces the from-scratch
-                            // Retry as the single primary recovery action. Use
-                            // the wired resume handler when present, otherwise a
-                            // plain send of the continue prompt — never the
-                            // re-sending Retry path, which would resume + repeat.
-                            <button
-                              type="button"
-                              className="chat-error-action"
-                              onClick={() =>
-                                {
-                                  trackRecoveryClick(retryAssistant, 'resume_run');
-                                  if (onResumeRun) onResumeRun(retryAssistant);
-                                  else onSend(RESUME_CONTINUE_PROMPT, [], []);
-                                }
-                              }
-                            >
-                              {t('chat.resumeRunCta')}
-                            </button>
-                          ) : runFailureUi.primaryAction === 'retry' ||
-                            runFailureUi.secondaryRetry ? (
-                            <button
-                              type="button"
-                              className="chat-error-action chat-error-retry"
-                              onClick={() => {
-                                trackRecoveryClick(retryAssistant, 'manual_retry');
-                                onRetry(retryAssistant, 'manual_retry');
-                              }}
-                            >
-                              {t('promptTemplates.retry')}
-                            </button>
-                          ) : null}
-                        </>
-                      ) : null}
-                    </>
-                  ) : undefined}
-                />
-              ) : null}
-              {showAmrGuidance && amrSwitchPayload ? (
-                <AmrGuidance
-                  {...amrSwitchPayload}
-                  sourceDetail="chat_error_switch_retry_card"
-                  metricsConsent={config?.telemetry?.metrics === true}
-                  onActivate={() => {
-                    if (retryAssistant && onSwitchToAmrAndRetry) {
-                      trackRecoveryClick(retryAssistant, 'switch_runtime_retry', {
-                        agentProviderId: 'amr',
-                        modelId: config?.agentModels?.amr?.model?.trim() || 'default',
-                      });
-                      onSwitchToAmrAndRetry(retryAssistant);
-                    } else {
-                      onOpenAmrSettings?.();
-                    }
-                  }}
-                />
-              ) : null}
-              {/* Dynamic spacer: when a turn is anchored to the top, this
-                  grows just enough to let the user message reach the top of
-                  the viewport, then shrinks as the reply streams in below. */}
-              <div className="chat-log-tail-spacer" ref={tailSpacerRef} aria-hidden />
-            </div>
-            {chatLogTray}
-            {/* Always mounted so the CSS transition can play in both
-                directions; the `chat-jump-btn-active` class flips the
-                slide + opacity, and `aria-hidden` + `tabIndex={-1}`
-                keep it out of the a11y tree when it's not visible.
-                Also suppressed while the conversation-history dropdown is
-                open: the dropdown sits in a separate stacking context, so
-                without this the button bleeds through it (#4123). */}
+    /* `chatSeam` 是 --chat-* 的唯一定义处。少了它,聊天树里所有 var(--chat-…) 静默落空 ——
+       比如壳头「进行中」那句用 background-clip: text 上色,渐变一失效字就成透明的,
+       页面上像是没渲染,而单测一条都不会红。
+       抹在 .pane 自己身上、**不另外包一层**:包一层会打断 `.split-chat-slot > .pane`
+       这类子选择器(全仓 11 条),聊天卡的圆角 / 白底 / backdrop-filter 会集体失效。 */
+    <div {...chatSeam('pane')}>
+        <div className="chat-project-header">
+          {collapseControlLifted ? null : onCollapse ? (
             <button
               type="button"
-              ref={jumpBtnGlassRef}
-              className={`chat-jump-btn od-glass-refract${scrolledFromBottom && !showConvList ? ' chat-jump-btn-active' : ''}`}
-              onClick={jumpToBottom}
-              title={t('chat.scrollToLatest')}
-              aria-hidden={!scrolledFromBottom || showConvList}
-              tabIndex={scrolledFromBottom && !showConvList ? 0 : -1}
+              className="chat-project-back od-tooltip"
+              onClick={onCollapse}
+              title={t('chat.collapsePane')}
+              aria-label={t('chat.collapsePane')}
+              data-tooltip={t('chat.collapsePane')}
+              data-tooltip-placement="bottom"
+              data-testid="chat-collapse-toggle"
             >
-              <Icon name="arrow-up" size={14} style={{ transform: 'rotate(180deg)' }} />
-              <span>{t('chat.jumpToLatest')}</span>
+              <Icon name="panel-left" size={16} />
             </button>
-          </div>
-          <PinnedTodoSlot
-            messages={displayMessages}
-            streaming={streaming}
-            conversationId={activeConversationId}
-            onContinueRemainingTasks={onContinueRemainingTasks}
-            containerRef={pinnedTodoRef}
-          />
-          <QueuedSendStrip
-            containerRef={queuedSendStripRef}
-            items={queuedItems}
-            editingId={editingQueuedSendId}
-            onEdit={(item) => {
-              trackMessageQueueClick(analytics.track, {
-                page_name: 'chat_panel',
-                area: 'message_queue',
-                element: 'edit',
-                project_id: projectId ?? '',
-                queue_length: queuedItems.length,
-              });
-              restoreQueuedSendToComposer(item);
-            }}
-            onRemove={onRemoveQueuedSend
-              ? (id) => {
-                  trackMessageQueueClick(analytics.track, {
-                    page_name: 'chat_panel',
-                    area: 'message_queue',
-                    element: 'delete',
-                    project_id: projectId ?? '',
-                    queue_length: queuedItems.length,
-                  });
-                  onRemoveQueuedSend(id);
-                }
-              : undefined}
-            onReorder={onReorderQueuedSends}
-            onSendNow={onSendQueuedNow
-              ? (id) => {
-                  trackMessageQueueClick(analytics.track, {
-                    page_name: 'chat_panel',
-                    area: 'message_queue',
-                    element: 'send_now',
-                    project_id: projectId ?? '',
-                    queue_length: queuedItems.length,
-                  });
-                  onSendQueuedNow(id);
-                }
-              : undefined}
-          />
+          ) : onBack ? (
+            <button
+              type="button"
+              className="chat-project-back"
+              onClick={onBack}
+              title={backLabel}
+              aria-label={backLabel}
+            >
+              <Icon name="arrow-left" size={16} />
+            </button>
+          ) : null}
+          {projectHeader ? (
+            <span className="chat-project-header-title">{projectHeader}</span>
+          ) : null}
           <div
-            className="chat-composer-slot"
-            ref={composerSlotRef}
-            style={composerSlotStyle}
-            aria-hidden={shouldPortalComposer ? true : undefined}
+            className={`chat-history-wrap chat-session-switcher${showConvList ? ' open' : ''}`}
+            ref={historyWrapRef}
           >
-            {shouldPortalComposer ? null : composerNode}
+            <button
+              type="button"
+              className="chat-session-trigger icon-only"
+              data-testid="conversation-history-trigger"
+              title={
+                activeConversation?.title
+                  ? `${t('chat.conversationsTitle')} · ${activeConversation.title}`
+                  : t('chat.conversationsTitle')
+              }
+              aria-label={t('chat.conversationsAria')}
+              aria-haspopup="menu"
+              aria-expanded={showConvList}
+              onClick={() => {
+                setShowConvList((v) => {
+                  const next = !v;
+                  if (next) {
+                    trackChatPanelClick(analytics.track, {
+                      page_name: 'chat_panel',
+                      area: 'chat_panel',
+                      element: 'history',
+                    });
+                  }
+                  return next;
+                });
+              }}
+            >
+              <Icon name="comment" size={16} />
+            </button>
+            {showConvList ? (
+              <div className="chat-history-menu" role="menu" data-testid="conversation-history-menu">
+                <div className="chat-history-menu-head">
+                  <span className="chat-history-menu-title">
+                    {t('chat.conversationsHeading')}
+                    <span className="chat-history-menu-count">
+                      <span data-testid="conversation-history-count">
+                      {filteredConversations.length === conversations.length
+                        ? compactCount(conversations.length)
+                        : `${compactCount(filteredConversations.length)} / ${compactCount(conversations.length)}`}
+                      </span>
+                    </span>
+                  </span>
+                  {onNewConversation ? (
+                    <button
+                      type="button"
+                      className="chat-history-new"
+                      data-testid="conversation-history-new"
+                      disabled={newConversationDisabled}
+                      onClick={() => {
+                        if (newConversationDisabled) return;
+                        trackChatPanelClick(analytics.track, {
+                          page_name: 'chat_panel',
+                          area: 'chat_panel',
+                          element: 'new_chat',
+                        });
+                        onNewConversation();
+                        setShowConvList(false);
+                      }}
+                    >
+                      <Icon name="plus" size={11} />
+                      <span>{t('chat.new')}</span>
+                    </button>
+                  ) : null}
+                </div>
+                <label className="chat-history-search">
+                  <Icon name="search" size={12} />
+                  <input
+                    type="search"
+                    value={conversationSearch}
+                    onChange={(event) => setConversationSearch(event.currentTarget.value)}
+                    placeholder="Search conversations"
+                    data-testid="conversation-history-search"
+                  />
+                  {conversationSearch ? (
+                    <button
+                      type="button"
+                      className="chat-history-search-clear"
+                      onClick={() => setConversationSearch('')}
+                      aria-label={t('chat.comments.clear')}
+                    >
+                      <Icon name="close" size={10} />
+                    </button>
+                  ) : null}
+                </label>
+                <div className="chat-history-list" data-testid="conversation-list">
+                  {conversations.length === 0 ? (
+                    <div className="chat-history-empty">
+                      {t('chat.emptyConversations')}
+                    </div>
+                  ) : filteredConversations.length === 0 ? (
+                    <div className="chat-history-empty">
+                      No conversations match.
+                    </div>
+                  ) : (
+                    filteredConversations.map((c) => (
+                      <ConversationRow
+                        key={c.id}
+                        conversation={c}
+                        active={c.id === activeConversationId}
+                        messageCount={conversationMessageCount(c, activeConversationId, messagesConversationId, messages.length)}
+                        onSelect={() => {
+                          onSelectConversation(c.id);
+                          setShowConvList(false);
+                        }}
+                        onDelete={() => onDeleteConversation(c.id)}
+                        t={t}
+                      />
+                    ))
+                  )}
+                </div>
+              </div>
+            ) : null}
           </div>
-          {shouldPortalComposer && composerPortalTarget && composerPortalRect
-            ? createPortal(
-                <div
-                  className="chat-composer-fixed-layer"
-                  ref={composerLayerRef}
-                  style={{
-                    left: composerPortalRect.left,
-                    bottom: composerPortalRect.bottom,
-                    width: composerPortalRect.width,
-                  }}
-                >
-                  {composerNode}
-                </div>,
-                composerPortalTarget,
-              )
-            : null}
-        </>
-      ) : null}
+        </div>
+        {tab === 'chat' ? (
+          <>
+            <div className={`chat-log-wrap${chatLogTray ? ' has-chat-log-tray' : ''}`}>
+              <ChatMessageRail
+                messages={displayMessages}
+                loading={loading}
+                logRef={logRef}
+                activeConversationKey={activeConversationId ?? 'no-conversation'}
+                onNavigate={handleChatRailNavigate}
+                t={t}
+              />
+              <div
+                className={[
+                  'chat-log',
+                  loading ? 'is-loading' : '',
+                  chatLogScrollable ? 'is-scrollable' : '',
+                  chatLogScrolling ? 'is-scrolling' : '',
+                  shouldBalanceFinishedTranscript ? 'is-balanced-transcript' : '',
+                ].filter(Boolean).join(' ')}
+                ref={logRef}
+                data-testid="chat-log"
+                /* 配平态原本只体现在类名上。类名是样式的私事(迁 CSS Module 就变哈希),
+                   状态得有自己的出口 —— 测试断言这个属性,不去嗅类名。 */
+                data-balanced={shouldBalanceFinishedTranscript ? 'true' : 'false'}
+                aria-busy={loading}
+                onClickCapture={(e) => {
+                  // Expanding an accordion (tool card / thinking block) should
+                  // grow downward with the clicked header staying put. While a
+                  // run is glued to the bottom, the ResizeObserver would re-pin
+                  // to the bottom on the height change and push the header up,
+                  // so unpin the moment the user toggles one open.
+                  // `summary` covers the execution record and everything folded
+                  // inside it — those disclosures are <details>, not buttons.
+                  const toggle = (e.target as HTMLElement).closest(
+                    'summary, .thinking-toggle, .action-card-toggle, button.op-card-head, [aria-expanded]',
+                  );
+                  if (toggle && logRef.current?.contains(toggle)) {
+                    pinnedToBottomRef.current = false;
+                    anchorActiveRef.current = false;
+                    setScrolledFromBottom(true);
+                  }
+                }}
+              >
+                {loading ? <ChatConversationLoading t={t} /> : null}
+                {displayMessages.length === 0 && !loading ? (
+                  <div className="chat-empty-wrap">
+                    {showImportedFolderArtifacts ? (
+                      <ImportedFolderArtifacts
+                        projectId={projectId}
+                        files={importedFolderArtifacts}
+                        onOpenFile={onRequestOpenFile}
+                        t={t}
+                      />
+                    ) : (
+                      <>
+                        {/* #5517 leaves the empty conversation pane clean — no
+                            "start a conversation" title or starter template
+                            cards; only the connect-repo note below survives. */}
+                        {connectRepoNeeded ? (
+                          <div className="chat-connect-repo" role="note">
+                            <span className="chat-connect-repo-icon" aria-hidden>
+                              <Icon name="github" size={18} />
+                            </span>
+                            <span className="chat-connect-repo-body">
+                              <span className="chat-connect-repo-title">
+                                {repoConnectCopy(t, githubConnected).cardTitle}
+                              </span>
+                              <span className="chat-connect-repo-text">
+                                {repoConnectCopy(t, githubConnected).cardBody}
+                              </span>
+                            </span>
+                            <button
+                              type="button"
+                              className="primary-ghost"
+                              disabled={githubConnected === undefined}
+                              onClick={() => onConnectRepo?.()}
+                            >
+                              <Icon name="github" size={13} />
+                              {repoConnectCopy(t, githubConnected).buttonLabel}
+                            </button>
+                          </div>
+                        ) : null}
+                      </>
+                    )}
+                  </div>
+                ) : null}
+                <ChatRows
+                  messages={displayMessages}
+                  streaming={streaming}
+                  onRetryImage={handleRetryImage}
+                  liveToolInput={liveToolInput}
+                  projectId={projectId}
+                  projectKindForTracking={projectKindForTracking}
+                  activeConversationId={activeConversationId}
+                  activeConversationKey={activeConversationId ?? 'no-conversation'}
+                  projectFiles={projectFiles}
+                  projectMetadata={projectMetadata}
+                  projectFileNames={projectFileNames}
+                  projectResolvedDir={projectResolvedDir}
+                  onRequestOpenFile={onRequestOpenFile}
+                  onRequestPluginDetails={onRequestPluginDetails}
+                  onRequestDesignSystemDetails={onRequestDesignSystemDetails}
+                  onRequestPluginFolderAgentAction={onRequestPluginFolderAgentAction}
+                  activePluginActionPaths={activePluginActionPaths}
+                  hiddenPluginActionPaths={hiddenPluginActionPaths}
+                  onShareToOpenDesign={onShareToOpenDesign}
+                  shareToOpenDesignBusyMessageId={shareToOpenDesignBusyMessageId}
+                  forceStreamingMessageIds={forceStreamingMessageIds}
+                  lastAssistantId={lastAssistantId}
+                  activePluginSnapshot={activePluginSnapshot}
+                  activeDesignSystem={activeDesignSystem}
+                  hasActiveDesignSystem={hasActiveDesignSystem}
+                  errorCardOwnerId={errorCardOwnerId}
+                  nextUserContentByAssistantId={nextUserContentByAssistantId}
+                  assistantCallbacksRef={assistantCallbacksRef}
+                  onBrandBrowserAssistConfirm={onBrandBrowserAssistConfirm}
+                  onArtifactShare={onArtifactShare}
+                  onToolboxAction={handleToolboxAction}
+                  onNextStepPromptAction={handleNextStepPromptAction}
+                  onNextStepAiOptimize={onContinueBrandEnrichment}
+                  nextStepAiOptimizeBusy={brandEnrichmentBusy}
+                  onNextStepContinueExtraction={onContinueBrandExtraction}
+                  nextStepContinueExtractionBusy={continueBrandExtractionBusy}
+                  onNextStepContinueAiExtraction={onContinueBrandAgentExtraction}
+                  nextStepContinueAiExtractionBusy={continueBrandAgentExtractionBusy}
+                  onNextStepCreateDesign={onCreateDesignFromActiveDesignSystem}
+                  nextStepCreateDesignBusy={createDesignFromActiveDesignSystemBusy}
+                  onNextStepCreateDesignSystem={onCreateDesignSystemFromProject}
+                  nextStepCreateDesignSystemBusy={createDesignSystemFromProjectBusy}
+                  onPickSkill={handlePickSkill}
+                  onArtifactDownload={onArtifactDownload}
+                  nextStepSkills={skills}
+                  toolboxSkillNames={featuredToolboxSkillNames}
+                  nextStepVariant={nextStepVariant}
+                  onForkFromMessage={viewerOnly ? undefined : onForkFromMessage}
+                  onAssistantFeedback={onAssistantFeedback}
+                  forkingMessageId={forkingMessageId}
+                  t={t}
+                  onSubmitQuestionForm={onSubmitQuestionForm}
+                  questionFormSubmitDisabled={questionFormSubmitDisabled}
+                  scrollContainerRef={logRef}
+                  highlightedUserMessageId={chatRailHighlightedMessageId}
+                />
+                {displayError ? (
+                  /*
+                   * 报错卡(稿子组件 19)。终于接回产品 —— 之前 `RunErrorCard` 抽出来了
+                   * 却只有验收陈列页在用,产品这一格仍是 `UserActionCard`:
+                   * 说明被藏在「查看详情」折叠里,而稿子的 `errb` 是**一句话直接可见**。
+                   *
+                   * 折叠留给**诊断原文**(那段给工程看的堆栈),不是给用户的那句人话。
+                   */
+                  <RunErrorCard
+                    dataKind="run-recovery"
+                    title={
+                      runFailureUi
+                        ? t(runFailureUi.titleKey)
+                        : t('chat.runError.title.generic')
+                    }
+                    description={displayError}
+                    actions={showErrorActions ? (
+                      <>
+                        {showByokRecoveryCta ? (
+                          <button
+                            type="button"
+                            className="chat-error-action"
+                            onClick={onSwitchToLocalCli}
+                          >
+                            {t('avatar.useLocal')}
+                          </button>
+                        ) : null}
+                        {retryAssistant && onRetry && runFailureUi ? (
+                          <>
+                            {runFailureUi.primaryAction === 'authorize' ? (
+                              // Sign in to AMR inline — the pill drives vela login,
+                              // surfaces the activation URL/code when the browser
+                              // doesn't auto-open, and on success we retry the run
+                              // without bouncing the user out to Settings.
+                              <AmrLoginPill
+                                className="chat-error-amr-login"
+                                signInLabel={t('chat.amrError.authorizeCta')}
+                                amrEntrySourceDetail="chat_error_authorize_retry"
+                                initialStatus={inlineAmrLoginStatus}
+                                skipInitialRefresh
+                                metricsConsent={config?.telemetry?.metrics === true}
+                                installationId={config?.installationId}
+                                showActivationDetails
+                                hideSignedOutStatus
+                                revealPendingCancelAction
+                                onSignInStarted={() => {
+                                  trackRecoveryClick(
+                                    retryAssistant,
+                                    'authorize_and_retry',
+                                  );
+                                  if (
+                                    projectId
+                                    && activeConversationId
+                                    && amrAuthRetryMountId
+                                    && amrAuthRetryWorkspaceIdentityKey
+                                    && onArmAmrAuthRetryContinuation
+                                  ) {
+                                    onArmAmrAuthRetryContinuation({
+                                      projectId,
+                                      conversationId: activeConversationId,
+                                      assistantId: retryAssistant.id,
+                                      workspaceIdentityKey: amrAuthRetryWorkspaceIdentityKey,
+                                      originMountId: amrAuthRetryMountId,
+                                    });
+                                  }
+                                }}
+                                onStatusChange={(loginStatus) => {
+                                  consumeAmrAuthRetryIfAuthorized(loginStatus);
+                                }}
+                              />
+                            ) : runFailureUi.primaryAction === 'launch-terminal-auth' ? (
+                              <button
+                                type="button"
+                                className="chat-error-action"
+                                onClick={() => {
+                                  onLaunchAntigravityOauth?.();
+                                }}
+                              >
+                                {t('chat.antigravityError.launchTerminalCta')}
+                              </button>
+                            ) : runFailureUi.primaryAction === 'launch-terminal-switch-model' ? (
+                              <button
+                                type="button"
+                                className="chat-error-action"
+                                onClick={() => {
+                                  onLaunchAntigravityOauth?.();
+                                }}
+                              >
+                                {t('chat.antigravityError.launchSwitchModelCta')}
+                              </button>
+                            ) : runFailureUi.primaryAction === 'recharge' ? (
+                              <button
+                                type="button"
+                                className="chat-error-action"
+                                onClick={() => {
+                                  const attribution = recordAmrEntry(
+                                    analytics.track,
+                                    'chat_error_recharge',
+                                    new Date(),
+                                    {
+                                      metricsConsent:
+                                        config?.telemetry?.metrics === true,
+                                    },
+                                  );
+                                  // Forward the canonical telemetry device id to
+                                  // AMR only on metrics opt-in (see
+                                  // amrHandoffDeviceId). Sourced from the current
+                                  // config.installationId / resolved device id,
+                                  // not the mount-time bootstrap UUID, so the join
+                                  // key matches the telemetry identity even across
+                                  // a Delete-my-data rotation.
+                                  const deviceId = amrHandoffDeviceId({
+                                    metricsConsent:
+                                      config?.telemetry?.metrics === true,
+                                    resolvedDeviceId: getResolvedDeviceId(),
+                                    installationId: config?.installationId,
+                                  });
+                                  window.open(
+                                    attributedAmrUrl(
+                                      amrRechargeUrlForProfile(amrProfile),
+                                      attribution,
+                                      deviceId,
+                                    ),
+                                    '_blank',
+                                    'noopener,noreferrer',
+                                  );
+                                }}
+                              >
+                                {t('chat.amrError.rechargeCta')}
+                              </button>
+                            ) : runFailureUi.primaryAction === 'upgrade' ? (
+                              <button
+                                type="button"
+                                className="chat-error-action"
+                                onClick={() => {
+                                  const attribution = recordAmrEntry(
+                                    analytics.track,
+                                    'chat_error_upgrade',
+                                    new Date(),
+                                    {
+                                      metricsConsent:
+                                        config?.telemetry?.metrics === true,
+                                    },
+                                  );
+                                  const deviceId = amrHandoffDeviceId({
+                                    metricsConsent:
+                                      config?.telemetry?.metrics === true,
+                                    resolvedDeviceId: getResolvedDeviceId(),
+                                    installationId: config?.installationId,
+                                  });
+                                  window.open(
+                                    attributedAmrUrl(
+                                      amrPlansUrlForProfile(amrProfile),
+                                      attribution,
+                                      deviceId,
+                                    ),
+                                    '_blank',
+                                    'noopener,noreferrer',
+                                  );
+                                }}
+                              >
+                                {t('chat.amrBalanceGate.plansCta')}
+                              </button>
+                            ) : null}
+                            {canResumeFailedRun ? (
+                              // Resumable failure: continue the agent's existing
+                              // CLI session instead of restarting from scratch, so
+                              // partial work is kept. Replaces the from-scratch
+                              // Retry as the single primary recovery action. Use
+                              // the wired resume handler when present, otherwise a
+                              // plain send of the continue prompt — never the
+                              // re-sending Retry path, which would resume + repeat.
+                              <button
+                                type="button"
+                                className="chat-error-action"
+                                onClick={() =>
+                                  {
+                                    trackRecoveryClick(retryAssistant, 'resume_run');
+                                    if (onResumeRun) onResumeRun(retryAssistant);
+                                    else onSend(RESUME_CONTINUE_PROMPT, [], []);
+                                  }
+                                }
+                              >
+                                {t('chat.resumeRunCta')}
+                              </button>
+                            ) : runFailureUi.primaryAction === 'retry' ||
+                              runFailureUi.secondaryRetry ? (
+                              <button
+                                type="button"
+                                className="chat-error-action chat-error-retry"
+                                onClick={() => {
+                                  trackRecoveryClick(retryAssistant, 'manual_retry');
+                                  onRetry(retryAssistant, 'manual_retry');
+                                }}
+                              >
+                                {t('promptTemplates.retry')}
+                              </button>
+                            ) : null}
+                          </>
+                        ) : null}
+                      </>
+                    ) : null}
+                  >
+                    {errorDiagnosticText ? (
+                      <div className="run-error__source">
+                        {/* 诊断原文仍然收在折叠里 —— 稿子的卡上不摆堆栈,
+                            那段是给工程看的;给用户的那句人话已经在上面直接可见了 */}
+                        <button
+                          type="button"
+                          className="run-error__source-toggle"
+                          aria-expanded={errorSourceOpen}
+                          onClick={() => setErrorSourceOpen(!errorSourceOpen)}
+                        >
+                          <span>{t('brand.viewDetails')}</span>
+                          <Icon name="chevron-down" size={13} className={`run-error__source-chevron${errorSourceOpen ? ' is-open' : ''}`} />
+                        </button>
+                      </div>
+                    ) : null}
+                    {errorDiagnosticText ? (
+                      <div className={`accordion-collapsible${errorSourceOpen ? ' open' : ''}`}>
+                        <div className="accordion-collapsible-inner">
+                      <div className="run-error__diagnostic">
+                        <div className="run-error__diagnostic-head">
+                          <span>{t('chat.runError.sourceLabel')}</span>
+                          <button
+                            type="button"
+                            className="run-error__source-copy"
+                            onClick={() => void copyErrorDiagnostic()}
+                            aria-label={copiedErrorDiagnostic ? t('chat.copyDone') : t('chat.copyErrorDiagnostic')}
+                            title={copiedErrorDiagnostic ? t('chat.copyDone') : t('chat.copyErrorDiagnostic')}
+                          >
+                            <Icon name={copiedErrorDiagnostic ? 'check' : 'copy'} size={13} />
+                          </button>
+                        </div>
+                        <pre>{errorDiagnosticText}</pre>
+                      </div>
+                        </div>
+                      </div>
+                    ) : null}
+                  </RunErrorCard>
+                ) : null}
+                {showAmrGuidance && amrSwitchPayload ? (
+                  <AmrGuidance
+                    {...amrSwitchPayload}
+                    sourceDetail="chat_error_switch_retry_card"
+                    metricsConsent={config?.telemetry?.metrics === true}
+                    onActivate={() => {
+                      if (retryAssistant && onSwitchToAmrAndRetry) {
+                        trackRecoveryClick(retryAssistant, 'switch_runtime_retry', {
+                          agentProviderId: 'amr',
+                          modelId: config?.agentModels?.amr?.model?.trim() || 'default',
+                        });
+                        onSwitchToAmrAndRetry(retryAssistant);
+                      } else {
+                        onOpenAmrSettings?.();
+                      }
+                    }}
+                  />
+                ) : null}
+                {/* Dynamic spacer: when a turn is anchored to the top, this
+                    grows just enough to let the user message reach the top of
+                    the viewport, then shrinks as the reply streams in below. */}
+                <div className="chat-log-tail-spacer" ref={tailSpacerRef} aria-hidden />
+                {/* 正文取词的浮条:只认 chat-log 里的选区(输入框、侧栏的选中不该弹它) */}
+                <QuoteBar scopeRef={logRef} onQuote={handleQuote} />
+              </div>
+              {chatLogTray}
+              {/* Always mounted so the CSS transition can play in both
+                  directions; the `chat-jump-btn-active` class flips the
+                  slide + opacity, and `aria-hidden` + `tabIndex={-1}`
+                  keep it out of the a11y tree when it's not visible.
+                  Also suppressed while the conversation-history dropdown is
+                  open: the dropdown sits in a separate stacking context, so
+                  without this the button bleeds through it (#4123). */}
+              <button
+                type="button"
+                ref={jumpBtnGlassRef}
+                className={`chat-jump-btn od-glass-refract${scrolledFromBottom && !showConvList ? ' chat-jump-btn-active' : ''}`}
+                data-testid="chat-jump-btn"
+                onClick={jumpToBottom}
+                title={t('chat.scrollToLatest')}
+                aria-hidden={!scrolledFromBottom || showConvList}
+                tabIndex={scrolledFromBottom && !showConvList ? 0 : -1}
+              >
+                <Icon name="arrow-up" size={14} style={{ transform: 'rotate(180deg)' }} />
+                <span>{t('chat.jumpToLatest')}</span>
+              </button>
+            </div>
+            {/* B17:钉在输入框上方的 TodoCard 退场 —— 同一份清单不再显示两处。
+                清单现在只在执行记录里以「执行计划 · N 步」+ 分段出现(D29 / 组件 7)。
+                根 `AGENTS.md` 的「Chat UI conventions」那一段已同步改掉。 */}
+            <QueuedSendStrip
+              containerRef={queuedSendStripRef}
+              items={queuedItems}
+              editingId={editingQueuedSendId}
+              onEdit={(item) => {
+                trackMessageQueueClick(analytics.track, {
+                  page_name: 'chat_panel',
+                  area: 'message_queue',
+                  element: 'edit',
+                  project_id: projectId ?? '',
+                  queue_length: queuedItems.length,
+                });
+                restoreQueuedSendToComposer(item);
+              }}
+              onRemove={onRemoveQueuedSend
+                ? (id) => {
+                    trackMessageQueueClick(analytics.track, {
+                      page_name: 'chat_panel',
+                      area: 'message_queue',
+                      element: 'delete',
+                      project_id: projectId ?? '',
+                      queue_length: queuedItems.length,
+                    });
+                    onRemoveQueuedSend(id);
+                  }
+                : undefined}
+              onReorder={onReorderQueuedSends}
+              onSendNow={onSendQueuedNow
+                ? (id) => {
+                    trackMessageQueueClick(analytics.track, {
+                      page_name: 'chat_panel',
+                      area: 'message_queue',
+                      element: 'send_now',
+                      project_id: projectId ?? '',
+                      queue_length: queuedItems.length,
+                    });
+                    onSendQueuedNow(id);
+                  }
+                : undefined}
+            />
+            <div
+              className="chat-composer-slot"
+              ref={composerSlotRef}
+              style={composerSlotStyle}
+              aria-hidden={shouldPortalComposer ? true : undefined}
+            >
+              {shouldPortalComposer ? null : composerNode}
+            </div>
+            {shouldPortalComposer && composerPortalTarget && composerPortalRect
+              ? createPortal(
+                  <div
+                    className="chat-composer-fixed-layer"
+                    ref={composerLayerRef}
+                    style={{
+                      left: composerPortalRect.left,
+                      bottom: composerPortalRect.bottom,
+                      width: composerPortalRect.width,
+                    }}
+                  >
+                    {composerNode}
+                  </div>,
+                  composerPortalTarget,
+                )
+              : null}
+          </>
+        ) : null}
     </div>
   );
 }
@@ -3407,6 +3463,7 @@ function ChatConversationLoading({ t }: { t: TranslateFn }) {
 function ChatRows({
   messages,
   streaming,
+  onRetryImage,
   liveToolInput,
   projectId,
   projectKindForTracking,
@@ -3461,6 +3518,8 @@ function ChatRows({
   highlightedUserMessageId,
 }: {
   messages: ChatMessage[];
+  /** 生图失败格的「重试」—— 见 ChatPane 的 handleRetryImage(D59) */
+  onRetryImage?: (row: { total: number; done: number; failed: number }, index: number) => void;
   streaming: boolean;
   liveToolInput?: Record<string, { name: string; text: string; seq?: number }>;
   projectId: string | null;
@@ -3640,6 +3699,7 @@ function ChatRows({
         projectFileNames={projectFileNames}
         projectResolvedDir={projectResolvedDir}
         onRequestOpenFile={onRequestOpenFile}
+        onRetryImage={onRetryImage}
         onRequestPluginFolderAgentAction={onRequestPluginFolderAgentAction}
         activePluginActionPaths={activePluginActionPaths}
         hiddenPluginActionPaths={hiddenPluginActionPaths}
@@ -3994,88 +4054,7 @@ function includeVirtualRowByKey<T extends { key: string }>(
   ].sort((a, b) => a.index - b.index);
 }
 
-function PinnedTodoSlot({
-  messages,
-  streaming,
-  conversationId,
-  onContinueRemainingTasks,
-  containerRef,
-}: {
-  messages: ChatMessage[];
-  streaming: boolean;
-  conversationId: string | null;
-  onContinueRemainingTasks?: (
-    assistantMessage: ChatMessage,
-    todos: TodoItem[],
-  ) => boolean | void | Promise<boolean | void>;
-  containerRef?: MutableRefObject<HTMLDivElement | null>;
-}) {
-  const storageKey = `od:chat:continued-todo:${conversationId ?? 'none'}`;
-  const [dismissal, setDismissal] = useState(() => ({
-    storageKey,
-    snapshotKey: readContinuedTodoSnapshotKey(storageKey),
-  }));
-  useEffect(() => {
-    setDismissal({
-      storageKey,
-      snapshotKey: readContinuedTodoSnapshotKey(storageKey),
-    });
-  }, [storageKey]);
-  const dismissedSnapshotKey =
-    dismissal.storageKey === storageKey ? dismissal.snapshotKey : null;
-  const input = latestTodoWriteInputForPinnedCard(messages);
-  if (input == null) return null;
-
-  const owner = [...messages].reverse().find(
-    (message) =>
-      message.role === 'assistant' &&
-      message.events?.some(
-        (event) => event.kind === 'tool_use' && isTodoWriteToolName(event.name),
-      ),
-  );
-  const ownerTodoEvent = owner?.events
-    ? [...owner.events].reverse().find(
-        (event) => event.kind === 'tool_use' && isTodoWriteToolName(event.name),
-      )
-    : undefined;
-  const snapshotKey =
-    owner &&
-    ownerTodoEvent &&
-    'id' in ownerTodoEvent &&
-    typeof ownerTodoEvent.id === 'string'
-      ? `${owner.id}:${ownerTodoEvent.id}`
-      : null;
-  if (snapshotKey != null && snapshotKey === dismissedSnapshotKey) return null;
-  const unfinishedTodos = owner ? unfinishedTodosFromEvents(owner.events) : [];
-
-  return (
-    <div
-      className="chat-pinned-todo"
-      ref={containerRef}
-    >
-      <TodoCard
-        input={input}
-        runStreaming={streaming}
-        runSucceeded={!streaming}
-        onContinue={
-          owner && snapshotKey && unfinishedTodos.length > 0 && onContinueRemainingTasks
-            ? () => {
-                void Promise.resolve(onContinueRemainingTasks(owner, unfinishedTodos))
-                  .then((accepted) => {
-                    if (accepted === false) return;
-                    setDismissal({ storageKey, snapshotKey });
-                    writeContinuedTodoSnapshotKey(storageKey, snapshotKey);
-                  })
-                  .catch(() => {});
-              }
-            : undefined
-        }
-      />
-    </div>
-  );
-}
-
-function readContinuedTodoSnapshotKey(storageKey: string): string | null {
+  function readContinuedTodoSnapshotKey(storageKey: string): string | null {
   if (typeof window === 'undefined') return null;
   try {
     return window.sessionStorage.getItem(storageKey);
@@ -4093,7 +4072,9 @@ function writeContinuedTodoSnapshotKey(storageKey: string, snapshotKey: string):
   }
 }
 
-function QueuedSendStrip({
+  /** 导出只为验收:镜像陈列页(`tests/components/chat/mirror-gallery.test.tsx`)要单挂
+   *  这一条队列去对第 72–74 格。产品里仍旧只有 `ChatPane` 一个消费方。 */
+  export function QueuedSendStrip({
   containerRef,
   editingId,
   items,
@@ -4114,7 +4095,6 @@ function QueuedSendStrip({
   const [dragState, setDragState] = useState<QueuedSendDragState | null>(null);
   if (items.length === 0) return null;
   const canReorder = Boolean(onReorder && items.length > 1);
-  const overflowCount = Math.max(0, items.length - QUEUED_SEND_VISIBLE_ROW_COUNT);
 
   const handleDragStart = (
     event: ReactDragEvent<HTMLButtonElement>,
@@ -4187,16 +4167,8 @@ function QueuedSendStrip({
         setDragState(null);
       }}
     >
-      <div className="chat-queued-send-header">
-        <div className="chat-queued-send-heading">
-          <strong>
-            {items.length} {t('chat.queuedHeader')}
-          </strong>
-          <span aria-hidden>↩</span>
-          <span>{t('chat.queuedToSend')}</span>
-        </div>
-      </div>
-      <div className={`chat-queued-send-list${overflowCount > 0 ? ' is-scrollable' : ''}`}>
+      {/* 稿子没有卡头:队列就贴在输入框底下,是什么一目了然,不用再单起一行说「排队中 · N 条」 */}
+      <div className="chat-queued-send-list">
         {items.map((item, index) => {
           const isDragging = dragState?.draggingId === item.id;
           const dropClass = dragState?.overId === item.id
@@ -4209,10 +4181,13 @@ function QueuedSendStrip({
               className={`chat-queued-send-row${index === 0 ? ' chat-queued-send-row-active' : ''}${
                 editingId === item.id ? ' chat-queued-send-row-editing' : ''
               }${isDragging ? ' chat-queued-send-row-dragging' : ''}${dropClass}`}
+              data-testid="chat-queued-send-row"
               key={item.id}
               onDragOver={(event) => handleDragOver(event, item.id)}
               onDrop={(event) => handleDrop(event, item.id)}
             >
+              {/* 稿子这一行是 `grip → ix → tx → qops`:**拖动手柄在最左**,序号跟在它右边。
+                  原来这两个是反的(序号在最左),整行的起手就和稿子对不上。 */}
               <button
                 type="button"
                 className="chat-queued-send-drag-handle chat-queued-send-tooltip od-tooltip"
@@ -4227,10 +4202,14 @@ function QueuedSendStrip({
               >
                 <Icon name="grip-vertical" size={14} />
               </button>
+              {/* 序号:出队后重排是数组下标的自然结果,不用另外维护 */}
+              <span className="chat-queued-send-index" data-testid="chat-queued-send-index" aria-hidden>{index + 1}</span>
               <div className="chat-queued-send-main">
                 <span className="chat-queued-send-title">{summarizeQueuedPrompt(item, t)}</span>
                 <QueuedSendMetaChips item={item} />
               </div>
+              {/* 稿子这一组是 `编辑 → 移除 → 第三颗`,而且「编辑」用的是**魔杖**不是铅笔。
+                  原来我们排的是 编辑 → 立即发送 → 移除,三枚图形和顺序全和稿子对不上。 */}
               <div className="chat-queued-send-actions">
                 {onEdit ? (
                   <button
@@ -4242,22 +4221,9 @@ function QueuedSendStrip({
                     aria-label={t('chat.queuedEdit')}
                     onClick={() => onEdit(item)}
                   >
-                    <Icon name="pencil" size={13} />
+                    <Icon name="magic" size={13} />
                   </button>
                 ) : null}
-                <button
-                  type="button"
-                  className="chat-queued-send-action chat-queued-send-tooltip od-tooltip"
-                  title={t('chat.send')}
-                  data-tooltip={t('chat.send')}
-                  data-tooltip-placement="top"
-                  aria-label={t('chat.send')}
-                  data-testid="chat-queued-send-now"
-                  onClick={() => onSendNow?.(item.id)}
-                  disabled={!onSendNow}
-                >
-                  <Icon name="arrow-up" size={13} />
-                </button>
                 {onRemove ? (
                   <button
                     type="button"
@@ -4271,22 +4237,33 @@ function QueuedSendStrip({
                     <Icon name="trash" size={13} />
                   </button>
                 ) : null}
+                {/* 第三颗:稿子标的是「引导对话」(把这条塞进正在跑的这一轮),
+                    我们这颗是**立即发送** —— 它会**打断**在跑的那一轮再发,是另一件事。
+                    位置和体量按稿子摆,语义不冒名顶替;缺的那条能力记在
+                    `specs/current/chat-panel-feedback.md` 的 B9 行。 */}
+                <button
+                  type="button"
+                  className="chat-queued-send-action chat-queued-send-tooltip od-tooltip"
+                  title={t('chat.send')}
+                  data-tooltip={t('chat.send')}
+                  data-tooltip-placement="top"
+                  aria-label={t('chat.send')}
+                  data-testid="chat-queued-send-now"
+                  onClick={() => onSendNow?.(item.id)}
+                  disabled={!onSendNow}
+                >
+                  <Icon name="arrow-up" size={13} />
+                </button>
               </div>
             </div>
           );
         })}
       </div>
-      {overflowCount > 0 ? (
-        <div className="chat-queued-send-overflow">
-          +{overflowCount} {t('chat.queuedMore')}
-        </div>
-      ) : null}
     </div>
   );
 }
 
-const QUEUED_SEND_DRAG_MIME = 'application/x-open-design-queued-send';
-const QUEUED_SEND_VISIBLE_ROW_COUNT = 4;
+  const QUEUED_SEND_DRAG_MIME = 'application/x-open-design-queued-send';
 
 type QueuedSendDropEdge = 'before' | 'after';
 
@@ -4317,11 +4294,13 @@ function reorderQueuedSendIds(
   return ids;
 }
 
-function summarizeQueuedPrompt(item: QueuedSendItem, t: TranslateFn): string {
-  const normalized = item.prompt.replace(/\s+/g, ' ').trim();
-  const text = normalized || t('chat.queuedFollowUpFallback');
-  return text.length > 58 ? `${text.slice(0, 57)}...` : text;
-}
+  /**
+   * 队列里每条显示的文字。**不在这里截断** —— 截成一行会把话切在半截,
+   * 人就认不出要取消 / 调序的是哪一条(稿子给了两行,用 CSS 的 line-clamp 收)。
+   */
+  function summarizeQueuedPrompt(item: QueuedSendItem, t: TranslateFn): string {
+  return item.prompt.replace(/\s+/g, ' ').trim() || t('chat.queuedFollowUpFallback');
+  }
 
 // Surfaces what a queued turn carries — attachments, visual marks, and the
 // staged plugin / skill / MCP / connector context from its meta — as compact
@@ -4657,7 +4636,12 @@ function ConversationRow({
 // props, so it skips re-render while a later turn streams.
 const UserMessage = memo(UserMessageImpl);
 
-function UserMessageImpl({
+  /**
+   * 导出只为**验收**:镜像陈列页要能单独挂它,和设计稿逐格并排比
+   * (`apps/web/tests/components/chat/mirror-gallery.test.tsx`)。
+   * 产品侧仍然只由本文件内部使用,不要在别处引它。
+   */
+  export function UserMessageImpl({
   message,
   projectId,
   projectFileNames,
@@ -4667,11 +4651,14 @@ function UserMessageImpl({
   t,
   appliedContextItems,
   highlighted,
+  onResend,
 }: {
   message: ChatMessage;
   projectId: string | null;
   projectFileNames?: Set<string>;
   onRequestOpenFile?: (name: string) => void;
+  /** 发送失败时那颗常驻的「重试」(稿子第 49 / 50 格) */
+  onResend?: (message: ChatMessage) => void;
   onRequestPluginDetails?: (pluginId: string) => void;
   onRequestDesignSystemDetails?: (system: DesignSystemSummary) => void;
   t: TranslateFn;
@@ -4710,18 +4697,24 @@ function UserMessageImpl({
   }
 
   const isDesignSystemWorkspaceRequest = isDesignSystemWorkspacePrompt(message.content);
+  // 发送时间一直都在(`ChatMessage.createdAt`),只是从来没渲染过 —— hover 才浮出。
+  const clock = formatMessageClock(message.createdAt);
 
   return (
     <div
       className={`msg user${highlighted ? ' is-chat-rail-highlighted' : ''}`}
+      data-testid="user-message"
       data-chat-message-id={message.id}
     >
       <span className="sr-only">{t('chat.you')}</span>
       {hasRunContext ? (
         <div className="msg-run-context-row" data-testid="msg-run-context-row">
-          {message.sessionMode ? (
-            <MessageSessionModeChip mode={message.sessionMode} t={t} />
-          ) : null}
+          {/*
+            会话模式徽标(「设计」/「对话」/「计划」)**不出**在消息上方那一行 ——
+            用户 2026-08-26 真机指认「把这个东西干掉」。模式是发送时的选择,
+            上面那行要说的是「这条消息带了哪些上下文」;把模式混进去只是多一枚
+            没人会去点的标签。组件保留(别处可能还要用),这里不挂。
+          */}
           {visibleWorkspaceItems.map((item) => (
             <ActiveWorkspaceContextChip
               key={`${item.kind}:${item.id}`}
@@ -4739,90 +4732,468 @@ function UserMessageImpl({
           ) : null}
         </div>
       ) : null}
-      {attachments.length > 0 ? (
-        <div className="user-attachments">
-          {attachments.map((a, index) => {
-            const baseName = a.path.split('/').pop() || a.path;
-            const openable =
-              !!onRequestOpenFile &&
-              (projectFileNames ? projectFileNames.has(baseName) : true);
-            const handleOpen = openable
-              ? () => onRequestOpenFile?.(baseName)
-              : undefined;
-            return (
+      {/* 附件在上、文字在下,右边界对齐:附件行锁 412、气泡锁 380,两条上限
+          各管各的(#53)。壳子刻意不设 width:100% —— 那样两个孩子会各自按
+          自己的百分比算宽度,右边界反而对不上。 */}
+      <div className="msg-stack">
+        {attachments.length > 0 ? (
+          <UserAttachmentRow
+            attachments={attachments}
+            projectId={projectId}
+            projectFileNames={projectFileNames}
+            onRequestOpenFile={onRequestOpenFile}
+            workspaceContext={workspaceContext}
+            t={t}
+          />
+        ) : null}
+        {commentAttachments.some((attachment) => attachment.selectionKind !== 'visual') ? (
+          <div className="user-attachments comment-history-attachments">
+            {commentAttachments.filter((attachment) => attachment.selectionKind !== 'visual').map((a) => (
+              <span key={a.id} className="user-attachment staged-comment">
+                <span className="staged-name" title={a.comment ? `${commentTargetDisplayName(a)}: ${a.comment}` : commentTargetDisplayName(a)}>
+                  <strong>{commentTargetDisplayName(a)}</strong>
+                  {a.comment ? <span>{a.comment}</span> : null}
+                </span>
+              </span>
+            ))}
+          </div>
+        ) : null}
+        {message.content && isDesignSystemWorkspaceRequest ? (
+          <div className="user-text-wrap user-status-wrap">
+            <div className="user-status-card design-system-generation-status">
+              <span className="user-status-card__icon">
+                <Icon name="blocks" size={15} />
+              </span>
+              <span className="user-status-card__copy">
+                <strong>{DESIGN_SYSTEM_WORKSPACE_DISPLAY_TITLE}</strong>
+                <span>{DESIGN_SYSTEM_WORKSPACE_DISPLAY_DESCRIPTION}</span>
+              </span>
+            </div>
+          </div>
+        ) : message.content ? (
+          <div className="user-text-wrap">
+            <UserBubble content={message.content} t={t} />
+            <div className="user-actions">
+              {/* 稿子**渲染出来**是「时间 → 复制 → 重试」(它的说明文字写的是「时间在最右」,
+                  和自己的 DOM 打架;用户 2026-08-26 指认以渲染为准)。
+                  时间不是动作,所以不给按钮那套 30px 命中框。 */}
+              {clock ? <span className="user-actions-time">{clock}</span> : null}
               <button
                 type="button"
-                key={a.path}
-                className={`user-attachment staged-${a.kind}${openable ? ' openable' : ''}`}
-                onClick={handleOpen}
-                disabled={!openable}
-                title={openable ? t('chat.openFile', { name: baseName }) : a.path}
+                className="ghost user-copy-btn"
+                onClick={handleCopy}
+                aria-label={copied ? t('chat.copyDone') : t('chat.copyPrompt')}
+                title={copied ? t('chat.copyDone') : t('chat.copyPrompt')}
               >
-                <span className="staged-order" aria-label={`Attachment ${index + 1}`}>
-                  {index + 1}
-                </span>
-                {a.kind === 'image' && projectId ? (
-                  <img
-                    src={projectRawUrl(projectId, a.path, workspaceContext)}
-                    alt={a.name}
-                  />
-                ) : (
-                  <Icon name="file" size={14} />
-                )}
-                <span className="staged-name">{a.name}</span>
+                <Icon name={copied ? 'check' : 'copy'} size={16} />
               </button>
-            );
-          })}
-        </div>
-      ) : null}
-      {commentAttachments.some((attachment) => attachment.selectionKind !== 'visual') ? (
-        <div className="user-attachments comment-history-attachments">
-          {commentAttachments.filter((attachment) => attachment.selectionKind !== 'visual').map((a) => (
-            <span key={a.id} className="user-attachment staged-comment">
-              <span className="staged-name" title={a.comment ? `${commentTargetDisplayName(a)}: ${a.comment}` : commentTargetDisplayName(a)}>
-                <strong>{commentTargetDisplayName(a)}</strong>
-                {a.comment ? <span>{a.comment}</span> : null}
-              </span>
-            </span>
-          ))}
-        </div>
-      ) : null}
-      {message.content && isDesignSystemWorkspaceRequest ? (
-        <div className="user-text-wrap user-status-wrap">
-          <div className="user-status-card design-system-generation-status">
-            <span className="user-status-card__icon">
-              <Icon name="blocks" size={15} />
-            </span>
-            <span className="user-status-card__copy">
-              <strong>{DESIGN_SYSTEM_WORKSPACE_DISPLAY_TITLE}</strong>
-              <span>{DESIGN_SYSTEM_WORKSPACE_DISPLAY_DESCRIPTION}</span>
-            </span>
+              {/* 发送失败那颗「重试」(稿子第 49 / 50 格的 `.msg-act .keep`):
+                  和时间 / 复制**同一行**,但不跟着 hover 出没 —— 第 50 格的状态名
+                  写的就是「时间与复制浮出,重试常驻」。 */}
+              {message.sendFailed ? (
+                <button
+                  type="button"
+                  className="user-keep-btn"
+                  data-testid="user-send-failed"
+                  aria-label={t('chat.sendFailedRetryAria')}
+                  onClick={() => onResend?.(message)}
+                >
+                  {/* 稿子这一枚是**循环箭头**(`refresh`),不是感叹号 ——
+                      感叹号说的是「出事了」,这颗按钮说的是「再来一次」。 */}
+                  <Icon name="refresh" size={13} />
+                  <span>{t('chat.record.retry')}</span>
+                </button>
+              ) : null}
+            </div>
           </div>
-        </div>
-      ) : message.content ? (
-        <div className="user-text-wrap">
-          <div className="user-text user-bubble">{message.content}</div>
-          <div className="user-actions">
-            <button
-              type="button"
-              className="ghost user-copy-btn"
-              onClick={handleCopy}
-              aria-label={copied ? t('chat.copyDone') : t('chat.copyPrompt')}
-              title={copied ? t('chat.copyDone') : t('chat.copyPrompt')}
-            >
-              <Icon name={copied ? 'check' : 'copy'} size={13} />
-            </button>
-          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+  }
+
+  /* ── 气泡正文:超长折到 6 行(#46 / #47)──────────────────────────────
+   *
+   * 折的是【里面那层 .user-text-txt】,不是气泡本身:`-webkit-line-clamp` 的裁切
+   * 边界是 padding box,直接折在气泡上的话第 7 行会从那 9px 下内边距里露半条字。
+   *
+   * 展开入口按 DOM / CSS / 规格 W7 走「气泡内的『查看全部』一行」,不是 hover
+   * 浮出箭头 —— 稿子的说明文字那一句已经过时(盘点 §5 第 2 条)。
+   * #47 相对 #46 在样式表里没有任何匹配规则,所以两格当同一态做。
+   */
+  function UserBubble({ content, t }: { content: string; t: TranslateFn }) {
+  const txtRef = useRef<HTMLSpanElement>(null);
+  const [expanded, setExpanded] = useState(false);
+  const cut = useIsTextClamped(txtRef, content, expanded);
+
+  return (
+    <div className={`user-text user-bubble${expanded ? ' is-expanded' : ''}${cut ? ' is-cut' : ''}`}>
+      <span className="user-text-clip">
+        <span className="user-text-txt" ref={txtRef}>{content}</span>
+        {cut && !expanded ? (
+          <button
+            type="button"
+            className="user-text-more"
+            data-testid="user-text-more"
+            aria-label={t('chat.input.expandFull')}
+            onClick={() => setExpanded(true)}
+          >
+            …
+          </button>
+        ) : null}
+      </span>
+      {cut ? (
+        <div className="msg-more">
+          <button
+            type="button"
+            data-testid="user-text-view-all"
+            aria-expanded={expanded}
+            onClick={() => setExpanded((v) => !v)}
+          >
+            {expanded ? t('chat.input.collapse') : t('chat.input.viewAll')}
+            <Icon name="chevron-down" size={12} />
+          </button>
         </div>
       ) : null}
     </div>
   );
 }
 
-// Plugin, skill and design-system inputs are supporting context, not separate
-// cards. Collapse them into one line and only render that line when the
-// selection changes (the caller performs the conversation-level dedupe).
-function AppliedContextDisclosure({
+  /**
+   * 「这段话真的被截断了吗」。
+   *
+   * 只在【真的被截断】时才出那枚「…」:同一段话在宽一点的面板里可能六行就说完了,
+   * 那时候还挂一枚「…」是在说一句不存在的下文。CSS 判断不了,只能量 ——
+   * `scrollHeight` 比 `clientHeight` 高就是有东西被压住了。
+   *
+   * 面板宽度会变(拖动分栏、窗口缩放),字体加载完行高也会变,所以 `resize`、
+   * `ResizeObserver`、`document.fonts.ready` 三路都要重量。
+   * 展开之后不再重量:那时候 clamp 已经摘掉,量出来必然是「没截断」,
+   * 会把「收起」的入口一起弄没。
+   */
+  function useIsTextClamped(
+  ref: MutableRefObject<HTMLSpanElement | null>,
+  content: string,
+  expanded: boolean,
+  ): boolean {
+  const [cut, setCut] = useState(false);
+  useEffect(() => {
+    if (expanded) return;
+    const el = ref.current;
+    if (!el) return;
+    let alive = true;
+    const measure = () => {
+      const node = ref.current;
+      if (!alive || !node) return;
+      setCut(node.scrollHeight - node.clientHeight > 1);
+    };
+    measure();
+    let observer: ResizeObserver | undefined;
+    if (typeof ResizeObserver !== 'undefined') {
+      observer = new ResizeObserver(measure);
+      observer.observe(el);
+    }
+    window.addEventListener('resize', measure);
+    const fonts = (document as Document & { fonts?: { ready?: Promise<unknown> } }).fonts;
+    fonts?.ready?.then(measure).catch(() => {});
+    return () => {
+      alive = false;
+      observer?.disconnect();
+      window.removeEventListener('resize', measure);
+    };
+  }, [ref, content, expanded]);
+  return cut;
+  }
+
+  /* ── 附件行(#52 / #53 / #56 / #57 / #58 / #59)────────────────────────
+   *
+   * 永远单行,超出横向滚动:多少个附件都只占一行,消息在流水里的高度因此是常量。
+   * 图卡 57px 见方、不挂文件名(缩略图本身就是它的名字);文档卡 180px 宽,
+   * 它没有画面,名字是它唯一的身份,所以反过来【必须】挂名字。
+   *
+   * 点击语义仍是产品现有的「在编辑器里打开这个文件」,不是稿子说的「弹层看大图」——
+   * 换语义要产品拍板(盘点 §5 第 8 条)。
+   */
+  function UserAttachmentRow({
+  attachments,
+  projectId,
+  projectFileNames,
+  onRequestOpenFile,
+  workspaceContext,
+  t,
+  }: {
+  attachments: ChatAttachment[];
+  projectId: string | null;
+  projectFileNames?: Set<string>;
+  onRequestOpenFile?: (name: string) => void;
+  workspaceContext: ReturnType<typeof useProjectCollabContext>['workspaceContext'];
+  t: TranslateFn;
+  }) {
+  const rowRef = useRef<HTMLDivElement>(null);
+  const { prev, next, page } = useAttachmentRowNav(rowRef, attachments.length);
+  return (
+    /* 壳子只为箭头存在:箭头要绝对定位压在这一行的两端,而滚动容器自己
+       不能 `position: relative` —— 那样绝对定位的孩子会跟着内容一起滚走。 */
+    <div className={`msg-att-wrap${prev ? ' is-prev' : ''}${next ? ' is-next' : ''}`}>
+      <div className="user-attachments msg-att" data-testid="user-attachment-row" ref={rowRef}>
+        {attachments.map((a) => {
+          const baseName = a.path.split('/').pop() || a.path;
+          const openable =
+            !!onRequestOpenFile && (projectFileNames ? projectFileNames.has(baseName) : true);
+          const handleOpen = openable ? () => onRequestOpenFile?.(baseName) : undefined;
+          const label = openable ? t('chat.openFile', { name: baseName }) : a.path;
+          return a.kind === 'image' && projectId ? (
+            <button
+              type="button"
+              key={a.path}
+              className="msg-att-img"
+              onClick={handleOpen}
+              disabled={!openable}
+              aria-label={label}
+              title={label}
+            >
+              <span className="msg-att-ph">
+                <img
+                  className="msg-att-mini"
+                  src={projectRawUrl(projectId, a.path, workspaceContext)}
+                  alt=""
+                />
+              </span>
+              {/* 稿子第 55 格:hover 时卡右上角浮出一枚眼睛角标(`.att-ov .act`)。
+                  它是**这张卡的悬停提示**,不是第二颗按钮 —— 卡本身的点击语义
+                  仍然是「在编辑器里打开」,换成「弹层看大图」要产品拍板(已记)。 */}
+              <span className="msg-att-eye" aria-hidden>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                  <circle cx="12" cy="12" r="3" />
+                </svg>
+              </span>
+            </button>
+          ) : (
+            <UserAttachmentDocCard
+              key={a.path}
+              attachment={a}
+              label={label}
+              openable={openable}
+              onOpen={handleOpen}
+            />
+          );
+        })}
+      </div>
+      {/* 一枚朝下的箭头转 ±90 度当左右用 —— 稿子里只此一支箭头,不另画两枚。
+          出不出由 JS 量,**两颗常驻**、靠壳上的 `is-prev` / `is-next` 开关 `display`,
+          和稿子 `.att-wrap.is-prev > .att-nav.mod-prev` 一致。
+          (原来这里是条件不渲染。改成常驻还顺带合上了本仓的约定:
+           条件显示的元素保持挂载,React 卸载会把退场过渡整个跳过。) */}
+      <button
+        type="button"
+        className="msg-att-nav mod-prev"
+        data-testid="msg-att-nav-prev"
+        aria-label={t('chat.attachments.scrollPrev')}
+        onClick={() => page('prev')}
+      >
+        <i>
+          <Icon name="chevron-down" size={14} />
+        </i>
+      </button>
+      <button
+        type="button"
+        className="msg-att-nav mod-next"
+        data-testid="msg-att-nav-next"
+        aria-label={t('chat.attachments.scrollNext')}
+        onClick={() => page('next')}
+      >
+        <i>
+          <Icon name="chevron-down" size={14} />
+        </i>
+      </button>
+    </div>
+  );
+  }
+
+  /**
+   * 附件行的翻页箭头(#58)。
+   *
+   * 滚动条按稿子藏起来了,所以「还能往哪边走」必须由别的东西说。原来指望
+   * 【卡被切在腰上】这一个信号 —— 它说得了「后面还有」,说不了「往回也还有」,
+   * 更给不了鼠标一个能点的地方(触控板能横扫,鼠标只有按住 shift 滚轮)。
+   *
+   * 【只在真的被遮住时才出】。是否遮住由这里量,判据是纯函数
+   * (`runtime/chat/attachment-nav.ts`)。四路重算,少一路就会看见错的箭头:
+   *   · `scroll` —— 滚动过程中两端的结论一直在翻;
+   *   · `ResizeObserver` —— 面板宽度变了(拖分栏),放得下 / 放不下会翻过来;
+   *   · `resize` —— 窗口缩放不一定触发容器自身的 resize(容器是定宽 412 时);
+   *   · `document.fonts.ready` —— 文档卡里的文字宽度要等字体到位才定下来。
+   */
+  function useAttachmentRowNav(
+  ref: MutableRefObject<HTMLDivElement | null>,
+  count: number,
+  ): AttachmentNavState & { page: (direction: 'prev' | 'next') => void } {
+  const [state, setState] = useState<AttachmentNavState>({ prev: false, next: false });
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    let alive = true;
+    const sync = () => {
+      const node = ref.current;
+      if (!alive || !node) return;
+      const measured = attachmentNavState(node);
+      // 同一个结论就别 setState —— `scroll` 每帧都在响,原样回写会把整条消息
+      // 重渲染一遍(附件行住在 memo 过的 UserMessage 里,白跑得很显眼)。
+      setState((current) =>
+        current.prev === measured.prev && current.next === measured.next ? current : measured,
+      );
+    };
+    sync();
+    el.addEventListener('scroll', sync, { passive: true });
+    window.addEventListener('resize', sync);
+    let observer: ResizeObserver | undefined;
+    if (typeof ResizeObserver !== 'undefined') {
+      observer = new ResizeObserver(sync);
+      observer.observe(el);
+    }
+    const fonts = (document as Document & { fonts?: { ready?: Promise<unknown> } }).fonts;
+    fonts?.ready?.then(sync).catch(() => {});
+    return () => {
+      alive = false;
+      el.removeEventListener('scroll', sync);
+      window.removeEventListener('resize', sync);
+      observer?.disconnect();
+    };
+  }, [ref, count]);
+
+  const page = useCallback(
+    (direction: 'prev' | 'next') => {
+      const node = ref.current;
+      if (!node) return;
+      const rtl =
+        typeof window !== 'undefined' &&
+        window.getComputedStyle(node).direction === 'rtl';
+      const left = attachmentNavDelta(direction, node.clientWidth, rtl);
+      if (typeof node.scrollBy === 'function') node.scrollBy({ left, behavior: 'smooth' });
+      else node.scrollLeft += left;
+    },
+    [ref],
+  );
+
+  return { ...state, page };
+  }
+
+  function UserAttachmentDocCard({
+  attachment,
+  label,
+  openable,
+  onOpen,
+  }: {
+  attachment: ChatAttachment;
+  label: string;
+  openable: boolean;
+  onOpen?: () => void;
+  }) {
+  const { base, ext } = splitFileName(attachment.name);
+  const nameRef = useRef<HTMLSpanElement>(null);
+  const displayBase = useMiddleTruncatedName(nameRef, base, ext);
+  const size = formatAttachmentSize(attachment.size);
+  return (
+    <button
+      type="button"
+      className="msg-att-doc"
+      onClick={onOpen}
+      disabled={!openable}
+      aria-label={label}
+      title={label}
+    >
+      <Icon name="file" size={15} className="msg-att-fi" />
+      <span className="msg-att-tx">
+        <span className="msg-att-nm" ref={nameRef}>
+          <span className="msg-att-base">{displayBase}</span>
+          {ext ? <span className="msg-att-ext">{ext}</span> : null}
+        </span>
+        {/* 拿不到体积就空着这一行,不写 `0 B` —— 但位置留着,
+            否则同一行里有体积和没体积的卡会差一行高(AGENTS §3)。 */}
+        <span className="msg-att-meta">{size ?? ''}</span>
+      </span>
+    </button>
+  );
+  }
+
+  /** 量文字宽度用的离屏 canvas。一份就够,反复建会在长会话里堆出几百个。 */
+  let nameMeasureCtx: CanvasRenderingContext2D | null | undefined;
+
+  function textMeasurerFor(el: HTMLElement | null): ((text: string) => number) | null {
+  if (!el || typeof document === 'undefined') return null;
+  if (nameMeasureCtx === undefined) {
+    try {
+      nameMeasureCtx = document.createElement('canvas').getContext('2d');
+    } catch {
+      // jsdom / 没有 canvas 的运行环境:量不到就不截,由 CSS overflow 兜底。
+      nameMeasureCtx = null;
+    }
+  }
+  const ctx = nameMeasureCtx;
+  if (!ctx) return null;
+  const cs = window.getComputedStyle(el);
+  if (!cs.fontSize) return null;
+  ctx.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+  return (text: string) => ctx.measureText(text).width;
+  }
+
+  /**
+   * 文件名中间省略(#59)。
+   *
+   * 量的是 `.msg-att-nm` 自己的可用宽度,而它在一张【定宽 180px】的卡里、且被
+   * `.msg-att-tx { flex: 1 }` 钉住 —— 所以这个宽度是常量,不随名字长短变。
+   * 这是绕开稿子里那个「越截越短」棘轮的关键:**不能拿截过的名字再去量**。
+   *
+   * 量不到(SSR / jsdom / 没有 canvas)就原样返回,由 CSS 的 `overflow:hidden`
+   * 兜底 —— 宁可不截,不要截错。
+   */
+  function useMiddleTruncatedName(
+  ref: MutableRefObject<HTMLSpanElement | null>,
+  base: string,
+  ext: string,
+  ): string {
+  const [avail, setAvail] = useState(0);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    let alive = true;
+    const measure = () => {
+      const node = ref.current;
+      if (!alive || !node) return;
+      // 还没布局(SSR 之后的第一帧 / jsdom)就别去碰 canvas —— 量不到就不截。
+      if (!node.clientWidth) {
+        setAvail(0);
+        return;
+      }
+      const measurer = textMeasurerFor(node);
+      const extWidth = measurer && ext ? measurer(ext) : 0;
+      setAvail(node.clientWidth - extWidth);
+    };
+    measure();
+    let observer: ResizeObserver | undefined;
+    if (typeof ResizeObserver !== 'undefined') {
+      observer = new ResizeObserver(measure);
+      observer.observe(el);
+    }
+    const fonts = (document as Document & { fonts?: { ready?: Promise<unknown> } }).fonts;
+    fonts?.ready?.then(measure).catch(() => {});
+    return () => {
+      alive = false;
+      observer?.disconnect();
+    };
+  }, [ref, ext]);
+  return useMemo(
+    () => (avail > 0 ? middleTruncateFileName(base, avail, textMeasurerFor(ref.current)) : base),
+    [ref, base, avail],
+  );
+  }
+
+  // Plugin, skill and design-system inputs are supporting context, not separate
+  // cards. Collapse them into one line and only render that line when the
+  // selection changes (the caller performs the conversation-level dedupe).
+  function AppliedContextDisclosure({
   items,
   t,
   onOpenPlugin,

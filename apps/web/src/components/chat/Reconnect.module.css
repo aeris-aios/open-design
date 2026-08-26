@@ -1,0 +1,101 @@
+/*
+ * 组件 22 · 重连的样式。数值逐条对设计稿 `chat-panel-next.html`
+ * (`.tool` 2207 / `.tool:has(.orb)` 3282 / `.wifi` 3307 / `.cnt` 3329 / `.ch` 3342)。
+ *
+ * 为什么另起一个 Module 而不是往 `primitives/record.module.css` 里加:
+ * 那个文件装的是执行记录一族(壳 → todo → 工具行),它们的缩进是互相咬合的父子选择器;
+ * 重连这一行不在那个嵌套里 —— 它是流水上的一条独立状态,跟壳没有选择器关系。
+ * 唯一借用的是 `.shimmer`(那条扫光三处共用),用 import 读,不改那边一个字。
+ */
+
+/* 去框。设计稿原话:「重连是一条状态,不是一张卡……套上边框和底色,它就成了和
+   输入框并列的第二个块,等于把『别管它』说成了『看这里』。」三态同一副形状 ——
+   **失败那格也没有红边红底**:稿子里 `.tool:has(.wifi)` 排在 `.tool.is-fail` 之后,
+   同特异度后者被压掉(在无头 Chrome 里读过计算样式:三态都是 transparent)。
+   失败唯一的颜色是那枚图标。
+   ------------------------------------------------------------
+   边留着但透明,不写 `border: 0` —— 稿子留的是那 1px 的**位置**,
+   去掉这一行会比旁边有框的工具行矮 2px,一摞行扫下来就错位了。 */
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 2px;
+  /* 稿子 `.tool` 的圆角是 `var(--radius)`;`.tool:has(.wifi)` 只把描边和底色抹掉,
+     圆角留着(hover 时那层浅底就是按这个圆角画的)。 */
+  border-radius: var(--chat-radius);
+  border: var(--chat-stroke) solid transparent;
+  background: none;
+  font-size: var(--chat-t-body);
+  line-height: var(--chat-lh-row);
+  color: var(--chat-text);
+}
+
+/* 球的画布 24px 比同一列位置上的记号大一截,负边距收的是画布四周的空边,
+   把它压回图标那一档的视觉重量。稿子给 box=24 的那档就是 `margin-inline: -3px`
+   (`.orb[data-orb-box="24"]`,排在 `.tool .orb` 之后所以两侧都是 -3)。
+   我们的 `Orb` 是个裸 span,没有上游那份基础样式,所以这里一次写全。 */
+.orb {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  margin-inline: -3px;
+}
+
+.name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 扫光要挂在**收缩到文字宽**的 inline 盒上。.name 是 flex:1 的撑满盒(靠它把 ⌄
+   顶到行尾),而渐变按元素盒宽算 —— 挂在撑满盒上,亮带大半程都在文字右边的空白里扫,
+   看着就是「隔一会儿闪一下」。这里给它的唯一子元素补上收缩盒。 */
+.name > * {
+  display: inline-block;
+  max-width: 100%;
+}
+
+/* 第几次 / 共几次:等宽数字,数字跳动时这一行不会跟着抖。
+   字重跟前面那句话一样是 400 —— 整句是一条状态,不是一条要你读重点的通知;
+   颜色 inherit,好让它跟着父级一起透出扫光的渐变。 */
+.count {
+  margin-inline-start: 6px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 400;
+  color: inherit;
+}
+
+/* 失败那一枚:14px 正方形。红是这一行唯一的颜色 —— 前两态刻意不上色,
+   它们还没出事,只是在等。 */
+.wifi {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  color: var(--chat-red);
+}
+
+/* 展开箭头:跟 Queue 行的动作按钮同一副尺寸 */
+.detail {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  margin-inline-end: -4px;
+  border: 0;
+  border-radius: var(--chat-radius-sm);
+  background: none;
+  color: var(--chat-text-soft);
+  cursor: pointer;
+  transition:
+    background-color var(--chat-dur-quick) var(--chat-ease-out),
+    color var(--chat-dur-quick) var(--chat-ease-out);
+}
+.detail svg { width: 12px; height: 12px; }
+.detail:hover {
+  background: var(--chat-bg-fill-secondary);
+  color: var(--chat-text-strong);
+}

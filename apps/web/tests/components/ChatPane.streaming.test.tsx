@@ -288,7 +288,7 @@ describe('ChatPane streaming state', () => {
       />,
     );
 
-    expect(container.querySelector('.chat-log')?.className).toContain('is-balanced-transcript');
+    expect(screen.getByTestId('chat-log').getAttribute('data-balanced')).toBe('true');
 
     rerender(
       <ChatPane
@@ -308,7 +308,7 @@ describe('ChatPane streaming state', () => {
       />,
     );
 
-    expect(container.querySelector('.chat-log')?.className).not.toContain('is-balanced-transcript');
+    expect(screen.getByTestId('chat-log').getAttribute('data-balanced')).toBe('false');
   });
 
   it('keeps composer popovers above the chat jump button', () => {
@@ -674,9 +674,11 @@ describe('ChatPane streaming state', () => {
       />,
     );
 
-    const bubble = screen.getByText('Generate a simple sign-in page');
-    expect(bubble.classList.contains('user-bubble')).toBe(true);
-    expect(bubble.closest('.msg.user')).not.toBeNull();
+    // 正文现在包在气泡【里面那层】(`-webkit-line-clamp` 的裁切边界是 padding box,
+    // 直接折在气泡上会从下内边距里露半条字),所以从文字往上找气泡,不再是文字自己。
+    const text = screen.getByText('Generate a simple sign-in page');
+    expect(text.closest('.user-bubble')).not.toBeNull();
+    expect(text.closest('.msg.user')).not.toBeNull();
   });
 
   it('offers a Local CLI recovery action on BYOK error states', () => {
@@ -730,7 +732,7 @@ describe('ChatPane streaming state', () => {
     expect(onSwitchToLocalCli).toHaveBeenCalledTimes(1);
   });
 
-  it('shows the sent mode and applied plugin context on user turns', () => {
+  it('shows the applied plugin context on user turns (mode chip removed 2026-08-26)', () => {
     const messages: ChatMessage[] = [
       {
         id: 'user-1',
@@ -814,7 +816,9 @@ describe('ChatPane streaming state', () => {
       />,
     );
 
-    expect(screen.getByTestId('msg-session-mode-chip').textContent).toContain('Design Agent');
+    // 会话模式徽标已经不挂在这一行了(用户 2026-08-26 真机指认「把这个东西干掉」):
+    // 这一行要说的是「这条消息带了哪些上下文」,发送时选的模式不属于它。
+    expect(screen.queryByTestId('msg-session-mode-chip')).toBeNull();
     expect(screen.getByTestId('msg-workspace-context-chip').textContent).toContain('Dribbble');
     const context = screen.getByTestId('msg-applied-context');
     expect(context.textContent).toContain('A Decade of Refinement Glow-Up');
@@ -1140,224 +1144,6 @@ Expected output:
     expect(spacer!.style.height).toBe('0px');
   });
 
-  it('pins a stopped todo after a terminal run without a final TodoWrite', () => {
-    const onContinueRemainingTasks = vi.fn();
-    const messages: ChatMessage[] = [
-      {
-        id: 'assistant-1',
-        role: 'assistant',
-        content: '',
-        createdAt: 1,
-        startedAt: 1,
-        endedAt: 2,
-        runStatus: 'failed',
-        events: [
-          {
-            kind: 'tool_use',
-            id: 'todo-1',
-            name: 'TodoWrite',
-            input: {
-              todos: [
-                {
-                  content: 'Build prototype',
-                  status: 'in_progress',
-                  activeForm: 'Building prototype',
-                },
-                { content: 'Run QA', status: 'pending' },
-              ],
-            },
-          },
-        ],
-      },
-    ];
-
-    const { container } = render(
-      <ChatPane
-        messages={messages}
-        streaming={false}
-        error={null}
-        projectId="project-1"
-        projectFiles={[]}
-        onEnsureProject={async () => 'project-1'}
-        onSend={vi.fn()}
-        onStop={vi.fn()}
-        conversations={conversations}
-        activeConversationId="conv-1"
-        onSelectConversation={vi.fn()}
-        onDeleteConversation={vi.fn()}
-        projectMetadata={projectMetadata}
-        onContinueRemainingTasks={onContinueRemainingTasks}
-      />,
-    );
-
-    expect(container.querySelector('.chat-log .op-card.op-todo')).toBeNull();
-    expect(container.querySelectorAll('.chat-pinned-todo .op-card.op-todo')).toHaveLength(1);
-    expect(container.querySelector('.todo-stopped .todo-text')?.textContent).toBe('Build prototype');
-    expect(container.querySelector('.todo-pending .todo-text')?.textContent).toBe('Run QA');
-    const continueButton = container.querySelector<HTMLButtonElement>('.op-todo-continue');
-    expect(continueButton).not.toBeNull();
-    fireEvent.click(continueButton!);
-    expect(onContinueRemainingTasks).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 'assistant-1' }),
-      [
-        {
-          content: 'Build prototype',
-          status: 'in_progress',
-          activeForm: 'Building prototype',
-        },
-        { content: 'Run QA', status: 'pending', activeForm: undefined },
-      ],
-    );
-  });
-
-  it('hides the stale pinned todo after continuing its remaining tasks', async () => {
-    const onContinueRemainingTasks = vi.fn(() => true);
-    const messages: ChatMessage[] = [
-      {
-        id: 'assistant-1',
-        role: 'assistant',
-        content: '',
-        createdAt: 1,
-        endedAt: 2,
-        runStatus: 'failed',
-        events: [
-          {
-            kind: 'tool_use',
-            id: 'todo-1',
-            name: 'TodoWrite',
-            input: {
-              todos: [
-                { content: 'Build prototype', status: 'completed' },
-                { content: 'Run QA', status: 'pending' },
-              ],
-            },
-          },
-        ],
-      },
-    ];
-
-    const { container, rerender } = render(
-      <ChatPane
-        messages={messages}
-        streaming={false}
-        error={null}
-        projectId="project-1"
-        projectFiles={[]}
-        onEnsureProject={async () => 'project-1'}
-        onSend={vi.fn()}
-        onStop={vi.fn()}
-        conversations={conversations}
-        activeConversationId="conv-1"
-        onSelectConversation={vi.fn()}
-        onDeleteConversation={vi.fn()}
-        projectMetadata={projectMetadata}
-        onContinueRemainingTasks={onContinueRemainingTasks}
-      />,
-    );
-
-    fireEvent.click(container.querySelector<HTMLButtonElement>('.op-todo-continue')!);
-
-    expect(onContinueRemainingTasks).toHaveBeenCalledOnce();
-    await waitFor(() => {
-      expect(container.querySelector('.chat-pinned-todo')).toBeNull();
-    });
-
-    rerender(
-      <ChatPane
-        messages={[
-          ...messages,
-          {
-            id: 'assistant-2',
-            role: 'assistant',
-            content: '',
-            createdAt: 3,
-            runStatus: 'running',
-            events: [
-              {
-                kind: 'tool_use',
-                id: 'todo-2',
-                name: 'TodoWrite',
-                input: {
-                  todos: [
-                    { content: 'Build prototype', status: 'completed' },
-                    { content: 'Run QA', status: 'pending' },
-                  ],
-                },
-              },
-            ],
-          },
-        ]}
-        streaming
-        error={null}
-        projectId="project-1"
-        projectFiles={[]}
-        onEnsureProject={async () => 'project-1'}
-        onSend={vi.fn()}
-        onStop={vi.fn()}
-        conversations={conversations}
-        activeConversationId="conv-1"
-        onSelectConversation={vi.fn()}
-        onDeleteConversation={vi.fn()}
-        projectMetadata={projectMetadata}
-        onContinueRemainingTasks={onContinueRemainingTasks}
-      />,
-    );
-
-    expect(container.querySelector('.chat-pinned-todo')).not.toBeNull();
-  });
-
-  it('keeps a continued todo snapshot hidden after the conversation remounts', async () => {
-    const messages: ChatMessage[] = [
-      {
-        id: 'assistant-1',
-        role: 'assistant',
-        content: '',
-        createdAt: 1,
-        endedAt: 2,
-        runStatus: 'failed',
-        events: [
-          {
-            kind: 'tool_use',
-            id: 'todo-1',
-            name: 'update_plan',
-            input: {
-              plan: [
-                { step: 'Build prototype', status: 'completed' },
-                { step: 'Run QA', status: 'pending' },
-              ],
-            },
-          },
-        ],
-      },
-    ];
-    const props = {
-      messages,
-      streaming: false,
-      error: null,
-      projectId: 'project-1',
-      projectFiles: [],
-      onEnsureProject: async () => 'project-1',
-      onSend: vi.fn(),
-      onStop: vi.fn(),
-      conversations,
-      activeConversationId: 'conv-1',
-      onSelectConversation: vi.fn(),
-      onDeleteConversation: vi.fn(),
-      projectMetadata,
-      onContinueRemainingTasks: vi.fn(() => true),
-    };
-
-    const firstMount = render(<ChatPane {...props} />);
-    fireEvent.click(firstMount.container.querySelector<HTMLButtonElement>('.op-todo-continue')!);
-    await waitFor(() => {
-      expect(firstMount.container.querySelector('.chat-pinned-todo')).toBeNull();
-    });
-    firstMount.unmount();
-
-    const secondMount = render(<ChatPane {...props} />);
-    expect(secondMount.container.querySelector('.chat-pinned-todo')).toBeNull();
-  });
-
   it('shows several queued prompts above the composer with compact controls', () => {
     const onRemoveQueuedSend = vi.fn();
     const onSendQueuedNow = vi.fn();
@@ -1410,19 +1196,24 @@ Expected output:
       />,
     );
 
-    const strip = container.querySelector('.chat-queued-send-strip');
-    expect(strip).not.toBeNull();
-    expect(strip?.textContent).toContain('5 Queued');
-    expect(strip?.textContent).toContain('to Send');
+    const strip = screen.getByTestId('chat-queued-send-strip');
+    // 稿子里队列**没有卡头**:它贴在输入框底下,是什么一目了然,
+    // 不再单起一行写「排队中 · N 条」。行首改成序号。
+    expect(strip?.textContent).not.toContain('Queued');
     expect(strip?.textContent).not.toContain('Start Multitasking');
-    expect(container.querySelectorAll('.chat-queued-send-row')).toHaveLength(5);
+    expect(
+      screen.getAllByTestId('chat-queued-send-index').map((el) => el.textContent),
+    ).toEqual(['1', '2', '3', '4', '5']);
+    expect(screen.getAllByTestId('chat-queued-send-row')).toHaveLength(5);
     expect(strip?.textContent).toContain('Make the export button larger and use a warmer accent');
     expect(strip?.textContent).toContain('Then adjust the title spacing');
     expect(strip?.textContent).toContain('Reduce the subtitle size');
     expect(strip?.textContent).toContain('Switch to a lighter font weight');
     expect(strip?.textContent).toContain('Add hover polish');
-    expect(container.querySelector('.chat-queued-send-list')?.className).toContain('is-scrollable');
-    expect(container.querySelector('.chat-queued-send-overflow')?.textContent).toContain('+1 more queued');
+    // 限的是高度不是条数:超出的部分整块滚动,不再折成「+N more」那一行。
+    // 这条**故意**还按类名查:它钉的是「那段 DOM 已经删掉了」,类名就是被删的东西本身,
+    // 换成 testid 反而钉不住(删掉的元素不会有 testid)。
+    expect(container.querySelector('.chat-queued-send-overflow')).toBeNull();
     expect(screen.getAllByRole('button', { name: 'Drag to reorder' })).toHaveLength(5);
 
     const sendNowButtons = screen.getAllByRole('button', { name: 'chat.send' });
@@ -1490,7 +1281,7 @@ Expected output:
       />,
     );
 
-    const rows = container.querySelectorAll('.chat-queued-send-row');
+    const rows = screen.getAllByTestId('chat-queued-send-row');
     const handles = screen.getAllByRole('button', { name: 'Drag to reorder' });
     const dataTransfer = mockDataTransfer();
     const targetRect = {
@@ -1563,14 +1354,12 @@ Expected output:
       />,
     );
 
-    const log = container.querySelector('.chat-log') as HTMLDivElement | null;
+    const log = screen.getByTestId('chat-log') as HTMLDivElement;
     const strip = screen.getByTestId('chat-queued-send-strip');
-    expect(log).not.toBeNull();
-    expect(strip).toBeTruthy();
 
-    Object.defineProperty(log!, 'scrollHeight', { configurable: true, get: () => 600 });
-    Object.defineProperty(log!, 'clientHeight', { configurable: true, get: () => 200 });
-    Object.defineProperty(log!, 'scrollTop', {
+    Object.defineProperty(log, 'scrollHeight', { configurable: true, get: () => 600 });
+    Object.defineProperty(log, 'clientHeight', { configurable: true, get: () => 200 });
+    Object.defineProperty(log, 'scrollTop', {
       configurable: true,
       get() {
         return (this as HTMLDivElement).dataset.scrollTop
@@ -1584,7 +1373,7 @@ Expected output:
 
     MockResizeObserver.triggerObserved(strip);
 
-    expect(log!.scrollTop).toBe(600);
+    expect(log.scrollTop).toBe(600);
   });
 });
 

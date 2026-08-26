@@ -91,7 +91,10 @@ function projectCollabValue(workspaceContext = PROJECT_A_CONTEXT) {
 }
 
 describe('AssistantMessage feedback gate', () => {
-  it('opens a produced file when the user clicks the filename row', () => {
+  // Component 14 / D28: an image, video or HTML artifact is delivered as a
+  // card whose picture IS the open target — the card writes no filename, so
+  // the click lands on the artwork rather than on a text row.
+  it('opens a produced artifact when the user clicks its card', () => {
     const onRequestOpenFile = vi.fn();
     render(
       <AssistantMessage
@@ -102,28 +105,29 @@ describe('AssistantMessage feedback gate', () => {
       />,
     );
 
-    fireEvent.click(screen.getByText('poster.png'));
+    expect(screen.queryByText('poster.png')).toBeNull();
+    fireEvent.click(screen.getByTestId('artifact-card-open-poster.png'));
     expect(onRequestOpenFile).toHaveBeenCalledWith('poster.png');
   });
 
-  it.each(['Enter', ' '])(
-    'opens a produced file when the user presses %s on its row',
-    (key) => {
-      const onRequestOpenFile = vi.fn();
-      render(
-        <AssistantMessage
-          message={baseMessage({ producedFiles: [producedFile('poster.png')] })}
-          streaming={false}
-          projectId="proj-1"
-          onRequestOpenFile={onRequestOpenFile}
-        />,
-      );
+  it('keeps the artifact card openable from the keyboard', () => {
+    const onRequestOpenFile = vi.fn();
+    render(
+      <AssistantMessage
+        message={baseMessage({ producedFiles: [producedFile('poster.png')] })}
+        streaming={false}
+        projectId="proj-1"
+        onRequestOpenFile={onRequestOpenFile}
+      />,
+    );
 
-      const row = screen.getByRole('button', { name: 'Open: poster.png' });
-      fireEvent.keyDown(row, { key });
-      expect(onRequestOpenFile).toHaveBeenCalledWith('poster.png');
-    },
-  );
+    // A real <button>, not a div with role="button": Enter and Space activate
+    // it natively, so the component owns no hand-rolled key handling.
+    const open = screen.getByRole('button', { name: 'Open: poster.png' });
+    expect(open.tagName).toBe('BUTTON');
+    fireEvent.click(open);
+    expect(onRequestOpenFile).toHaveBeenCalledWith('poster.png');
+  });
 
   it('renders plugin suggestions as compact user decisions with secondary actions in details', () => {
     const message = baseMessage({
@@ -170,9 +174,25 @@ describe('AssistantMessage feedback gate', () => {
       />,
     );
 
-    expect(container.querySelector('.msg.assistant-continuation')).toBeTruthy();
-    expect(container.querySelector('.msg .role')).toBeNull();
+    expect(container.querySelector('[data-continuation="true"]')).toBeTruthy();
+    expect(container.querySelector('[data-testid="assistant-role"]')).toBeNull();
     expect(container.textContent).toContain('Done.');
+  });
+
+  it('shows the agent name again when it is not a continuation', () => {
+    // 反面这一条是为了让上面那条**可证伪**:只断言「接续时为 true」的话,
+    // 把这个属性写死成 true 也照样绿
+    const { container } = render(
+      <AssistantMessage
+        message={baseMessage()}
+        streaming={false}
+        projectId="proj-1"
+        showRole
+      />,
+    );
+
+    expect(container.querySelector('[data-continuation="false"]')).toBeTruthy();
+    expect(container.querySelector('[data-testid="assistant-role"]')).toBeTruthy();
   });
 
   it('copies the raw assistant markdown from the completion footer', async () => {
@@ -514,7 +534,7 @@ describe('AssistantMessage thinking blocks', () => {
       />,
     );
 
-    expect(container.querySelector('.thinking-block')).toBeNull();
+    expect(container.querySelector('[data-testid="thinking-block"]')).toBeNull();
   });
 
   it('keeps non-empty thinking content visible after leading whitespace deltas', () => {
@@ -532,7 +552,8 @@ describe('AssistantMessage thinking blocks', () => {
       />,
     );
 
-    expect(container.querySelector('.thinking-block')).toBeTruthy();
+    // 新执行记录接进来之后,thinking 收进壳里(D29),不再是消息里一个独立的 `.thinking-block`。
+    // 这条测的是「空白 delta 不该把后面的内容吃掉」—— 判据改成「那段字还在」,与画在哪无关。
     expect(screen.getByText('Reading the directory listing.')).toBeTruthy();
   });
 });
@@ -587,12 +608,12 @@ describe('AssistantMessage question forms', () => {
     );
 
     expect(screen.getByText('Quick brief — tailored')).toBeTruthy();
-    const audienceInput = document.querySelector('.qf-input');
+    const audienceInput = document.querySelector('[data-testid="qf-input"]');
     if (!(audienceInput instanceof HTMLInputElement)) throw new Error('expected audience input');
     fireEvent.change(audienceInput, {
       target: { value: 'Product evaluators' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Send answers' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
     expect(onSubmitQuestionForm).toHaveBeenCalledWith(
       expect.stringContaining('- Who is this for?: Product evaluators'),
     );
@@ -620,7 +641,7 @@ describe('AssistantMessage question forms', () => {
       onSubmitQuestionForm: vi.fn(),
     };
     const first = render(<AssistantMessage {...props} />);
-    const draftInput = first.container.querySelector('.qf-input');
+    const draftInput = first.container.querySelector('[data-testid="qf-input"]');
     if (!(draftInput instanceof HTMLInputElement)) throw new Error('expected draft input');
     fireEvent.change(draftInput, {
       target: { value: 'Product leaders' },
@@ -628,7 +649,7 @@ describe('AssistantMessage question forms', () => {
     first.unmount();
 
     const restored = render(<AssistantMessage {...props} />);
-    const restoredInput = restored.container.querySelector('.qf-input');
+    const restoredInput = restored.container.querySelector('[data-testid="qf-input"]');
     if (!(restoredInput instanceof HTMLInputElement)) throw new Error('expected restored input');
     expect(restoredInput.value).toBe('Product leaders');
   });
@@ -655,12 +676,12 @@ describe('AssistantMessage question forms', () => {
         onSubmitQuestionForm={onSubmitQuestionForm}
       />,
     );
-    const audienceInput = document.querySelector('.qf-input');
+    const audienceInput = document.querySelector('[data-testid="qf-input"]');
     if (!(audienceInput instanceof HTMLInputElement)) throw new Error('expected audience input');
     fireEvent.change(audienceInput, {
       target: { value: 'Product leaders' },
     });
-    const send = screen.getByRole('button', { name: 'Send answers' });
+    const send = screen.getByRole('button', { name: 'Next' });
     fireEvent.click(send);
     fireEvent.click(send);
 
@@ -694,12 +715,12 @@ describe('AssistantMessage question forms', () => {
         onSubmitQuestionForm={onSubmitQuestionForm}
       />,
     );
-    const audienceInput = container.querySelector('.qf-input');
+    const audienceInput = container.querySelector('[data-testid="qf-input"]');
     if (!(audienceInput instanceof HTMLInputElement)) throw new Error('expected audience input');
     fireEvent.change(audienceInput, {
       target: { value: 'Product leaders' },
     });
-    const send = screen.getByRole('button', { name: 'Send answers' }) as HTMLButtonElement;
+    const send = screen.getByRole('button', { name: 'Next' }) as HTMLButtonElement;
     fireEvent.click(send);
 
     await waitFor(() => {
@@ -762,7 +783,7 @@ describe('AssistantMessage question forms', () => {
     if (!(input instanceof HTMLInputElement)) throw new Error('expected file input');
     const file = new File(['mood'], 'mood.png', { type: 'image/png' });
     fireEvent.change(input, { target: { files: [file] } });
-    fireEvent.click(screen.getByRole('button', { name: 'Send answers' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
 
     await waitFor(() => {
       expect(onSubmitQuestionForm).toHaveBeenCalledWith(
@@ -833,7 +854,7 @@ describe('AssistantMessage question forms', () => {
     if (!(input instanceof HTMLInputElement)) throw new Error('expected file input');
     const file = new File(['mood'], 'mood.png', { type: 'image/png' });
     fireEvent.change(input, { target: { files: [file] } });
-    const send = screen.getByRole('button', { name: 'Send answers' }) as HTMLButtonElement;
+    const send = screen.getByRole('button', { name: 'Next' }) as HTMLButtonElement;
     fireEvent.click(send);
 
     await waitFor(() => {
@@ -926,7 +947,7 @@ describe('AssistantMessage question forms', () => {
     const brief = new File(['brief'], 'brief.png', { type: 'image/png' });
     fireEvent.change(input, { target: { files: [mood, brief] } });
 
-    const send = screen.getByRole('button', { name: 'Send answers' });
+    const send = screen.getByRole('button', { name: 'Next' });
     fireEvent.click(send);
 
     await waitFor(() => {
@@ -993,7 +1014,10 @@ describe('AssistantMessage question forms', () => {
     );
 
     expect(screen.getByTestId('question-form-summary')).toBeTruthy();
-    expect(screen.getByText('Questions answered')).toBeTruthy();
+    // 2026-08-26:这一块按稿子第 23/24/25 格重做 —— 绿色「已确认」+ 纯行式「标签 值」,
+    // 不再是灰底卡 +「Questions answered」标题 + 胶囊。
+    expect(screen.getByText('Confirmed')).toBeTruthy();
+    expect(screen.queryByText('Questions answered')).toBeNull();
     expect(screen.getByText('Who is this for?')).toBeTruthy();
     expect(screen.getByText('Product evaluators')).toBeTruthy();
     expect(screen.queryByText('Quick brief — tailored')).toBeNull();
@@ -1325,10 +1349,9 @@ describe('AssistantMessage recovered produced files', () => {
       </CollabProvider>,
     );
 
-    // #5517 shape: recovered files land in the flat produced-files block (name
-    // / size / Open / Download), not folded into the collapsible tool-op
-    // summary — that summary lists only ops the turn actually emitted.
-    const produced = document.querySelector('.produced-files');
+    // #5517 shape:找回来的文件是**这一轮的产出**,不折进那张只列真实操作的工具摘要。
+    // 2026-08-26:产出一律走产物卡(拿不出预览图的走 `doc` 档),不再有第二种列表形态。
+    const produced = document.querySelector('[data-testid="artifact-card-browser-war-deck-outline.md"]');
     expect(produced).toBeTruthy();
     expect(produced?.textContent).toContain('browser-war-deck-outline.md');
     const download = produced?.querySelector('a[download]');
@@ -1378,7 +1401,7 @@ describe('AssistantMessage recovered produced files', () => {
     );
 
     const hasFileOpsSummary = !!screen.queryByTestId('file-ops-summary');
-    const hasProducedFiles = !!document.querySelector('.produced-files');
+    const hasProducedFiles = !!document.querySelector('[data-testid="produced-files"]');
     expect(hasFileOpsSummary).toBe(true);
     expect(hasProducedFiles).toBe(false);
   });
@@ -1426,7 +1449,10 @@ describe('AssistantMessage recovered produced files', () => {
       />,
     );
 
-    expect(screen.getAllByTestId(`file-ops-row-${fileName}`)).toHaveLength(1);
+    // HTML 产物现在走卡片形态(组件 14),不再是文本行 —— 这条测的是**去重**:
+    // 同一个文件被写到过错项目路径,最终只应该出现一次
+    expect(document.querySelectorAll('[data-artifact-card]')).toHaveLength(1);
+    expect(screen.queryByTestId(`file-ops-row-${fileName}`)).toBeNull();
     expect(screen.queryByTestId('file-ops-toggle')).toBeNull();
   });
 
@@ -1454,7 +1480,7 @@ describe('AssistantMessage recovered produced files', () => {
       />,
     );
 
-    const produced = document.querySelector('.produced-files');
+    const produced = document.querySelector('[data-testid="artifact-card-browser-war-deck-outline.md"]');
     expect(produced).toBeTruthy();
     expect(produced?.textContent).toContain('browser-war-deck-outline.md');
   });
@@ -1512,7 +1538,8 @@ describe('AssistantMessage recovered produced files', () => {
       />,
     );
 
-    expect(screen.getByText('iphone-device-reveal.mp4')).toBeTruthy();
+    // Video artifacts land on a card (grid 33) instead of a filename row.
+    expect(screen.getByTestId('artifact-card-iphone-device-reveal.mp4')).toBeTruthy();
   });
 
 
@@ -1579,7 +1606,10 @@ describe('AssistantMessage recovered produced files', () => {
       />,
     );
 
-    expect(screen.getByText('diagram.svg')).toBeTruthy();
+    // The svg is an artifact, so it arrives as a card (grid 32, export only);
+    // the sketch json is still not inferred as turn output at all.
+    expect(screen.getByTestId('artifact-card-diagram.svg')).toBeTruthy();
+    expect(screen.queryByTestId('artifact-card-board.sketch.json')).toBeNull();
     expect(screen.queryByText('board.sketch.json')).toBeNull();
   });
 

@@ -65,7 +65,8 @@ describe('AssistantMessage feedback analytics', () => {
     );
 
     fireEvent.click(screen.getByRole('button', { name: 'Helpful' }));
-    fireEvent.click(await screen.findByLabelText('Understood my request'));
+    // 原因项按稿子第 40 格改成了胶囊按钮(`aria-pressed` 承担多选),不再是 label+checkbox
+    fireEvent.click(await screen.findByRole('button', { name: 'Understood my request' }));
     fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
 
     const resultCall = analyticsMocks.track.mock.calls.find(

@@ -96,7 +96,8 @@ describe('AssistantMessage unfinished todo state', () => {
 
     expect(screen.getByText('No output')).toBeTruthy();
     expect(screen.getByText(/provider ended the request/i)).toBeTruthy();
-    expect(screen.queryByText('Done')).toBeNull();
+    // 「Done」现在是执行记录壳头的状态词(D10:壳永远出现),但回合状态行仍然只说「没有输出」
+    expect(document.querySelector('[data-testid="assistant-label"]')?.textContent).toBe('No output');
     expect(screen.queryByText('empty_response')).toBeNull();
   });
 
@@ -119,7 +120,8 @@ describe('AssistantMessage unfinished todo state', () => {
       />,
     );
 
-    expect(screen.queryByText('Done')).toBeNull();
+    // 完成度由 composer 上方那张固定清单卡拥有,这条消息自己不再摆一个完成状态行
+    expect(document.querySelector('[data-testid="assistant-label"]')).toBeNull();
     expect(screen.queryByText('Stopped with unfinished work')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Continue remaining tasks' })).toBeNull();
   });

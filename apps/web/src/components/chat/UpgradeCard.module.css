@@ -1,0 +1,68 @@
+/*
+ * 升级卡(设计稿组件 18)。
+ *
+ * 形态取自交付稿的 `.up`:**流水里的一张卡**,不是弹窗、不挡发送。
+ * 出现时机由用户 2026-08-26 裁决:**运行结束之后**(见规格 D58)。
+ *
+ * 与产品原有的 `AmrLowBalanceDialog` 是两回事 —— 那个是居中硬阻断弹窗;
+ * 这张卡走 D4「不阻塞」的取向,只是把话说清楚。
+ */
+.up {
+  border: var(--chat-stroke) solid var(--chat-border);
+  border-radius: var(--chat-radius-lg);
+  background: var(--chat-bg);
+  overflow: hidden;
+}
+
+/* 稿子 `.up .h { display:flex; align-items:center; gap:8px; padding: 10px 11px 0 }` */
+.head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 11px 0;
+}
+
+/* 稿子 `.up .h .amt { flex: 1; min-width: 0 }` */
+.amount {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 稿子 `.up .h .amt .n { display:block; font-size: var(--t-lead); font-weight:600; color:#353535 }` */
+.amount > span {
+  display: block;
+  font-size: var(--chat-t-lead);
+  font-weight: 600;
+  color: var(--chat-text-strong);
+}
+
+/* 稿子 `.up .h .amt b { font-family: var(--mono); font-weight: 700; color: #f8672f }` */
+.amount b {
+  font-family: var(--chat-font-mono);
+  font-weight: 700;
+  color: var(--chat-upgrade-amount);
+}
+
+/* 稿子 `.up .h .amt.is-out b { color: var(--red) }` —— 归零那一档换红 */
+.out b {
+  color: var(--chat-red);
+}
+
+/* 稿子 `.up .why { margin: 6px 11px 10px; font-size: var(--t-cap);
+   line-height: var(--lh-row); color: var(--text-soft) }` */
+.why {
+  margin: 6px 11px 10px;
+  font-size: var(--chat-t-cap);
+  line-height: var(--chat-lh-row);
+  color: var(--chat-text-soft);
+}
+
+/* 稿子 `.up .h .btn { padding: 8px }` + `.up .h .btn.mod-primary { color: var(--upgrade-ink) }`
+   —— 黑底不变,绿只落在字和那枚闪光上 */
+.cta {
+  padding: 8px;
+  color: var(--chat-upgrade-ink);
+}
+.cta:hover:not(:disabled) {
+  color: var(--chat-upgrade-ink);
+}

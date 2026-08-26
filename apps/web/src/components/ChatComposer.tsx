@@ -9,6 +9,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type MutableRefObject,
   type ReactNode,
 } from "react";
 import { createPortal } from 'react-dom';
@@ -106,6 +107,24 @@ import {
 } from './composer/LexicalComposerInput';
 import { CaretFloatingLayer } from './composer/CaretFloatingLayer';
 import { ANNOTATION_EVENT, type AnnotationEventDetail } from "./PreviewDrawOverlay";
+import {
+  formatAttachmentSize,
+  middleTruncateFileName,
+  splitFileName,
+} from '../runtime/chat/attachment';
+import {
+  attachmentNavDelta,
+  attachmentNavState,
+  type AttachmentNavState,
+} from '../runtime/chat/attachment-nav';
+import {
+  buildStagedAttachmentCards,
+  looksLikeImageName,
+  runWithConcurrency,
+  STAGED_UPLOAD_CONCURRENCY,
+  type PendingUpload,
+  type StagedAttachmentCard,
+} from '../runtime/chat/staged-attachment';
 
 /**
  * Window event for staging attachments that are ALREADY uploaded to the
@@ -123,6 +142,8 @@ import { listenForConnectorsChanged } from './connectors-events';
 import { fetchConnectorCatalogSnapshot } from './connectors-state';
 import { PlaceholderCarousel } from './home-hero/PlaceholderCarousel';
 import type { PlaceholderScenario } from './home-hero/placeholderScenarios';
+import type { ChatQuote } from '../runtime/chat/quote-selection';
+import { QuotedRefs } from './chat/QuotedRefs';
 
 type TranslateFn = (key: keyof Dict, vars?: Record<string, string | number>) => string;
 
@@ -228,6 +249,12 @@ type DesignToolboxResource =
 export type ChatSendOutcome = void | 'restore-draft';
 
 interface Props {
+  /**
+   * 正文取词(设计稿组件 23)攒下的引用。输入框上方那枚「N 条注释」芯片就是它,
+   * 发送时作为引文前缀带给 agent。
+   */
+  quotes?: ChatQuote[];
+  onClearQuotes?: () => void;
   projectId: string | null;
   projectFiles: ProjectFile[];
   activeProjectFileName?: string | null;
@@ -489,6 +516,8 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
       leadingAccessory,
       designSystemPicker,
       onShowToast,
+      quotes,
+      onClearQuotes,
     },
     ref
   ) {
@@ -655,6 +684,32 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
     const [slashIndex, setSlashIndex] = useState(0);
     const [uploading, setUploading] = useState(false);
     const [uploadError, setUploadError] = useState<string | null>(null);
+    /* 待发送托盘里【还没传完 / 传失败】的那几张卡(设计稿 #61 / #63)。
+       它们不进 `staged` —— `staged` 是「能跟着这条消息发出去的附件」,而这几张
+       还没有服务端路径。两条列表在渲染时才合并(`buildStagedAttachmentCards`)。 */
+    const [pendingUploads, setPendingUploads] = useState<PendingUpload[]>([]);
+    /* 本地 `File` 留在 ref 里,不进 state:重试要能只重发那一个文件,而 `File`
+       本身不参与渲染,放进 state 只会让每次上传都多一轮无谓的 diff。
+       `previewUrl` 一并记着,移除 / 传完时要 revoke,不然长会话里会漏一串 blob。 */
+    const pendingFilesRef = useRef<Map<string, { file: File; previewUrl: string | null }>>(new Map());
+    const pendingSeqRef = useRef(0);
+    // 组件被卸掉时(切项目 / 关面板)把还没 revoke 的本地缩略图一次收干净。
+    useEffect(() => {
+      const files = pendingFilesRef.current;
+      return () => {
+        if (typeof URL === 'undefined' || typeof URL.revokeObjectURL !== 'function') return;
+        for (const entry of files.values()) {
+          if (entry.previewUrl) {
+            try {
+              URL.revokeObjectURL(entry.previewUrl);
+            } catch {
+              /* 撤不掉不影响功能 */
+            }
+          }
+        }
+        files.clear();
+      };
+    }, []);
     // External MCP servers configured by the user. Fetched lazily on mount;
     // shown in the slash-command palette so `/mcp <id>` inserts a hint into
     // the prompt that nudges the model to use that server's tools.
@@ -1407,6 +1462,8 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
       };
       const effectiveMeta =
         Object.keys(effectiveMetaShape).length > 0 ? effectiveMetaShape : undefined;
+      // 引用是这一条消息的上下文,发出去就该清掉 —— 它不是长期状态
+      onClearQuotes?.();
       return beginComposedSend(
         () => onSend(prompt, nextAttachments, nextCommentAttachments, effectiveMeta),
         { entryFrom: pendingEntryFrom, sessionMode: pendingSessionMode },
@@ -1882,6 +1939,118 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
       return onEnsureProject();
     }
 
+    /* ── 逐文件上传(设计稿 #61 / #63)────────────────────────────────
+     *
+     * 原来这里是**原子**的:一次 `uploadProjectFiles(id, files)` 打包发,成功之后
+     * 芯片才出现。于是上传的那几秒界面上一张卡都没有,失败也只有一行全局提示 ——
+     * 哪个文件没传上去、能不能只重发那一个,都说不出来。
+     *
+     * 现在**一个文件一个请求**。`uploadProjectFiles` 本来就收 `File[]`,给它一个
+     * 长度为 1 的数组走的是同一个端点、同一份契约 —— 后端和 `packages/contracts`
+     * 都不用动,换来的是失败能落到具体那张卡上(原来只有 `failed[].name`,
+     * 同名文件根本对不回去)。
+     *
+     * 代价是请求数从 ⌈N/12⌉ 变成 N,所以并发限到 `STAGED_UPLOAD_CONCURRENCY`。
+     */
+    function stageOnePendingUpload(file: File, order: number): PendingUpload {
+      pendingSeqRef.current += 1;
+      const id = `pu-${pendingSeqRef.current}`;
+      const kind = looksLikeImageName(file.name, file.type) ? 'image' as const : 'file' as const;
+      // 本地缩略图只为上传的那几秒服务;拿不到(jsdom / 老浏览器)就退回灰底占位。
+      let previewUrl: string | null = null;
+      if (kind === 'image' && typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function') {
+        try {
+          previewUrl = URL.createObjectURL(file);
+        } catch {
+          previewUrl = null;
+        }
+      }
+      pendingFilesRef.current.set(id, { file, previewUrl });
+      return {
+        id,
+        name: file.name,
+        kind,
+        ...(Number.isFinite(file.size) ? { size: file.size } : {}),
+        order,
+        state: 'uploading',
+        ...(previewUrl ? { previewUrl } : {}),
+      };
+    }
+
+    function releasePendingUpload(id: string) {
+      const entry = pendingFilesRef.current.get(id);
+      if (entry?.previewUrl && typeof URL !== 'undefined' && typeof URL.revokeObjectURL === 'function') {
+        try {
+          URL.revokeObjectURL(entry.previewUrl);
+        } catch {
+          /* 已经撤过或环境不支持 —— 撤不掉不影响功能 */
+        }
+      }
+      pendingFilesRef.current.delete(id);
+    }
+
+    function dropPendingUpload(id: string) {
+      releasePendingUpload(id);
+      setPendingUploads((current) => current.filter((item) => item.id !== id));
+    }
+
+    /**
+     * 传一个文件。传成功就把占位卡换成真附件(**同一个 `order`**,所以它落回
+     * 用户当初挑的那个位置,不因为先传完而插队);失败就把卡留在托盘里标红,
+     * 等人点重试或者「×」。
+     */
+    async function runOnePendingUpload(
+      projectIdForUpload: string,
+      entry: PendingUpload,
+    ): Promise<{ ok: boolean; error?: string }> {
+      const local = pendingFilesRef.current.get(entry.id);
+      // 人在这一轮里已经把卡「×」掉了 —— 别再把结果塞回托盘。
+      if (!local) return { ok: true };
+      try {
+        const result = await uploadProjectFiles(
+          projectIdForUpload,
+          [local.file],
+          undefined,
+          workspaceContext,
+        );
+        const uploaded = result.uploaded[0];
+        // 人在等结果的这几秒里把卡撤了,结果就地丢掉(文件本身已经落到项目里,
+        // 和「传完再点×」是同一个语义 —— 不进待发列表,也不回删)。
+        if (!pendingFilesRef.current.has(entry.id)) return { ok: Boolean(uploaded) };
+        if (uploaded) {
+          appendOrderedStagedAttachments([{ ...uploaded, order: entry.order }]);
+          dropPendingUpload(entry.id);
+          return { ok: true };
+        }
+        const detail = result.error ?? result.failed[0]?.error;
+        setPendingUploads((current) =>
+          current.map((item) => (item.id === entry.id ? { ...item, state: 'failed' } : item)),
+        );
+        return { ok: false, ...(detail ? { error: detail } : {}) };
+      } catch (err) {
+        const detail = err instanceof Error ? err.message : String(err);
+        if (pendingFilesRef.current.has(entry.id)) {
+          setPendingUploads((current) =>
+            current.map((item) => (item.id === entry.id ? { ...item, state: 'failed' } : item)),
+          );
+        }
+        return { ok: false, error: detail };
+      }
+    }
+
+    /** 只重发这一个文件。本地 `File` 还在 `pendingFilesRef` 里,失败时没有清掉。 */
+    async function retryPendingUpload(pendingId: string) {
+      const target = pendingUploads.find((item) => item.id === pendingId);
+      if (!target || !pendingFilesRef.current.has(pendingId)) return;
+      const id = await ensureProject();
+      if (!id) return;
+      setUploadError(null);
+      setPendingUploads((current) =>
+        current.map((item) => (item.id === pendingId ? { ...item, state: 'uploading' } : item)),
+      );
+      await runOnePendingUpload(id, { ...target, state: 'uploading' });
+    }
+
     async function uploadFiles(files: File[]) {
       if (files.length === 0) return;
       const id = await ensureProject();
@@ -1895,30 +2064,40 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
       const cohort = deriveUploadCohort(files);
       const orderStart = reserveAttachmentOrders(files.length);
       try {
-        const result = await uploadProjectFiles(id, files, undefined, workspaceContext);
-        if (result.uploaded.length > 0) {
-          const orderedUploaded = assignChatAttachmentOrders(result.uploaded, orderStart);
-          appendOrderedStagedAttachments(orderedUploaded);
-        }
-        const partial = result.failed.length > 0;
+        const entries = files.map((file, index) => stageOnePendingUpload(file, orderStart + index));
+        setPendingUploads((current) => [...current, ...entries]);
+        const outcomes = await runWithConcurrency(
+          entries,
+          STAGED_UPLOAD_CONCURRENCY,
+          (entry) => runOnePendingUpload(id, entry),
+        );
+        const failures = outcomes.filter((outcome) => !outcome.ok);
+        const partial = failures.length > 0;
         if (partial) {
-          const failedCount = result.failed.length;
-          const uploadedCount = result.uploaded.length;
-          const detail = result.error ? ` (${result.error})` : '';
+          // 全局那一行提示【保留】。稿子里没有它 —— 稿子把失败全交给卡片上的
+          // 「重试」,可那一格只画了图卡(S13:文档宽卡的失败态没画,「重试」放哪
+          // 没说)。在设计补上那一态之前,文档卡失败就只剩这一行能说话,
+          // 收掉它等于让「.txt 传失败」变成完全无声。
+          const failedCount = failures.length;
+          const uploadedCount = outcomes.length - failedCount;
+          const firstFailure = failures.find((outcome) => outcome.error)?.error;
+          const detail = firstFailure ? ` (${firstFailure})` : '';
           setUploadError(
             uploadedCount > 0
               ? `Attached ${uploadedCount} file(s), but ${failedCount} failed${detail}.`
               : `Attachment upload failed for ${failedCount} file(s)${detail}.`,
           );
-          console.warn('Some attachments failed to upload', result.failed);
+          console.warn('Some attachments failed to upload', failures);
         }
+        // 埋点仍然是**一次挑文件一条事件**(v2 文档的口径),不随请求数变成 N 条。
+        const firstError = failures.find((outcome) => outcome.error)?.error;
         trackFileUploadResult(analytics.track, {
           page_name: 'chat_panel',
           area: 'chat_composer',
           project_id: id,
           ...cohort,
           result: partial ? 'failed' : 'success',
-          ...(partial && result.error ? { error_code: result.error } : {}),
+          ...(partial && firstError ? { error_code: firstError } : {}),
         });
       } catch (err) {
         const detail = err instanceof Error ? err.message : String(err);
@@ -2637,7 +2816,15 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
     }
 
     async function submit() {
-      const prompt = draft.trim();
+      /*
+       * 正文取词攒下的引用作为**引文前缀**带上(设计稿组件 23)。
+       * 用 markdown 的引用块,agent 一眼能分清「这是我上一轮说的话」和「这是新指令」;
+       * 发出去之后清空芯片 —— 它是这一条消息的上下文,不是长期状态。
+       */
+      const quoted = (quotes ?? []).map((q) => `> ${q.text}`).join('\n');
+      const prompt = quoted
+        ? `${quoted}\n\n${draft.trim()}`.trim()
+        : draft.trim();
       if (sendDisabled) return;
       // Intercept `/pet …` and `/mcp` before sending so the slash command
       // never hits the agent — these are local UX hooks, not model prompts.
@@ -2815,6 +3002,16 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
       || liveCommentAttachments.length > 0;
     const showStopButton = streaming && !hasComposerPayload;
     const showSendButton = !streaming || hasComposerPayload;
+    /* 托盘里要摆的那一排卡:已传好的 `staged` 与还在传 / 传失败的 `pendingUploads`
+       合成一排,顺序按用户当初挑文件的顺序(合并规则是纯函数,单测在
+       `tests/runtime/chat/staged-attachment.test.ts`)。
+       ⚠️ **只有 `state === 'ready'` 的卡进得了 `hasComposerPayload`** —— 上面那个
+       判断读的是 `staged`,没读这里,所以「在传的文件算不算 payload」的语义没被这次
+       改动动过(那条已知 bug 属于另一个 PR,见规格 §4-A 末尾)。 */
+    const stagedAttachmentCards = useMemo(
+      () => buildStagedAttachmentCards(staged, pendingUploads),
+      [staged, pendingUploads],
+    );
 
     const openDesignSystemPicker = () => {
       const trigger = composerRootRef.current?.querySelector<HTMLButtonElement>(
@@ -2917,6 +3114,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
             />
             <div
               className="plus-menu__popup composer-toolbox-standalone-popup composer-plugins-standalone-popup"
+              data-testid="composer-plugins-popup"
               role="menu"
               onMouseEnter={cancelComposerPanelClose}
               onMouseLeave={scheduleComposerPanelClose}
@@ -2994,14 +3192,13 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
               }}
             />
           ) : null}
-          {selectedWorkspaceContexts.length > 0 || stagedSkills.length > 0 || stagedMcpServers.length > 0 || stagedConnectors.length > 0 || staged.length > 0 || activeAppliedPlugin ? (
+          {selectedWorkspaceContexts.length > 0 || stagedSkills.length > 0 || stagedMcpServers.length > 0 || stagedConnectors.length > 0 || activeAppliedPlugin ? (
             <StagedRunContexts
               workspaceItems={selectedWorkspaceContexts}
               currentWorkspaceContextId={visibleWorkspaceContext?.id ?? null}
               skills={stagedSkills}
               mcpServers={stagedMcpServers}
               connectors={stagedConnectors}
-              attachments={staged}
               pluginChip={
                 activeAppliedPlugin
                   ? {
@@ -3010,12 +3207,10 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
                     }
                   : null
               }
-              projectId={projectId}
               onRemoveWorkspace={removeWorkspaceContext}
               onRemoveSkill={removeStagedSkill}
               onRemoveMcp={removeStagedMcpServer}
               onRemoveConnector={removeStagedConnector}
-              onRemoveAttachment={removeStaged}
               onRemovePlugin={() => {
                 pluginsSectionRef.current?.clear();
                 setActiveAppliedPlugin(null);
@@ -3032,6 +3227,18 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
                     ?? null,
                 });
               }}
+              t={t}
+            />
+          ) : null}
+          {/* 待发送附件自己占一个托盘,不和 plugin / skill / MCP 芯片挤在同一行:
+              稿子的 `.composer > .tray` 只装附件(盘点 #60 第 5 条)。 */}
+          {stagedAttachmentCards.length > 0 ? (
+            <StagedAttachmentTray
+              cards={stagedAttachmentCards}
+              projectId={projectId}
+              onRemoveStaged={removeStaged}
+              onRemovePending={dropPendingUpload}
+              onRetryPending={(id) => void retryPendingUpload(id)}
               t={t}
             />
           ) : null}
@@ -3059,6 +3266,10 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
               this only drops the per-composer override UI. The byok* props and
               handlers are intentionally retained as the plumbing the unified
               picker will reuse. */}
+          {/* 稿子第 67 格:引用芯片在输入框**上方**,不占写字的地方 */}
+          {quotes && quotes.length > 0 ? (
+            <QuotedRefs quotes={quotes} onClear={() => onClearQuotes?.()} />
+          ) : null}
           <div
             className="composer-input-wrap"
             onFocus={() => {
@@ -3794,14 +4005,11 @@ function StagedRunContexts({
   skills,
   mcpServers,
   connectors,
-  attachments,
   pluginChip,
-  projectId,
   onRemoveWorkspace,
   onRemoveSkill,
   onRemoveMcp,
   onRemoveConnector,
-  onRemoveAttachment,
   onRemovePlugin,
   onPluginDetails,
   onSkillDetails,
@@ -3813,38 +4021,18 @@ function StagedRunContexts({
   skills: SkillSummary[];
   mcpServers: McpServerConfig[];
   connectors: ConnectorDetail[];
-  attachments: ChatAttachment[];
   pluginChip?: { id: string; title: string } | null;
-  projectId: string | null;
   onRemoveWorkspace: (id: string) => void;
   onRemoveSkill: (id: string) => void;
   onRemoveMcp: (id: string) => void;
   onRemoveConnector: (id: string) => void;
-  onRemoveAttachment: (path: string) => void;
   onRemovePlugin?: () => void;
   onPluginDetails?: (id: string) => void;
   onSkillDetails?: (id: string) => void;
   t: TranslateFn;
 }) {
   const { workspaceContext } = useProjectCollabContext();
-  // Attachment thumbnails preview in a portal modal; keep that state here so the
-  // file chips can live in the same wrap row as the design-system picker and
-  // other run-context chips (so files flow to the picker's right, wrapping to a
-  // new line only when the row fills) instead of forcing a separate row below.
-  const [preview, setPreview] = useState<ChatAttachment | null>(null);
-  const previewUrl = preview && projectId
-    ? projectRawUrl(projectId, preview.path, workspaceContext)
-    : null;
-  useEffect(() => {
-    if (!preview) return;
-    function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') setPreview(null);
-    }
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [preview]);
   return (
-    <>
     <div
       className="staged-row staged-context-row"
       data-testid="staged-contexts"
@@ -3855,7 +4043,7 @@ function StagedRunContexts({
         </div>
       ) : null}
       {pluginChip ? (
-        <div className="staged-chip staged-context staged-context--plugin">
+        <div className="staged-chip staged-context staged-context--plugin" data-staged-kind="plugin">
           {/* Two sibling controls — a details button (icon + name) and the
               remove button — rather than a role=button wrapper containing the
               remove button. Nested interactive controls break focus order and
@@ -3989,86 +4177,357 @@ function StagedRunContexts({
           </button>
         </div>
       ))}
-      {attachments.map((a, index) => {
-        const canPreview = a.kind === 'image' && Boolean(projectId);
-        const imageUrl = canPreview
-          ? projectRawUrl(projectId!, a.path, workspaceContext)
-          : null;
-        return (
-          <div
-            key={a.path}
-            className={`staged-chip staged-${a.kind}${canPreview && imageUrl ? ' staged-chip--image-file' : ''}`}
-          >
-            <span className="staged-order" aria-label={`Attachment ${index + 1}`}>
-              {index + 1}
-            </span>
-            {canPreview && imageUrl ? (
-              // Mirrors the home composer's image chips: thumbnail only, the
-              // filename lives in the tooltip / aria-label.
+    </div>
+  );
+}
+
+/* ── 待发送附件托盘(设计稿组件 21,第 60–64 格)──────────────────────────
+ *
+ * 与「已发送」那一侧(`ChatPane.tsx` 的 `UserAttachmentRow`)**共用同一张卡**:
+ * 同样 57px 方卡 / 180px 文档卡、同样的主名中间省略 + 后缀保留,靠 CSS 里
+ * `.composer-att` 与 `.msg.user` 共写一份选择器落实,不另抄一套模板。
+ * 稿子这条是有来历的:两侧长得不一样时,同一批文件在按下发送的那一瞬会整个
+ * 跳一下形状,而两套模板还会各自漂移 —— 线上那版就是这么裂的。
+ *
+ * 托盘只多两样东西:右上角一枚 hover 才出的「×」,和上传中 / 失败的叠加物。
+ * 托盘靠左(已发送那一侧要贴右,因为它压在用户气泡上方)。
+ */
+export function StagedAttachmentTray({
+  cards,
+  projectId,
+  onRemoveStaged,
+  onRemovePending,
+  onRetryPending,
+  t,
+}: {
+  cards: StagedAttachmentCard[];
+  projectId: string | null;
+  onRemoveStaged: (path: string) => void;
+  onRemovePending: (pendingId: string) => void;
+  onRetryPending: (pendingId: string) => void;
+  t: TranslateFn;
+}) {
+  const { workspaceContext } = useProjectCollabContext();
+  const rowRef = useRef<HTMLDivElement>(null);
+  const { prev, next, page } = useStagedTrayNav(rowRef, cards.length);
+  // 点缩略图看大图 —— 这是产品**已有**的能力,稿子那一格把卡画成了不可点的
+  // `<span>`。删掉一个人已经在用的入口要产品拍板,所以这里保留(报告里记着)。
+  const [preview, setPreview] = useState<StagedAttachmentCard | null>(null);
+  const previewUrl = preview
+    ? preview.previewUrl
+      ?? (preview.path && projectId ? projectRawUrl(projectId, preview.path, workspaceContext) : null)
+    : null;
+  useEffect(() => {
+    if (!preview) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setPreview(null);
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [preview]);
+  const removeCard = (card: StagedAttachmentCard) => {
+    if (card.pendingId) onRemovePending(card.pendingId);
+    else if (card.path) onRemoveStaged(card.path);
+  };
+  return (
+    <>
+      {/* 壳子只为箭头存在:箭头要绝对定位压在这一行的两端,而滚动容器自己
+          不能 `position: relative` —— 那样绝对定位的孩子会跟着内容一起滚走。 */}
+      <div className={`composer-att-wrap${prev ? ' is-prev' : ''}${next ? ' is-next' : ''}`}>
+        <div className="composer-att" data-testid="staged-attachments" ref={rowRef}>
+          {cards.map((card) => {
+            const removeLabel = card.state === 'uploading'
+              ? t('chat.att.cancelUpload', { name: card.name })
+              : t('chat.removeAria', { name: card.name });
+            const del = (
               <button
                 type="button"
-                className="staged-preview-trigger"
-                onClick={() => setPreview(a)}
-                title={a.name}
-                aria-label={`Preview ${a.name}`}
+                className="msg-att-del"
+                onClick={() => removeCard(card)}
+                aria-label={removeLabel}
               >
-                <img src={imageUrl} alt="" aria-hidden />
+                <Icon name="close" size={10} />
               </button>
-            ) : (
-              <>
-                <span className="staged-icon" aria-hidden>
-                  <Icon name="file" size={13} />
+            );
+            const stateClass = card.state === 'uploading'
+              ? ' is-up'
+              : card.state === 'failed' ? ' is-fail' : '';
+            if (card.kind === 'file') {
+              return (
+                <StagedTrayDocCard
+                  key={card.key}
+                  card={card}
+                  stateClass={stateClass}
+                  del={del}
+                />
+              );
+            }
+            const thumbUrl = card.previewUrl
+              ?? (card.path && projectId ? projectRawUrl(projectId, card.path, workspaceContext) : null);
+            return (
+              <span key={card.key} className={`msg-att-img${stateClass}`} data-testid="staged-attachment-image">
+                <span className="msg-att-ph">
+                  {card.state === 'failed' ? (
+                    /* 失败卡里「重试」铺满整块缩略图 —— 57px 见方的卡横着放不下
+                       「↻ 重试」,竖排两行才落得进方块里。
+                       失败卡不描红框:红只留给【可以点的那一下】,不是「这张卡出事了」。 */
+                    <button
+                      type="button"
+                      className="msg-att-rt"
+                      data-testid="staged-att-retry"
+                      onClick={() => card.pendingId && onRetryPending(card.pendingId)}
+                      title={card.name}
+                    >
+                      <Icon name="refresh" size={14} />
+                      <span>{t('chat.att.retry')}</span>
+                    </button>
+                  ) : card.state === 'ready' && thumbUrl ? (
+                    <button
+                      type="button"
+                      className="msg-att-mini-btn"
+                      onClick={() => setPreview(card)}
+                      title={card.name}
+                      aria-label={`Preview ${card.name}`}
+                    >
+                      <img className="msg-att-mini" src={thumbUrl} alt="" aria-hidden />
+                    </button>
+                  ) : thumbUrl ? (
+                    /* 上传中:缩略图压暗(`.is-up .msg-att-mini { opacity: .45 }`),
+                       这几秒它不是一个可点的东西。 */
+                    <img className="msg-att-mini" src={thumbUrl} alt="" aria-hidden />
+                  ) : (
+                    <span className="msg-att-mini" aria-hidden />
+                  )}
                 </span>
-                <span className="staged-name" title={a.path}>
-                  {a.name}
-                </span>
-              </>
-            )}
-            <button
-              type="button"
-              className="staged-remove od-tooltip"
-              onClick={() => onRemoveAttachment(a.path)}
-              title={t('common.delete')}
-              data-tooltip={t('common.delete')}
-              aria-label={t('chat.removeAria', { name: a.name })}
-            >
-              <Icon name="close" size={11} />
-            </button>
-          </div>
-        );
-      })}
-    </div>
-    {preview && previewUrl ? createPortal(
-      <div
-        className="staged-preview-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-label={preview.name}
-        onMouseDown={(e) => {
-          if (e.target === e.currentTarget) setPreview(null);
-        }}
-      >
-        <div className="staged-preview-card">
-          <div className="staged-preview-head">
-            <span title={preview.path}>{preview.name}</span>
-            <button
-              type="button"
-              className="icon-only od-tooltip"
-              onClick={() => setPreview(null)}
-              aria-label={t('common.close')}
-              title={t('common.close')}
-              data-tooltip={t('common.close')}
-            >
-              <Icon name="close" size={14} />
-            </button>
-          </div>
-          <img src={previewUrl} alt={preview.name} />
+                {del}
+              </span>
+            );
+          })}
         </div>
-      </div>,
-      document.body
-    ) : null}
+        {/* 一枚朝下的箭头转 ±90 度当左右用,判据与已发送那一行同一份纯函数。
+            两颗**常驻**,出没交给壳上的 `is-prev` / `is-next`(稿子 `.att-wrap.is-prev > .att-nav.mod-prev`
+            就是这么写的);这也是本仓的约定 —— 条件显示的元素保持挂载、用 CSS 切,
+            React 卸载会把退场过渡整个跳过。 */}
+        <button
+          type="button"
+          className="msg-att-nav mod-prev"
+          data-testid="staged-att-nav-prev"
+          aria-label={t('chat.attachments.scrollPrev')}
+          onClick={() => page('prev')}
+        >
+          <i>
+            <Icon name="chevron-down" size={14} />
+          </i>
+        </button>
+        <button
+          type="button"
+          className="msg-att-nav mod-next"
+          data-testid="staged-att-nav-next"
+          aria-label={t('chat.attachments.scrollNext')}
+          onClick={() => page('next')}
+        >
+          <i>
+            <Icon name="chevron-down" size={14} />
+          </i>
+        </button>
+      </div>
+      {preview && previewUrl ? createPortal(
+        <div
+          className="staged-preview-modal"
+          role="dialog"
+          aria-modal="true"
+          aria-label={preview.name}
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setPreview(null);
+          }}
+        >
+          <div className="staged-preview-card" data-testid="staged-preview-card">
+            <div className="staged-preview-head" data-testid="staged-preview-head">
+              <span title={preview.path ?? preview.name}>{preview.name}</span>
+              <button
+                type="button"
+                className="icon-only od-tooltip"
+                onClick={() => setPreview(null)}
+                aria-label={t('common.close')}
+                title={t('common.close')}
+                data-tooltip={t('common.close')}
+              >
+                <Icon name="close" size={14} />
+              </button>
+            </div>
+            <img src={previewUrl} alt={preview.name} />
+          </div>
+        </div>,
+        document.body,
+      ) : null}
     </>
   );
+}
+
+/**
+ * 文档卡(#62)。名字是它唯一的身份,所以反过来【必须】挂名字;
+ * 主名中间省略、后缀永远完整,量法与已发送那一侧同一份纯函数。
+ *
+ * 托盘里它额外吃 `padding-inline-end: 28px` 给右上角的「×」让位,
+ * 而「×」自己的偏移是 5px(图卡是 4px)—— 两张卡的边框 / 内边距不同,
+ * 稿子给的就是两个值,别统一成一个。
+ */
+function StagedTrayDocCard({
+  card,
+  stateClass,
+  del,
+}: {
+  card: StagedAttachmentCard;
+  stateClass: string;
+  del: ReactNode;
+}) {
+  const { base, ext } = splitFileName(card.name);
+  const nameRef = useRef<HTMLSpanElement>(null);
+  const displayBase = useTrayTruncatedName(nameRef, base, ext);
+  const size = formatAttachmentSize(card.size);
+  return (
+    <span className={`msg-att-doc${stateClass}`} title={card.name}>
+      <Icon name="file" size={15} className="msg-att-fi" />
+      <span className="msg-att-tx">
+        <span className="msg-att-nm" ref={nameRef}>
+          <span className="msg-att-base">{displayBase}</span>
+          {ext ? <span className="msg-att-ext">{ext}</span> : null}
+        </span>
+        {/* 拿不到体积就空着这一行,不写 `0 B` —— 但位置留着,
+            否则同一行里有体积和没体积的卡会差一行高。 */}
+        <span className="msg-att-meta">{size ?? ''}</span>
+      </span>
+      {del}
+    </span>
+  );
+}
+
+/** 量文字宽度用的离屏 canvas。一份就够,反复建会在长会话里堆出几百个。 */
+let trayMeasureCtx: CanvasRenderingContext2D | null | undefined;
+
+function trayTextMeasurerFor(el: HTMLElement | null): ((text: string) => number) | null {
+  if (!el || typeof document === 'undefined') return null;
+  if (trayMeasureCtx === undefined) {
+    try {
+      trayMeasureCtx = document.createElement('canvas').getContext('2d');
+    } catch {
+      // jsdom / 没有 canvas 的运行环境:量不到就不截,由 CSS overflow 兜底。
+      trayMeasureCtx = null;
+    }
+  }
+  const ctx = trayMeasureCtx;
+  if (!ctx) return null;
+  const cs = window.getComputedStyle(el);
+  if (!cs.fontSize) return null;
+  ctx.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+  return (text: string) => ctx.measureText(text).width;
+}
+
+/**
+ * 文件名中间省略(#59 的量法,#62 复用)。
+ *
+ * 量的是 `.msg-att-nm` 自己的可用宽度,而它在一张定宽 180px 的卡里、且被
+ * `.msg-att-tx { flex: 1 }` 钉住 —— 所以这个宽度是常量,不随名字长短变。
+ * 这是绕开「越截越短」棘轮的关键:**不能拿截过的名字再去量**。
+ */
+function useTrayTruncatedName(
+  ref: MutableRefObject<HTMLSpanElement | null>,
+  base: string,
+  ext: string,
+): string {
+  const [avail, setAvail] = useState(0);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    let alive = true;
+    const measure = () => {
+      const node = ref.current;
+      if (!alive || !node) return;
+      if (!node.clientWidth) {
+        setAvail(0);
+        return;
+      }
+      const measurer = trayTextMeasurerFor(node);
+      const extWidth = measurer && ext ? measurer(ext) : 0;
+      setAvail(node.clientWidth - extWidth);
+    };
+    measure();
+    let observer: ResizeObserver | undefined;
+    if (typeof ResizeObserver !== 'undefined') {
+      observer = new ResizeObserver(measure);
+      observer.observe(el);
+    }
+    const fonts = (document as Document & { fonts?: { ready?: Promise<unknown> } }).fonts;
+    fonts?.ready?.then(measure).catch(() => {});
+    return () => {
+      alive = false;
+      observer?.disconnect();
+    };
+  }, [ref, ext]);
+  return useMemo(
+    () => (avail > 0 ? middleTruncateFileName(base, avail, trayTextMeasurerFor(ref.current)) : base),
+    [ref, base, avail],
+  );
+}
+
+/**
+ * 托盘的翻页箭头(#64)。判据与已发送那一行**同一份纯函数**
+ * (`runtime/chat/attachment-nav.ts`),稿子里两处底色相同,所以渐变和箭头也共用。
+ *
+ * 四路重算,少一路就会看见错的箭头:`scroll`(滚动中两端的结论一直在翻)、
+ * `ResizeObserver`(面板宽度变了)、`resize`(容器定宽时窗口缩放不触发容器自身的
+ * resize)、`document.fonts.ready`(文档卡里的文字宽度要等字体到位才定下来)。
+ */
+function useStagedTrayNav(
+  ref: MutableRefObject<HTMLDivElement | null>,
+  count: number,
+): AttachmentNavState & { page: (direction: 'prev' | 'next') => void } {
+  const [state, setState] = useState<AttachmentNavState>({ prev: false, next: false });
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    let alive = true;
+    const sync = () => {
+      const node = ref.current;
+      if (!alive || !node) return;
+      const measured = attachmentNavState(node);
+      setState((current) =>
+        current.prev === measured.prev && current.next === measured.next ? current : measured,
+      );
+    };
+    sync();
+    el.addEventListener('scroll', sync, { passive: true });
+    window.addEventListener('resize', sync);
+    let observer: ResizeObserver | undefined;
+    if (typeof ResizeObserver !== 'undefined') {
+      observer = new ResizeObserver(sync);
+      observer.observe(el);
+    }
+    const fonts = (document as Document & { fonts?: { ready?: Promise<unknown> } }).fonts;
+    fonts?.ready?.then(sync).catch(() => {});
+    return () => {
+      alive = false;
+      el.removeEventListener('scroll', sync);
+      window.removeEventListener('resize', sync);
+      observer?.disconnect();
+    };
+  }, [ref, count]);
+
+  const page = useCallback(
+    (direction: 'prev' | 'next') => {
+      const node = ref.current;
+      if (!node) return;
+      const rtl =
+        typeof window !== 'undefined' && window.getComputedStyle(node).direction === 'rtl';
+      const left = attachmentNavDelta(direction, node.clientWidth, rtl);
+      if (typeof node.scrollBy === 'function') node.scrollBy({ left, behavior: 'smooth' });
+      else node.scrollLeft += left;
+    },
+    [ref],
+  );
+
+  return { ...state, page };
 }
 
 function StagedCommentAttachments({
@@ -5761,7 +6220,7 @@ function MentionPopover({
         ) : null}
         {showFiles && files.length > 0 ? (
           <>
-            <div className="mention-section-label">{t('chat.mentionSectionFiles')}</div>
+            <div className="mention-section-label" data-testid="mention-section-label">{t('chat.mentionSectionFiles')}</div>
             {files.map((f) => {
               const key = f.path ?? f.name;
               const flat = optionIndex;
@@ -5780,7 +6239,7 @@ function MentionPopover({
                 >
                   <Icon name="file" size={12} />
                   <span className="mention-item-body">
-                    <strong>{projectFileMentionTitle(f, key)}</strong>
+                    <strong data-testid="mention-item-name">{projectFileMentionTitle(f, key)}</strong>
                     <span className="mention-meta mention-meta--desc mention-meta--path">
                       {projectFileMentionDescription(f, key)}
                     </span>
@@ -5795,7 +6254,7 @@ function MentionPopover({
         ) : null}
         {showTabs && workspaceContexts.length > 0 ? (
           <>
-            <div className="mention-section-label">{t('chat.mentionSectionTabs')}</div>
+            <div className="mention-section-label" data-testid="mention-section-label">{t('chat.mentionSectionTabs')}</div>
             {workspaceContexts.map((item) => {
               const flat = optionIndex;
               optionIndex += 1;
@@ -5814,7 +6273,7 @@ function MentionPopover({
                 >
                   <Icon name={workspaceContextIcon(item)} size={12} />
                   <span className="mention-item-body">
-                    <strong>{item.label}</strong>
+                    <strong data-testid="mention-item-name">{item.label}</strong>
                     <span className="mention-meta mention-meta--desc">
                       {workspaceContextDescription(item)}
                     </span>
@@ -5827,7 +6286,7 @@ function MentionPopover({
         ) : null}
         {showPlugins && plugins.length > 0 ? (
           <>
-            <div className="mention-section-label">{t('chat.mentionSectionPlugins')}</div>
+            <div className="mention-section-label" data-testid="mention-section-label">{t('chat.mentionSectionPlugins')}</div>
             {plugins.map((p) => {
               const flat = optionIndex;
               optionIndex += 1;
@@ -5848,7 +6307,7 @@ function MentionPopover({
                 >
                   <Icon name="sparkles" size={12} />
                   <span className="mention-item-body">
-                    <strong>{pluginTitle}</strong>
+                    <strong data-testid="mention-item-name">{pluginTitle}</strong>
                     <span className="mention-meta mention-meta--desc">
                       {pluginDescription || p.id}
                     </span>
@@ -5861,7 +6320,7 @@ function MentionPopover({
         ) : null}
         {showSkills && skills.length > 0 ? (
           <>
-            <div className="mention-section-label">{t('chat.mentionSectionSkills')}</div>
+            <div className="mention-section-label" data-testid="mention-section-label">{t('chat.mentionSectionSkills')}</div>
             {skills.map((skill) => {
               const flat = optionIndex;
               optionIndex += 1;
@@ -5881,7 +6340,7 @@ function MentionPopover({
                 >
                   <Icon name={isStaged ? 'check' : 'file'} size={12} />
                   <span className="mention-item-body">
-                    <strong>{localizeSkillName(locale, skill)}</strong>
+                    <strong data-testid="mention-item-name">{localizeSkillName(locale, skill)}</strong>
                     <span className="mention-meta mention-meta--desc">
                       {localizeSkillDescription(locale, skill) || skill.id}
                     </span>
@@ -5894,7 +6353,7 @@ function MentionPopover({
         ) : null}
         {showMcp && mcpServers.length > 0 ? (
           <>
-            <div className="mention-section-label">{t('chat.mentionSectionMcp')}</div>
+            <div className="mention-section-label" data-testid="mention-section-label">{t('chat.mentionSectionMcp')}</div>
             {mcpServers.map((server) => {
               const flat = optionIndex;
               optionIndex += 1;
@@ -5913,7 +6372,7 @@ function MentionPopover({
                 >
                   <Icon name="link" size={12} />
                   <span className="mention-item-body">
-                    <strong>{server.label || server.id}</strong>
+                    <strong data-testid="mention-item-name">{server.label || server.id}</strong>
                     <span className="mention-meta mention-meta--desc">
                       {server.url || server.command || server.id}
                     </span>
@@ -5926,7 +6385,7 @@ function MentionPopover({
         ) : null}
         {showConnectors && connectors.length > 0 ? (
           <>
-            <div className="mention-section-label">{t('chat.mentionSectionConnectors')}</div>
+            <div className="mention-section-label" data-testid="mention-section-label">{t('chat.mentionSectionConnectors')}</div>
             {connectors.map((connector) => {
               const flat = optionIndex;
               optionIndex += 1;
@@ -5945,7 +6404,7 @@ function MentionPopover({
                 >
                   <Icon name="link" size={12} />
                   <span className="mention-item-body">
-                    <strong>{connector.name}</strong>
+                    <strong data-testid="mention-item-name">{connector.name}</strong>
                     <span className="mention-meta mention-meta--desc">
                       {connector.description || connector.provider || connector.id}
                     </span>

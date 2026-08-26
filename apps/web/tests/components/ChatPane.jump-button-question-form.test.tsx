@@ -13,7 +13,7 @@ if (typeof HTMLElement.prototype.scrollTo !== 'function') {
   };
 }
 
-import { act, cleanup, render } from '@testing-library/react';
+import { act, cleanup, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ChatPane } from '../../src/components/ChatPane';
 import type { ChatMessage } from '../../src/types';
@@ -145,10 +145,11 @@ describe('jump-to-latest button after landing on a question form (recvqajMdAnfmd
     render(chatPaneEl(questionFormMessages()));
     await flushFrames();
 
-    const btn = document.querySelector('.chat-jump-btn');
-    expect(btn).not.toBeNull();
-    expect(btn!.className).not.toContain('chat-jump-btn-active');
-    expect(btn!.getAttribute('aria-hidden')).toBe('true');
+    // 按钮**一直挂着**(退场动画要它在),所以「露没露出来」只能看 aria-hidden;
+    // 那个 -active 类和 aria-hidden 出自同一个布尔量,再断言一遍是零覆盖。
+    const btn = screen.getByTestId('chat-jump-btn');
+    expect(btn.getAttribute('aria-hidden')).toBe('true');
+    expect(btn.getAttribute('tabindex')).toBe('-1');
   });
 
   it('still shows when aligning the form to the top genuinely leaves content below the fold', async () => {
@@ -158,9 +159,8 @@ describe('jump-to-latest button after landing on a question form (recvqajMdAnfmd
     render(chatPaneEl(questionFormMessages()));
     await flushFrames();
 
-    const btn = document.querySelector('.chat-jump-btn');
-    expect(btn).not.toBeNull();
-    expect(btn!.className).toContain('chat-jump-btn-active');
-    expect(btn!.getAttribute('aria-hidden')).toBe('false');
+    const btn = screen.getByTestId('chat-jump-btn');
+    expect(btn.getAttribute('aria-hidden')).toBe('false');
+    expect(btn.getAttribute('tabindex')).toBe('0');
   });
 });

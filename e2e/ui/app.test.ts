@@ -860,6 +860,10 @@ async function runQuestionFormSingleSelectionFlow(
   const toneQuestion = page.locator('.qf-field', { has: page.getByText('Visual tone') });
   await expect(toneQuestion).toBeVisible();
 
+  // 视觉方向按新稿改成了「一沓叠放的预览图」(D45):默认只有最上面那张露在外面,
+  // 底下几张被盖住点不到。先切成网格再逐张点 —— 比 force:true 干净,也更像真人的操作。
+  await toneQuestion.locator('[data-action="toggle-view"]').click();
+
   const editorial = toneQuestion.getByRole('radio', { name: 'Content-led product' });
   const modern = toneQuestion.getByRole('radio', { name: 'Quiet SaaS' });
   const editorialCard = toneQuestion.locator('label.qf-visual-card[title="Content-led product"]');
@@ -886,11 +890,13 @@ async function runQuestionFormSubmitPersistenceFlow(
   await expect(form).toBeVisible();
 
   const toneQuestion = form.locator('.qf-field', { has: page.getByText('Visual tone') });
+  // 同上:叠放态下被盖住的那几张点不到,先切网格(D45)
+  await toneQuestion.locator('[data-action="toggle-view"]').click();
   const modern = toneQuestion.getByRole('radio', { name: 'Quiet SaaS' });
   await toneQuestion.locator('label.qf-visual-card[title="Quiet SaaS"]').click();
   await expect(modern).toBeChecked();
 
-  await form.getByRole('button', { name: 'Send answers' }).click();
+  await form.getByRole('button', { name: 'Next' }).click();
 
   const summary = page.getByTestId('question-form-summary');
   await expect(summary).toBeVisible();

@@ -821,7 +821,21 @@ export type PersistedAgentEvent =
       /** Optional wall-clock ms when the tool first started (e.g. ACP first frame). */
       startedAt?: number;
     }
-  | { kind: 'tool_result'; toolUseId: string; content: string; isError: boolean }
+  | {
+      kind: 'tool_result';
+      toolUseId: string;
+      content: string;
+      isError: boolean;
+      /**
+       * Wall-clock ms when the call finished. Pairs with `tool_use.startedAt` so the
+       * UI can show a per-call duration. Optional on purpose: several adapters emit
+       * `tool_use` only once the call has already completed (codex sends it at
+       * `item.completed`), so a difference computed there would be ~0 — which means
+       * "unknown", not "fast". Consumers must render nothing when either end is
+       * missing rather than showing `0.0s`.
+       */
+      completedAt?: number;
+    }
   | {
       kind: 'diagnostic';
       name: string;
@@ -886,6 +900,27 @@ export interface ChatMessage {
   appliedPluginSnapshot?: AppliedPluginSnapshot;
   attachments?: ChatAttachment[];
   commentAttachments?: ChatCommentAttachment[];
+  /**
+   * 用户消息**没发出去**(网络或服务异常)。
+   *
+   * 设计稿第 49 / 50 格要的就是这一档:气泡下方一行红色说明 + 一枚常驻的「重试」。
+   * 在这之前失败一律归到助手侧的报错卡,消息本身不带任何状态 —— 于是那两格根本画不出来。
+   * 只对 `role === 'user'` 有意义;助手侧的失败仍然看 `runStatus`。
+   */
+  sendFailed?: boolean;
+  /**
+   * 这条消息之后**原地分叉**过一次(点了「新开会话」)。
+   *
+   * 设计稿第 38 格:分叉不是跳走 —— 上面是老会话说完的话,线以下是新会话,
+   * 中间那行字是**承接过来的会话标题**。点完什么都不留的话,人只会以为按钮没反应。
+   * 之前契约里没有这两样,所以那一格根本画不出来。
+   */
+  forkedInto?: {
+    /** 新会话的标题(认领的就是老会话的题目) */
+    title: string;
+    /** 新会话 id —— 之后要跳过去看靠它 */
+    conversationId?: string;
+  };
   producedFiles?: ProjectFile[];
   traceObjectFiles?: ProjectFile[];
   // Diff baseline so reattach can rebuild producedFiles after reload.
