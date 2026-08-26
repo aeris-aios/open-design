@@ -1549,6 +1549,7 @@ export function createChatRunService({
         ) {
           return { quiescent: true, forced: false, remainingPids: [] };
         }
+        if (gracefulWaitMs > 0) closeRunStdin(run);
         signalProcessGroup(processGroupId, 'SIGTERM');
         if (await waitForProcessGroupExit(processGroupId, termGraceMs)) {
           return { quiescent: true, forced: false, remainingPids: [] };
@@ -1569,6 +1570,7 @@ export function createChatRunService({
         ) {
           return { quiescent: true, forced: false, remainingPids: [] };
         }
+        if (gracefulWaitMs > 0) closeRunStdin(run);
         signalChildProcess(child, null, 'SIGTERM');
         if (await waitForChildExit(child, termGraceMs)) {
           return { quiescent: true, forced: false, remainingPids: [] };
@@ -1582,19 +1584,54 @@ export function createChatRunService({
         };
       }
 
-      const snapshots = await listProcessSnapshots();
-      const pids = collectProcessTreePids(snapshots, [child?.pid]);
+      const initialSnapshots = await listProcessSnapshots();
+      let enumerationVerified = initialSnapshots.length > 0;
+      let childExitedDuringGrace = childHasExited(child);
       if (gracefulWaitMs > 0) {
-        await waitForChildExit(child, gracefulWaitMs);
+        childExitedDuringGrace = await waitForChildExit(child, gracefulWaitMs);
+        if (!childExitedDuringGrace) closeRunStdin(run);
       }
-      const result = await stopProcesses(
-        pids.length > 0 ? pids : [child?.pid],
-        { termGraceMs, killGraceMs },
-      );
+      const refreshedSnapshots = await listProcessSnapshots();
+      enumerationVerified &&= refreshedSnapshots.length > 0;
+      const snapshots = [...initialSnapshots, ...refreshedSnapshots];
+      const pids = collectProcessTreePids(snapshots, [child.pid])
+        .filter((pid) => !childExitedDuringGrace || pid !== child.pid);
+      const terminationPids = pids.length > 0 || childExitedDuringGrace
+        ? pids
+        : [child.pid];
+      const result = await stopProcesses(terminationPids, { termGraceMs, killGraceMs });
+
+      const verificationSnapshots = await listProcessSnapshots();
+      enumerationVerified &&= verificationSnapshots.length > 0;
+      const livePids = new Set(verificationSnapshots.map((snapshot) => snapshot.pid));
+      let remainingPids = collectProcessTreePids(
+        [...snapshots, ...verificationSnapshots],
+        [child.pid, ...pids],
+      ).filter((pid) => livePids.has(pid));
+      let forcedPids = result.forcedPids;
+
+      // A wrapper may create one last descendant while handling SIGTERM. Reap
+      // anything the post-escalation verification newly attaches to the
+      // captured ownership tree, then verify once more before terminalizing.
+      if (enumerationVerified && remainingPids.length > 0) {
+        const followUp = await stopProcesses(remainingPids, {
+          termGraceMs: 0,
+          killGraceMs,
+        });
+        forcedPids = [...new Set([...forcedPids, ...followUp.forcedPids])];
+        const finalSnapshots = await listProcessSnapshots();
+        enumerationVerified &&= finalSnapshots.length > 0;
+        const finalLivePids = new Set(finalSnapshots.map((snapshot) => snapshot.pid));
+        remainingPids = collectProcessTreePids(
+          [...snapshots, ...verificationSnapshots, ...finalSnapshots],
+          [...pids, ...remainingPids],
+        ).filter((pid) => finalLivePids.has(pid));
+      }
       return {
-        quiescent: result.remainingPids.length === 0,
-        forced: result.forcedPids.length > 0,
-        remainingPids: result.remainingPids,
+        quiescent: enumerationVerified && remainingPids.length === 0,
+        forced: forcedPids.length > 0,
+        remainingPids,
+        ...(!enumerationVerified ? { error: 'process enumeration unavailable' } : {}),
       };
     })().catch((error) => ({
       quiescent: false,
@@ -1703,13 +1740,12 @@ export function createChatRunService({
       } catch {
         // Signal fallback below owns eventual process termination.
       }
-      const childExitedDuringAbort = await waitForChildExit(targetChild, graceMs);
-      if (!childExitedDuringAbort) closeRunStdin(run);
       const termination = terminateProcessTree(
         run,
         targetChild,
         targetProcessGroupId,
         {
+          gracefulWaitMs: graceMs,
           termGraceMs: graceMs,
           killGraceMs: forceWaitMs(),
           reason: 'run_cancel',
