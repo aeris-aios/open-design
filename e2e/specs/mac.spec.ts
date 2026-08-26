@@ -65,6 +65,55 @@ const healthExpression = `
     };
   })()
 `;
+const pptxArchiveInspectionSource = `
+  async function inspectPptxArchive(bytes, expectedText) {
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    let eocd = -1;
+    for (let offset = bytes.length - 22; offset >= Math.max(0, bytes.length - 65557); offset -= 1) {
+      if (view.getUint32(offset, true) === 0x06054b50) { eocd = offset; break; }
+    }
+    if (eocd < 0) throw new Error('PPTX end-of-central-directory record not found');
+    const entries = new Map();
+    const entryCount = view.getUint16(eocd + 10, true);
+    let offset = view.getUint32(eocd + 16, true);
+    const decoder = new TextDecoder();
+    for (let index = 0; index < entryCount; index += 1) {
+      if (view.getUint32(offset, true) !== 0x02014b50) throw new Error('invalid PPTX central-directory entry');
+      const nameLength = view.getUint16(offset + 28, true);
+      const extraLength = view.getUint16(offset + 30, true);
+      const commentLength = view.getUint16(offset + 32, true);
+      const name = decoder.decode(bytes.slice(offset + 46, offset + 46 + nameLength));
+      entries.set(name, {
+        compressedSize: view.getUint32(offset + 20, true),
+        localOffset: view.getUint32(offset + 42, true),
+        method: view.getUint16(offset + 10, true),
+      });
+      offset += 46 + nameLength + extraLength + commentLength;
+    }
+    async function readText(name) {
+      const entry = entries.get(name);
+      if (!entry) throw new Error('missing PPTX entry: ' + name);
+      const nameLength = view.getUint16(entry.localOffset + 26, true);
+      const extraLength = view.getUint16(entry.localOffset + 28, true);
+      const start = entry.localOffset + 30 + nameLength + extraLength;
+      const compressed = bytes.slice(start, start + entry.compressedSize);
+      if (entry.method === 0) return decoder.decode(compressed);
+      if (entry.method !== 8) throw new Error('unsupported PPTX compression method: ' + entry.method);
+      const stream = new Blob([compressed]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+      return decoder.decode(await new Response(stream).arrayBuffer());
+    }
+    const slideNames = Array.from(entries.keys())
+      .filter((name) => /^ppt\\/slides\\/slide\\d+\\.xml$/.test(name))
+      .sort((left, right) => left.localeCompare(right, undefined, { numeric: true }));
+    const slides = await Promise.all(slideNames.map(readText));
+    return {
+      hasContentTypes: entries.has('[Content_Types].xml'),
+      hasPresentation: entries.has('ppt/presentation.xml'),
+      slideCount: slideNames.length,
+      textMatches: expectedText.map((text, index) => slides[index]?.includes(text) === true),
+    };
+  }
+`;
 const upgradePersistenceProjectId = `packaged-upgrade-persistence-${Date.now().toString(36)}`;
 const upgradePersistenceSeedExpression = `
   (async () => {
@@ -98,14 +147,17 @@ const upgradePersistenceSeedExpression = `
 function existingProjectPptxExportExpression(projectId: string): string {
   return `
   (async () => {
+    ${pptxArchiveInspectionSource}
     const projectId = ${JSON.stringify(projectId)};
     const exported = await fetch('/api/projects/' + encodeURIComponent(projectId) + '/export/pptx', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ fileName: 'deck.html' }),
+      body: JSON.stringify({ fileName: 'deck.html', editable: true }),
     });
     const bytes = new Uint8Array(await exported.arrayBuffer());
+    const archive = await inspectPptxArchive(bytes, ['Upgrade From Outer', 'Persistence Check']);
     return {
+      archive,
       byteLength: bytes.length,
       contentType: exported.headers.get('content-type'),
       magic: String.fromCharCode(...bytes.slice(0, 2)),
@@ -288,6 +340,12 @@ type HealthEvalValue = {
 };
 
 type PptxExportEvalValue = {
+  archive: {
+    hasContentTypes: boolean;
+    hasPresentation: boolean;
+    slideCount: number;
+    textMatches: boolean[];
+  };
   byteLength: number;
   contentType: string | null;
   magic: string;
@@ -1477,7 +1535,7 @@ desktopMacDescribe('mac desktop settings smoke', () => {
     });
   }, 45_000);
 
-  test('keeps the desktop workspace stable when the artifact Open link is clicked', async () => {
+  test('[P0] keeps the desktop artifact preview loaded and stable when Open is clicked', async () => {
     await seedDesktopConfig(desktop, {
       mode: 'api',
       apiKey: 'sk-test',
@@ -1553,9 +1611,21 @@ desktopMacDescribe('mac desktop settings smoke', () => {
       expect(snapshot.fileWorkspaceVisible).toBe(true);
       expect(snapshot.selectedTab).toBe('desktop-open.html');
       expect(snapshot.artifactPreviewVisible).toBe(true);
+      expect(snapshot.artifactPreviewActive).toBe(true);
+      expect(snapshot.artifactPreviewLoadedEpoch).toBeTruthy();
+      expect(snapshot.artifactPreviewLoadingVisible).toBe(false);
       expect(snapshot.openHref).toBe('/api/projects/' + seeded.projectId + '/raw/desktop-open.html?v=0&r=0');
       expect(snapshot.openTarget).toBe('_blank');
       expect(snapshot.openRel).toContain('noreferrer');
+    });
+
+    const stablePreview = await observeDesktopArtifactPreviewStability(desktop);
+    expect(stablePreview).toEqual({
+      activeThroughout: true,
+      loadedThroughout: true,
+      loadingSurfaceSeen: false,
+      sameFrameThroughout: true,
+      visibleThroughout: true,
     });
 
     const clicked = await desktop.eval<boolean>(`
@@ -1574,6 +1644,9 @@ desktopMacDescribe('mac desktop settings smoke', () => {
       expect(snapshot.fileWorkspaceVisible).toBe(true);
       expect(snapshot.selectedTab).toBe('desktop-open.html');
       expect(snapshot.artifactPreviewVisible).toBe(true);
+      expect(snapshot.artifactPreviewActive).toBe(true);
+      expect(snapshot.artifactPreviewLoadedEpoch).toBeTruthy();
+      expect(snapshot.artifactPreviewLoadingVisible).toBe(false);
       expect(snapshot.openHref).toBe('/api/projects/' + seeded.projectId + '/raw/desktop-open.html?v=0&r=0');
     });
 
@@ -1869,6 +1942,9 @@ type DesktopAppearanceSectionSnapshot = {
 };
 
 type DesktopArtifactOpenSnapshot = {
+  artifactPreviewActive: boolean;
+  artifactPreviewLoadedEpoch: string | null;
+  artifactPreviewLoadingVisible: boolean;
   artifactPreviewVisible: boolean;
   fileWorkspaceVisible: boolean;
   openHref: string | null;
@@ -2139,16 +2215,87 @@ async function readDesktopArtifactOpenSnapshot(
     (() => {
       const openLink = Array.from(document.querySelectorAll('a'))
         .find((node) => node.textContent?.trim() === 'Open');
+      const preview = document.querySelector('[data-testid="artifact-preview-frame"]');
+      const loadingSurface = document.querySelector('[data-testid="artifact-preview-first-load"]');
+      const elementIsVisible = (element) => {
+        if (!(element instanceof HTMLElement)) return false;
+        const style = getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        return style.display !== 'none'
+          && style.visibility !== 'hidden'
+          && Number(style.opacity) !== 0
+          && rect.width > 0
+          && rect.height > 0;
+      };
       const activeTab = Array.from(document.querySelectorAll('[role="tab"][aria-selected="true"]'))
         .map((node) => node.textContent?.trim())
         .find((value) => typeof value === 'string') ?? null;
       return {
-        artifactPreviewVisible: Boolean(document.querySelector('[data-testid="artifact-preview-frame"]')),
+        artifactPreviewActive: preview?.getAttribute('data-od-active') === 'true',
+        artifactPreviewLoadedEpoch: preview instanceof HTMLIFrameElement
+          ? preview.dataset.odLoadedPreviewEpoch ?? null
+          : null,
+        artifactPreviewLoadingVisible: elementIsVisible(loadingSurface),
+        artifactPreviewVisible: elementIsVisible(preview),
         fileWorkspaceVisible: Boolean(document.querySelector('[data-testid="file-workspace"]')),
         openHref: openLink?.getAttribute('href') ?? null,
         openRel: openLink?.getAttribute('rel') ?? null,
         openTarget: openLink?.getAttribute('target') ?? null,
         selectedTab: activeTab,
+      };
+    })()
+  `);
+}
+
+async function observeDesktopArtifactPreviewStability(
+  desktop: DesktopHarness,
+): Promise<{
+  activeThroughout: boolean;
+  loadedThroughout: boolean;
+  loadingSurfaceSeen: boolean;
+  sameFrameThroughout: boolean;
+  visibleThroughout: boolean;
+}> {
+  return await desktop.eval(`
+    (async () => {
+      const selector = '[data-testid="artifact-preview-frame"]';
+      const firstFrame = document.querySelector(selector);
+      const visible = (element) => {
+        if (!(element instanceof HTMLElement)) return false;
+        const style = getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        return element.isConnected
+          && style.display !== 'none'
+          && style.visibility !== 'hidden'
+          && Number(style.opacity) !== 0
+          && rect.width > 0
+          && rect.height > 0;
+      };
+      let activeThroughout = true;
+      let loadedThroughout = true;
+      let loadingSurfaceSeen = false;
+      let sameFrameThroughout = firstFrame instanceof HTMLIFrameElement;
+      let visibleThroughout = visible(firstFrame);
+
+      for (let sample = 0; sample < 16; sample += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 100));
+        const current = document.querySelector(selector);
+        sameFrameThroughout &&= current === firstFrame;
+        visibleThroughout &&= visible(current);
+        activeThroughout &&= current?.getAttribute('data-od-active') === 'true';
+        loadedThroughout &&= current instanceof HTMLIFrameElement
+          && Boolean(current.dataset.odLoadedPreviewEpoch);
+        loadingSurfaceSeen ||= Array.from(
+          document.querySelectorAll('[data-testid="artifact-preview-first-load"]'),
+        ).some(visible);
+      }
+
+      return {
+        activeThroughout,
+        loadedThroughout,
+        loadingSurfaceSeen,
+        sameFrameThroughout,
+        visibleThroughout,
       };
     })()
   `);
@@ -2535,6 +2682,11 @@ function assertPayloadDesktopIdentity(
 function assertPptxExportEvalValue(value: unknown): PptxExportEvalValue {
   if (
     !isRecord(value) ||
+    !isRecord(value.archive) ||
+    typeof value.archive.hasContentTypes !== 'boolean' ||
+    typeof value.archive.hasPresentation !== 'boolean' ||
+    typeof value.archive.slideCount !== 'number' ||
+    !Array.isArray(value.archive.textMatches) ||
     typeof value.byteLength !== 'number' ||
     (value.contentType != null && typeof value.contentType !== 'string') ||
     typeof value.magic !== 'string' ||
@@ -2549,6 +2701,12 @@ function assertPptxExportEvalValue(value: unknown): PptxExportEvalValue {
   );
   expect(value.byteLength).toBeGreaterThan(0);
   expect(value.magic).toBe('PK');
+  expect(value.archive).toEqual({
+    hasContentTypes: true,
+    hasPresentation: true,
+    slideCount: 2,
+    textMatches: [true, true],
+  });
   return value as PptxExportEvalValue;
 }
 
