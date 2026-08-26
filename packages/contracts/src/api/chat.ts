@@ -848,6 +848,19 @@ export type PersistedAgentEvent =
    * heuristic there rather than treating "no key" as "no boundary".
    */
   | { kind: 'done_key'; key: string }
+  /**
+   * This turn's follow-up suggestions — the three one-line actions the chat
+   * offers under a delivered answer. Parsed by the daemon out of the agent's
+   * `<od-next key="…">` marker and validated against the turn's nonce, so the
+   * client stores conclusions, never raw protocol.
+   *
+   * Persisted with the turn's other events so a reloaded conversation shows
+   * the same three rows it showed live. Turns recorded before this event
+   * existed have none, and MUST render no next-step row at all — there is no
+   * legacy fallback, because the suggestions are about the specific thing that
+   * turn built and cannot be reconstructed after the fact.
+   */
+  | { kind: 'next_steps'; suggestions: string[] }
   | { kind: 'conversation_title'; title: string }
   | { kind: 'thinking'; text: string }
   | {

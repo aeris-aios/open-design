@@ -1777,6 +1777,15 @@ function translateAgentEvent(data: DaemonAgentPayload): AgentEvent | null {
   if (t === 'done_key' && typeof data.key === 'string' && data.key) {
     return { kind: 'done_key', key: data.key };
   }
+  // This turn's follow-up suggestions, already parsed and key-checked by the
+  // daemon. The client never sees the `<od-next>` marker itself.
+  if (t === 'next_steps' && Array.isArray(data.suggestions)) {
+    const suggestions = data.suggestions.filter(
+      (s): s is string => typeof s === 'string' && s.trim().length > 0,
+    );
+    if (suggestions.length === 0) return null;
+    return { kind: 'next_steps', suggestions };
+  }
   if (t === 'conversation_title' && typeof data.title === 'string') {
     return { kind: 'conversation_title', title: data.title };
   }

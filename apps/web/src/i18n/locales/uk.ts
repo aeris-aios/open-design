@@ -3522,6 +3522,7 @@ export const uk: Dict = {
   'assistant.openFile': 'Відкрити',
   'assistant.downloadFile': 'Завантажити',
   'nextStep.title': 'Наступний крок',
+  'nextStep.suggestionsLabel': 'Запропоновані наступні кроки',
   'nextStep.more': 'Більше',
   'nextStep.share': 'Поділитися',
   'nextStep.download': 'Завантажити',

@@ -3522,6 +3522,7 @@ export const tr: Dict = {
   'assistant.openFile': 'Aç',
   'assistant.downloadFile': 'İndir',
   'nextStep.title': 'Sonraki adım',
+  'nextStep.suggestionsLabel': 'Önerilen sonraki adımlar',
   'nextStep.more': 'Daha fazla',
   'nextStep.share': 'Paylaş',
   'nextStep.download': 'İndir',

@@ -3522,6 +3522,7 @@ export const ko: Dict = {
   'assistant.openFile': '열기',
   'assistant.downloadFile': '다운로드',
   'nextStep.title': '다음 단계',
+  'nextStep.suggestionsLabel': '추천 다음 단계',
   'nextStep.more': '더 보기',
   'nextStep.share': '공유',
   'nextStep.download': '다운로드',

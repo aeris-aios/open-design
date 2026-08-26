@@ -3522,6 +3522,7 @@ export const pl: Dict = {
   'assistant.openFile': 'Otwórz',
   'assistant.downloadFile': 'Pobierz',
   'nextStep.title': 'Następny krok',
+  'nextStep.suggestionsLabel': 'Sugerowane następne kroki',
   'nextStep.more': 'Więcej',
   'nextStep.share': 'Udostępnij',
   'nextStep.download': 'Pobierz',

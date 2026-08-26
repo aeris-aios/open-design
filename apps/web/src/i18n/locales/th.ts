@@ -3522,6 +3522,7 @@ export const th: Dict = {
   'assistant.openFile': 'เรียก',
   'assistant.downloadFile': 'สูบลงตัวเครื่อง',
   'nextStep.title': 'ขั้นตอนถัดไป',
+  'nextStep.suggestionsLabel': 'ขั้นตอนถัดไปที่แนะนำ',
   'nextStep.more': 'เพิ่มเติม',
   'nextStep.share': 'แชร์',
   'nextStep.download': 'ดาวน์โหลด',

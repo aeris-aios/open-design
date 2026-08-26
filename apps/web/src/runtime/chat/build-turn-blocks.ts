@@ -442,7 +442,9 @@ export function buildTurnBlocks(input: BuildTurnInput): TurnBlock[] {
     if (event.kind === 'conversation_title' || event.kind === 'plugin_candidate') continue;
     // `done_key` 是协议元数据,不是这一轮的内容 —— 在 ensureShell 之前跳掉,
     // 免得「本轮第一条事件」被一条纯协议帧顶掉(D10 的开壳时机由真实事件决定)
-    if (event.kind === 'usage' || event.kind === 'done_key') continue;
+    // `next_steps` 同理:它是回合末尾的引导,不是回合的内容,更不该把开壳时机
+    // 提前到「这一轮已经有东西了」之前。
+    if (event.kind === 'usage' || event.kind === 'done_key' || event.kind === 'next_steps') continue;
 
     ensureShell();
 

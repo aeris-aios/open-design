@@ -3522,6 +3522,7 @@ export const ja: Dict = {
   'assistant.openFile': '開く',
   'assistant.downloadFile': 'ダウンロード',
   'nextStep.title': '次のステップ',
+  'nextStep.suggestionsLabel': '次のステップの提案',
   'nextStep.more': 'もっと見る',
   'nextStep.share': '共有',
   'nextStep.download': 'ダウンロード',

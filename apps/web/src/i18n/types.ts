@@ -4401,6 +4401,10 @@ export interface Dict {
   'assistant.openFile': string;
   'assistant.downloadFile': string;
   'nextStep.title': string;
+  // Accessible name for the three agent-written follow-up rows under a
+  // delivered turn. The suggestions themselves are model-written in the
+  // conversation's own language and deliberately never enter the dictionary.
+  'nextStep.suggestionsLabel': string;
   'nextStep.more': string;
   'nextStep.share': string;
   'nextStep.download': string;

@@ -63,26 +63,90 @@ const handlers = () => ({
   onArtifactShare: vi.fn(),
   onToolboxAction: vi.fn(),
   onNextStepPromptAction: vi.fn(),
+  onNextStepSuggestion: vi.fn(),
 });
 
+/**
+ * 这一轮的三条行为引导。
+ *
+ * 它们来自 daemon 解析 `<od-next key="…">` 之后下发并落库的 `next_steps` 事件,
+ * 不是正文里的标记 —— 客户端从来看不到标记本身。
+ * 一条消息**没有**这个事件,就是「旧会话 / 这一轮模型没给」,下一步引导整块不出。
+ */
+const SUGGESTIONS = ['再加一页订单列表', '把商品卡换成两列布局', '补一套深色模式'];
+
+function withSuggestions(
+  message: ChatMessage,
+  suggestions: string[] = SUGGESTIONS,
+): ChatMessage {
+  return {
+    ...message,
+    events: [
+      ...(message.events ?? []),
+      { kind: 'next_steps', suggestions } as NonNullable<ChatMessage['events']>[number],
+    ],
+  };
+}
+
 describe('AssistantMessage next-step affordance', () => {
-  it('routes Share through the More → Share cascade with the file name', () => {
+  it('renders this turn\'s three agent-written suggestions and sends the one clicked', () => {
     const h = handlers();
     render(
       <AssistantMessage
-        message={baseMessage({ producedFiles: [producedFile('landing.html')] })}
+        message={withSuggestions(baseMessage({ producedFiles: [producedFile('landing.html')] }))}
         streaming={false}
         projectId="proj-1"
         isLast
         {...h}
       />,
     );
-    expect(screen.getByRole('group', { name: en['nextStep.title'] })).toBeTruthy();
-    expect(screen.queryByText(en['nextStep.title'])).toBeNull();
-    fireEvent.mouseEnter(screen.getByTestId('next-step-toolbox-more'));
-    fireEvent.mouseEnter(screen.getByTestId('next-step-more-share'));
-    fireEvent.click(screen.getByTestId('next-step-share-share'));
-    expect(h.onArtifactShare).toHaveBeenCalledWith('landing.html');
+    expect(screen.getByRole('group', { name: en['nextStep.suggestionsLabel'] })).toBeTruthy();
+    // 稿子里这一块没有标题行 —— 三条建议自己铺满,不套框不加头
+    expect(screen.queryByText(en['nextStep.suggestionsLabel'])).toBeNull();
+    for (const text of SUGGESTIONS) expect(screen.getByText(text)).toBeTruthy();
+
+    fireEvent.click(screen.getByTestId('next-step-suggestion-0'));
+    expect(h.onNextStepSuggestion).toHaveBeenCalledWith('再加一页订单列表');
+  });
+
+  /**
+   * 旧会话兼容(产品硬要求)。历史消息里没有 `next_steps` 事件 —— 这一行
+   * **干脆不出**:既不退回原来那份固定工具箱目录,也不出一个空壳。
+   * 建议是关于「这一轮到底做了什么」的,事后无从重建。
+   */
+  it('renders nothing for a turn recorded before suggestions existed', () => {
+    render(
+      <AssistantMessage
+        message={baseMessage({ producedFiles: [producedFile('landing.html')] })}
+        streaming={false}
+        projectId="proj-1"
+        isLast
+        {...handlers()}
+      />,
+    );
+    expect(screen.queryByTestId('next-step-actions')).toBeNull();
+    expect(screen.queryByTestId('next-step-suggestions')).toBeNull();
+    expect(screen.queryByTestId('next-step-toolbox-more')).toBeNull();
+  });
+
+  /** 重试会在同一条消息上再跑一轮:当前这一轮的建议才算数 */
+  it('uses the latest suggestions when a retried turn emits a second set', () => {
+    const h = handlers();
+    const message = withSuggestions(
+      withSuggestions(baseMessage({ producedFiles: [producedFile('landing.html')] }), ['旧的一条']),
+      ['新的一条'],
+    );
+    render(
+      <AssistantMessage
+        message={message}
+        streaming={false}
+        projectId="proj-1"
+        isLast
+        {...h}
+      />,
+    );
+    expect(screen.getByText('新的一条')).toBeTruthy();
+    expect(screen.queryByText('旧的一条')).toBeNull();
   });
 
   it('does not render when the message is not the last assistant message', () => {
@@ -98,11 +162,24 @@ describe('AssistantMessage next-step affordance', () => {
     expect(screen.queryByTestId('next-step-actions')).toBeNull();
   });
 
-  it('reaches Contribute (share to OpenDesign) through the More → Share cascade', () => {
+  /**
+   * ⚠️ 落点变更,**待产品拍板**。
+   *
+   * 「贡献到 OpenDesign 社区」(`onShareToOpenDesign`)原来挂在
+   * 更多 → 分享 → 贡献 这条三级路径上,而那条路径只在 `default` 档出现。
+   * `default` 档现在整档换成 agent 现写的三条建议,所以这个入口在常规交付
+   * 回合上**没有落点了**(仅在 brand / plan / design-system 这些工作流档上
+   * 还画得出更多行 —— 但那几档不是它原来出现的地方)。
+   *
+   * 这里不写成「断言它不可达」——那等于把回归钉死。只锁住一件事:
+   * 交付回合的 `default` 档现在出的是建议行,而不是那条三级菜单。
+   * 该给贡献入口找哪个新家,由产品定(见交接报告「失去落点的入口」一节)。
+   */
+  it('no longer routes Contribute through the default variant (needs a new home)', () => {
     const onShareToOpenDesign = vi.fn();
     render(
       <AssistantMessage
-        message={baseMessage({ producedFiles: [producedFile('landing.html')] })}
+        message={withSuggestions(baseMessage({ producedFiles: [producedFile('landing.html')] }))}
         streaming={false}
         projectId="proj-1"
         isLast
@@ -111,10 +188,9 @@ describe('AssistantMessage next-step affordance', () => {
         {...handlers()}
       />,
     );
-    fireEvent.mouseEnter(screen.getByTestId('next-step-toolbox-more'));
-    fireEvent.mouseEnter(screen.getByTestId('next-step-more-share'));
-    fireEvent.click(screen.getByTestId('next-step-share-contribute'));
-    expect(onShareToOpenDesign).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId('next-step-suggestions')).toBeTruthy();
+    expect(screen.queryByTestId('next-step-toolbox-more')).toBeNull();
+    expect(onShareToOpenDesign).not.toHaveBeenCalled();
   });
 
   it('does not render after a simple answer with no deliverable', () => {
@@ -302,11 +378,14 @@ describe('AssistantMessage next-step affordance during the question phase', () =
   ].join('\n');
 
   function questionFormMessage(content = QUESTION_FORM_CONTENT): ChatMessage {
-    return baseMessage({
-      content,
-      events: [{ kind: 'text', text: content } as NonNullable<ChatMessage['events']>[number]],
-      producedFiles: [producedFile('brief.html')],
-    });
+    // 带上这一轮的三条建议:门开了之后要看得见东西,才测得出「门开了」。
+    return withSuggestions(
+      baseMessage({
+        content,
+        events: [{ kind: 'text', text: content } as NonNullable<ChatMessage['events']>[number]],
+        producedFiles: [producedFile('brief.html')],
+      }),
+    );
   }
 
   it('does not render while the question form is still unanswered', () => {

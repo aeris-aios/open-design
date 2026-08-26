@@ -873,7 +873,16 @@ export interface NextStepActionClickProps {
     | 'chip'
     | 'toolbox_action'
     | 'toolbox_more'
-    | 'share_to_open_design';
+    | 'share_to_open_design'
+    /**
+     * One of the agent-written follow-up suggestions under a delivered turn.
+     * Unlike every element above it, clicking this SENDS the row's sentence as
+     * the user's next message, so its click-through is literally the
+     * second-turn rate. `chip_id` carries the row's 0-based position, never the
+     * text — the text is model-written prose about the user's own project and
+     * has no business in an analytics payload.
+     */
+    | 'suggestion';
   chip_id?: string;
 }
 

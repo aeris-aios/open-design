@@ -844,15 +844,19 @@ const upgrade = (balanceUsd: number) => (
   </div>
 );
 
+/**
+ * 下一步引导(组件 16,第 41 / 42 格)——**三条建议由 agent 现写**。
+ *
+ * 稿子那三句就是这里的入参:它们不是目录里的条目,也不是语言包里的文案,
+ * 而是这一轮 agent 按「刚才到底做了什么」写出来的、能直接发出去的一句话。
+ * 产线上它们走 `<od-next key="…">` → daemon 解析 → `next_steps` 事件 →
+ * `AssistantMessage` 读事件;陈列页只是把最后那一段的入参摆上来。
+ */
+const NEXT_STEP_SUGGESTIONS = ['再加一页订单列表', '把商品卡换成两列布局', '补一套深色模式'];
+
 const nextSteps = () => (
   <div className={CAGE_NEXT_STEP}>
-    <NextStepActions
-      fileName="商品列表页.html"
-      onToolboxAction={() => {}}
-      onPromptAction={() => {}}
-      onShare={() => {}}
-      onDownload={() => {}}
-    />
+    <NextStepActions suggestions={NEXT_STEP_SUGGESTIONS} onSuggestion={() => {}} />
   </div>
 );
 
@@ -1013,12 +1017,13 @@ const OUTRO: Cell[] = [
     gid: 41, sub: '16-1', cmp: '下一步引导', state: '默认 · 3 条可点击建议', family: '产出收尾',
     node: () => nextSteps(),
     notes: [
-      '⚠️ **这一格挂的是「现状」,不是对齐后的样子** —— 内容被 T12 卡住:稿子要的是「跟本轮相关的三条建议」(再加一页订单列表 / 把商品卡换成两列布局 / 补一套深色模式),产品渲染的是**固定的设计工具箱目录** + 一枚「更多」。**事件流与契约里没有任何「按本轮内容生成的后续建议」字段**,daemon 侧也没有;要做只有两条路:让 agent 在正文里吐一段标记(改 system prompt,代价与 D43 的 `<done/>` 同一量级),或 daemon 在轮末再调一次模型(有成本、有延迟、要考虑 BYOK / AMR 计费)。**挂现状是为了让人看见这个差**',
-      '**形态已经对上**:容器无框无内距、行与行不留缝、行内距 `9px 11px`、gap `8px`、字号 12、行高 35px —— 逐值和稿子相同(浏览器里量的,不是 diff 规则文本)',
-      '**图标已按稿子改**:`.nexts button svg { width:12px; height:12px; color: var(--text-soft) }`,hover 时和字一起转 `--text-strong`。原来是 14px 的品牌绿 + 13px 的 `--text-muted` chevron,而且 hover 时一动不动',
-      '⚠️ **剩下的形态差只有一处**:行尾那枚 chevron 稿子里没有。它跟着 T12 一起留着(固定目录 + 三级 flyout 的入口指示),只压进稿子的图标节奏 —— 同第 40 格 Discord 那一条的处理',
-      '⚠️ **归属**:「分享 / 下载 / 投稿社区 / 创建设计系统」现在藏在这个组件的三级菜单里;按稿子,分享和导出属于**组件 14 的卡面动作**(第 30–33 格)。对齐时要把它们拆走',
-      '**唯一已经对上的一条**:点击是 `composerRef.setDraft(prompt)` —— 填入输入框、不直接发送。别改坏它',
+      '**T12 已结**(产品裁决 2026-08-26):固定的设计工具箱目录不要了,换成 agent 现写的三条行为引导。这一格挂的就是对齐后的样子,三句用的是稿子原文',
+      '**内容链路**:agent 在回合末尾吐一枚 `<od-next key="…">`(密钥与 D43 的 `<od-done>` 同一枚,每轮一次性)→ daemon 在可见文本流上剥离并校验 → 下发 / 落库为 `next_steps` 事件 → `AssistantMessage` 读事件。**标记本身客户端从来看不到**,所以不可能漏进正文、也不会被复制 / 导出带走',
+      '**形态**:容器无框无内距、行与行不留缝、行内距 `9px 11px`、gap `8px`、字号 12、行高 35px —— 逐值和稿子相同(浏览器里量的,不是 diff 规则文本)',
+      '**行的构成也对上了**:每行是**同一枚箭头**(12px、`--text-soft`,hover 时和字一起转 `--text-strong`)+ 一句话;**分类图标和行尾 chevron 都已删掉** —— 点一条是直接把那句话发出去,没有下一层可展开,一枚指向别处的箭头会承诺一个不存在的东西',
+      '⚠️ **点击语义变了,别按老的改**:现在是 `onSend(那句话)` —— **直接发送**,不再是 `composerRef.setDraft(prompt)` 填草稿。稿子那三句本来就是能直接发的动作',
+      '⚠️ **旧会话**:历史消息里没有 `next_steps` 事件,这一块**整块不出**(不退回目录、不出空壳)。陈列页照不出这一态,它钉在 `tests/components/NextStepActions.test.tsx`',
+      '⚠️ **归属未决**:「投稿社区」原来只藏在这个组件的三级菜单里,`default` 档换掉之后它在常规交付回合上没有落点了。分享 / 下载 / 创建设计系统在别处都还有入口(文件查看器工具条、文件面板「…」菜单)',
     ],
   },
   {
@@ -1026,10 +1031,10 @@ const OUTRO: Cell[] = [
     hover: true,
     node: () => nextSteps(),
     notes: [
-      '这一格由陈列页**替设计师按住第一行**(`data-hover`),同第 51 格的手法;产线上仍旧是鼠标停上去才变',
-      '**hover 已按稿子改**:`--bg-panel` 打底,字与图标一起转 `--text-strong`,边框不动(本来就没有)。过渡也照抄成 `background-color / color × var(--duration-faster) var(--ease-out)` —— 原来只过渡 `background` 和一条不存在的 `border-color`,字色是硬跳的',
-      '🐞 **这条只有在真客户端上才看得见,陈列页天生照不出来**:全局 `button:hover:not(:disabled) { background: var(--bg-subtle) }` 是 (0,2,1),原来的 `.toolboxRow:hover` 是 (0,2,0) —— **输了**,产线上量到的 hover 底色是 `rgb(237,237,237)` 而不是稿子的 `rgb(250,250,250)`。真因是搬稿子时把 `.nexts` 这个祖先省掉了,而它在稿子里承担的正是层叠职责。修法是把祖先补回来(`.toolboxList .toolboxRow:hover`),钉在 `tests/components/chat/next-step-cascade.test.ts`。**这一页把 module 关进 `.cage-next-step` 的笼子,选择器凭空多一个祖先,bug 正好被盖住**',
-      '⚠️ **hover 还会 portal 弹一张 detail 说明卡**,稿子里没有这个东西(它服务的是「固定目录需要解释」这个前提,即 T12);静态页里 portal 出不来,所以这一格看不到它。**这一轮有意留着** —— 撤它等于先把内容来源换成「按本轮生成的三条建议」,那是 T12 的账',
+      '这一格由陈列页**替设计师按住第二行**(`data-hover`)—— 稿子的 `is-hover` 就落在「把商品卡换成两列布局」那一条上;产线上仍旧是鼠标停上去才变',
+      '**hover 照稿子**:`--bg-panel` 打底,字与箭头一起转 `--text-strong`,边框不动(本来就没有)。过渡是 `background-color / color × var(--duration-faster) var(--ease-out)`',
+      '🐞 **这条只有在真客户端上才看得见,陈列页天生照不出来**:全局 `button:hover:not(:disabled) { background: var(--bg-subtle) }` 是 (0,2,1),裸写 `.suggestionRow:hover` 是 (0,2,0) —— **输了**,量出来会是 `rgb(237,237,237)` 而不是稿子的 `rgb(250,250,250)`。所以选择器带上 `.suggestions` 这个祖先凑到 (0,3,0),和稿子里 `.nexts` 承担的是同一份层叠职责。**这一页把 module 关进 `.cage-next-step` 的笼子,选择器凭空多一个祖先,这个坑正好被盖住**',
+      '**detail 说明卡没了**:它服务的是「固定目录需要解释」这个前提,目录既然撤了,卡也跟着删了(品牌那一档还留着自己的那张)',
     ],
   },
   {
@@ -2822,12 +2827,13 @@ h1{margin:0 0 6px;font-size:20px;}
    浏览器画的「碎图」图标会盖住要比的那件事:卡多大、圆角多少、一行里两种卡同不同高。 */
 .stage .msg-att-mini[data-broken],
 .stage .role-agent-icon[data-broken]{visibility:hidden;}
-/* 第 42 格同理:稿子的 hover 格画的就是「鼠标停在第一条上」的样子。
-   这里把 NextStepActions.module.css 里 .toolboxList .toolboxRow:hover 那几条原样重放到第一行
-   —— 底、字、图标三样一起转,和组件里写的一字不差。
+/* 第 42 格同理:稿子的 hover 格画的就是「鼠标停在**第二条**上」的样子
+   (matrix-82 的 is-hover 落在「把商品卡换成两列布局」那一行)。
+   这里把 NextStepActions.module.css 里 .suggestions .suggestionRow:hover 那两条
+   原样重放到第二行 —— 底、字、箭头三样一起转,和组件里写的一字不差。
    (类名的哈希由 dehash 摘掉了,所以选择器就是源文件里写的那个。) */
-.cell[data-hover] .stage .toolboxList .toolboxRow:first-of-type{background:var(--bg-panel);color:var(--text-strong);}
-.cell[data-hover] .stage .toolboxList .toolboxRow:first-of-type svg{color:var(--text-strong);}
+.cell[data-hover] .stage .suggestions .suggestionRow:nth-of-type(2){background:var(--bg-panel);color:var(--text-strong);}
+.cell[data-hover] .stage .suggestions .suggestionRow:nth-of-type(2) svg{color:var(--text-strong);}
 /* 第 71 格同理:稿子那一格画的就是「鼠标停在药丸上」的样子(它的 DOM 自带 .is-hover)。
    这里把 PlanPill.module.css 里 .wrap:hover 那两条原样重放到笼子里。
    产线上仍旧只有真的 hover / focus 才浮出,组件一个字没改。 */

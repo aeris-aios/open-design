@@ -434,9 +434,14 @@ interface Props {
   onNextStepCreateDesignSystem?: () => void;
   nextStepCreateDesignSystemBusy?: boolean;
   onPickSkill?: (skillId: string) => void;
+  /**
+   * Send one of this turn's agent-written follow-up suggestions as the user's
+   * next message. The suggestion text IS the message — no composer draft, no
+   * menu — which is why the rows carry no trailing chevron.
+   */
+  onNextStepSuggestion?: (text: string) => void;
   onArtifactDownload?: (fileName: string) => void;
   nextStepSkills?: SkillSummary[];
-  toolboxSkillNames?: Partial<Record<DesignToolboxActionId, string | null>>;
   nextStepVariant?: NextStepActionsVariant;
 }
 
@@ -479,9 +484,7 @@ const ASSISTANT_MESSAGE_COMPARED_PROPS: Array<keyof Props> = [
   'nextStepCreateDesignBusy',
   'nextStepCreateDesignSystemBusy',
   // Memoized + stable from ChatPane; compared so a late skill-list load
-  // refreshes the featured next-step rows' `@skill` hover detail and the
-  // More → Design toolbox global resources.
-  'toolboxSkillNames',
+  // refreshes the More → Design toolbox flyout's global resources.
   'nextStepSkills',
   'nextStepVariant',
   // Live streaming tool input changes identity on every `tool_input_delta`.
@@ -580,9 +583,9 @@ function AssistantMessageImpl({
   onNextStepCreateDesignSystem,
   nextStepCreateDesignSystemBusy,
   onPickSkill,
+  onNextStepSuggestion,
   onArtifactDownload,
   nextStepSkills,
-  toolboxSkillNames,
   nextStepVariant = 'default',
 }: Props) {
   const t = useT();
@@ -916,6 +919,31 @@ function AssistantMessageImpl({
       : nextStepVariant === 'default' && (!runSucceeded || !nextStepArtifactName)
         ? 'project-incomplete'
         : nextStepVariant;
+  /*
+   * 这一轮的三条行为引导。
+   *
+   * 来源是 daemon 解析 `<od-next key="…">` 之后下发并落库的 `next_steps` 事件 ——
+   * **不是**正文里的标记:客户端从来看不到标记本身,所以它不可能漏进正文、
+   * 也不会被复制/导出带走。
+   *
+   * 取**最后一条**:一轮里理应只有一条,但重试会在同一条消息上再来一轮,
+   * 那时新的一条才是当前这一轮的。
+   *
+   * 旧会话没有这个事件 —— 于是这里是空数组,下一步引导整块不出。这是产品
+   * 明确要的兼容口径:不退回工具箱、不出空壳。
+   */
+  const nextStepSuggestions = useMemo(() => {
+    for (let i = events.length - 1; i >= 0; i -= 1) {
+      const event = events[i];
+      if (event?.kind !== 'next_steps') continue;
+      const list = Array.isArray(event.suggestions) ? event.suggestions : [];
+      const cleaned = list
+        .map((s) => (typeof s === 'string' ? s.trim() : ''))
+        .filter(Boolean);
+      if (cleaned.length > 0) return cleaned;
+    }
+    return [];
+  }, [events]);
   const hasNextStepPrimary =
     effectiveNextStepVariant === 'brand-extraction'
       ? !!onNextStepAiOptimize || !!onNextStepCreateDesign || !!onNextStepContinueExtraction
@@ -933,9 +961,12 @@ function AssistantMessageImpl({
               !!onToolboxAction ||
               !!onNextStepCreateDesignSystem ||
               (!!nextStepArtifactName && (!!onArtifactShare || !!onArtifactDownload))
-            : !!onToolboxAction ||
-              !!onNextStepCreateDesignSystem ||
-              (!!nextStepArtifactName && (!!onArtifactShare || !!onArtifactDownload));
+            /*
+             * `default` 这一档已经不是工具箱目录了 —— 它**只**渲染 agent 现写
+             * 的三条建议。没有建议(旧会话、模型这轮没给、给的一条都用不了)
+             * 就没有这一块,不再靠「有工具箱回调」把一张空目录顶上来。
+             */
+            : nextStepSuggestions.length > 0 && !!onNextStepSuggestion;
   // A clarification turn terminates its run while the emitted <question-form>
   // is still waiting for the user inline. Until the immediate
   // user reply submits that form's answers (skip-all submits through the same
@@ -1241,9 +1272,10 @@ function AssistantMessageImpl({
             onCreateDesignSystem={isLast ? onNextStepCreateDesignSystem : undefined}
             createDesignSystemBusy={Boolean(isLast && nextStepCreateDesignSystemBusy)}
             onPickSkill={isLast ? onPickSkill : undefined}
+            suggestions={isLast ? nextStepSuggestions : undefined}
+            onSuggestion={isLast ? onNextStepSuggestion : undefined}
             onDownload={isLast && nextStepFileName ? onArtifactDownload : undefined}
             skills={isLast ? nextStepSkills : undefined}
-            toolboxSkillNames={isLast ? toolboxSkillNames : undefined}
             onShareToOpenDesign={showOpenDesignSubmission ? onShareToOpenDesign : undefined}
             shareToOpenDesignBusy={shareToOpenDesignBusy}
             variant={effectiveNextStepVariant}
