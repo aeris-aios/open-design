@@ -187,12 +187,18 @@ describe('resolveRunFailureUi', () => {
   // #895 follow-up: the daemon's fine-grained failure_detail can refine — and
   // even override — a too-coarse error_code. A hard quota and a transient 429
   // both arrive as RATE_LIMITED, but retrying a hard quota is futile, so it must
-  // drop Retry (primaryAction 'none') and name a distinct "quota exhausted" type
-  // while still promoting the hosted-AMR switch card.
+  // drop Retry and name a distinct "quota exhausted" type while still promoting
+  // the hosted-AMR switch card.
+  //
+  // Ladder rung 3 (§6.Z names S08 here): topping up with the provider or
+  // swapping keys isn't something we can do for the user, so the way out is the
+  // hosted alternative — the switch card below IS this card's primary action,
+  // which is why `primaryAction` reads `switch-to-cloud` and the card itself
+  // draws no button of its own.
   it('overrides a coarse RATE_LIMITED code with hard-quota / workspace-credits detail', () => {
     const hard = resolveRunFailureUi('RATE_LIMITED', 'hard_quota', 'claude');
     expect(hard).toMatchObject({
-      primaryAction: 'none',
+      primaryAction: 'switch-to-cloud',
       titleKey: 'chat.runError.title.quotaExhausted',
       messageKey: 'chat.runError.quotaExhaustedMessage',
       secondaryRetry: false,
@@ -200,7 +206,7 @@ describe('resolveRunFailureUi', () => {
     });
     const workspace = resolveRunFailureUi('RATE_LIMITED', 'workspace_credits_exhausted', 'claude');
     expect(workspace).toMatchObject({
-      primaryAction: 'none',
+      primaryAction: 'switch-to-cloud',
       titleKey: 'chat.runError.title.quotaExhausted',
       messageKey: 'chat.runError.workspaceCreditsMessage',
       showSwitchCard: true,
@@ -266,12 +272,14 @@ describe('resolveRunFailureUi', () => {
 
   // A cpu_unsupported crash (bundled agent binary requires AVX2, this CPU has
   // none) is deterministic: retry re-runs the same binary on the same CPU, and
-  // switching hosted models doesn't replace the runtime binary. So: guidance
-  // copy only — no Retry button, no AMR promotion — for every agent.
+  // switching hosted models doesn't replace the runtime binary — the binary that
+  // cannot start IS the hosted runtime. No Retry, no AMR promotion, for every
+  // agent. Ladder rung 4, so the standing 〔Contact support〕 secondary is
+  // promoted to primary rather than leaving a card with nothing on it.
   it('maps cpu_unsupported to update guidance without retry or switch card', () => {
     for (const agent of ['claude', 'codex', 'amr', null]) {
       expect(resolveRunFailureUi('AGENT_EXECUTION_FAILED', 'cpu_unsupported', agent)).toMatchObject({
-        primaryAction: 'none',
+        primaryAction: 'contact-support',
         titleKey: 'chat.runError.title.cpuUnsupported',
         messageKey: 'chat.runError.cpuUnsupportedMessage',
         secondaryRetry: false,
@@ -283,6 +291,11 @@ describe('resolveRunFailureUi', () => {
   // Agent-agnostic root-cause codes (#895): each carries a named failure type +
   // actionable fix, resolved the same way for any agent, with a plain Retry and
   // no AMR promotion (these aren't "switch to hosted model" cases).
+  //
+  // `AGENT_RUNTIME_DEF_INVALID` used to be in this list and no longer is: the
+  // user cannot self-repair a bad runtime definition and a new run re-reads the
+  // same file, so it moved to ladder rung 4 (catalogue R-031: flow F10,
+  // "retryable: no"). Its own assertion lives in run-error-ladder.test.ts.
   it('maps agent-agnostic root-cause codes to a named type + guidance for any agent', () => {
     const cases: Array<[string, string, string | null]> = [
       ['ARTIFACT_NOT_FOUND', 'chat.runError.title.artifactMissing', null],
@@ -290,7 +303,6 @@ describe('resolveRunFailureUi', () => {
       ['AGENT_PROMPT_TOO_LARGE', 'chat.runError.title.promptTooLarge', 'chat.runError.promptTooLargeMessage'],
       ['TOOL_LOOP_DETECTED', 'chat.runError.title.toolLoop', 'chat.runError.toolLoopMessage'],
       ['ROLE_MARKER_HALLUCINATION', 'chat.runError.title.outputInvalid', 'chat.runError.outputInvalidMessage'],
-      ['AGENT_RUNTIME_DEF_INVALID', 'chat.runError.title.runtimeConfig', 'chat.runError.runtimeConfigMessage'],
     ];
     for (const [code, titleKey, messageKey] of cases) {
       for (const agent of ['claude', 'codex', 'amr', 'antigravity', null]) {
