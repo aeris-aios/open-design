@@ -338,11 +338,16 @@ export function settingsSectionToTracking(
       return 'memory';
     case 'privacy':
       return 'privacy';
+    case 'labs':
+      return 'labs';
     case 'notifications':
       return 'notifications';
     case 'externalMcp':
       return 'external_mcp';
     default:
+      // Unmapped sections fall back to the execution area for dashboard
+      // continuity. Anything user-reachable belongs in a case above:
+      // landing here silently inflates the execution-mode funnel.
       return 'configure_execution_mode';
   }
 }

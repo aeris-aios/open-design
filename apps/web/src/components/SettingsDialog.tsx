@@ -67,6 +67,7 @@ import {
 } from '../utils/visibleAgents';
 import { ExportDiagnosticsRow } from './ExportDiagnosticsButton';
 import { Icon } from './Icon';
+import { LabsSection } from './LabsSection';
 import { defaultAgentModelId, effectiveAgentModelChoice } from './agentModelSelection';
 import {
   CUSTOM_MODEL_SENTINEL,
@@ -221,6 +222,7 @@ import {
 
 export type SettingsSection =
   | 'general'
+  | 'labs'
   | 'execution'
   | 'workspace'
   | 'instructions'
@@ -3848,6 +3850,7 @@ export function SettingsDialog({
   // not twice (heading + tab).
   const sectionHeader: Record<SettingsSection, { title: string; subtitle: string }> = {
     general: { title: t('settings.general'), subtitle: t('settings.generalHint') },
+    labs: { title: t('labs.title'), subtitle: t('labs.navHint') },
     execution: { title: t('settings.title'), subtitle: t('settings.subtitle') },
     workspace: { title: t('settings.workspace'), subtitle: t('settings.workspaceHint') },
     instructions: {
@@ -4338,6 +4341,17 @@ export function SettingsDialog({
               <span>
                 <strong>{t('settings.general')}</strong>
                 <small>{t('settings.generalHint')}</small>
+              </span>
+            </button>
+            <button
+              type="button"
+              className={`settings-nav-item${activeSection === 'labs' ? ' active' : ''}`}
+              onClick={() => setActiveSection('labs')}
+            >
+              <Icon name="sparkles" size={18} />
+              <span>
+                <strong>{t('labs.title')}</strong>
+                <small>{t('labs.navHint')}</small>
               </span>
             </button>
             <button
@@ -5952,6 +5966,10 @@ export function SettingsDialog({
                 />
               </div>
             </section>
+          ) : null}
+
+          {activeSection === 'labs' ? (
+            <LabsSection onAutosaveStatus={setAutosaveStatus} />
           ) : null}
 
           {activeSection === 'designSystems' ? (

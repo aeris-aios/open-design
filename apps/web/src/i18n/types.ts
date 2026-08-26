@@ -5463,4 +5463,15 @@ export interface Dict {
   'experienceSurvey.skip': string;
   'experienceSurvey.thanksTitle': string;
   'experienceSurvey.thanksBody': string;
+  'labs.title': string;
+  'labs.itemAbout': string;
+  'labs.navHint': string;
+  'labs.pageDesc': string;
+  'labs.harnessName': string;
+  'labs.harnessHint': string;
+  'labs.harnessTooltip': string;
+  'labs.harnessScope': string;
+  'labs.envOverrideNotice': string;
+  'labs.latchedNotice': string;
+  'labs.loadFailedNotice': string;
 }
