@@ -232,9 +232,9 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
       path.join(dir, 'foreign-content.html'),
       Buffer.from(
         '<!doctype html><html><head></head><body>'
-          + '<svg><![CDATA[label > </body>]]></svg>'
-          + '<svg><foreignObject><![CDATA[x > ]]></foreignObject></svg>'
-          + '<math><![CDATA[a > </body>]]></math>'
+          + '<svg><foreignObject><![CDATA[x > </svg><body>slip</body>]]></foreignObject></svg>'
+          + '<template><svg><![CDATA[x > </template><body>slip</body>]]></svg></template>'
+          + '<math><annotation-xml><![CDATA[x > </math><body>slip</body>]]></annotation-xml></math>'
           + '<main id="slot">real</main></body></html>',
       ),
     );
@@ -629,10 +629,14 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
     const html = await bridged.text();
     const injectedAt = html.indexOf('data-od-url-scroll-bridge');
     expect(injectedAt).toBeGreaterThan(-1);
-    expect(html).toContain('<![CDATA[label > </body>]]>');
-    expect(html).toContain('<![CDATA[a > </body>]]>');
-    expect(injectedAt).toBeGreaterThan(html.indexOf('<main id="slot">real</main>'));
-    expect(injectedAt).toBeLessThan(html.lastIndexOf('</body>'));
+    // Whether these are CDATA sections or bogus comments depends on the
+    // adjusted current node's namespace, so the scan refuses to pick a
+    // boundary and the bridge is appended instead — it still runs, and every
+    // authored section survives byte for byte.
+    expect(html).toContain('<![CDATA[x > </svg><body>slip</body>]]>');
+    expect(html).toContain('<![CDATA[x > </template><body>slip</body>]]>');
+    expect(html).toContain('<![CDATA[x > </math><body>slip</body>]]>');
+    expect(injectedAt).toBeGreaterThan(html.lastIndexOf('</body>'));
   });
 
   it('appends the URL preview scroll bridge rather than splicing into plaintext', async () => {

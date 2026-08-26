@@ -1609,16 +1609,19 @@ function skipTemplateContent(html: string, lowerHtml: string, from: number): num
       i = contentEnd;
       continue;
     }
+    if (!open[1] && (tagName === 'svg' || tagName === 'math') && html.charCodeAt(tagEnd - 1) !== 47 /* / */) {
+      // Foreign content inside a template follows the same rules, CDATA
+      // included, so it has to go through the same skip.
+      const contentEnd = skipForeignContent(html, lowerHtml, tagName, tagEnd + 1);
+      if (contentEnd < 0) return -1;
+      i = contentEnd;
+      continue;
+    }
     if (tagName === 'template') depth += open[1] ? -1 : 1;
     i = tagEnd + 1;
   }
   return depth === 0 ? i : -1;
 }
-
-/** SVG/MathML elements whose content the parser reads as ordinary HTML again. */
-const HTML_INTEGRATION_POINTS: readonly string[] = [
-  'foreignobject', 'desc', 'title', 'annotation-xml', 'mtext', 'mi', 'mo', 'mn', 'ms',
-];
 
 /**
  * Offset just past the `</svg>` / `</math>` that closes the foreign element
@@ -1638,7 +1641,6 @@ const HTML_INTEGRATION_POINTS: readonly string[] = [
 function skipForeignContent(html: string, lowerHtml: string, rootName: string, from: number): number {
   const tagOpen = /<(\/?)([a-z][a-z0-9-]*)/iy;
   let depth = 1;
-  let integrationDepth = 0;
   let i = from;
   while (i < html.length && depth > 0) {
     if (html.charCodeAt(i) !== 60 /* < */) {
@@ -1651,11 +1653,14 @@ function skipForeignContent(html: string, lowerHtml: string, rootName: string, f
       i = end + 3;
       continue;
     }
-    if (integrationDepth === 0 && lowerHtml.startsWith('<![cdata[', i)) {
-      const end = html.indexOf(']]>', i + 9);
-      if (end < 0) return -1;
-      i = end + 3;
-      continue;
+    if (lowerHtml.startsWith('<![cdata[', i)) {
+      // Whether this is a CDATA section or a bogus comment depends on the
+      // adjusted current node's namespace, which in turn depends on the HTML
+      // integration-point rules — including `annotation-xml`'s `encoding`
+      // attribute. Rather than model that, refuse: the caller falls back to
+      // appending, where the injection still runs and nothing is rewritten.
+      // Guessing is the only outcome that corrupts, so it is the one to avoid.
+      return -1;
     }
     if (html.startsWith('<!', i) || html.startsWith('<?', i)) {
       const end = html.indexOf('>', i + 2);
@@ -1678,10 +1683,6 @@ function skipForeignContent(html: string, lowerHtml: string, rootName: string, f
       if (contentEnd < 0) return -1;
       i = contentEnd;
       continue;
-    }
-    if (!selfClosing && HTML_INTEGRATION_POINTS.includes(tagName)) {
-      integrationDepth += open[1] ? -1 : 1;
-      if (integrationDepth < 0) integrationDepth = 0;
     }
     if (!selfClosing && tagName === rootName) depth += open[1] ? -1 : 1;
     i = tagEnd + 1;
