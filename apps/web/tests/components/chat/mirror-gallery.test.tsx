@@ -41,7 +41,7 @@ import { ExecutionShell } from '../../../src/components/chat/ExecutionShell';
 import { QuestionFormView } from '../../../src/components/QuestionForm';
 import { OdCardView } from '../../../src/components/OdCard';
 import { QueuedSendStrip, UserMessageImpl } from '../../../src/components/ChatPane';
-import { AssistantFeedback, AssistantFeedbackReasons, AssistantFooter, feedbackReasonOptions } from '../../../src/components/AssistantMessage';
+import { AssistantFeedback, AssistantFeedbackReasons, AssistantFooter, AssistantMessage, feedbackReasonOptions } from '../../../src/components/AssistantMessage';
 import { FileOpsSummary } from '../../../src/components/FileOpsSummary';
 import { UpgradeCard } from '../../../src/components/chat/UpgradeCard';
 import { QuoteBarView } from '../../../src/components/chat/QuoteBar';
@@ -1561,6 +1561,393 @@ const CELLS: Cell[] = [
   ...EDGE,
 ];
 
+/* ── 端到端 · 真实形态回归(**不在交付稿的 84 格之内**)────────────────────
+ *
+ * 上面 84 格是**逐个组件摆拍**:一格一个实体、一份夹具、一条分支。
+ * 产品负责人 2026-08-26 指认它会骗人 ——「compare 里看起来都实现了,为什么本地跑起来
+ * 还是旧的?你的 compare 是假的吗?」两个盲区,这一族是冲着第一个建的:
+ *
+ *  1. **只照得到「我喂了夹具的那条分支」**。真实运行时可能走另一条,而那条在 84 格里
+ *     没有格子,就永远照不到。活例子:用户消息上方那块灰色的「本条消息带了哪些上下文」
+ *     (`.msg-applied-context`)—— 84 格的 `msg()` 传的是 `appliedContextItems={[]}`,
+ *     这条分支从头到尾没被照过一次。`runContext.workspaceItems`、`producedFiles`、
+ *     「一轮两张壳」、失败轮的报错卡、done 密钥协议,同理。
+ *  2. **摆拍的宿主曾经是理想的**。这一条已经由上一个提交(旧聊天皮肤那次)收掉了 ——
+ *     84 格现在也套在 `.app` 里、`routines.css` 那一层也内联进来了。这一族沿用同一条祖先链,
+ *     并且在它下面再补一层 `.chat-log`:消息之间的间距、气泡与执行记录壳的相对位置,
+ *     都是**摆一个组件看不见、摞成一条会话才看得见**的东西。
+ *
+ * 所以它们**不是「第 85 格」**:没有对应的交付稿截图,不参与逐格比对。
+ * `diff-cells.mjs` 按 `.cell` 取格、`build-compare.mjs` 按 `<header>` 无属性那条正则
+ * 取表头 —— 这一族的类名(`e2ecell` / `e2ehead`)两条都不命中,而且整段排在 84 格之后,
+ * 位置索引也动不到。
+ */
+
+/** 产品的祖先链上那一层(和 84 格现在用的是同一个)。`.app .msg…` 那一族规则靠它生效。 */
+const LIVE_HOST = 'app';
+/**
+ * 这一族**自己的笼子**,和 `.app` 分开。
+ *
+ * 别拿 `.app` 当笼子:84 格现在也在 `.app` 底下,而它们外面那层接缝的类名正是 `root` ——
+ * `NextStepActions.module.css` 摘掉哈希之后也有一个 `.root`,`scope(css, 'app')` 会让
+ * **每一格**都套上一圈下一步引导的边框和渐变底(`scope()` 的注释里记着这个坑)。
+ * 端到端这一族的接缝走 `vars`,笼子走这个类,两边都不会撞。
+ */
+const CAGE_LIVE = 'cage-live';
+
+interface LiveCell {
+  /** 页面上的编号 —— 刻意不用 `#N`,免得看着像 84 格里的一格 */
+  id: string;
+  title: string;
+  state: string;
+  /** 这一格专门去照 84 格照不到的哪几条分支 */
+  covers: string[];
+  node: () => ReactElement;
+  notes?: string[];
+}
+
+const LIVE_SENT_AT = new Date(2026, 7, 26, 14, 31).getTime();
+const LIVE_REPLY_AT = LIVE_SENT_AT + 4_000;
+
+/** 一条真实的用户消息。字段名与 `ChatMessage` 一一对应,不另造形状。 */
+const liveUser = (over: Record<string, unknown> = {}) => ({
+  id: 'live-u1',
+  role: 'user' as const,
+  content: '照这两张图把商品列表页复刻出来,规格按 md 里写的走',
+  createdAt: LIVE_SENT_AT,
+  ...over,
+});
+
+/** 一条真实的助手消息。`events` 是唯一的内容来源,和产线一样。 */
+const liveAssistant = (events: PersistedAgentEvent[], over: Record<string, unknown> = {}) => ({
+  id: 'live-a1',
+  role: 'assistant' as const,
+  content: '',
+  runId: 'live-r1',
+  agentId: 'claude',
+  agentName: 'Claude Code',
+  runStatus: 'succeeded' as const,
+  startedAt: LIVE_REPLY_AT,
+  endedAt: LIVE_REPLY_AT + 72_000,
+  createdAt: LIVE_REPLY_AT + 72_000,
+  producedFiles: [] as unknown[],
+  events,
+  ...over,
+});
+
+/** `ProjectFile` 形状的产出条目 —— `producedFiles` 走的就是这一份。 */
+const producedFile = (name: string, kind: string, mime: string, sizeKb: number) => ({
+  name, path: name, size: sizeKb * 1024, mtime: LIVE_REPLY_AT + 60_000, kind, mime,
+});
+
+/**
+ * 一整轮:用户消息 → 助手消息 →(可选)ChatPane 挂在消息列表之后的东西。
+ *
+ * **不手捏中间层**:两个组件都是产品的调用点原样搬过来的,连 `errorCardOwnerId`
+ * 这种只有 `ChatPane` 才算得出来的字段也照抄语义(见 E2E-5)。
+ */
+const liveTurn = (
+  user: unknown,
+  assistant: unknown,
+  opts: {
+    applied?: unknown[];
+    errorCardOwnerId?: string | null;
+    /** 产品把报错卡挂在消息列表**之后**,不在 `AssistantMessage` 里面 */
+    trailing?: ReactElement;
+    /** 产物卡上的「发布 / 导出」由宿主给回调才出;不给就是产品没给的那条分支 */
+    artifactActions?: boolean;
+  } = {},
+) => (
+  <div className="chat-log">
+    <UserMessageImpl
+      message={user as never}
+      projectId="p1"
+      onRequestOpenFile={() => {}}
+      onRequestPluginDetails={() => {}}
+      onRequestDesignSystemDetails={() => {}}
+      t={T}
+      appliedContextItems={(opts.applied ?? []) as never}
+    />
+    <AssistantMessage
+      message={assistant as never}
+      streaming={false}
+      projectId="p1"
+      conversationId="c1"
+      isLast
+      errorCardOwnerId={opts.errorCardOwnerId ?? null}
+      onRequestOpenFile={() => {}}
+      onFeedback={() => {}}
+      onForkFromMessage={() => {}}
+      {...(opts.artifactActions
+        ? { onArtifactShare: () => {}, onArtifactDownload: () => {} }
+        : {})}
+    />
+    {opts.trailing}
+  </div>
+);
+
+/*
+ * 本轮的 done 密钥。**走产线的那条协议**:daemon 每轮铸一个 nonce,先发一条
+ * `done_key` 事件,再让 agent 在正文里吐 `<od-done key="…"/>` —— 那一枚才是
+ * 「过程到此为止、下面是结论」的分界(`packages/contracts/src/api/done-marker.ts`)。
+ *
+ * 84 格里**一条 `done_key` 都没有**,所以那边跑的一直是「没有 key」的老判据分支。
+ * 这一族喂真的密钥,顺手把新协议也照进来。
+ */
+const LIVE_DONE_KEY = 'a7f3c91ed2b40561';
+const doneKey = (): PersistedAgentEvent => ({ kind: 'done_key', key: LIVE_DONE_KEY });
+/** 结论段:标记和正文在同一条 text 事件里,和 agent 真实吐字的样子一致 */
+const conclusion = (text: string): PersistedAgentEvent =>
+  ({ kind: 'text', text: `<od-done key="${LIVE_DONE_KEY}"/>${text}` });
+
+/** 一轮里最常见的那段执行记录:想一下 → 出清单 → 逐条干活 → 收尾说一句。 */
+const LIVE_TURN_EVENTS: PersistedAgentEvent[] = [
+  doneKey(),
+  { kind: 'thinking', text: '两张图是同一套栅格,先复刻列表页,再拿它的商品卡去拼设置页。' },
+  ...todos('lt1', [
+    ['复刻商品列表页', 'in_progress'],
+    ['抽出商品卡为共享组件', 'pending'],
+  ]),
+  ...call('lt-r0', 'Read', { file_path: '首页.png' }, { startedAt: 0, completedAt: 1_200 }),
+  ...call('lt-w0', 'Write', { file_path: '商品列表页.html', content: LINES }),
+  ...todos('lt2', [
+    ['复刻商品列表页', 'completed'],
+    ['抽出商品卡为共享组件', 'in_progress'],
+  ]),
+  ...call('lt-w1', 'Write', { file_path: '商品卡.html', content: LINES64 }),
+  ...call('lt-b0', 'Bash', { command: 'npm run build', description: '跑一遍,看两页能不能通' },
+    { content: '✓ built in 2.14s (2 pages)', startedAt: 60_000, completedAt: 72_000 }),
+  // 收尾那一次清单快照。**不省**:省掉之后最后一条 todo 停在 `in_progress`,
+  // 回合状态行会说「已停止,仍有未完成任务」—— 那是 E2E-4 专门去照的那一态,
+  // 这一格要的是干干净净跑完的样子,两格并排才看得出差在哪
+  ...todos('lt3', [
+    ['复刻商品列表页', 'completed'],
+    ['抽出商品卡为共享组件', 'completed'],
+  ]),
+  conclusion('商品列表页做完了,商品卡已经抽成共享组件,改一处两页都跟着变。'),
+];
+
+const LIVE: LiveCell[] = [
+  {
+    id: 'E2E-1',
+    title: '一整轮 · 带上下文的设计请求',
+    state: '成功 · 用户消息(上下文行 + 附件 + 气泡)→ 执行记录 → 结论 → 回合状态行',
+    covers: [
+      '用户消息带 `appliedContextItems` —— 那块灰色的「本条消息带了哪些上下文」(`.msg-applied-context`),84 格里传的一直是 `[]`',
+      '一条消息上**三样东西同时在**:上下文行 + 附件行 + 气泡(84 格是拆成三格分别摆的)',
+      '执行记录壳与它上下两条消息的**间距**(`.chat-log` 的 gap)—— 单摆一个壳看不见这件事',
+    ],
+    node: () => liveTurn(
+      liveUser({
+        content: '照这两张图把商品列表页复刻出来,规格按插件里那套走',
+        sessionMode: 'design',
+        attachments: [img('首页.png', 1), img('设置页.png', 2)],
+      }),
+      liveAssistant(LIVE_TURN_EVENTS),
+      {
+        applied: [
+          { kind: 'plugin', title: '像素风组件库', pluginId: 'pixel-kit' },
+          { kind: 'skill', title: '前端交付规范' },
+          { kind: 'design-system', title: 'Nexu Design' },
+        ],
+        artifactActions: true,
+      },
+    ),
+    notes: [
+      '**上下文那一行默认是收起的**(`AppliedContextDisclosure` 自己的 `useState`),静态页够不着那个 state —— 这一格照的是收起态,展开态要起真实页面',
+      '✅ **气泡这一条是「已经修好了」的现场**:浏览器里量到 `background rgb(32,32,32)` / `color rgb(255,255,255)` / '
+        + '`border-radius 12px 12px 4px`,和第 45 格逐值相同 —— 上一个提交(旧聊天皮肤那次)删掉了 `routines.css` 里'
+        + '那条把气泡刷成 `#ededed` 的规则,这一格是它在**一整条会话里**也成立的证据。'
+        + '这一族存在的意义正是这个:同一件事在摆拍里对上,不等于串起来也对得上',
+      '🐞 **这一轮出了两张壳,而开头只有一句 thinking**:分张的判据是「清单之前那张壳里有没有东西」,而一句想法就算「有东西」。'
+        + '也就是说**产线上绝大多数轮次都会摞两张卡**(agent 先想一句几乎是常态)。84 格看不到这件事 —— `renderCell` 只取 `shells[shells.length - 1]`,'
+        + '第 2 格的夹具其实也分了张,那一句 thinking 在陈列页上从来没出现过。要不要按「只有一句 thinking 时不分张」收一收,**待产品裁**',
+      '🐞 **两张壳头写着同一个耗时(都是 1m 12s)**:`thinking` 事件不带时刻,第一张壳因此一件带时刻的事都没有,'
+        + '`shellElapsed` 按注释里写的「没有自己的跨度就退回轮次跨度」把整轮的耗时给了它。'
+        + '回退本身是有意的,但它在**最常见的那条路径**上正好制造出 `build-turn-blocks` 自己点名反对的画面 ——'
+        + '「两张都写『已完成』、耗时还都是同一个数,读起来像同一件事说了两遍」。这一轮**没有顺手改**',
+    ],
+  },
+  {
+    id: 'E2E-2',
+    title: '一整轮 · 消息带工作区上下文',
+    state: '成功 · 用户消息上方那一行里,「Current」芯片与上下文折叠行并排',
+    covers: [
+      '用户消息带 `runContext.workspaceItems` —— `ActiveWorkspaceContextChip`,84 格里从没喂过',
+      '`design-system` 那一条**会被过滤掉**(`visibleWorkspaceItems`),芯片数与喂进去的条数不相等',
+      '同一行(`.msg-run-context-row`)里**芯片与上下文折叠行同时出现**时怎么排、会不会挤 —— 两样东西共用一个容器,单摆哪一个都看不见',
+    ],
+    node: () => liveTurn(
+      liveUser({
+        content: '照现在打开的这个预览调一下价格行的字号',
+        sessionMode: 'design',
+        runContext: {
+          workspaceItems: [
+            { id: 'w1', kind: 'file', label: '商品列表页.html', path: '商品列表页.html', tabId: 'tab-1' },
+            { id: 'w2', kind: 'browser', label: '商品列表页 · 预览', url: 'https://example.com/list' },
+            { id: 'w3', kind: 'design-system', label: 'Nexu Design' },
+          ],
+        },
+      }),
+      liveAssistant([
+        doneKey(),
+        { kind: 'thinking', text: '先看一眼现在的字号阶梯,别把标题和价格行拉到同一档。' },
+        ...call('w-r0', 'Read', { file_path: '商品列表页.html' }, { startedAt: 0, completedAt: 900 }),
+        ...call('w-e0', 'Edit', { file_path: '商品列表页.html', old_string: LINES2, new_string: LINES4 },
+          { startedAt: 900, completedAt: 6_300 }),
+        conclusion('价格行调到 15px 了,和标题差一档,行高没动。'),
+      ]),
+      {
+        // 芯片和上下文折叠行**共用** `.msg-run-context-row` 这一个容器,
+        // 所以这一格两样都喂,照的是它们并排时的排布
+        applied: [{ kind: 'design-system', title: 'Nexu Design' }],
+        artifactActions: true,
+      },
+    ),
+    notes: [
+      '喂了三条 `workspaceItems`,页面上只出**两枚**芯片 —— `design-system` 那一条被 `UserMessageImpl` 过滤掉了。这是设计好的(设计系统由别处表达),写在这儿是免得下次有人当 bug 修',
+      '⚠️ **芯片上那个「Current」是硬编码的英文**,不走 i18n(`ChatPane.tsx` 的 `ActiveWorkspaceContextChip`)。19 个语言包里都没有这个键 —— 待产品/设计确认要不要翻',
+    ],
+  },
+  {
+    id: 'E2E-3',
+    title: '一整轮 · 本轮产出三张卡(含拿不出预览图的 .md)',
+    state: '成功 · 生图轮:没有 Write/Edit 工具行,产出全靠 producedFiles',
+    covers: [
+      '助手消息带 `producedFiles` —— 走的是 `ProducedFiles` 那条分支,84 格的第 30–33 格走的是另一条(`FileOpsSummary`)',
+      '`.md` 这种拿不出预览图的产出 —— `producedArtifactCardKind` 给它 `doc` 档卡',
+      '同一行里 html / image / doc **三种卡混排**,84 格每格只摆一种',
+    ],
+    node: () => liveTurn(
+      liveUser({ content: '把这三样东西一起产出来:列表页、一张对齐稿、一份交接说明' }),
+      liveAssistant(
+        [
+          doneKey(),
+          { kind: 'thinking', text: '交接说明写 md 就行,不用做成页面。' },
+          ...call('p-g0', 'Bash', { command: 'od media generate 商品卡对齐稿' },
+            { content: gen('商品卡对齐稿.png'), startedAt: 0, completedAt: 9_600 }),
+          conclusion('三样都产出来了,交接说明里写了两页共用的那套间距。'),
+        ],
+        {
+          producedFiles: [
+            producedFile('商品列表页.html', 'html', 'text/html', 48),
+            producedFile('商品卡对齐稿.png', 'image', 'image/png', 320),
+            producedFile('交接说明.md', 'md', 'text/markdown', 6),
+          ],
+        },
+      ),
+      { artifactActions: true },
+    ),
+    notes: [
+      '**两条产出分支的准入名单不一样,这一格是特意去照另一条的**:有 Write/Edit 工具行时走 `FileOpsSummary`,它用严格的 `artifactCardKind()`,`.md` **进不了卡**、掉到下面那条文本行里;没有工具行时走 `ProducedFiles`,它用 `producedArtifactCardKind()`,`.md` 出 `doc` 档卡。同一个 `.md`、同一轮产出,画法取决于 agent 用没用 Write —— **待产品裁一次**',
+      '缩略图与 html 卡的 iframe 都指向 daemon 的 `/api/projects/:id/raw/…`,离开 daemon 打不开,格子里是占位底色。要比的是三张卡的尺寸、圆角、栅格与右上角动作',
+    ],
+  },
+  {
+    id: 'E2E-4',
+    title: '一整轮 · 两张壳(先散活、后清单)',
+    state: '成功 · 第一张壳装「还没出清单时干的活」,第二张装清单',
+    covers: [
+      '一轮里**两张 `ExecutionShell` 摞在一起**的形态 —— 84 格每格只出一张壳(`renderCell` 只取 `shells[shells.length - 1]`),这条分支在陈列页上从来没出现过',
+      '**第一张壳里装着真的工具行**(Read + Grep),不只是一句 thinking —— 和 E2E-1 那种「只说了一句就分张」并排看,才看得出分张判据宽到什么程度',
+      '两张壳**各自的耗时**(每张壳定死在自己结束的那一刻,不是共用一个轮次计时),以及第一张转「已完成」、第二张接着跑时两个壳头并排的样子',
+    ],
+    node: () => liveTurn(
+      liveUser({ content: '先看看现在这套代码怎么组织的,然后按同一套间距把设置页做出来' }),
+      liveAssistant([
+        doneKey(),
+        { kind: 'thinking', text: '先摸清楚现有结构再动手,免得清单写歪。' },
+        ...call('s-r0', 'Read', { file_path: '商品列表页.html' }, { startedAt: 0, completedAt: 2_400 }),
+        ...call('s-s0', 'Grep', { pattern: '商品卡' },
+          { content: 'a.css:1\nb.css:2\nc.css:3', startedAt: 2_400, completedAt: 3_100 }),
+        ...todos('s-p1', [
+          ['按同一套间距做设置页', 'in_progress'],
+          ['接上两页之间的跳转', 'pending'],
+        ]),
+        ...call('s-w0', 'Write', { file_path: '设置页.html', content: LINES140 }),
+        ...todos('s-p2', [
+          ['按同一套间距做设置页', 'completed'],
+          ['接上两页之间的跳转', 'in_progress'],
+        ]),
+        ...call('s-e0', 'Edit', { file_path: '商品列表页.html', old_string: LINES2, new_string: LINES4 },
+          { startedAt: 40_000, completedAt: 72_000 }),
+        conclusion('设置页做好了,两页之间的跳转也接上了。'),
+      ]),
+      { artifactActions: true },
+    ),
+    notes: [
+      '分张的判据是「**清单之前那张壳里有没有东西**」(T34 / 2026-08-26 裁决):这一格清单之前跑了 Read + Grep,所以分张;光有清单不分张',
+      '两张壳都**默认收起**(D18),这一格没有替设计师点开 —— 端到端那一族要照的是「产线上打开会话第一眼看到什么」,替它摊开就不是第一眼了',
+      '⚠️ **这一格的回合状态行说的是「已停止,仍有未完成任务」,而 `runStatus` 是 succeeded**:'
+        + 'agent 最后那次 Edit 之后没再发一次清单快照(注释里写着「有的干脆整轮只发一次」),'
+        + '最后一条 todo 停在 `in_progress`,`unfinishedTodosFromEvents` 就据此判定「还有没干完的」。'
+        + 'E2E-1 补了收尾快照,状态行是「已完成」—— **两格并排看的就是这个差**。'
+        + '这条路径在产线上很常见,状态行要不要以 `runStatus` 为准,**待产品裁**',
+    ],
+  },
+  {
+    id: 'E2E-5',
+    title: '一整轮 · 失败轮 + 报错卡',
+    state: '失败 · 壳头转失败态、回合状态行让位、报错卡挂在消息之后',
+    covers: [
+      '`runStatus: "failed"` 的一整轮 —— 84 格的第 3 格只有壳,没有它上下文里的用户消息与报错卡',
+      '`errorCardOwnerId` 这条**只有 `ChatPane` 才算得出来**的分支:命中时消息内的错误药丸不出、回合状态行 `hideRunStatus`',
+      '报错卡与上面那条助手消息的间距、以及「一件事到底谁来说」的分工',
+    ],
+    node: () => liveTurn(
+      liveUser({ content: '把商品卡抽成共享组件,两页都换过去' }),
+      liveAssistant(
+        [
+          doneKey(),
+          { kind: 'thinking', text: '先把卡抽出来,再逐页替换引用。' },
+          ...todos('f-p1', [['按现有结构重做这一屏', 'in_progress']]),
+          ...call('f-r0', 'Read', { file_path: '商品列表页.html' }, { startedAt: 0, completedAt: 700 }),
+          ...call('f-b0', 'Bash', { command: 'npm run build', description: '构建产物,看能不能跑通' },
+            { content: '✗ Could not resolve "./ProductCard" from src/pages/List.tsx', isError: true, startedAt: 700, completedAt: 4_000 }),
+          { kind: 'status', label: 'error', detail: 'Could not resolve "./ProductCard"' },
+        ] as PersistedAgentEvent[],
+        { runStatus: 'failed' as const },
+      ),
+      {
+        errorCardOwnerId: 'live-a1',
+        trailing: (
+          <RunErrorCard
+            dataKind="run-recovery"
+            title="任务没能跑完"
+            description="构建在替换商品卡引用那一步失败了,已经写好的两个文件还在。"
+            actions={(
+              <>
+                <button type="button" className="chat-error-action">导出日志</button>
+                <button type="button" className="chat-error-action">从失败处重试</button>
+              </>
+            )}
+          />
+        ),
+      },
+    ),
+    notes: [
+      '`errorCardOwnerId` 传的是这条助手消息自己的 id —— 产品里 `ChatPane` 只在「最后一条失败的助手消息」上这么传。命中之后消息内那枚灰色错误药丸不渲染(避免和卡说两遍),回合状态行也把状态词让给卡',
+      '**报错卡的样式在这一族里是另挂一份的**:84 格第 78–80 格把 `RunErrorCard.module.css` 关进 `cage-err` 笼子,这一族关进 `cage-live`(两边互不影响,见 `scope()` 那段注释)',
+      '⚠️ 卡上那两颗动作是**照抄 `ChatPane` 的裸 `<button class="chat-error-action">`**,不是稿子第 78 格那套带图标的 `Button` —— 产品今天就是这两套并存,对齐时要收成一套',
+    ],
+  },
+];
+
+function renderLive(cell: LiveCell): string {
+  return dehash(renderToStaticMarkup(
+    <I18nProvider initial="zh-CN">
+      {/* 产品的祖先链:`.app`(ProjectView)→ 接缝(ChatPane 的 `chatSeam`)→ `.chat-log`。
+          接缝这里用 `vars` 而不是 `root`:`root` 会和几份 CSS Module 摘掉哈希后的
+          `.root` 撞名(见 `scope()`),而产品里接缝本来就是抹在已有元素上的那一种。 */}
+      <div className={`${LIVE_HOST} ${CAGE_LIVE}`}>
+        <div className="vars" data-chat-root="">
+          {cell.node()}
+        </div>
+      </div>
+    </I18nProvider>,
+  ));
+}
+
 function renderCell(cell: Cell): string {
   if (cell.node) {
     return dehash(renderToStaticMarkup(
@@ -1614,6 +2001,84 @@ describe('镜像陈列页', () => {
   });
 
   /**
+   * 端到端那一族**真的照到了那几条分支**。
+   *
+   * 这几条断言不是「渲染出了东西」那种活性检查 —— 它们钉住的是这一族存在的理由:
+   * 每一条都是 84 格里**没有任何一格**会经过的分支。夹具哪天被改瘦了(比如
+   * `appliedContextItems` 又变回 `[]`),这几条会红,而页面照样能生成、看着还挺好。
+   */
+  it('端到端那一族照到了 84 格照不到的分支', () => {
+    const byId = new Map(LIVE.map((c) => [c.id, renderLive(c)]));
+    const html = (id: string): string => {
+      const found = byId.get(id);
+      expect(found, `${id} 不见了`).toBeTruthy();
+      return found ?? '';
+    };
+
+    // 84 格的 `msg()` 传的是 `appliedContextItems={[]}`,这条分支在那边永远不出
+    expect(html('E2E-1')).toContain('msg-applied-context');
+    expect(html('E2E-1')).toContain('msg-run-context-row');
+    // 同一条消息上「上下文行 + 附件行 + 气泡」三样同时在
+    expect(html('E2E-1')).toContain('msg-att');
+    expect(html('E2E-1')).toContain('user-bubble');
+
+    // workspaceItems 芯片;喂了 3 条,design-system 那条被过滤掉,只出 2 枚
+    const chips = html('E2E-2').match(/msg-plugin-chip--workspace /g) ?? [];
+    expect(chips).toHaveLength(2);
+    expect(html('E2E-2')).not.toContain('msg-plugin-chip--workspace-design-system');
+    // 芯片与上下文折叠行共用一个容器 —— 这一格两样都在
+    expect(html('E2E-2')).toContain('msg-applied-context');
+
+    // producedFiles → `ProducedFiles` 那条分支:`.md` 走 `doc` 档卡
+    expect(html('E2E-3')).toContain('data-kind="doc"');
+    expect(html('E2E-3')).toContain('data-kind="html"');
+    expect(html('E2E-3')).toContain('data-kind="image"');
+
+    /*
+     * 一轮两张壳。`.fold.flat` 是**壳**那一层(抽屉是 `.fold`,不带 `flat`),
+     * 所以数它就等于数壳。84 格的 `renderCell` 只取 `shells[shells.length - 1]`,
+     * 那边**结构上**看不到第二张。
+     */
+    const shells = html('E2E-4').match(/class="fold flat"/g) ?? [];
+    expect(shells, '先散活、后清单应当分出两张壳').toHaveLength(2);
+
+    // 失败轮 + 报错卡;`errorCardOwnerId` 命中时消息内那枚错误药丸不出
+    expect(html('E2E-5')).toContain('chat-run-error-card');
+    expect(html('E2E-5')).not.toContain('status-pill');
+
+    /*
+     * **协议标记一个字都不许上屏**(`done-marker.ts` 的原话:「标记任何情况下都不许
+     * 出现在正文里」,`<od-title>` 当年就是这么漏进线上聊天的)。
+     * 84 格一条 `done_key` 都没喂过,这条只有端到端这一族守得住。
+     */
+    for (const [id, out] of byId) {
+      expect(out, `${id} 把 done 标记漏到正文里了`).not.toContain('od-done');
+      expect(out, `${id} 把 done 标记漏到正文里了`).not.toContain(LIVE_DONE_KEY);
+    }
+  });
+
+  /**
+   * **84 格摆拍会把第一张壳吞掉** —— 这一条钉的是「为什么需要端到端那一族」。
+   *
+   * `renderCell` 只取 `shells[shells.length - 1]`(它一格只摆一个实体)。而分张的判据
+   * 宽到「清单之前说过一句话」就成立,所以第 2 格那份夹具其实是**两张壳**,
+   * 开头那句 thinking 在陈列页上从来没出现过 —— 摆拍看到的和产线看到的不是一回事。
+   * 哪天 `renderCell` 改成摆全部壳,这一条会红,那时候把它删掉就是。
+   */
+  it('84 格摆拍只摆最后一张壳,第一张连同它那句 thinking 一起看不见', () => {
+    const shellsOf = (events: PersistedAgentEvent[]): number =>
+      buildTurnBlocks({ events, runStatus: 'succeeded', nowMs: 31_000 })
+        .filter((b) => b.kind === 'shell').length;
+    // 第 2 格(gid 2)喂的就是 PLAN_DONE:开头一句 thinking,然后才出清单
+    expect(shellsOf(PLAN_DONE)).toBe(2);
+    const cell2 = CELLS[1] as Cell;
+    expect(cell2.gid).toBe(2);
+    expect(renderCell(cell2).match(/class="fold flat"/g) ?? []).toHaveLength(1);
+    // 同样是「先说一句、再出清单」,端到端那一族两张都在
+    expect(renderLive(LIVE[0] as LiveCell).match(/class="fold flat"/g) ?? []).toHaveLength(2);
+  });
+
+  /**
    * 把每一格的**夹具**导出成 JSON,供「真实运行时」那一列用。
    *
    * 为什么需要:陈列页是 `renderToStaticMarkup` 出来的静态 HTML,每格外面还由它自己
@@ -1640,6 +2105,34 @@ describe('镜像陈列页', () => {
     }));
     writeFileSync(out, JSON.stringify(rows, null, 1), 'utf-8');
     expect(rows).toHaveLength(84);
+  });
+
+  /**
+   * 端到端那一族**不许碰下游那两条脚本**。
+   *
+   * 它们都按前 84 格取数,而且都是硬的:
+   *  · `build-compare.mjs` 用一条**无属性 `<header>`** 的正则解表头,解不出 84 条
+   *    直接 `process.exit(1)`;
+   *  · `diff-cells.mjs` 用 `querySelectorAll('.cell')` 取格,再按**下标**配 gid
+   *    (`ours[gid - 1]`)—— 多一个 `.cell` 混进 84 格中间,后面全部错位。
+   * 这一族换了类名、给 `<header>` 加了属性、整段排在 84 格之后,三条一起保这件事。
+   * 在这儿钉住,免得以后有人为了「统一样式」把类名改回去。
+   */
+  it('端到端那一族不会破坏 84 格的两条下游脚本', () => {
+    const page = buildPage();
+    // build-compare.mjs 里那条正则,一字不差搬过来
+    const heads = [...page.matchAll(
+      /<header>\s*<span class="no">#(\d+)<\/span><span class="sub">([^<]*)<\/span>\s*<span class="cmp">([^<]*)<\/span><span class="st">([^<]*)<\/span>/g,
+    )];
+    expect(heads).toHaveLength(84);
+    // diff-cells.mjs 按 `.cell` 取格:数量与顺序都不能被新格子动到
+    const cellOpens = [...page.matchAll(/<section class="cell"/g)];
+    expect(cellOpens).toHaveLength(84);
+    // 新格子全部排在 84 格之后
+    const lastCell = page.lastIndexOf('<section class="cell"');
+    expect(page.indexOf('<section class="e2ecell">')).toBeGreaterThan(lastCell);
+    // 页面上写清楚了它们不是那 84 格里的一格
+    expect(page).toContain('不是交付稿的 84 格');
   });
 
   it('写出陈列页(给了 OD_WRITE_MIRROR 落点时)', () => {
@@ -1885,6 +2378,30 @@ function buildPage(): string {
    */
   const edge = scope(read('src/components/chat/Reconnect.module.css'), CAGE_EDGE) + '\n'
     + scope(read('src/components/chat/PauseLine.module.css'), CAGE_EDGE);
+  /*
+   * ── 端到端那一族要用、而 84 格用不上的几张表 ──────────────────────────
+   *
+   * 全部**另起一组 style**,不去改上面那几条 `pick` 的正则:改了会把新规则混进
+   * 84 格的样式里,逐格比对的基线跟着动,而这一族的收益一格都收不到。
+   * 这几组选择器 84 格一条都没用到,追加在后面对它们是**零影响**。
+   * 组内顺序照 `index.css`:chat.css → code.css → tools.css → composio.css → routines.css。
+   */
+  const liveLogCss = pick(read('src/styles/chat.css'), /(^|[\s,>+~])\.chat-log/);
+  const liveFlowCss = pick(read('src/styles/viewer/code.css'), /(^|[\s,>+~])\.(assistant-flow|status-pill|status-label|status-detail)/);
+  const liveProducedCss = pick(read('src/styles/viewer/tools.css'), /(^|[\s,>+~])\.produced-file/);
+  const liveCompletionCss = pick(read('src/styles/viewer/composio.css'), /(^|[\s,>+~])\.assistant-completion-row/);
+  /*
+   * 旧聊天皮肤(`legacySkin`)**不在这里重来一遍**:上面那份是按「这一页实际渲染出来的
+   * 类名」求的交集,端到端这一族用的正是同一批(`.msg` / `.user-text` / `.assistant-footer`
+   * / `.prose-block` / `.chat-log` …),照单全收就够。多挑一份只会让同一条规则出现两次,
+   * 以后改 `legacySkin` 的人还得记得这儿也有一份。
+   *
+   * 端到端那一族里出场的两份 CSS Module,笼子用 `CAGE_LIVE`。
+   * **不能用 `.app`**:84 格现在也在 `.app` 底下,而它们的接缝类名就是 `root`,
+   * 和 `NextStepActions.module.css` 摘完哈希的 `.root` 正好撞上(见 `scope()` 的注释)。
+   */
+  const liveModuleCss = scope(read('src/components/chat/RunErrorCard.module.css'), CAGE_LIVE) + '\n'
+    + scope(read('src/components/NextStepActions.module.css'), CAGE_LIVE);
   // 打包后的 ESM 把内部名字压缩过(`vt as MODE_FRAMES`),内联进页面后
   // 那些**导出名**在模块作用域里并不存在。把尾部的 export 换成一个具名对象,
   // 下面的画笔通过它取引擎;引擎代码本身一个字没改。
@@ -1985,6 +2502,66 @@ function buildPage(): string {
 </section>`;
   }).join('\n');
 
+  /*
+   * 端到端那一族的格子。**刻意不复用 `.cell` / `<header>`**:
+   *  · `diff-cells.mjs` 按 `document.querySelectorAll('.cell')` 取格并按下标配 gid;
+   *  · `build-compare.mjs` 按 `<header><span class="no">#N</span>…` 那条**无属性**的正则
+   *    取表头,解不出 84 条就直接 `process.exit(1)`。
+   * 换个类名、给 `<header>` 加个属性,两条都稳稳落空;整段又排在 84 格之后,下标也动不到。
+   */
+  const liveCells = LIVE.map((cell) => {
+    const covers = cell.covers.map((c) => `<li>${inline(c)}</li>`).join('');
+    const notes = (cell.notes ?? []).map((n) => `<li>${inline(n)}</li>`).join('');
+    return `<section class="e2ecell">
+  <header class="e2ehead"><span class="tag">${esc(cell.id)}</span>
+    <span class="cmp">${esc(cell.title)}</span><span class="st">${esc(cell.state)}</span></header>
+  <div class="covers"><b>这一格专门去照 84 格照不到的:</b><ul>${covers}</ul></div>
+  <div class="stage e2estage">${renderLive(cell)}</div>
+  ${notes ? `<ul class="notes">${notes}</ul>` : ''}
+</section>`;
+  }).join('\n');
+
+  const liveSection = `<h2 class="fam e2efam">端到端 · 真实形态回归<span class="e2etag">不是交付稿的 84 格</span></h2>
+<div class="famnote e2enote">
+<p><b>这一族没有对应的交付稿截图,不参与逐格比对。</b>上面 84 格是<b>逐个组件摆拍</b> ——
+一格一个实体、一份夹具、一条分支;这一族喂的是<b>一整条真实会话</b>,回答的是另一个问题:
+<b>串起来之后还是那个样子吗</b>。</p>
+<p>建它是因为 84 格有一个结构性盲区:<b>它只照得到「喂了夹具的那条分支」</b>。
+真实运行时可能走另一条,而那条在 84 格里没有格子,就永远照不到。活例子:</p>
+<table>
+<tr><th>照不到的分支</th><th>为什么</th></tr>
+<tr><td>用户消息上方那块灰色的「本条消息带了哪些上下文」(<code>.msg-applied-context</code>)</td>
+<td>84 格的 <code>msg()</code> 传的是 <code>appliedContextItems={[]}</code> —— 这条分支从头到尾没被照过一次</td></tr>
+<tr><td><code>runContext.workspaceItems</code> 的「Current」芯片</td><td>84 格从没喂过这个字段</td></tr>
+<tr><td><code>producedFiles</code> 的产物卡(含拿不出预览图的 <code>.md</code>)</td>
+<td>第 30–33 格走的是另一条产出分支(<code>FileOpsSummary</code>),两条的准入名单不一样</td></tr>
+<tr><td>一轮里<b>两张执行记录壳</b></td><td><code>renderCell</code> 只取 <code>shells[shells.length - 1]</code>,一格只摆一个实体</td></tr>
+<tr><td>失败轮的报错卡</td><td>它由 <code>ChatPane</code> 挂在消息列表之后,不在 <code>AssistantMessage</code> 里,单摆一个组件够不着</td></tr>
+<tr><td>done 密钥协议(<code>done_key</code> + <code>&lt;od-done key=…/&gt;</code>)</td>
+<td>84 格一条 <code>done_key</code> 都没有,那边跑的一直是「没有 key」的老判据分支</td></tr>
+</table>
+<p>这一族按产品的祖先链渲染:<code>.app</code>(<code>ProjectView</code>)→ 接缝(<code>ChatPane</code> 的 <code>chatSeam</code>)→
+<code>.chat-log</code> → 消息。<b>组件一个字没改</b>,也没有替设计师点开 / 按住任何东西 ——
+这一族要照的是「产线上打开会话第一眼看到什么」。</p>
+<p><b>挂上去当场的收获</b>:</p>
+<table>
+<tr><th>照出什么</th><th>机制</th></tr>
+<tr><td>✅ <b>用户气泡在一整条会话里也对上了</b> —— 量到 <code>rgb(32,32,32)</code> / <code>rgb(255,255,255)</code> /
+<code>12px 12px 4px</code>,和第 45 格逐值相同</td>
+<td>上一个提交删掉了 <code>routines.css</code> 里那条把气泡刷成 <code>#ededed</code> 的旧皮规则。
+摆拍对上不等于串起来也对上,这一族是那次修复在真实形态下的复核</td></tr>
+<tr><td>🐞 <b>一轮摞两张壳比想象中常见得多</b> —— E2E-1 开头只有一句 thinking,照样分了张</td>
+<td>分张判据是「清单之前那张壳里有没有东西」,一句想法就算「有东西」。
+84 格看不到:第 2 格的夹具其实也分了张,那一句 thinking 在陈列页上从来没出现过。要不要收一收<b>待产品裁</b></td></tr>
+<tr><td>🐞 <b>那两张壳头写着同一个耗时</b>(E2E-1 都是 1m 12s;E2E-4 第一张壳有工具行,就是 3.1s / 32s 两个数)</td>
+<td><code>thinking</code> 事件不带时刻,第一张壳因此没有自己的跨度,<code>shellElapsed</code> 退回轮次跨度。
+回退本身是有意的,但它在最常见的路径上正好制造出 <code>build-turn-blocks</code> 自己点名反对的画面</td></tr>
+<tr><td>🐞 <b>回合状态行会说「已停止,仍有未完成任务」,而 <code>runStatus</code> 是 succeeded</b>(E2E-4 对 E2E-1)</td>
+<td>agent 收尾时没再发一次清单快照,最后一条 todo 停在 <code>in_progress</code>。这条路径在产线上很常见,<b>待产品裁</b></td></tr>
+</table>
+</div>
+${liveCells}`;
+
   return `<!doctype html>
 <html lang="zh-CN" data-theme="light"><head><meta charset="utf-8">
 <title>执行记录 · 镜像陈列页</title>
@@ -2014,6 +2591,12 @@ ${tokens}</style>
 <style>/* 稿子的 .sel:选中那截的高亮底(这段在模板串里,不能带反引号) */
 .quote-sel{background:var(--selected-soft);border-radius:var(--radius-xs)}</style>
 <style>${edge}</style>
+<!-- 端到端那一族专用,追加在最后;选择器 84 格一条都没用到 -->
+<style>${liveLogCss}</style>
+<style>${liveFlowCss}</style>
+<style>${liveProducedCss}</style>
+<style>${liveCompletionCss}</style>
+<style>${liveModuleCss}</style>
 <style>${PAGE_CSS}</style>
 </head><body>
 <h1>执行记录 · 镜像陈列页</h1>
@@ -2029,7 +2612,11 @@ ${tokens}</style>
 还是<b>这一页本身够不着</b>(静态标记没有布局、没有 React state、渲染不了 portal)。
 <b>没有</b>为了让某一格好看去改组件的行为、样式或默认值,也没有拿近似糊过去。
 平铺形态下工具行的缩进(S7)与壳内叙述的颜色档(S22)在下面逐格标了。</p>
+<p class="lead"><b>页面最后还有一段「端到端 · 真实形态回归」</b> —— 那几格<b>不是</b>交付稿 84 格里的格子,
+没有对应的设计稿截图、也不参与逐格比对。它们喂的是<b>一整条真实会话</b>,
+用来照「逐格摆拍照不到的分支」和「组件单摆好看、串起来不对」。</p>
 ${cells}
+${liveSection}
 <script type="module">
 ${engine}
 /* 陈列页专用的球:与 Orb.tsx 同一份引擎、同一套上色规则。
@@ -2083,8 +2670,11 @@ for (const cell of document.querySelectorAll('[data-expand]')) {
     if (inner && !inner.classList.contains('leaf')) inner.open = true;
   }
 }
-/* 附件缩略图取不到就藏起来 —— 见 PAGE_CSS 里 [data-broken] 那条 */
-for (const im of document.querySelectorAll('.stage .msg-att-mini')) {
+/* 附件缩略图与 agent 头像取不到就藏起来 —— 见 PAGE_CSS 里 [data-broken] 那条。
+   两者的 src 都指向真实运行时(项目文件的 raw 端点、以及 agent 图标目录),
+   离开 dev server 就是打不开的图;浏览器画的「碎图」图标会盖住要比的那件事。
+   (这段在模板串里,所以不能带反引号。) */
+for (const im of document.querySelectorAll('.stage .msg-att-mini, .stage .role-agent-icon')) {
   const mark = () => im.setAttribute('data-broken', '');
   if (im.complete && !im.naturalWidth) mark();
   im.addEventListener('error', mark);
@@ -2164,7 +2754,8 @@ h1{margin:0 0 6px;font-size:20px;}
 /* 图卡的缩略图指向 daemon 的 /api/projects/:id/raw/…,离开 daemon 就是一张打不开的图。
    取不到就把 <img> 藏掉,露出卡自己的底色当占位(标记由下面那段脚本打)——
    浏览器画的「碎图」图标会盖住要比的那件事:卡多大、圆角多少、一行里两种卡同不同高。 */
-.stage .msg-att-mini[data-broken]{visibility:hidden;}
+.stage .msg-att-mini[data-broken],
+.stage .role-agent-icon[data-broken]{visibility:hidden;}
 /* 第 42 格同理:稿子的 hover 格画的就是「鼠标停在第一条上」的样子。
    这里把 NextStepActions.module.css 里 .toolboxRow:hover 那两条原样重放到第一行。
    (类名的哈希由 dehash 摘掉了,所以选择器就是源文件里写的那个。) */
@@ -2180,4 +2771,33 @@ h1{margin:0 0 6px;font-size:20px;}
    长宽比(只补在陈列格里,组件一个字没改)——同 data-hover / data-expand 一个性质。 */
 .stage .artifact-card--video .artifact-card-media{position:absolute;inset:0;margin:auto;
   width:auto;height:100%;aspect-ratio:9/16;}
+/* ── 端到端那一族 ────────────────────────────────────────────────────
+   长得**和 84 格明显不一样**是有意的:它们没有设计稿可对,验收的人不该把它们
+   当成第 85 格去逐格比。所以换一套边框色、换一枚标签,编号也从井号数字换成 E2E-N。
+   (这段在模板串里,所以不能带反引号。) */
+.e2efam{margin-top:52px;border-bottom-color:#7c3aed;color:#5b21b6;
+  display:flex;align-items:center;gap:10px;}
+.e2etag{padding:1px 8px;border:1px solid #ddd0fb;border-radius:999px;
+  background:#f6f2ff;color:#6d28d9;font-size:11px;font-weight:600;letter-spacing:0;}
+.e2enote{border-color:#e4daff;background:#faf7ff;}
+/* 上面 .famnote 的第一列是「#38 分叉分界」那种短标签,所以写死了 nowrap。
+   这一族第一列是整句话,不放开的话表格会撑到 1667px,整页横向出条。 */
+.e2enote table{table-layout:fixed;}
+.e2enote td:first-child{white-space:normal;color:var(--text);width:34%;}
+.e2ecell{max-width:760px;margin:22px 0;border:1px solid #e4daff;border-radius:12px;overflow:hidden;
+  background:var(--bg-panel);}
+.e2ehead{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;padding:9px 14px;
+  border-bottom:1px solid #e4daff;background:#faf7ff;}
+.e2ehead .tag{font-family:var(--mono);font-weight:700;color:#6d28d9;}
+.e2ehead .cmp{font-weight:600;}
+.e2ehead .st{color:var(--text-muted);font-size:12px;}
+.covers{padding:9px 16px 10px;border-bottom:1px dashed #e4daff;background:#fdfcff;
+  color:var(--text-muted);font-size:12px;}
+.covers b{color:#6d28d9;}
+.covers ul{margin:4px 0 0;padding-inline-start:16px;}
+.covers li+li{margin-top:3px;}
+/* 展位比 84 格宽一点:这里装的是一整条会话,而 440 是交付稿单格的宽度。
+   460 是产品里聊天面板的默认宽度(split-chat-slot 的初值),照它来。
+   (这段在模板串里,所以不能带反引号。) */
+.e2estage{width:460px;}
 `;
