@@ -29,6 +29,7 @@ import {
   publishInFlightSync,
   publishSnapshot,
   recordSnapshotRead,
+  subscribeMessageCenterReads,
   retireInFlightSync,
   supersedeEarlierSnapshotWrites,
   type MessageCenterInFlightSync,
@@ -423,6 +424,29 @@ export function MessageCenter({
       document.removeEventListener('visibilitychange', onVisibility);
     };
   }, [retrySync, commitState, locale, accountGeneration]);
+
+  // A read recorded by ANOTHER host — typically this host's predecessor,
+  // finishing a write the user started just before navigating. Without this the
+  // successor kept the row unread until some later refresh, which is the very
+  // thing a remount is supposed to preserve.
+  useEffect(() => subscribeMessageCenterReads((delta) => {
+    if (delta.accountGeneration !== currentWorkspaceAccountGeneration()) return;
+    if (delta.locale !== locale) return;
+    const rows = messagesRef.current;
+    const target = rows.find((item) => item.id === delta.messageId);
+    if (!target || target.readAt) return;
+    if (delta.account) {
+      pendingReadIdsRef.current = new Set(pendingReadIdsRef.current).add(delta.messageId);
+    }
+    // Component state only: whoever recorded the delta already wrote both
+    // shared sinks, and persisting again here would race their write.
+    commitState(
+      rows.map((item) => (
+        item.id === delta.messageId ? { ...item, readAt: item.readAt ?? delta.readAt } : item
+      )),
+      new Set(readIdsRef.current).add(delta.messageId),
+    );
+  }), [commitState, locale]);
 
   useEffect(() => {
     if (open) retrySync();

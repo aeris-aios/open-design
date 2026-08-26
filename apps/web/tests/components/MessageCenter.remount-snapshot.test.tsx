@@ -1097,6 +1097,77 @@ describe('MessageCenter remount snapshot', () => {
       .toContain('anon-ack');
   });
 
+  it('reaches a successor that mounted while the read was still in flight', async () => {
+    // Click an unread row, then navigate before the write lands. The old host
+    // unmounts mid-flight; the successor adopts the still-unread snapshot and
+    // finishes its mount effect. Patching the shared snapshot afterwards only
+    // helps hosts that adopt LATER — the one already on screen kept the row
+    // unread until an open, a visibility refresh or the 60s poll.
+    const hold = { armed: false, release: null as (() => void) | null };
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/integrations/vela/status')) {
+        statusCalls += 1;
+        return Response.json({ loggedIn: true });
+      }
+      if (url.includes('/read') && init?.method === 'POST') {
+        if (hold.armed) {
+          hold.armed = false;
+          await new Promise<void>((resolve) => {
+            hold.release = resolve;
+          });
+        }
+        return Response.json({ read: true, markedCount: 1 });
+      }
+      if (url.includes('/message-center') && url.includes('/messages')) {
+        messageCalls += 1;
+        return Response.json({ messages: [row('in-flight-read', null)], nextCursor: null, unreadCount: 1 });
+      }
+      return Response.json({});
+    }));
+
+    const first = render(
+      <I18nProvider initial="zh-CN">
+        <MessageCenter />
+      </I18nProvider>,
+    );
+    await waitFor(() => expect(messageCalls).toBe(1));
+    fireEvent.click(screen.getByTestId('message-center-trigger'));
+    const target = await screen.findByRole('button', { name: /in-flight-read/ });
+    await new Promise((r) => setTimeout(r, 30));
+
+    // The read starts and its POST is held.
+    hold.armed = true;
+    fireEvent.click(target);
+    await waitFor(() => expect(hold.release).not.toBeNull());
+
+    // The user navigates: this host goes away, a successor takes over and
+    // adopts the snapshot as it stands — still unread.
+    first.unmount();
+    // Opening the panel already cost a sync of its own, so the meaningful
+    // measure is that nothing further goes out once the successor is up.
+    const pullsBeforeSuccessor = messageCalls;
+    const counts: number[] = [];
+    render(
+      <I18nProvider initial="zh-CN">
+        <MessageCenter
+          hideTrigger
+          open={false}
+          onOpenChange={() => {}}
+          onUnreadCountChange={(n) => counts.push(n)}
+        />
+      </I18nProvider>,
+    );
+    await waitFor(() => expect(counts[counts.length - 1]).toBe(1));
+
+    // The predecessor's write lands.
+    hold.release!();
+
+    // The successor must learn about it without another round trip.
+    await waitFor(() => expect(counts[counts.length - 1]).toBe(0));
+    expect(messageCalls).toBe(pullsBeforeSuccessor);
+  });
+
   it('does not re-sync when it is remounted straight away', async () => {
     const first = await mountAndSettle();
     const afterFirst = { status: statusCalls, messages: messageCalls };

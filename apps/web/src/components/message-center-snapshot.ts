@@ -79,6 +79,7 @@ export function resetMessageCenterSnapshot(): void {
   lastSyncSnapshot = null;
   inFlightSync = null;
   snapshotWriteToken = 0;
+  readListeners.clear();
 }
 
 /** Claim a publication slot. Taken when a run is ISSUED, not when it lands. */
@@ -119,6 +120,38 @@ export function adoptableSnapshot(locale: string): MessageCenterSnapshot | null 
 }
 
 /**
+ * A durable read, broadcast to every mounted host.
+ *
+ * Patching the shared snapshot only helps hosts that adopt it AFTERWARDS. A
+ * successor that mounted while the read was still in flight has already
+ * rendered from the pre-read snapshot and finished its mount effect, so the row
+ * stayed unread on screen until an open, a visibility refresh or the 60s poll —
+ * which is exactly the guarantee a remount is supposed to preserve.
+ *
+ * Broadcasting is safe because a read is monotonic: a row only ever goes from
+ * unread to read, so applying the delta late, twice, or to a host that already
+ * has it are all no-ops.
+ */
+export interface MessageCenterReadDelta {
+  messageId: string;
+  readAt: string;
+  accountGeneration: number;
+  locale: string;
+  account: boolean;
+}
+
+const readListeners = new Set<(delta: MessageCenterReadDelta) => void>();
+
+export function subscribeMessageCenterReads(
+  listener: (delta: MessageCenterReadDelta) => void,
+): () => void {
+  readListeners.add(listener);
+  return () => {
+    readListeners.delete(listener);
+  };
+}
+
+/**
  * Record a read against the current snapshot as a DELTA.
  *
  * Writing a host's whole row set here would drop rows a sync published in the
@@ -128,13 +161,17 @@ export function adoptableSnapshot(locale: string): MessageCenterSnapshot | null 
  * Adding one id needs neither guard. The timestamp is deliberately untouched:
  * the underlying fetch is no fresher than it was.
  */
-export function recordSnapshotRead(args: {
-  messageId: string;
-  readAt: string;
-  accountGeneration: number;
-  locale: string;
-  account: boolean;
-}): void {
+export function recordSnapshotRead(args: MessageCenterReadDelta): void {
+  // Announced before the snapshot work and regardless of whether a snapshot
+  // exists: the delta is about the READ, and a host that fetched its own rows
+  // needs it just as much as one that adopted.
+  for (const listener of [...readListeners]) {
+    try {
+      listener(args);
+    } catch (error) {
+      console.error('[message-center] read-delta subscriber failed', error);
+    }
+  }
   const snapshot = lastSyncSnapshot;
   if (!snapshot) return;
   // Matched against the generation the read BEGAN under, so this can only ever
