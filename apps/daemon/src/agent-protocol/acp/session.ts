@@ -132,6 +132,13 @@ export interface AttachAcpSessionOptions {
   onCliReady?: () => void;
   onSessionInit?: () => void;
   onPromptComplete?: () => void;
+  /**
+   * Transfers process-tree teardown ownership to the caller once this
+   * one-prompt session has a clean or fatal verdict. When provided, the ACP
+   * bridge does not fall back to direct-child SIGTERM; the caller must stop the
+   * complete owned tree and gate terminal publication on its quiescence.
+   */
+  onTerminal?: (kind: 'completed' | 'fatal') => void;
 }
 /**
  * Attaches an ACP protocol session to an already-spawned child process and
@@ -179,6 +186,7 @@ export function attachAcpSession({
   onCliReady,
   onSessionInit,
   onPromptComplete,
+  onTerminal,
 }: AttachAcpSessionOptions) {
   const runStartedAt = Date.now();
   const effectiveCwd = path.resolve(cwd || process.cwd());
@@ -389,8 +397,15 @@ export function attachAcpSession({
     finished = true;
     fatal = true;
     clearStageTimer();
+    let terminalOwnedByCaller = false;
+    try {
+      onTerminal?.('fatal');
+      terminalOwnedByCaller = onTerminal != null;
+    } catch {
+      // Fall back to direct-child termination below.
+    }
     send('error', payload);
-    if (!child.killed) child.kill('SIGTERM');
+    if (!terminalOwnedByCaller && !child.killed) child.kill('SIGTERM');
   };
 
   const fail = (
@@ -404,6 +419,13 @@ export function attachAcpSession({
     finished = true;
     fatal = true;
     clearStageTimer();
+    let terminalOwnedByCaller = false;
+    try {
+      onTerminal?.('fatal');
+      terminalOwnedByCaller = onTerminal != null;
+    } catch {
+      // Fall back to direct-child termination below.
+    }
     const useModelUnavailable =
       modelUnavailableErrorCode &&
       (options.forceModelUnavailable || isModelUnavailableError(message));
@@ -423,7 +445,7 @@ export function attachAcpSession({
               },
             },
     );
-    if (!child.killed) child.kill('SIGTERM');
+    if (!terminalOwnedByCaller && !child.killed) child.kill('SIGTERM');
   };
 
   const writeRpc = (id: JsonRpcId, method: string, params: unknown, timeoutLabel: string) => {
@@ -681,13 +703,22 @@ export function attachAcpSession({
     emitUsageIfPresent(usageSource);
     clearStageTimer();
     stdin.end();
+    let terminalOwnedByCaller = false;
+    try {
+      onTerminal?.('completed');
+      terminalOwnedByCaller = onTerminal != null;
+    } catch {
+      // Fall back to the direct-child timer below.
+    }
     // Some ACP agents keep the child process alive after stdin closes,
     // waiting for another prompt. Each OpenDesign run owns one process per
     // turn, so close it once this prompt is cleanly complete.
-    const cleanExitTimer = setTimeout(() => {
-      if (!child.killed) child.kill('SIGTERM');
-    }, 500);
-    child.once('close', () => clearTimeout(cleanExitTimer));
+    if (!terminalOwnedByCaller) {
+      const cleanExitTimer = setTimeout(() => {
+        if (!child.killed) child.kill('SIGTERM');
+      }, 500);
+      child.once('close', () => clearTimeout(cleanExitTimer));
+    }
   };
 
   const replyPermission = (raw: JsonObject) => {
