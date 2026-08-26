@@ -8529,6 +8529,21 @@ describe('FileViewer tweaks toolbar', () => {
     signal('od:preview:visible-paint', baseCapabilities);
     expect(screen.getByTestId('preview-runtime-frame-current')).toBe(frame);
 
+    const mintCountBeforeModeSwitch = fetchMock.mock.calls.filter(([input]) => (
+      String(input).includes('/api/projects/project-1/preview-url')
+    )).length;
+    fireEvent.click(screen.getByRole('tab', { name: 'Code' }));
+    expect(screen.getByTestId('preview-runtime-frame-current')).toBe(frame);
+    expect(frame.getAttribute('src')).toBe(initialSrc);
+    expect(frame.dataset.odActive).toBe('false');
+    fireEvent.click(screen.getByRole('tab', { name: 'Preview' }));
+    expect(screen.getByTestId('preview-runtime-frame-current')).toBe(frame);
+    expect(frame.getAttribute('src')).toBe(initialSrc);
+    expect(frame.dataset.odActive).toBe('true');
+    expect(fetchMock.mock.calls.filter(([input]) => (
+      String(input).includes('/api/projects/project-1/preview-url')
+    ))).toHaveLength(mintCountBeforeModeSwitch);
+
     postMessage.mockClear();
     fireEvent.click(screen.getByTestId('board-mode-toggle'));
     expect(screen.getByTestId('preview-runtime-frame-current')).toBe(frame);
@@ -8667,6 +8682,137 @@ describe('FileViewer tweaks toolbar', () => {
       'src',
       'http://n-scope-0002.localhost:43111/gated.html',
     );
+  });
+
+  it('navigates a converged deck directly without replacing its real-URL frame', async () => {
+    const file = htmlPreviewFile({
+      name: 'deck.html',
+      path: 'deck.html',
+      artifactManifest: {
+        version: 1,
+        kind: 'deck',
+        title: 'Deck',
+        entry: 'deck.html',
+        renderer: 'deck-html',
+        exports: ['html'],
+      },
+    });
+    const sessionId = 'scope-deck-0001';
+    const documentVersion = 'deck-v1';
+    const deckSource = [
+      '<!doctype html><html><body>',
+      '<section class="slide">one</section>',
+      '<section class="slide">two</section>',
+      '<section class="slide">three</section>',
+      '<section class="slide">four</section>',
+      '<section class="slide">five</section>',
+      '</body></html>',
+    ].join('');
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = typeof input === 'string'
+        ? input
+        : input instanceof Request
+          ? input.url
+          : String(input);
+      if (url.startsWith('/api/projects/project-1/raw/deck.html')) {
+        return new Response(deckSource, {
+          status: 200,
+          headers: { 'Content-Type': 'text/html' },
+        });
+      }
+      if (url === '/api/projects/project-1/files') {
+        return new Response(JSON.stringify({ files: [file] }), { status: 200 });
+      }
+      if (url.includes('/api/projects/project-1/preview-url')) {
+        return new Response(JSON.stringify({
+          url: '/api/projects/project-1/preview/legacy-scope/deck.html',
+          file: 'deck.html',
+          expiresAt: Date.now() + 60 * 60 * 1000,
+          scopedOrigin: {
+            normalUrl: `http://n-${sessionId}.localhost:43111/deck.html`,
+            poweredUrl: `http://p-${sessionId}.localhost:43111/deck.html`,
+            documentVersion,
+          },
+        }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ deployments: [] }), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(
+      <FileViewer
+        projectId="project-1"
+        projectKind="slide_deck"
+        file={file}
+        isDeck
+        previewRuntimeConvergence
+      />,
+    );
+
+    const frame = await waitFor(() => (
+      screen.getByTestId('preview-runtime-frame-standby') as HTMLIFrameElement
+    ));
+    const initialSrc = frame.getAttribute('src');
+    expect(initialSrc).toBe(
+      `http://n-${sessionId}.localhost:43111/deck.html?odPreviewRuntime=deck`,
+    );
+    const postMessage = vi.spyOn(frame.contentWindow!, 'postMessage');
+    const capabilities: PreviewRuntimeCapability[] = [
+      'content_measurement',
+      'scroll',
+      'snapshot',
+      'observability',
+      'selection',
+      'tweaks',
+      'palette',
+      'deck',
+    ];
+    const signal = (
+      type: 'od:preview:hello' | 'od:preview:capabilities-applied' | 'od:preview:visible-paint',
+    ) => {
+      act(() => {
+        window.dispatchEvent(new MessageEvent('message', {
+          source: frame.contentWindow,
+          data: {
+            type,
+            protocolVersion: PREVIEW_RUNTIME_PROTOCOL_VERSION,
+            sessionId,
+            documentVersion,
+            ...(type === 'od:preview:hello' ? { availableCapabilities: capabilities } : {}),
+            ...(type === 'od:preview:capabilities-applied'
+              ? { enabledCapabilities: capabilities }
+              : {}),
+          },
+        }));
+      });
+    };
+
+    signal('od:preview:hello');
+    signal('od:preview:capabilities-applied');
+    signal('od:preview:visible-paint');
+    expect(screen.getByTestId('preview-runtime-frame-current')).toBe(frame);
+
+    act(() => {
+      window.dispatchEvent(new MessageEvent('message', {
+        source: frame.contentWindow,
+        data: { type: 'od:slide-state', active: 0, count: 5 },
+      }));
+    });
+    const slideFive = (await screen.findAllByTitle('Slide 5 / 5')).find(
+      (element) => element instanceof HTMLButtonElement,
+    );
+    expect(slideFive).toBeTruthy();
+    postMessage.mockClear();
+    fireEvent.click(slideFive!);
+
+    const slideCalls = postMessage.mock.calls.filter(([message]) => (
+      (message as { type?: unknown } | null)?.type === 'od:slide'
+    ));
+    expect(slideCalls).toEqual([
+      [{ type: 'od:slide', action: 'go', index: 4 }, '*'],
+    ]);
+    expect(screen.getByTestId('preview-runtime-frame-current')).toBe(frame);
+    expect(frame.getAttribute('src')).toBe(initialSrc);
   });
 
   it('renders Annotation, Edit, and Draw as the primary preview tools', async () => {

@@ -13504,6 +13504,11 @@ function HtmlViewer({
     const count = Math.max(deckSlideCount, target + 1);
     setSlideStateCached(previewStateKey, { active: target, count });
     setSlideState({ active: target, count });
+    // The converged transport owns replaying host state after the exact deck
+    // capability acknowledgement. Posting here as well would deliver the
+    // same direct `go` twice: once imperatively and once from the transport's
+    // deckSlideIndex update. Legacy frames still need the direct message.
+    if (previewRuntimeConvergence) return;
     postSlide('go', target);
   }
 
@@ -13515,7 +13520,13 @@ function HtmlViewer({
   }
 
   useEffect(() => {
-    if (!workspaceActive || mode !== 'preview' || useUrlLoadPreview || !effectiveDeck) return;
+    if (
+      previewRuntimeConvergence
+      || !workspaceActive
+      || mode !== 'preview'
+      || useUrlLoadPreview
+      || !effectiveDeck
+    ) return;
     // Retained project/file viewers keep their iframe browsing context while
     // hidden. Chromium can repaint that context before the deck bridge has
     // restored which authored slide is visible, leaving the rail and counter
@@ -13523,7 +13534,14 @@ function HtmlViewer({
     // Replay the already-cached index when the viewer becomes active; this is
     // an idempotent bridge message and does not navigate or replace the frame.
     syncCachedSlideStateToIframe(srcDocPreviewIframeRef.current);
-  }, [effectiveDeck, mode, previewStateKey, useUrlLoadPreview, workspaceActive]);
+  }, [
+    effectiveDeck,
+    mode,
+    previewRuntimeConvergence,
+    previewStateKey,
+    useUrlLoadPreview,
+    workspaceActive,
+  ]);
 
   function fireSpeakerNotesSaveResult(
     editSurface: 'preview' | 'presenter',
@@ -15037,8 +15055,15 @@ function HtmlViewer({
     const count = slideState?.count ?? cachedCount ?? target + 1;
     setSlideStateCached(previewStateKey, { active: target, count });
     setSlideState({ active: target, count });
-    syncCachedSlideStateToIframe();
-  }, [slideNavRequest?.nonce, slideNavRequest?.slideIndex, effectiveDeck, previewStateKey, slideState?.count]);
+    if (!previewRuntimeConvergence) syncCachedSlideStateToIframe();
+  }, [
+    slideNavRequest?.nonce,
+    slideNavRequest?.slideIndex,
+    effectiveDeck,
+    previewRuntimeConvergence,
+    previewStateKey,
+    slideState?.count,
+  ]);
 
   // Share and Download are separate toolbar intents, but they share the same
   // popover shell so switching between them keeps the menu anchored in place.
