@@ -84,7 +84,7 @@ let lastSyncSnapshot: {
  * are needed. A mount that finds a sync already running waits for it instead of
  * starting its own.
  */
-let inFlightSync: Promise<void> | null = null;
+let inFlightSync: { generation: number; run: Promise<void> } | null = null;
 
 /** Test hook: module state must not leak between cases. */
 export function resetMessageCenterSnapshot(): void {
@@ -145,6 +145,11 @@ export function MessageCenter({
   const sync = useCallback(async () => {
     const requestId = syncRequestIdRef.current + 1;
     syncRequestIdRef.current = requestId;
+    // Capture the account boundary the request is issued under. Reading it
+    // again at completion would stamp a pre-boundary response with the new
+    // account's generation, and a later mount would adopt the previous
+    // account's messages as current.
+    const issuedAccountGeneration = currentWorkspaceAccountGeneration();
     if (messagesRef.current.length === 0) setSyncState('loading');
     const account = await isAmrLoggedIn();
     const wasAccount = loggedInRef.current;
@@ -171,11 +176,15 @@ export function MessageCenter({
       ...message,
       readAt: message.readAt ?? (overlayReadIds.has(message.id) ? new Date().toISOString() : null),
     }));
+    // A sign-out/sign-in landed while this was in flight: the response
+    // describes an authority that is no longer current, so it may neither be
+    // committed nor published as a snapshot.
+    if (currentWorkspaceAccountGeneration() !== issuedAccountGeneration) return;
     if (account) clearAnonymousState(window.localStorage);
     commitState(merged, overlayReadIds, { persistAnonymous: !account });
     lastSyncSnapshot = {
       at: Date.now(),
-      accountGeneration: currentWorkspaceAccountGeneration(),
+      accountGeneration: issuedAccountGeneration,
       loggedIn: account,
       messages: merged,
       readIds: overlayReadIds,
@@ -192,14 +201,20 @@ export function MessageCenter({
 
   const retrySync = useCallback(() => {
     // Publish the run so a mount that lands mid-flight can wait for it instead
-    // of starting a second identical sync.
-    const run = sync()
+    // of starting a second identical sync. Keyed by the account boundary it was
+    // started under, so a post-boundary mount never joins pre-boundary work.
+    const generation = currentWorkspaceAccountGeneration();
+    const entry: { generation: number; run: Promise<void> } = {
+      generation,
+      run: Promise.resolve(),
+    };
+    entry.run = sync()
       .catch(() => setSyncState('error'))
       .finally(() => {
-        if (inFlightSync === run) inFlightSync = null;
+        if (inFlightSync === entry) inFlightSync = null;
       });
-    inFlightSync = run;
-    void run;
+    inFlightSync = entry;
+    void entry.run;
   }, [sync]);
 
   const invalidateSyncResponses = useCallback(() => {
@@ -227,11 +242,11 @@ export function MessageCenter({
     const adopted = adoptableSnapshot();
     if (adopted) {
       adopt(adopted);
-    } else if (inFlightSync) {
-      // Someone else's sync is already on the wire for this same data; take its
-      // result rather than racing a second copy of it.
+    } else if (inFlightSync && inFlightSync.generation === currentWorkspaceAccountGeneration()) {
+      // Someone else's sync is already on the wire for this same data and the
+      // same account; take its result rather than racing a second copy of it.
       if (messagesRef.current.length === 0) setSyncState('loading');
-      void inFlightSync.then(() => {
+      void inFlightSync.run.then(() => {
         const settled = adoptableSnapshot();
         if (settled) adopt(settled);
         else if (!cancelled) retrySync();
@@ -306,6 +321,13 @@ export function MessageCenter({
     }
     invalidateSyncResponses();
     commitState(nextMessages, nextIds, { persistAnonymous: !account });
+    // Keep the cross-mount snapshot consistent with what the user just did.
+    // Without this a remount inside the window adopts the pre-read rows and the
+    // unread count comes back until the next network sync. The timestamp is
+    // deliberately left alone: the underlying fetch is no fresher than it was.
+    if (lastSyncSnapshot && lastSyncSnapshot.accountGeneration === currentWorkspaceAccountGeneration()) {
+      lastSyncSnapshot = { ...lastSyncSnapshot, messages: nextMessages, readIds: nextIds };
+    }
   };
 
   const openLabel = unreadCount > 0 ? `${t('messageCenter.openAria')} (${t('messageCenter.unreadCount', { count: unreadCount })})` : t('messageCenter.openAria');

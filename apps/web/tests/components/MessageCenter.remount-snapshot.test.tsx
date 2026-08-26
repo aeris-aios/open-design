@@ -7,7 +7,7 @@
 // for a panel the user has not opened and whose contents cannot have changed in
 // the time a route switch takes.
 
-import { cleanup, render, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { I18nProvider } from '../../src/i18n';
@@ -137,6 +137,101 @@ describe('MessageCenter remount snapshot', () => {
 
     mount();
     await waitFor(() => expect(messageCalls).toBeGreaterThan(afterFirst));
+  });
+
+  it('never adopts a response that was fetched before an account boundary', async () => {
+    // The generation must be captured when the sync STARTS. Stamping the
+    // snapshot at completion labels a pre-boundary response with the new
+    // account's generation, and a post-boundary mount then renders the previous
+    // account's messages as current.
+    let release: (value: Response) => void = () => {};
+    const gate = new Promise<Response>((r) => { release = r; });
+    let pulls = 0;
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/integrations/vela/status')) {
+        statusCalls += 1;
+        return Response.json({ loggedIn: false });
+      }
+      if (url.includes('/message-center') && url.includes('/messages')) {
+        pulls += 1;
+        messageCalls += 1;
+        if (pulls === 1) return gate;
+        return Response.json({ messages: [], nextCursor: null, unreadCount: 0 });
+      }
+      return Response.json({});
+    }));
+
+    const first = mount();
+    await waitFor(() => expect(pulls).toBe(1));
+
+    // Sign-out/sign-in lands while the first pull is still open.
+    advanceWorkspaceAccountGeneration('mid-flight-boundary');
+    release(Response.json({
+      messages: [{ id: 'stale', title: 'previous account', readAt: null }],
+      nextCursor: null,
+      unreadCount: 1,
+    }));
+    await new Promise((r) => setTimeout(r, 20));
+    first.unmount();
+
+    // A mount after the boundary must fetch rather than adopt that response.
+    mount();
+    await waitFor(() => expect(pulls).toBeGreaterThan(1));
+  });
+
+  it('keeps a message read after marking it and remounting', async () => {
+    // `markRead` updates component state; the module snapshot was left holding
+    // the pre-read rows, so a project<->home switch inside the window restored
+    // the unread count until the next network sync. The count is the
+    // component's own contract (`onUnreadCountChange`), so assert on that.
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/integrations/vela/status')) {
+        statusCalls += 1;
+        return Response.json({ loggedIn: false });
+      }
+      if (url.includes('/message-center') && url.includes('/messages')) {
+        if ((init?.method ?? 'GET') !== 'GET') return Response.json({});
+        messageCalls += 1;
+        return Response.json({
+          messages: [{
+            id: 'm1',
+            title: 'unread one',
+            body: 'b',
+            typeName: 't',
+            publishedAt: '2026-08-01T00:00:00.000Z',
+            readAt: null,
+          }],
+          nextCursor: null,
+          unreadCount: 1,
+        });
+      }
+      return Response.json({});
+    }));
+
+    const firstCounts: number[] = [];
+    const view = render(
+      <I18nProvider initial="zh-CN">
+        <MessageCenter hideTrigger open onOpenChange={() => {}} onUnreadCountChange={(n) => firstCounts.push(n)} />
+      </I18nProvider>,
+    );
+    const row = await screen.findByText('unread one');
+    await waitFor(() => expect(firstCounts.at(-1)).toBe(1));
+
+    fireEvent.click(row.closest('button') as HTMLButtonElement);
+    await waitFor(() => expect(firstCounts.at(-1)).toBe(0));
+    view.unmount();
+
+    const secondCounts: number[] = [];
+    render(
+      <I18nProvider initial="zh-CN">
+        <MessageCenter hideTrigger open onOpenChange={() => {}} onUnreadCountChange={(n) => secondCounts.push(n)} />
+      </I18nProvider>,
+    );
+    await waitFor(() => expect(secondCounts.length).toBeGreaterThan(0));
+    await new Promise((r) => setTimeout(r, 30));
+    expect(secondCounts.at(-1)).toBe(0);
   });
 
   it('still syncs when the panel is opened', async () => {
