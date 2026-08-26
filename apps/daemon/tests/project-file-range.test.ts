@@ -465,6 +465,27 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
           + '<main id="slot">real</main></body></html>',
       ),
     );
+    // A `<base>` under an HTML integration point is an HTML-namespace element
+    // and governs the document, even though the structural scan skips the
+    // whole foreign subtree. One directly under `<svg>` is an SVG element and
+    // inert, and one inside a `<template>` belongs to an inert fragment.
+    await writeFile(
+      path.join(dir, 'integration-point-base.html'),
+      Buffer.from(
+        '<!doctype html><html><head></head><body>'
+          + '<svg><foreignObject><base href="https://author.example/assets/">'
+          + '</foreignObject></svg><main id="slot">real</main></body></html>',
+      ),
+    );
+    await writeFile(
+      path.join(dir, 'foreign-namespace-base.html'),
+      Buffer.from(
+        '<!doctype html><html><head></head><body>'
+          + '<svg><base href="https://ignored.example/"></svg>'
+          + '<template><base href="https://inert.example/"></template>'
+          + '<main id="slot">real</main></body></html>',
+      ),
+    );
     // A leading BOM is the encoding signature and only counts at byte zero, so
     // the no-boundary fallback has to insert after it rather than in front of
     // it — otherwise the doctype stops applying and the artifact silently
@@ -1180,6 +1201,27 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
     expect(page('[data-od-url-scroll-bridge]').length).toBe(1);
     expect(page('#slot').text()).toBe('real');
     expect(html).toContain('const x = "<table></body>";');
+  });
+
+  it('respects an authored base inside an HTML integration point', async () => {
+    const bridged = await fetch(`${rawUrl('integration-point-base.html')}?odPreviewBridge=scroll`);
+    expect(bridged.status).toBe(200);
+    const html = await bridged.text();
+    // The generated base would land in `<head>`, ahead of the authored one, and
+    // the first base with an href wins — so it must not be generated at all.
+    expect(html).not.toContain('data-od-project-preview-base');
+    expect(html).toContain('href="https://author.example/assets/"');
+    expect(load(html)('[data-od-url-scroll-bridge]').length).toBe(1);
+  });
+
+  it('does not treat a foreign-namespace or template base as authored', async () => {
+    const bridged = await fetch(`${rawUrl('foreign-namespace-base.html')}?odPreviewBridge=scroll`);
+    expect(bridged.status).toBe(200);
+    const html = await bridged.text();
+    // Neither of those governs the document, so containment still applies.
+    expect(html).toContain('data-od-project-preview-base');
+    expect(html).toContain('href="https://ignored.example/"');
+    expect(html).toContain('href="https://inert.example/"');
   });
 
   it('keeps a leading BOM at byte zero when there is no boundary', async () => {

@@ -6783,6 +6783,25 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
     return filePath.split('/').map((segment) => encodeURIComponent(segment)).join('/');
   }
 
+  /**
+   * Whether the document contains a `<base>` the browser would actually honour.
+   *
+   * Parsed rather than scanned, because the answer depends on namespace and on
+   * template content: a `<base>` directly under `<svg>` is an SVG element and
+   * inert, and one inside a `<template>` belongs to an inert fragment. Both
+   * look identical to a linear scan.
+   */
+  function hasAuthoredHtmlBase(html: string): boolean {
+    const $ = load(html);
+    return $('base').toArray().some((element) => {
+      if (element.namespace !== 'http://www.w3.org/1999/xhtml') return false;
+      for (let node = element.parent; node; node = node.parent) {
+        if ((node as { name?: string }).name === 'template') return false;
+      }
+      return true;
+    });
+  }
+
   function injectProjectPreviewBase(
     html: string,
     projectId: string,
@@ -6796,6 +6815,16 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
     // `<base>` an author merely wrote into a string does not govern this
     // document, so it must not suppress containment.
     if (findRealTagOffset(html, /<base(?=[\t\n\f\r />])/i) >= 0) return html;
+    // A `<base>` can also sit inside an HTML integration point — under
+    // `<foreignObject>`, `<desc>`, or an `annotation-xml` that names an HTML
+    // encoding — where the structural scan deliberately does not go, because
+    // for its own purpose the whole foreign subtree is skippable. Such a base
+    // is an HTML-namespace element and governs the document; the generated one
+    // would land in `<head>` ahead of it and win, silently repointing every
+    // authored relative URL. Only foreign content can hide one, so the parse
+    // below is gated on the document having some — 10% of this repository's
+    // HTML files reach it, at a few milliseconds each.
+    if (/<(svg|math)[\t\n\f\r />]/i.test(html) && hasAuthoredHtmlBase(html)) return html;
     const ownerDir = path.posix.dirname(ownerFilePath);
     const dirSuffix = ownerDir === '.'
       ? ''
