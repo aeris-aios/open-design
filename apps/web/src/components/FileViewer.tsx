@@ -11785,6 +11785,17 @@ function HtmlViewer({
     ? POWERED_PREVIEW_SANDBOX
     : 'allow-scripts allow-downloads';
   const urlFrameAllow = usePoweredPreview ? POWERED_PREVIEW_ALLOW : undefined;
+  // The converged transport selects its scoped origin from
+  // `previewRuntimePolicy`; derive the iframe privileges from that same
+  // decision. The legacy powered-isolation probe belongs only to the legacy
+  // URL route and can resolve later (or report unsupported) even though the
+  // scoped `p-<session>.localhost` capability is already authoritative.
+  const previewRuntimeFrameSandbox = previewRuntimePolicy.sandboxProfile === 'powered'
+    ? POWERED_PREVIEW_SANDBOX
+    : 'allow-scripts allow-downloads';
+  const previewRuntimeFrameAllow = previewRuntimePolicy.sandboxProfile === 'powered'
+    ? POWERED_PREVIEW_ALLOW
+    : undefined;
   // Arm the first-load overlay only for URL-load previews this pane has never
   // painted (per keep-alive key, so tab revisits and pooled re-attaches skip
   // it). about:blank parks (powered probe, srcDoc-active) never arm.
@@ -17315,8 +17326,8 @@ function HtmlViewer({
                             navigationRetryToken={previewRuntimeNavigationRetryToken}
                             title={file.name}
                             data-od-powered={needsPowered ? 'true' : undefined}
-                            sandbox={urlFrameSandbox}
-                            allow={urlFrameAllow}
+                            sandbox={previewRuntimeFrameSandbox}
+                            allow={previewRuntimeFrameAllow}
                             onCurrentFrameChange={(frame) => {
                               iframeRef.current = frame;
                               if (!frame) return;

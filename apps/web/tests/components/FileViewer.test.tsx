@@ -9103,6 +9103,63 @@ describe('FileViewer tweaks toolbar', () => {
     expect(screen.queryByText(/Preview unavailable/)).toBeNull();
   });
 
+  it('uses one powered policy for the converged URL and iframe permissions', async () => {
+    const file = htmlPreviewFile({ name: 'powered-runtime.html', path: 'powered-runtime.html' });
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = typeof input === 'string'
+        ? input
+        : input instanceof Request
+          ? input.url
+          : String(input);
+      if (url.startsWith('/api/projects/project-1/raw/powered-runtime.html')) {
+        return new Response(
+          '<!doctype html><script>const memory = new SharedArrayBuffer(8)</script>',
+          { status: 200, headers: { 'Content-Type': 'text/html' } },
+        );
+      }
+      if (url === '/api/projects/project-1/files') {
+        return new Response(JSON.stringify({ files: [file] }), { status: 200 });
+      }
+      if (url === '/api/preview/isolation') {
+        return new Response(JSON.stringify({ supported: false }), { status: 200 });
+      }
+      if (url.includes('/api/projects/project-1/preview-url')) {
+        return new Response(JSON.stringify({
+          url: '/api/projects/project-1/preview/legacy-scope/powered-runtime.html',
+          file: 'powered-runtime.html',
+          expiresAt: Date.now() + 60 * 60 * 1000,
+          scopedOrigin: {
+            normalUrl: 'http://n-scope-powered.localhost:43111/powered-runtime.html',
+            poweredUrl: 'http://p-scope-powered.localhost:43111/powered-runtime.html',
+            documentVersion: 'powered-runtime-v1',
+          },
+        }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ deployments: [] }), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(
+      <FileViewer
+        projectId="project-1"
+        projectKind="prototype"
+        file={file}
+        previewRuntimeConvergence
+      />,
+    );
+
+    const frame = await waitFor(() => (
+      screen.getByTestId('preview-runtime-frame-standby') as HTMLIFrameElement
+    ));
+    expect(frame).toHaveAttribute(
+      'src',
+      'http://p-scope-powered.localhost:43111/powered-runtime.html',
+    );
+    expect(frame).toHaveAttribute('data-od-powered', 'true');
+    expect(frame.getAttribute('sandbox')).toContain('allow-same-origin');
+    expect(frame.getAttribute('allow')).toContain('cross-origin-isolated');
+  });
+
   it('gates converged Team navigation on exact project authority', async () => {
     const file = htmlPreviewFile({ name: 'team-gated.html', path: 'team-gated.html' });
     const rawReads: Array<{ init?: RequestInit; url: string }> = [];
