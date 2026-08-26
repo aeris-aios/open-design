@@ -153,17 +153,18 @@ describe('没有清单:平铺', () => {
   });
 
   /*
-   * 2026-08-26 裁决:**还没有 todo 时,普通正文落在壳外** —— 壳里只装工具调用和
-   * thinking。原来这条测的是 D43「done 之前的叙述画在壳里」,已被收紧。
+   * 2026-08-26 **最终裁决**:done 之前的一切都在卡片里 —— 普通正文和工具调用
+   * 一样收在壳内。中间那版「没有 todo 时正文落壳外」已被用户在真机上撤销
+   * (开场白因此排到了整张卡之后)。
    */
-  it('没有清单时,普通正文不进壳(2026-08-26 裁决)', () => {
+  it('没有清单时,普通正文照样在壳里(2026-08-26 最终裁决)', () => {
     const [shell] = shellsOf([
       { kind: 'text', text: '我先看一下工作区里的规格文件。' },
       ...call('t1', 'Bash', { command: 'cat 规格.md' }),
     ], 'running');
     render(<ExecutionShell shell={shell as ShellData} />);
-    expect(screen.queryByText('我先看一下工作区里的规格文件。')).toBeNull();
-    // 工具行照旧在壳里
+    expect(screen.getByText('我先看一下工作区里的规格文件。')).toBeTruthy();
+    // 工具行照旧在壳里,而且排在那句话后面
     expect(screen.getByText('读取')).toBeTruthy();
   });
 });

@@ -57,6 +57,7 @@ import {
 import {
   hasOdCard,
   splitOnOdCards,
+  stripCritiqueGrammar,
   stripTrailingOpenOdCard,
   type ChatSessionMode,
   type OdCard,
@@ -2711,7 +2712,18 @@ function ProseBlock({
 }) {
   const t = useT();
   const cleaned = useMemo(() => {
-    const stripped = stripArtifact(text);
+    /*
+     * 评审剧场语法先剥一道。
+     *
+     * daemon 那道(`panel-grammar-strip.ts`)只管**新流**;用户手上已经有一堆
+     * 落了库的旧对话,里面原样写着 `<CRITIQUE_RUN>` / `<PANELIST role="Critic" score="9.0">`。
+     * 旧数据不能因为「以后不会再有了」就一直烂在那儿 —— 所以渲染时再剥一次。
+     *
+     * 位置在最前面:后面 `stripArtifact` 之类都按标记找边界,先把不是标记的
+     * 噪音清掉,它们的扫描才不会被岔开。
+     * 语法出处在 `@open-design/contracts`,两边共用一份,不会分叉。
+     */
+    const stripped = stripArtifact(stripCritiqueGrammar(text));
     return hideRecoveredHtmlFallback ? stripRecoveredHtmlFallbackForDisplay(stripped, text) : stripped;
   }, [hideRecoveredHtmlFallback, text]);
   // While the latest turn is still streaming a not-yet-closed question-form,

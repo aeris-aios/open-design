@@ -230,3 +230,22 @@ export function commandHeadline(command: string): string {
 export function isRawCommandTitle(toolName: string, input: unknown): boolean {
   return isCommandTool(toolName) && !asRecord(input).description;
 }
+
+/**
+ * **快照型**工具:每次调用都是把整份状态**替换**一遍,而不是记一笔流水。
+ *
+ * 各家 agent 在 daemon 归一后都叫 `TodoWrite`;这里仍放宽匹配,兼容 MCP 注入的
+ * `mcp__*__todo_write` 和 codex 的 `update_plan`。
+ *
+ * 谁要用它:
+ *  · `build-turn-blocks` 靠它把快照落成 todo 分段;
+ *  · `dedupeToolUsesById` 靠它**放行同 id 的多次调用** —— 有的 agent 把「计划」
+ *    建模成一个反复改写的条目,五次推进共用一个 tool id,按 id 去重会把
+ *    除第一次以外的状态推进全部丢掉(真机撞到:一轮跑完四条 todo 还全是未开始)。
+ */
+const SNAPSHOT_TOOL_RE = /^(TodoWrite|todowrite|todo_write|update_plan)$|(^|__)todo_?write$/i;
+
+export function isSnapshotTool(toolName: string): boolean {
+  return SNAPSHOT_TOOL_RE.test(toolName);
+}
+

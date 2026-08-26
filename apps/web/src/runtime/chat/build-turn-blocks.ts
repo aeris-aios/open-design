@@ -46,6 +46,7 @@ import {
   fileOf,
   isCommandTool,
   isRawCommandTitle,
+  isSnapshotTool,
   searchPattern,
   toolKind,
   toolTitle,
@@ -83,8 +84,6 @@ const OPEN_TAGS = ['<done', '<question-form', '<artifact', OD_DONE_OPEN_TAG];
 /** `<od-done` 之后属性还在路上时也要扣住;超过这个长度还没见到 `>` 就放行,免得卡死 */
 const MAX_MARKER_HOLD = 96;
 
-/** 各家 todo 工具在 daemon 归一后都叫 TodoWrite;这里仍放宽匹配,兼容 MCP 注入的 `mcp__*__todo_write` */
-const TODO_NAME_RE = /^(TodoWrite|todowrite|todo_write|update_plan)$|(^|__)todo_?write$/i;
 const ABANDON_NAME_RE = /(^|__)todo_abandon$/i;
 
 interface RawTodo { content: string; status: string }
@@ -386,15 +385,20 @@ export function buildTurnBlocks(input: BuildTurnInput): TurnBlock[] {
     blocks.push(top);
   };
 
-  const pushInside = (text: string): void => {
+  const pushInside = (text: string, thinking = false): void => {
     const arr = sink();
     const last = arr[arr.length - 1];
-    if (openText && last === openText) {
-      openText.text += text;
+    // 只有**同一种**文字才续写:thinking 和回答挨着时必须分成两段,
+    // 否则兜底提结论时会把前半截的 thinking 一起拽出去
+    const open = openText as ShellText | null;
+    if (open && last === open && Boolean(open.thinking) === thinking) {
+      open.text += text;
       return;
     }
     if (!text.trim()) return;
-    openText = { kind: 'text', text: text.replace(/^\s+/, '') };
+    openText = thinking
+      ? { kind: 'text', text: text.replace(/^\s+/, ''), thinking: true }
+      : { kind: 'text', text: text.replace(/^\s+/, '') };
     arr.push(openText);
   };
 
@@ -408,26 +412,30 @@ export function buildTurnBlocks(input: BuildTurnInput): TurnBlock[] {
     blocks.push(openProse);
   };
   /**
-   * done 之前的**正文**往哪落 —— 2026-08-26 产品裁决:
+   * done **之前**的一切都收进卡片(2026-08-26 用户裁决,推翻了当天早些时候那条
+   * 「没有 todo 时正文落壳外」)。
    *
-   *   · **还没有 todo** → 落在**壳外**。这一阶段壳里只装工具调用和 thinking;
-   *     一段还没被任何 todo 认领的叙述,收进壳里就等于把它藏进一个默认收起的抽屉。
-   *   · **已经有 todo** → 落进**当前正在进行的那条 todo**(和工具调用同一个 sink)。
+   * 原话:「没有 todowrite 时,所有工具调用或普通文本或者 thinking,都收拢在
+   * 展开收起卡片里;当有了 done 信号之后,输出的平台文本内容才会显示到卡片外面,
+   * 但如果有工具调用啥的,还是会收到卡片里。」
    *
-   * 这条收紧了 D43(原来一律进壳)。thinking 不受影响,它任何阶段都在壳里 ——
-   * thinking 本来就是「过程」,而正文是说给人听的。
+   * 所以判据只有一个 —— **done 有没有到**,而不是「有没有 todo」:
+   *  · done 之前:工具行 / thinking / 正文,一律进当前 sink
+   *    (有 todo 就进当前那条 todo,没有就进壳);
+   *  · done 之后:正文走 `pushProse` 出壳(在上面 `event.kind === 'text'` 那一段),
+   *    工具调用仍然进壳 —— 它是过程,不是回答。
+   *
+   * 为什么推翻上一版:上一版让开场白落在壳外,而 `ensureShell` 在循环开头就把壳
+   * 压进了 `blocks`,屏幕上就成了「卡片在上、开场白在下」,还和结论粘成一段。
+   * 用户真机指认那句「我会严格按 4 步执行」明明是建清单**之前**说的。
    */
   const routeInside = (text: string): void => {
-    if (!todoCard) {
-      pushProse(text);
-      return;
-    }
     const arr = sink();
-    if (!text.trim() && !(openText && arr[arr.length - 1] === openText)) return;
-    const merging = openText && arr[arr.length - 1] === openText;
+    const open = openText as ShellText | null;
+    const merging = !!open && arr[arr.length - 1] === open && !open.thinking;
+    if (!text.trim() && !merging) return;
     pushInside(merging ? text : text.replace(/^\s+/, ''));
   };
-
 
   for (const event of events) {
     if (event.kind === 'tool_result' || event.kind === 'raw' || event.kind === 'diagnostic') continue;
@@ -458,8 +466,12 @@ export function buildTurnBlocks(input: BuildTurnInput): TurnBlock[] {
       if (shell) shell.thinking = true;
       const text = event.text ?? '';
       const arr = sink();
-      if (!text.trim() && !(openText && arr[arr.length - 1] === openText)) continue;
-      pushInside(text);
+      // `openText` 的赋值都发生在 `pushInside` 这个闭包里,TS 的控制流分析看不见,
+      // 于是在循环体里把它窄化成了 `null`。显式断开窄化,别让它退化成 never。
+      const open = openText as ShellText | null;
+      const cont = !!open && open.thinking === true && arr[arr.length - 1] === open;
+      if (!text.trim() && !cont) continue;
+      pushInside(text, true);
       continue;
     }
 
@@ -556,7 +568,7 @@ export function buildTurnBlocks(input: BuildTurnInput): TurnBlock[] {
       continue;
     }
 
-    if (TODO_NAME_RE.test(event.name)) {
+    if (isSnapshotTool(event.name)) {
       const list = readTodoList(event.input);
       if (!list.length) continue;
       applyTodoList(list);
@@ -621,24 +633,22 @@ export function buildTurnBlocks(input: BuildTurnInput): TurnBlock[] {
   function applyTodoList(list: RawTodo[]): void {
     if (!todoCard) {
       /*
-       * 第二张壳只在**清单之前说过话**时才出现(T34,用户 2026-08-25 裁决:
-       * 「如果创建 todo 时,上面有文案,那就在文案下面新创建一个卡片,里面包裹那些 todo」)。
+       * 清单落下时**不另起一张卡**(2026-08-26 用户裁决,推翻当天早些时候那条
+       * 「一出现 TodoWrite 就收起前一张、新开一张」)。
        *
-       * 反过来说:光干活没说话就不分张 —— agent 先跑三十几次工具、后补清单是常事,
-       * 按旧判据(「第一张壳空着才复用」)那种轮次会分出两张壳,两张都写「已完成」、
-       * 耗时还都是同一个数,读起来像同一件事说了两遍。
+       * 为什么推翻:两张卡之间**永远不会有东西隔开**。卡外唯一会出现的内容是
+       * done 之后的结论,而 TodoWrite 必然在 done 之前 —— 所以那条规则的产物
+       * 一定是两张紧贴的卡:两个「已完成 + 秒数」的头,说的却是同一段连续过程。
+       * 顺带它还制造过一个坏画面:两张卡的头显示**同一个耗时**(thinking 事件
+       * 不带时刻,前一张只能退回轮次跨度)。
        *
-       * 判据 = **第一张壳里有没有东西**(2026-08-26 裁决之后)。
-       *
-       * 原来问的是「壳里有没有 text」,因为那时正文也落在壳里(D43)。
-       * 裁决把「还没有 todo 时的正文」挪到了壳外,壳里只剩工具调用和 thinking ——
-       * 再问 text 就永远是「没说话」,于是一张壳装两段人生:
-       * 上半截是没有清单的散活,下半截是清单。用户看到的两张卡就该是这么来的。
-       *
-       * 空壳仍然复用:agent 一上来就发清单是常事,分张只会多出一张空卡。
+       * 新判据 —— 卡片的边界由**卡外有没有落过东西**决定,不由清单决定:
+       *  · 一轮正常跑完 = 一张过程卡(开场白 → 执行计划 → 各条 todo);
+       *  · 只有卡外已经落过结论(done 之后)、agent 又接着开新计划继续干时,
+       *    才在结论**下面**另起一张 —— 那时有一段正文把两张卡分开。
        */
-      const firstShellUsed = !!top && top.items.length > 0;
-      if (top && !firstShellUsed) {
+      const proseSinceShell = !!top && blocks.indexOf(top) < blocks.length - 1;
+      if (top && !proseSinceShell) {
         todoCard = top;
       } else {
         if (top && top.status === 'running') top.status = 'done';
@@ -652,12 +662,25 @@ export function buildTurnBlocks(input: BuildTurnInput): TurnBlock[] {
 
     const overlap = todoCard.segments.some((a) => list.some((b) => b.content === a.content));
     if (!overlap) {
-      // D14:内容完全不重叠 = 重新规划。旧的全部划线转完成态,仍然不新开壳
+      // D14:内容完全不重叠 = 重新规划。旧的全部划线转完成态
       for (const seg of todoCard.segments) {
         if (seg.status === 'in_progress') seg.status = 'completed';
         seg.abandoned = true;
       }
-      todoCard.segments = [];
+      /*
+       * 同一条边界规则:卡外落过东西才另起一张卡。
+       *
+       * done 之后 agent 又开一份新计划继续干 —— 这时结论已经落在卡外,
+       * 两张卡中间有一段正文隔着,新开才读得通。没有那段正文就还在原卡里换清单,
+       * 否则又是两张紧贴的卡。
+       */
+      if (blocks.indexOf(todoCard) < blocks.length - 1) {
+        if (todoCard.status === 'running') todoCard.status = 'done';
+        todoCard = nextShell();
+        blocks.push(todoCard);
+      } else {
+        todoCard.segments = [];
+      }
       addPlan(list);
       pickCurrent();
       return;
@@ -746,18 +769,19 @@ export function buildTurnBlocks(input: BuildTurnInput): TurnBlock[] {
     const shell = todoCard ?? top;
     if (!shell) return;
     /*
-     * **只从 todo 里提**。
+     * 从**当前 sink** 里提:有 todo 就是那条 todo 的抽屉,没有就是壳本身。
      *
-     * 2026-08-26 裁决之后,没有 todo 的阶段正文本来就在壳外 —— 壳里剩下的文本
-     * 只可能是 **thinking**,那是过程不是结论,提出来会把「想什么」当成「答什么」
-     * (踩过:整轮只有一句 thinking 时,它被提到壳外、壳空掉后整张壳被丢,
-     *  「思考中」那一格直接没了)。
-     * 有 todo 时这条兜底仍然要:结论会被收进最后那条 todo 的抽屉里,得捞出来。
+     * 为什么没有 todo 时也要提:2026-08-26 最终裁决之后,done 之前的一切都在卡片里,
+     * 而卡片跑完默认收起 —— 一个「只答话、不调工具、又没发 done」的普通回合,
+     * 整段答案会被埋在收起的抽屉里,用户看不到自己问题的答案。
+     *
+     * **thinking 不提**:它是过程不是结论,提出来就是把「想什么」当成「答什么」。
+     * 踩过一次:整轮只有一句 thinking 时它被提到壳外、壳空掉后整张壳被丢,
+     * 「思考中」那一格直接没了。所以 `ShellText` 带 `thinking` 标记,这里认它。
      */
-    if (!current) return;
-    const arr = current.items;
+    const arr = current ? current.items : shell.items;
     const last = arr[arr.length - 1];
-    if (!last || last.kind !== 'text' || !last.text.trim()) return;
+    if (!last || last.kind !== 'text' || last.thinking || !last.text.trim()) return;
     arr.pop();
     blocks.push({ kind: 'prose', text: last.text });
   }

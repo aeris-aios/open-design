@@ -14,21 +14,21 @@
  *  2. **不吞用户的字**:攒着的半截如果最终不是标记,`flush()` 要原样吐回去。
  */
 
-/** 成对出现、要**脱壳留字**的标记 —— 里面那句话是人写给人看的 */
-const INLINE_TAGS = ['PANELIST', 'MUSTFIX', 'RESOLVED', 'SHIP'] as const;
-/** 整条都是协议、里面没有人话的标记 */
-const BLOCK_TAGS = ['CRITIQUE_RUN', 'ROUND', 'ROUND_END'] as const;
+import { CRITIQUE_GRAMMAR_TAGS, critiqueGrammarTagPattern } from '@open-design/contracts';
 
-const ALL_TAGS = [...INLINE_TAGS, ...BLOCK_TAGS];
+/*
+ * 语法本身住在 `@open-design/contracts`(`critique.ts`)—— 那是**唯一出处**。
+ * 这个文件只负责流式那一半:半截标记的缓冲与吐回。
+ * web 侧用同一份语法剥**历史**(已经落库的旧对话,这道来不及了)。
+ */
+const ALL_TAGS = CRITIQUE_GRAMMAR_TAGS;
 
 /**
- * 一条完整标记:`<TAG …>` / `</TAG>` / `<TAG …/>`。
- * 标签名后面必须紧跟空白、`>` 或 `/`，否则 `<PANELISTS>` 这种会被误吃。
+ * 一条完整标记。只喂给 `String.replace` —— 全局正则走完 `replace` 会自己把
+ * `lastIndex` 归零,所以模块级复用一个实例是安全的;换成 `test()` / `exec()`
+ * 就必须改成每次现造。
  */
-const TAG_RE = new RegExp(
-  `</?(?:${ALL_TAGS.join('|')})(?=[\\s/>])[^>]*>`,
-  'g',
-);
+const TAG_RE = critiqueGrammarTagPattern();
 
 /** 攒着的半截最多留这么长 —— 正文里孤立的 `<` 不该把输出一直憋住 */
 const MAX_HOLD = 96;

@@ -2380,12 +2380,20 @@
   background: color-mix(in srgb, var(--bg-panel) 96%, var(--bg-subtle));
   box-shadow: var(--shadow-sm);
 }
+/*
+ * 输入区是**一层**盒子,不是两层。
+ *
+ * 稿子只有 `.composer { border: 1px solid var(--border); border-radius: var(--radius-lg);
+ * background: var(--bg) }` —— 一圈描边、白底,输入行和底栏都在里面。
+ * 我们原来外壳是灰底、里面的 `.composer-input-wrap` 又是白底圆角,
+ * 于是屏幕上是「灰框里套一个白框」,比稿子多出一层。
+ */
 .chat-composer-fixed-layer .composer-shell {
   padding: 5px;
   gap: 8px;
-  border-color: var(--border-soft);
+  border-color: var(--border);
   border-radius: var(--radius-lg);
-  background: color-mix(in srgb, var(--bg-subtle) 45%, var(--bg-panel));
+  background: var(--bg);
   box-shadow: none;
 }
 
@@ -2429,9 +2437,9 @@
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 9%, transparent);
 }
 .chat-composer-fixed-layer .composer-input-wrap {
-  background: #fff;
-  /* No inner frame — the input sits directly on the shell surface. The shell
-     keeps its own outer border (see .composer-shell above). */
+  /* 输入行直接坐在外壳的白底上 —— 自己不再铺一层底色,否则和外壳凑成两层盒子。
+     原来这里写死 `#fff` 而外壳是灰的,那道白正是用户看见的第二个框。 */
+  background: transparent;
   border-color: transparent;
   border-radius: var(--radius-lg);
   overflow: hidden;

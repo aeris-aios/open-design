@@ -1,14 +1,20 @@
 /**
  * 什么时候该多出第二张执行记录壳。
  *
- * **2026-08-26 裁决(现行)**:「第一张卡片那边还没产生 todo,那部分收起的应该只有
- * 工具调用或 thinking……当有了 todo 后,**来了第二张卡片**,第一个展开收起卡片就收起」。
- * 判据 = **第一张壳里有没有东西**(工具 / thinking 都算),空壳仍然复用。
+ * **2026-08-26 最终裁决**:边界由「**卡外落过东西**」决定,**不由清单决定**。
+ * 一轮正常跑完就是**一张**过程卡;只有 done 之后 agent 又开新计划继续干时,
+ * 才在结论下面另起一张 —— 那时有一段正文把两张卡分开。
  *
- * 上一版(T34,2026-08-25)是「清单之前**说过话**才分张」。它的顾虑是:分出来两张都写
- * 「已完成」、**耗时还是同一个数**,读着像同一件事说了两遍 —— 那是耗时按轮次算的 bug,
- * 已经在 `shell-elapsed.test.ts` 里修掉(每张壳按自己的起止定秒)。
- * 两条裁决的取舍记在 `specs/current/chat-panel-feedback.md`。
+ * 用户撤销「清单一到就分张」的原话:「如果有了 todowrite,不用第二张卡片,
+ * 继续第一张卡片里继续输出就行了,因为此时肯定是没 done 信号的…卡片外面也没文本…
+ * 会出现两张连起来的卡片,不太好。」
+ *
+ * 也就是说那条规则的产物**必然**是两张紧贴的卡:卡外唯一会出现的内容是 done 之后的
+ * 结论,而 TodoWrite 必然在 done 之前。它还制造过两张卡头**显示同一个耗时**的坏画面
+ * (thinking 事件不带时刻,前一张只能退回轮次跨度)。
+ *
+ * 更早的两版(T34「清单之前说过话才分张」、以及「第一张壳里有东西就分张」)都已作废,
+ * 取舍全记在 `specs/current/chat-panel-feedback.md` 的 D 节。
  */
 import { describe, expect, it } from 'vitest';
 import type { PersistedAgentEvent } from '@open-design/contracts';
@@ -27,18 +33,16 @@ const shells = (events: PersistedAgentEvent[]) =>
   buildTurnBlocks({ events, runStatus: 'succeeded' }).filter((b) => b.kind === 'shell');
 
 describe('第二张壳的出现条件', () => {
-  it('清单之前干过活 → 分成两张:活在第一张,清单在第二张', () => {
+  it('清单之前干过活 → 仍然只有**一张**,活和清单前后排在同一张里', () => {
     const out = shells([
       ...call('t1', 'Read', { file_path: 'a.css' }),
       ...call('t2', 'Bash', { command: 'ls' }),
       ...todo('p1', [['复刻列表页', 'in_progress']]),
       ...call('t3', 'Write', { file_path: 'card.html', content: 'x' }),
     ]);
-    expect(out).toHaveLength(2);
-    const first = (out[0] as { items: Array<{ kind: string }> }).items.map((i) => i.kind);
-    const second = (out[1] as { items: Array<{ kind: string }> }).items.map((i) => i.kind);
-    expect(first).toEqual(['tool', 'tool']);
-    expect(second).toEqual(['plan', 'todo']);
+    expect(out).toHaveLength(1);
+    expect((out[0] as { items: Array<{ kind: string }> }).items.map((i) => i.kind))
+      .toEqual(['tool', 'tool', 'plan', 'todo']);
   });
 
   it('清单之前**什么都没干** → 空壳复用,不多出一张空卡', () => {
@@ -49,9 +53,7 @@ describe('第二张壳的出现条件', () => {
     expect(out).toHaveLength(1);
   });
 
-  it('清单之前说过话 → 话在**壳外**,第一张壳只留工具', () => {
-    // 2026-08-26 裁决:没有 todo 的阶段,正文不进壳。所以「说过话」不再体现为
-    // 第一张壳里的 text,而是壳外多出一段 prose。
+  it('清单之前说过话 → 那句话也在这张卡里,壳外一条都没有', () => {
     const blocks = buildTurnBlocks({
       events: [
         { kind: 'text', text: '我先看一眼两张图的栅格。' },
@@ -62,11 +64,10 @@ describe('第二张壳的出现条件', () => {
       runStatus: 'succeeded',
     });
     const out = blocks.filter((b) => b.kind === 'shell');
-    expect(out).toHaveLength(2);
-    const first = out[0] as { items: Array<{ kind: string }> };
-    expect(first.items.map((i) => i.kind)).toEqual(['tool']);
-    expect(blocks.filter((b) => b.kind === 'prose').map((b) => (b as { text: string }).text))
-      .toEqual(['我先看一眼两张图的栅格。']);
+    expect(out).toHaveLength(1);
+    expect((out[0] as { items: Array<{ kind: string }> }).items.map((i) => i.kind))
+      .toEqual(['text', 'tool', 'plan', 'todo']);
+    expect(blocks.filter((b) => b.kind === 'prose')).toEqual([]);
   });
 
   it('第一张壳完全空着时仍然直接复用,不留空壳(D13,老规则不动)', () => {

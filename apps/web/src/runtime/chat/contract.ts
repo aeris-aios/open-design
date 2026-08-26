@@ -47,7 +47,15 @@ export interface ToolRow {
 }
 
 /** thinking 落下的文字,以及 done 之前的过程叙述(D43)—— 两者同一种渲染 */
-export interface ShellText { kind: 'text'; text: string }
+/**
+ * 壳内的一段文字。
+ *
+ * `thinking` 标出「这段是模型在想,不是在答」—— 两者在屏幕上长得一样,但**归属不同**:
+ * 整轮没发 done 时要把最后一段**回答**提到卡外(否则用户看不到答案),
+ * 而 thinking 提出来就是把「想什么」当成「答什么」。踩过一次:整轮只有一句 thinking 时
+ * 它被提到壳外、壳空掉后整张壳被丢,「思考中」那一格直接没了。
+ */
+export interface ShellText { kind: 'text'; text: string; thinking?: boolean }
 
 /** 「执行计划 · N 步」 */
 export interface ShellPlan { kind: 'plan'; steps: string[] }

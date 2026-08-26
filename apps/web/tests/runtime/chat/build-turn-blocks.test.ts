@@ -168,40 +168,37 @@ describe('工具行(D3 / D23 / §2.2b)', () => {
  * 这条改动的由来:Codex 这类**从不发 `<done/>`** 的 agent,整轮的正文都被当成
  * 「过程叙述」吞进壳里,而壳默认是收起的 —— 用户跑真机时看到的就是这个。
  */
-describe('没有 todo 时正文一律在壳外(2026-08-26 裁决)', () => {
-  it('没发 done 也一样:正文在壳外,壳里只剩工具调用', () => {
+describe('done 之前正文一律在卡片里(2026-08-26 最终裁决)', () => {
+  it('没发 done:正文和工具调用都在卡片里,最后一段回答被兜底提出来', () => {
     const blocks = buildTurnBlocks({ events: [text('我先看一下工作区里的规格文件。'), ...call('t1', 'Read', { file_path: 'a.md' })] });
-    expect(prose(blocks).map((p) => p.text)).toEqual(['我先看一下工作区里的规格文件。']);
-    // 壳里有那次工具调用,所以壳留着;里面没有正文
-    expect(texts(nth(shells(blocks), 0).items)).toEqual([]);
+    // 以工具收尾 → 没有可提的结论,那句话留在卡片里
+    expect(prose(blocks)).toEqual([]);
+    expect(texts(nth(shells(blocks), 0).items)).toEqual(['我先看一下工作区里的规格文件。']);
     expect(nth(shells(blocks), 0).items.some((i) => i.kind === 'tool')).toBe(true);
   });
 
-  it('`<done/>` 仍然分段:两侧各自成块,不粘成一段', () => {
+  it('`<done/>` 是唯一的边界:之前那句在卡片里,之后那句在卡片外', () => {
     const blocks = buildTurnBlocks({
       events: [text('先看目录。'), text('<done/>两页都好了,商品卡已抽成组件。')],
       ...done(),
     });
-    expect(prose(blocks).map((p) => p.text)).toEqual(['先看目录。', '两页都好了,商品卡已抽成组件。']);
-    // 壳里什么都没有 + 轮次成功 → 整张壳不留(B47)
-    expect(shells(blocks)).toHaveLength(0);
+    expect(prose(blocks).map((p) => p.text)).toEqual(['两页都好了,商品卡已抽成组件。']);
+    expect(texts(nth(shells(blocks), 0).items)).toEqual(['先看目录。']);
   });
 
   it('标记被流式切成两半也认得出来,且不会闪出半截标签', () => {
     const blocks = buildTurnBlocks({ events: [text('先看目录。<do'), text('ne/>结论在这里。')], ...done() });
-    expect(prose(blocks).map((p) => p.text)).toEqual(['先看目录。', '结论在这里。']);
-    // 壳里什么都没有 + 轮次成功 → 整张壳不留(B47)
-    expect(shells(blocks)).toHaveLength(0);
+    expect(prose(blocks).map((p) => p.text)).toEqual(['结论在这里。']);
+    expect(texts(nth(shells(blocks), 0).items)).toEqual(['先看目录。']);
   });
 
-  it('意图澄清表单:表单整段留在壳外,交给消息层剥卡', () => {
+  it('意图澄清表单是**隐式 done**:表单整段留在壳外,之前那句留在卡片里', () => {
     const blocks = buildTurnBlocks({
       events: [text('我先确认两个关键点。'), text('<question-form title="确认">{}</question-form>')],
       ...done(),
     });
-    // 壳里什么都没有 + 轮次成功 → 整张壳不留(B47)
-    expect(shells(blocks)).toHaveLength(0);
     expect(prose(blocks).some((b) => b.text.includes('<question-form'))).toBe(true);
+    expect(texts(nth(shells(blocks), 0).items)).toEqual(['我先确认两个关键点。']);
   });
 
   /**
@@ -228,28 +225,28 @@ describe('没有 todo 时正文一律在壳外(2026-08-26 裁决)', () => {
     expect(prose(both).some((b) => b.text.includes('<question-form'))).toBe(true);
   });
 
-  it('以工具收尾的轮次,壳外只有此前说过的话,没有凭空多出的结论', () => {
+  it('以工具收尾的轮次:没有可提的结论,卡外一条都不多出来', () => {
     const blocks = buildTurnBlocks({
       events: [text('改一下间距。'), ...call('t1', 'Edit', { file_path: 'a.css', old_string: 'x', new_string: 'y' })],
       ...done(),
     });
-    expect(prose(blocks).map((p) => p.text)).toEqual(['改一下间距。']);
+    expect(prose(blocks)).toEqual([]);
+    expect(texts(nth(shells(blocks), 0).items)).toEqual(['改一下间距。']);
   });
 
-  it('运行中同样是这个落点 —— 不等轮次结束才搬家', () => {
+  it('运行中同样在卡片里 —— 不等轮次结束才搬家', () => {
     const blocks = buildTurnBlocks({ events: [text('先看目录。')], runStatus: 'running' });
-    expect(prose(blocks).map((p) => p.text)).toEqual(['先看目录。']);
-    // 还在跑:空壳就是「进行中」那一行本身,留着;里面没有正文
-    expect(texts(nth(shells(blocks), 0).items)).toEqual([]);
+    expect(prose(blocks)).toEqual([]);
+    expect(texts(nth(shells(blocks), 0).items)).toEqual(['先看目录。']);
   });
 });
 
 /* ── 清单与分段(D29 / D13 / D26 / D14 / D36)──────────────── */
 
 describe('清单到达时的落块(D29)', () => {
-  it('② 清单之前**说过话** → 多出第二块,第一块转已完成(T34 收窄后的 D29 ②)', () => {
-    // 判据从「第一块有内容」收窄成「第一块有正文」(T34,用户 2026-08-25 裁决):
-    // 光跑工具不说话不再分张 —— 那种轮次会分出两张都写「已完成」的壳,读着像重复。
+  it('② 清单之前说过话、也干过活 → 仍然只有**一块**(2026-08-26 最终裁决)', () => {
+    // 清单不再另起一张卡:卡外唯一会出现的内容是 done 之后的结论,而 TodoWrite
+    // 必然在 done 之前 —— 分张的产物一定是两张紧贴的卡,读着像同一件事说了两遍。
     const blocks = buildTurnBlocks({
       events: [
         { kind: 'text', text: '我先看一眼现有的列表页。' },
@@ -260,9 +257,9 @@ describe('清单到达时的落块(D29)', () => {
       ...done(),
     });
     const all = shells(blocks);
-    expect(all).toHaveLength(2);
-    expect(nth(all, 0).status).toBe('done');
-    expect(nth(all, 1).segments.map((s) => s.content)).toEqual(['复刻列表页', '抽出商品卡']);
+    expect(all).toHaveLength(1);
+    expect(nth(all, 0).items.map((i) => i.kind)).toEqual(['text', 'tool', 'plan', 'todo', 'todo']);
+    expect(nth(all, 0).segments.map((s) => s.content)).toEqual(['复刻列表页', '抽出商品卡']);
   });
 
   it('⑤ 一上来就发清单 → 不留空壳,第一块本身就是清单卡(D13)', () => {
@@ -303,9 +300,9 @@ describe('清单到达时的落块(D29)', () => {
     expect(tools(b.items)).toHaveLength(1);
   });
 
-  it('一轮里最多两块,同一份清单反复推进也不会开第三块(D26)', () => {
-    // 用「说过话」把它逼成两块(T34 之后这才是分张条件),再反复推进清单 ——
-    // 要钉的是「不会开第三块」,不是「一定有两块」
+  it('同一份清单反复推进不会多开卡片(D26)', () => {
+    // 2026-08-26 最终裁决之后,一轮正常跑完就是**一张**卡;
+    // 这里要钉的是「反复推进清单不会把它撑成多张」
     const blocks = buildTurnBlocks({
       events: [
         { kind: 'text', text: '先看一眼。' },
@@ -316,7 +313,7 @@ describe('清单到达时的落块(D29)', () => {
       ],
       ...done(),
     });
-    expect(shells(blocks)).toHaveLength(2);
+    expect(shells(blocks)).toHaveLength(1);
   });
 
   it('兜底 a:清单全部打完勾之后说的话算结论,回到壳外', () => {

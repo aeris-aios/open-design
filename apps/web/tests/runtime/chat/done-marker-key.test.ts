@@ -197,6 +197,18 @@ describe('旧数据兼容 · 没有 key 的历史消息落块与改动前一致'
    *
    * 基线要重新生成时:把 HEAD 上的 build-turn-blocks.ts 拷进 src 跑一遍这批 fixture,
    * 覆盖这个 JSON —— 但先想清楚为什么历史消息的渲染需要变。
+   *
+   * **2026-08-26 重刷过一次**,四处变化逐条核过,都是「有意要变」而不是回归:
+   *  · `bare-done-while-todo-open`:两张壳并成一张 —— 最终裁决说清单**不另起卡片**;
+   *  · `implicit-done-question-form`:表单前那句「先确认方向。」从壳外挪进卡片 ——
+   *    最终裁决说 done 之前的一切都在卡片里(表单是隐式 done,它自己仍在卡外);
+   *  · `plain-chat-turn`:空壳没了 —— 那句回答被兜底提到卡外,壳空掉后按 B47 丢弃;
+   *  · `bare-done-after-todos-closed`:todo **行数从 3 变成 2** —— 旧基线里有一条
+   *    重复行(3 行只对应 2 条 segment),正是用户指认的「为什么有两个一模一样的 todo」。
+   *    这一条是**修复**落进基线,不是裁决。
+   *
+   * 顺带记一笔:重刷之前这条测试在 HEAD 上**本来就是红的** —— 上一次修重复行时没有
+   * 同步重刷基线。基线一旦欠着,它就从「守护栏」退化成「噪音」,下次真回归也拦不住。
    */
   it('九种历史轮次:落块与改动前逐字一致', () => {
     for (const [name, input] of Object.entries(HISTORICAL_TURN_FIXTURES)) {

@@ -116,14 +116,16 @@ describe('claude 真实一轮:没有清单,thinking 全是空串', () => {
   });
 
   /*
-   * 2026-08-26 裁决:没有清单的轮次里,**正文一律在壳外**,壳里只留工具调用和 thinking。
-   * 这条真实轨迹正是那种轮次(claude 一整轮没有 TodoWrite、也从不发 `<done/>`),
-   * 所以它现在的期望是「壳里没有正文」——原来的 D43 回归断言正好相反,已被裁决取代。
+   * 2026-08-26 **最终裁决**:done 之前的一切都在卡片里;整轮没发 done 时,
+   * 兜底把最后一段**回答**提到卡外(否则一个只答话的回合会被整段埋进收起的抽屉)。
+   *
+   * 这条真实轨迹正是那种轮次:claude 一整轮没有 TodoWrite、也从不发 `<done/>`。
+   * 所以期望是「过程叙述留在卡片里,只有最后那一段在卡外」。
    */
-  it('没有清单的整轮:正文全在壳外,壳里不留叙述(2026-08-26 裁决)', () => {
-    expect(prose.length).toBeGreaterThan(0);
+  it('没有清单也没发 done 的整轮:过程留在卡片里,只有最后一段回答在卡外', () => {
+    expect(prose).toHaveLength(1);
     expect(nth(prose, 0).text.trim().length).toBeGreaterThan(0);
-    expect(textsOf(nth(shells, 0).items)).toHaveLength(0);
+    expect(textsOf(nth(shells, 0).items).length).toBeGreaterThan(0);
   });
 
   it('连续的 text 增量合并成段落,而不是 25 行碎片', () => {

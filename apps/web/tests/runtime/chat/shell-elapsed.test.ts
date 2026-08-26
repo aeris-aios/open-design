@@ -19,11 +19,23 @@ const todos = (id: string, items: Array<[string, string]>): PersistedAgentEvent[
   { kind: 'tool_use', id, name: 'TodoWrite', input: { todos: items.map(([content, status]) => ({ content, status })) } },
 ]);
 
+const KEY = 'a7f3c91ed2b40561';
+
+/**
+ * 两张卡的形状。
+ *
+ * 2026-08-26 最终裁决之后,清单**不再**另起一张卡 —— 唯一会出现两张的场景是
+ * 「done 之后 agent 又开新计划继续干」:结论落在卡外,把两张卡分开。
+ * 这条红测钉的 bug(先结束的那张不许再走秒)在这个场景下照样成立。
+ */
 function shellsAt(nowMs: number): ExecutionShell[] {
   const events: PersistedAgentEvent[] = [
-    // 第一个壳:0 → 5s 之间跑完(清单还没来)
+    { kind: 'done_key', key: KEY } as unknown as PersistedAgentEvent,
+    // 第一个壳:0 → 5s 之间跑完
     ...call('t1', 'Bash', { command: 'ls' }, 0, 5_000),
-    // 清单一来,另起第二个壳
+    // done + 结论落在卡外,把两张卡分开
+    { kind: 'text', text: `<od-done key="${KEY}"/>\n先答到这儿。` } as PersistedAgentEvent,
+    // 之后又开一份新计划继续干 → 第二张卡
     ...todos('p1', [['做第一件事', 'in_progress']]),
     ...call('t2', 'Bash', { command: 'pwd' }, 6_000, 7_000),
   ];

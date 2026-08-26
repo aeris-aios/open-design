@@ -1112,10 +1112,43 @@
   opacity: 0.48;
 }
 .question-form-locked .qf-chip { cursor: not-allowed; }
+/*
+ * 自由填写一律是「无框 + 一条底线」(稿子的 `.rsn .ta` / `.qf-custom .qf-input`
+ * 是同一种做法)。
+ *
+ * 这条原来只写了字号 —— 于是只有折叠的「自己填」那一路(在 `.qf-custom` 里)
+ * 是下划线,而 `type: 'text' / 'number' / 'textarea'` 三种自由填写掉回浏览器
+ * 默认的四边框 + 圆角 + 灰底。用户截图反馈过一次,当时只修了「自己填」那一路,
+ * 另外三种没跟上 —— 同一件事要在同一个地方说完。
+ *
+ * `select` 不在内:它有原生的下拉指示符,拆掉边框会看不出是可选的。
+ */
 .qf-input,
-.qf-select,
 .qf-textarea {
+  display: block;
+  width: 100%;
+  padding: 2px 0 5px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: none;
+  color: var(--text-strong);
+  font-family: inherit;
   font-size: 13px;
+  line-height: 1.5;
+  field-sizing: content;
+  resize: none;
+  outline: none;
+}
+.qf-select {
+  font-size: 13px;
+}
+.qf-input::placeholder,
+.qf-textarea::placeholder { color: var(--text-soft); }
+.qf-input:focus,
+.qf-textarea:focus {
+  border-bottom-color: var(--border-strong);
+  box-shadow: none;
 }
 .qf-custom {
   display: block;
@@ -1249,14 +1282,10 @@
 }
 /* Quiet neutral focus for form fields: the global --selected focus border is
    near-black and reads like the chosen-chip state sitting right above. */
-.qf-input:focus,
+/* 自由填写那两种的聚焦态在上面(`.qf-input:focus, .qf-textarea:focus`)——
+   加深的是那条底线,不是一圈框。这里只剩 select:它保留原生四边框 */
 .qf-select:focus {
   border-color: var(--border-strong);
-}
-/* 自由填写框是「无框 + 一条底线」,聚焦时加深的是那条底线,不是一圈框 */
-.qf-textarea:focus {
-  border-bottom-color: var(--border-strong);
-  box-shadow: none;
 }
 /* 稿子 `.cbody > .foot { display:flex; align-items:center; gap:8px; padding:0 11px 8px }`
    —— 在白底里面,所以没有上边线也没有另一层底色 */
