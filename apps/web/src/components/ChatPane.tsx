@@ -588,6 +588,14 @@ interface Props {
     assistantMessage: ChatMessage,
     recoveryActionType?: TrackingRunRecoveryActionType,
   ) => void;
+  /**
+   * 「这条**没发出去**,再发一次」—— 用户气泡上那颗常驻的「重试」(稿子第 49 / 50 格)。
+   *
+   * 和 `onRetry` 是两回事,别合并:`onRetry` 重跑的是**建出来又失败**的那条 run
+   * (它要求失败的助手消息还在列表末尾);这一颗管的是 run 从来没建出来、助手占位
+   * 已经被撤掉的那一档 —— 那时候 `onRetry` 的前提根本不成立。
+   */
+  onResend?: (message: ChatMessage) => void;
   amrAuthRetryContinuation?: AmrAuthRetryContinuation | null;
   amrAuthRetryMountId?: string;
   amrAuthRetryWorkspaceIdentityKey?: string;
@@ -923,6 +931,7 @@ export function ChatPane({
   onDeleteComment,
   onSend,
   onRetry,
+  onResend,
   amrAuthRetryContinuation = null,
   amrAuthRetryMountId,
   amrAuthRetryWorkspaceIdentityKey,
@@ -2779,6 +2788,7 @@ export function ChatPane({
                 <ChatRows
                   messages={displayMessages}
                   streaming={streaming}
+                  onResend={onResend}
                   onRetryImage={handleRetryImage}
                   liveToolInput={liveToolInput}
                   projectId={projectId}
@@ -3557,7 +3567,10 @@ function ChatRows({
   questionFormSubmitDisabled,
   scrollContainerRef,
   highlightedUserMessageId,
+  onResend,
 }: {
+  /** 发送失败的用户气泡上那颗常驻「重试」—— 见 ChatPane 的 `onResend`。 */
+  onResend?: (message: ChatMessage) => void;
   messages: ChatMessage[];
   /** 生图失败格的「重试」—— 见 ChatPane 的 handleRetryImage(D59) */
   onRetryImage?: (row: { total: number; done: number; failed: number }, index: number) => void;
@@ -3721,6 +3734,7 @@ function ChatRows({
           t={t}
           appliedContextItems={appliedContextByMessageId.get(m.id) ?? []}
           highlighted={highlightedUserMessageId === m.id}
+          onResend={onResend}
         />
       );
     }

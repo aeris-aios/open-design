@@ -1470,6 +1470,42 @@ export async function saveMessage(
   }
 }
 
+/**
+ * Withdraw one persisted message.
+ *
+ * The product caller is B13's send-failed turn: when `POST /api/runs` never
+ * produced a run, the assistant placeholder has to be taken back from the
+ * database too, not just from memory. The provider already wrote it — a
+ * terminal `failed` status arrives before the error, and terminal rows are
+ * deliberately outside the client's phantom guard — so a reload would put a
+ * second retry entry point back on screen beside the user bubble's.
+ *
+ * Resolves `true` only when the row is gone. A `false` means the caller should
+ * keep treating the row as present (a denied workspace mutation, a daemon
+ * outage) rather than assume the cleanup happened.
+ */
+export async function deleteMessage(
+  projectId: string,
+  conversationId: string,
+  messageId: string,
+  workspaceContext?: WorkspaceCollabContext | null,
+): Promise<boolean> {
+  try {
+    const resp = await fetch(
+      `/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}`,
+      {
+        method: 'DELETE',
+        ...(workspaceContext
+          ? { headers: workspaceProjectHeaders(workspaceContext) }
+          : {}),
+      },
+    );
+    return resp.ok;
+  } catch {
+    return false;
+  }
+}
+
 // ---------- terminals ----------
 //
 // Interactive PTY sessions rooted at the project working directory. The daemon

@@ -374,6 +374,11 @@ describe('ProjectView API empty response handling', () => {
       const { handlers } = options;
       callCount += 1;
       if (callCount === 1) {
+        // 「模型崩了」是 run **建出来之后**才发生的事,所以夹具得先发号。
+        // 原来这条夹具直接 onError、一个 runId 都不给,那形容的其实是另一档
+        // (run 从来没建出来),而那一档现在按 B13 收回到用户气泡上、不再出
+        // 报错卡。这里补上发号让夹具说的是它标题里那件事。
+        options.onRunCreated?.('run-model-crashed');
         handlers.onError(new Error('model crashed'));
       }
     });

@@ -13,6 +13,7 @@ import {
   compactAdjacentMessageAgentEvents,
   countMessages,
   deleteConversationAndRepairTeamCommentAnchor,
+  deleteMessage,
   isProjectCommentAnchorConversationId,
 } from '../../db.js';
 
@@ -589,6 +590,50 @@ export function registerProjectConversationRoutes(app: Express, ctx: RegisterPro
       conversationId: req.params.cid,
     });
     res.json({ message: saved });
+  });
+
+  /*
+   * Withdraw one message (B13, design cells 49 / 50).
+   *
+   * The client needs this because a turn whose run was never created has
+   * already written an assistant placeholder by the time it finds out:
+   * `POST /api/runs` fails, the provider emits a terminal `failed` status
+   * BEFORE the error, and a terminal row is deliberately not caught by the
+   * client's phantom guard (that guard only holds back queued/running rows so
+   * a reattach can still find them). Dropping the placeholder from memory
+   * alone would leave it in the database, and the next reload would put a
+   * second retry entry point back on screen next to the user bubble's.
+   *
+   * Idempotent by contract: `ok` reports that the row is gone, `deleted`
+   * reports whether this call is the one that removed it. Withdrawing is
+   * best-effort cleanup, retried by second tabs, reloads, and network
+   * retries; a repeat must be a no-op, not an error to handle.
+   */
+  app.delete('/api/projects/:id/conversations/:cid/messages/:mid', async (req, res) => {
+    if (!await authorizeProjectRequest(
+      req,
+      res,
+      req.params.id,
+      { mode: 'write', capability: 'writeFiles' },
+    )) return;
+    const conv = getRoutableConversation(req.params.id, req.params.cid);
+    if (!conv) {
+      return res.status(404).json({ error: 'conversation not found' });
+    }
+    // Message ids are unique across conversations, so an unscoped delete would
+    // let this route reach into another conversation's row. Mirror the PUT
+    // boundary (#6418): if the id exists but lives elsewhere, refuse.
+    if (
+      getMessage(db, req.params.mid, req.params.cid) === null
+      && getMessage(db, req.params.mid) !== null
+    ) {
+      return res.status(404).json({ error: 'message not found' });
+    }
+    const deleted = deleteMessage(db, req.params.cid, req.params.mid);
+    // Bump the parent project's updatedAt so the project list re-orders,
+    // matching the PUT path.
+    if (deleted) updateProject(db, req.params.id, {});
+    res.json({ deleted, ok: true });
   });
 
   registerProjectCommentRoutes(app, ctx);

@@ -8549,6 +8549,12 @@ async function runConversation(args) {
                                            source message.
   od conversation list <projectId>           List conversations in a project.
   od conversation info <conversationId>      Print one conversation.
+  od conversation messages <projectId> <conversationId>
+                                           List one conversation's messages.
+  od conversation message-delete <projectId> <conversationId> <messageId>
+                                           Withdraw one message. Idempotent:
+                                           an already-gone message reports
+                                           deleted=false, not an error.
 
 Common options:
   --daemon-url <url>         OpenDesign daemon HTTP base.
@@ -8559,19 +8565,20 @@ Common options:
   }
   const sub = args[0];
   const rest = args.slice(1);
+  // Project-scoped subcommands go through the daemon's workspace-resource
+  // gate, so they must be able to name the acting workspace explicitly.
+  // `info` is addressed by conversation id alone and has no project route.
+  const projectScopedSub =
+    sub === 'new' || sub === 'list' || sub === 'messages' || sub === 'message-delete';
   const conversationStringFlags =
-    sub === 'new' || sub === 'list'
-      ? PROJECT_RESOURCE_STRING_FLAGS
-      : PROJECT_STRING_FLAGS;
+    projectScopedSub ? PROJECT_RESOURCE_STRING_FLAGS : PROJECT_STRING_FLAGS;
   const flags = parseFlags(rest, {
     string: conversationStringFlags,
     boolean: PROJECT_BOOLEAN_FLAGS,
   });
   const base = (await projectDaemonUrl(flags)).replace(/\/$/, '');
   const workspaceHeaders =
-    sub === 'new' || sub === 'list'
-      ? workspaceHeadersFromExplicitFlags(flags) ?? {}
-      : {};
+    projectScopedSub ? workspaceHeadersFromExplicitFlags(flags) ?? {} : {};
   switch (sub) {
     case 'new': {
       const [id] = positionalArgs(rest, conversationStringFlags);
@@ -8629,6 +8636,59 @@ Common options:
       if (!resp.ok) return structuredHttpFailure(resp);
       const data = await resp.json();
       process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+      return;
+    }
+    case 'messages': {
+      // The read half of `message-delete`: without it there is no CLI route to
+      // a message id, so the withdraw verb would only be usable by someone who
+      // already had the web UI open.
+      const [projectId, conversationId] = positionalArgs(rest, conversationStringFlags);
+      if (!projectId || !conversationId) {
+        console.error('Usage: od conversation messages <projectId> <conversationId>');
+        process.exit(2);
+      }
+      const resp = await fetch(
+        `${base}/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/messages`,
+        { headers: workspaceHeaders },
+      );
+      if (!resp.ok) return structuredHttpFailure(resp, 'project-not-found');
+      const data = await resp.json();
+      if (flags.json) return process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+      for (const message of data.messages ?? []) {
+        const marks = [
+          message.runStatus ? `run:${message.runStatus}` : null,
+          message.sendFailed ? 'send-failed' : null,
+        ].filter(Boolean).join(' ');
+        const preview = String(message.content ?? '').replace(/\s+/g, ' ').slice(0, 60);
+        console.log(`${message.id}  ${message.role}${marks ? `  [${marks}]` : ''}  ${preview}`);
+      }
+      return;
+    }
+    case 'message-delete': {
+      // Withdraw one persisted message. The product caller is the send-failed
+      // turn taking back an assistant placeholder whose run was never created
+      // (the browser already wrote that row before it learned the run did not
+      // exist). Idempotent on purpose — see the route comment.
+      const [projectId, conversationId, messageId] =
+        positionalArgs(rest, conversationStringFlags);
+      if (!projectId || !conversationId || !messageId) {
+        console.error(
+          'Usage: od conversation message-delete <projectId> <conversationId> <messageId>',
+        );
+        process.exit(2);
+      }
+      const resp = await fetch(
+        `${base}/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}`,
+        { method: 'DELETE', headers: workspaceHeaders },
+      );
+      if (!resp.ok) return structuredHttpFailure(resp, 'project-not-found');
+      const data = await resp.json();
+      if (flags.json) return process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+      console.log(
+        data?.deleted
+          ? `[conversation] withdrew ${messageId}`
+          : `[conversation] ${messageId} was already gone`,
+      );
       return;
     }
     default:

@@ -139,6 +139,7 @@ import {
 } from '../runtime/design-delivery';
 import { notifyArtifactDelivered } from './experience-survey-trigger';
 import { RESUME_CONTINUE_PROMPT } from '../runtime/resume';
+import { turnCollapsesIntoSendFailure } from '../runtime/send-failure';
 import {
   amrBalanceGateScopeForWorkspaceContext,
   amrBalanceGateScopesMatch,
@@ -186,6 +187,7 @@ import {
 import {
   createConversation,
   deleteConversation as deleteConversationApi,
+  deleteMessage,
   duplicatePluginAsProject,
   fetchAppliedPluginSnapshot,
   getProject,
@@ -4180,6 +4182,58 @@ export function ProjectView({
     return project.id;
   }, [project.id]);
 
+  /*
+   * 被这个视图**收回**的消息 id(B13):那一轮的 run 从来没建出来,助手占位
+   * 正在从内存和 daemon 库里一起撤掉。撤完之后有两件事必须成立,否则它会回来:
+   *
+   *   1. **后面的写不许再把它建出来。** 这个视图里所有的消息保存都拒绝写一个
+   *      已经收回的 id。
+   *   2. **DELETE 不许追尾一条还在飞的 PUT。** 每条保存按消息 id 记下来,撤的
+   *      时候先等它落地 —— 否则「先删掉、旧的保存后到」会**悄悄**把占位又写
+   *      回去,而这件事只有刷新一次才看得见。
+   */
+  const withdrawnMessageIdsRef = useRef<Set<string>>(new Set());
+  const pendingMessageSavesRef = useRef<Map<string, Set<Promise<void>>>>(new Map());
+  const trackedSaveMessage = useCallback(
+    (
+      conversationId: string,
+      message: ChatMessage,
+      options?: SaveMessageOptions,
+    ) => {
+      if (withdrawnMessageIdsRef.current.has(message.id)) return;
+      // A set, not a single latest promise: one row can legitimately have two
+      // saves in the air (the send-time write and the terminal-status write),
+      // and the withdraw has to wait for BOTH. Tracking only the newest would
+      // let an older save land after the DELETE. Saves are not serialized —
+      // queueing them behind each other would park an unload-time keepalive
+      // flush behind a hung request.
+      const inFlight =
+        pendingMessageSavesRef.current.get(message.id) ?? new Set<Promise<void>>();
+      pendingMessageSavesRef.current.set(message.id, inFlight);
+      // `Promise.resolve(...)` rather than `.catch()` straight off the call:
+      // the tracker must not care whether the writer is the real async
+      // `saveMessage` or a synchronous stand-in — throwing here would take the
+      // whole send down with it, and a persistence detail must never do that.
+      const pending = Promise.resolve(
+        saveMessage(project.id, conversationId, message, options),
+      ).catch(() => {
+        // saveMessage is best-effort; the tracker only needs to know when the
+        // request settled, not whether it succeeded.
+      });
+      inFlight.add(pending);
+      void pending.then(() => {
+        inFlight.delete(pending);
+        if (
+          inFlight.size === 0
+          && pendingMessageSavesRef.current.get(message.id) === inFlight
+        ) {
+          pendingMessageSavesRef.current.delete(message.id);
+        }
+      });
+    },
+    [project.id],
+  );
+
   const persistMessage = useCallback(
     (m: ChatMessage, options?: SaveMessageOptions) => {
       if (!activeConversationId) return;
@@ -4192,12 +4246,12 @@ export function ProjectView({
       // a runId — or the run finishes terminally — this guard lets the row
       // through normally.
       if (isPhantomDaemonRunMessage(m)) return;
-      void saveMessage(project.id, activeConversationId, m, {
+      trackedSaveMessage(activeConversationId, m, {
         ...options,
         workspaceContext: projectRunWorkspaceContext,
       });
     },
-    [project.id, activeConversationId, projectRunWorkspaceContext],
+    [trackedSaveMessage, activeConversationId, projectRunWorkspaceContext],
   );
 
   const persistMessageById = useCallback(
@@ -4206,7 +4260,7 @@ export function ProjectView({
       setMessages((curr) => {
         const found = curr.find((m) => m.id === messageId);
         if (found && !isPhantomDaemonRunMessage(found)) {
-          void saveMessage(project.id, activeConversationId, found, {
+          trackedSaveMessage(activeConversationId, found, {
             ...options,
             workspaceContext: projectRunWorkspaceContext,
           });
@@ -4214,7 +4268,7 @@ export function ProjectView({
         return curr;
       });
     },
-    [project.id, activeConversationId, projectRunWorkspaceContext],
+    [trackedSaveMessage, activeConversationId, projectRunWorkspaceContext],
   );
 
   const updateMessageById = useCallback(
@@ -4237,7 +4291,7 @@ export function ProjectView({
         // The runId-arriving update from onRunCreated passes through because
         // the updater sets runId before this check runs.
         if (persist && saved && activeConversationId && !isPhantomDaemonRunMessage(saved)) {
-          void saveMessage(project.id, activeConversationId, saved, {
+          trackedSaveMessage(activeConversationId, saved, {
             ...persistOptions,
             workspaceContext: projectRunWorkspaceContext,
           });
@@ -4245,7 +4299,7 @@ export function ProjectView({
         return next;
       });
     },
-    [project.id, activeConversationId, projectRunWorkspaceContext],
+    [trackedSaveMessage, activeConversationId, projectRunWorkspaceContext],
   );
 
   const appendConversationMessage = useCallback(
@@ -6913,6 +6967,16 @@ export function ProjectView({
       // that just failed in the current session (the daemon status fetch is only
       // needed on reload, not for runs that are already known to have failed).
       let currentRunId: string | undefined = undefined;
+      /*
+       * 这一轮到底**有没有真的发出去过**。
+       *
+       * 有一类失败根本没碰网络:没选本地 agent、BYOK 的 OpenCode 不可用、
+       * Bedrock 不支持 —— 它们是**配置没配好**,报错卡上那句话就是「去做什么」
+       * 本身。把它们也收成气泡上一颗「重试」,等于把唯一的说明删掉,再教人去点
+       * 一颗确定会以同样理由再失败一次的按钮。所以 B13 的收回只覆盖「真的把这条
+       * 消息放到线上了、但一条 run 都没建出来」那一档。
+       */
+      let runCreateAttempted = false;
       let daemonArtifactCount: number | undefined;
       const updateConversationLatestRun = (
         status: NonNullable<ChatMessage['runStatus']>,
@@ -7137,6 +7201,56 @@ export function ProjectView({
             updated,
           ];
         });
+      };
+      /*
+       * B13:这一轮**从来没建出 run** —— 把它收回到用户气泡上(稿子第 49 / 50 格)。
+       *
+       * 三件事一起做,少一件都会留下一个假象:
+       *   ① 用户消息盖上 `sendFailed` 并落库 —— 屏幕上和刷新之后都要有那枚
+       *      常驻的「重试」;
+       *   ② 助手占位从内存里撤掉 —— 它没跑过、没计过费,不该在那儿摆一条空
+       *      回合假装它回过话;
+       *   ③ 助手占位从 daemon 库里也撤掉 —— `POST /api/runs` 失败时先发的那条
+       *      terminal `failed` 状态**已经把它写进去了**(terminal 行不在
+       *      `isPhantomDaemonRunMessage` 的拦截范围内,那个守卫只挡
+       *      queued/running)。不删的话刷新一次它就诈尸,气泡上的红色「重试」
+       *      和助手侧的报错卡会**同时**在屏幕上,而两颗按钮做的还不是一件事。
+       *
+       * 顺序是有讲究的:先标「已收回」把后面所有写堵死,再等这条占位自己那几条
+       * 还在飞的保存落地,最后才删。反过来的话 DELETE 会先到、旧的 PUT 后到,
+       * 占位悄悄写回去,而这件事只有刷新一次才看得见。
+       */
+      const withdrawNeverSentTurn = () => {
+        withdrawnMessageIdsRef.current.add(assistantId);
+        setError(null);
+        setMessages((curr) => {
+          // A conversation switch during the failing send leaves `curr` owned by
+          // some other conversation; never rewrite that list. The DB write below
+          // still lands, so coming back shows the send-failed bubble.
+          if (!curr.some((message) => message.id === assistantId)) return curr;
+          return curr
+            .filter((message) => message.id !== assistantId)
+            .map((message) =>
+              message.id === userMsg.id ? { ...message, sendFailed: true } : message,
+            );
+        });
+        trackedSaveMessage(
+          runConversationId,
+          { ...userMsg, sendFailed: true },
+          { workspaceContext: projectRunWorkspaceContext },
+        );
+        // The database half runs on its own: awaiting it here would hold the
+        // composer busy for a network round-trip after the turn is already over.
+        void (async () => {
+          const inFlight = pendingMessageSavesRef.current.get(assistantId);
+          if (inFlight && inFlight.size > 0) await Promise.all([...inFlight]);
+          await deleteMessage(
+            project.id,
+            runConversationId,
+            assistantId,
+            projectRunWorkspaceContext,
+          );
+        })();
       };
       let persistTimer: ReturnType<typeof setTimeout> | null = null;
       const persistAssistantSoon = () => {
@@ -7673,10 +7787,41 @@ export function ProjectView({
           // tagged superseded. See the onDone above for the ownership rationale.
           const runMayFinalize =
             !supersededRunsRef.current.has(controller);
+          /*
+           * B13:这一轮到底**有没有建出 run**?
+           *
+           * 判据是 `latestAssistantMsg.runId` —— 消息**自己身上**那一格,
+           * daemon 和 api/BYOK 两条分支的 `onRunCreated` 都会写它,而且它就是
+           * 落库、重连、报错卡读的同一份。`currentRunId` 不行:它是**重连登记簿**
+           * 的记账变量(哪条 run 已经不用再去 attach 了),语义上回答的不是
+           * 「这一轮发出去了吗」;它历史上就在 api/BYOK 分支漏赋值过一次,
+           * 拿它当判据会让 BYOK 下**每一次**运行失败都被误判成「根本没发出去」。
+           *
+           * 还必须套在 `runMayFinalize` 里:被「立刻发送」打断的旧 run 也会迟到
+           * 一条 onError,它早就不拥有这条会话了,不能替**新的**那一轮去给用户
+           * 消息盖失败章。
+           */
+          const collapseIntoSendFailure =
+            runMayFinalize
+            && runCreateAttempted
+            && !latestAssistantMsg.runId
+            && turnCollapsesIntoSendFailure({
+              code: errorCode,
+              failureDetail: failure?.failureDetail ?? null,
+              agentId: latestAssistantMsg.agentId ?? null,
+              detail: err.message,
+              resumable,
+            });
           textBuffer.flush();
           textBuffer.cancel();
           cancelSendTextBuffer();
-          if (runMayFinalize) {
+          if (collapseIntoSendFailure) {
+            // 收回这一轮之后**不许**再走下面那套助手侧收尾:`setRunError` /
+            // `appendAssistantErrorEvent` / `updateAssistant` 里任何一条都会把
+            // 刚撤掉的占位重新插回来(`updateAssistant` 找不到目标时会补一条),
+            // 于是屏幕上出现两个重试入口 —— 正是这一条要消灭的东西。
+            withdrawNeverSentTurn();
+          } else if (runMayFinalize) {
             setRunError(err.message, assistantId);
             appendAssistantErrorEvent(assistantId, err.message, errorCode, failure);
             updateAssistant((prev) => ({
@@ -7687,9 +7832,9 @@ export function ProjectView({
                 : prev.runStatus,
               resumable,
             }));
-            if (runCommentAttachments.length > 0) {
-              void patchAttachedStatuses(runCommentAttachments, 'failed');
-            }
+          }
+          if (runMayFinalize && runCommentAttachments.length > 0) {
+            void patchAttachedStatuses(runCommentAttachments, 'failed');
           }
           // Mark the run as completed in the reattach registry so that
           // attachRecoverableRuns does not race it after streaming ends.
@@ -7955,6 +8100,7 @@ export function ProjectView({
           recoveryActionType: taskAnalytics.recoveryActionType,
           recoveryActionInstanceId: taskAnalytics.recoveryActionInstanceId,
         };
+        runCreateAttempted = true;
         void streamViaDaemon({
           agentId: config.agentId,
           history: nextHistory,
@@ -8016,7 +8162,7 @@ export function ProjectView({
             currentRunId = runId;
             // The view may already be on a different project/conversation;
             // pin the daemon run to the original row so returning can reattach.
-            void saveMessage(project.id, runConversationId, pinnedAssistant, {
+            trackedSaveMessage(runConversationId, pinnedAssistant, {
               workspaceContext: projectRunWorkspaceContext,
             });
             updateMessageById(assistantId, (prev) => ({
@@ -8130,6 +8276,7 @@ export function ProjectView({
         const byokHasExistingArtifact = projectFilesRef.current.some(
           (file) => Boolean(file.artifactManifest),
         );
+        runCreateAttempted = true;
         void streamViaDaemon({
           agentId: 'byok-opencode',
           history: byokOpenCodeHistory,
@@ -8196,7 +8343,7 @@ export function ProjectView({
               taskAnalytics: resolvedTaskAnalytics,
             };
             latestAssistantMsg = pinnedAssistant;
-            void saveMessage(project.id, runConversationId, pinnedAssistant, {
+            trackedSaveMessage(runConversationId, pinnedAssistant, {
               workspaceContext: projectRunWorkspaceContext,
             });
             updateMessageById(assistantId, (prev) => ({
@@ -8257,6 +8404,7 @@ export function ProjectView({
       requestOpenFile,
       persistMessage,
       persistMessageById,
+      trackedSaveMessage,
       auditDesignSystemWorkspaceAfterRun,
       patchAttachedStatuses,
       updateMessageById,
@@ -8509,6 +8657,66 @@ export function ProjectView({
     removeQueuedChatSend,
     scheduleProjectTimeout,
   ]);
+
+  /*
+   * 气泡上那颗「重试」(稿子第 49 / 50 格)——「这条**没发出去**,再发一次」。
+   *
+   * 这是一条**独立于 `handleRetry` 的通路**,不能复用它:`resolveRetryTarget`
+   * 要求那条失败的**助手**消息是列表最后一条,而这一档按设计已经把助手占位
+   * 撤掉了,那个前提根本不成立(`resolveRetryTarget` 会返回 null,`handleSend`
+   * 直接 `return false`,按钮点了没反应)。
+   *
+   * 做法是把这条用户消息**原地重发**:沿用同一个消息 id(`meta.userMessageId`)
+   * 和它之前的历史(`baseMessages`),所以对话里不会多出一条一模一样的用户消息 ——
+   * 那条消息本来就在,只是没送出去。
+   */
+  const handleResendFailedSend = useCallback(
+    (message: ChatMessage) => {
+      if (currentConversationActionDisabled) return;
+      if (message.role !== 'user' || !message.sendFailed) return;
+      const index = messages.findIndex((candidate) => candidate.id === message.id);
+      if (index < 0) return;
+      const existing = message.taskAnalytics;
+      void handleSend(
+        message.content,
+        message.attachments ?? [],
+        message.commentAttachments ?? [],
+        {
+          userMessageId: message.id,
+          // 不另起 entry_from:这一轮的「这是一次重试」已经由 taskAnalytics 的
+          // recoveryActionType 报出来了(和 handleRetry 同一个口径),不为它
+          // 往契约里的枚举加值。
+          ...(message.sessionMode ? { sessionMode: message.sessionMode } : {}),
+          ...(message.runContext ? { context: message.runContext } : {}),
+          ...(message.appliedPluginSnapshot
+            ? { appliedPluginSnapshot: message.appliedPluginSnapshot }
+            : {}),
+          // 同一件事的第 N 次尝试,不是一个新任务 —— 沿用原来的 taskExecutionId,
+          // 次数往上加一。没有 sourceRunId:这一轮从来没建出 run。
+          taskAnalytics: {
+            taskExecutionId: existing?.taskExecutionId ?? message.id,
+            ...(existing?.initialRunId ? { initialRunId: existing.initialRunId } : {}),
+            taskRunIndex: Math.max(0, existing?.taskRunIndex ?? 0) + 1,
+            recoveryActionType: 'manual_retry' as const,
+            recoveryActionInstanceId: `resend:${message.id}:${existing?.taskRunIndex ?? 0}`,
+          },
+        },
+        messages.slice(0, index),
+      );
+    },
+    [currentConversationActionDisabled, handleSend, messages],
+  );
+  /*
+   * 稳定身份很重要:这颗回调要传给 **memo 过的** `UserMessage`。上面那个
+   * `handleResendFailedSend` 依赖 `messages`,每来一条消息就换一次身份 ——
+   * 直接传下去会让后面每一轮流式都把历史里所有用户气泡重渲染一遍(附件行、
+   * 上下文行都在里面),memo 白设。走一层 ref 让传下去的那颗永不变。
+   */
+  const resendFailedSendRef = useRef(handleResendFailedSend);
+  resendFailedSendRef.current = handleResendFailedSend;
+  const handleResendFailedSendStable = useCallback((message: ChatMessage) => {
+    resendFailedSendRef.current(message);
+  }, []);
 
   const handleRetry = useCallback(
     (
@@ -11143,6 +11351,7 @@ export function ProjectView({
               onDeleteComment={(commentId) => void removePreviewComment(commentId)}
               onSend={handleComposerSend}
               onRetry={handleRetry}
+              onResend={handleResendFailedSendStable}
               amrAuthRetryContinuation={amrAuthRetryContinuation}
               amrAuthRetryMountId={amrAuthRetryMountIdRef.current}
               amrAuthRetryWorkspaceIdentityKey={projectRunAuthorityKey}

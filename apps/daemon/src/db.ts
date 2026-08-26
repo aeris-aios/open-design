@@ -450,6 +450,13 @@ function migrate(db: SqliteDb): void {
   if (!messageCols.some((c: DbRow) => c.name === 'forked_into_json')) {
     db.exec(`ALTER TABLE messages ADD COLUMN forked_into_json TEXT`);
   }
+  // Send-failed user bubble (delivered design, cells 49 / 50): "this message
+  // never left the building". Same reason as forked_into_json — a red retry
+  // that disappears on reload is worse than no retry at all, because the user
+  // then believes the message went through.
+  if (!messageCols.some((c: DbRow) => c.name === 'send_failed')) {
+    db.exec(`ALTER TABLE messages ADD COLUMN send_failed INTEGER`);
+  }
   const routineRunCols = db.prepare(`PRAGMA table_info(routine_runs)`).all() as DbRow[];
   if (!routineRunCols.some((c: DbRow) => c.name === 'error_code')) {
     db.exec(`ALTER TABLE routine_runs ADD COLUMN error_code TEXT`);
@@ -2601,6 +2608,7 @@ export function listMessages(db: SqliteDb, conversationId: string) {
               task_analytics_json AS taskAnalyticsJson,
               applied_plugin_snapshot_json AS appliedPluginSnapshotJson,
               forked_into_json AS forkedIntoJson,
+              send_failed AS sendFailed,
               created_at AS createdAt, started_at AS startedAt, ended_at AS endedAt,
               position
          FROM messages
@@ -2634,6 +2642,7 @@ export function getMessage(db: SqliteDb, id: string, conversationId?: string) {
               run_context_json AS runContextJson,
               applied_plugin_snapshot_json AS appliedPluginSnapshotJson,
               forked_into_json AS forkedIntoJson,
+              send_failed AS sendFailed,
               created_at AS createdAt, started_at AS startedAt, ended_at AS endedAt,
               position
          FROM messages
@@ -2641,6 +2650,43 @@ export function getMessage(db: SqliteDb, id: string, conversationId?: string) {
     )
     .get(conversationId ? [id, conversationId] : id) as DbRow | undefined;
   return row ? normalizeMessage(db, row) : null;
+}
+
+/**
+ * Withdraw one message row (and the event batches hanging off it).
+ *
+ * The one caller today is B13's "the run was never created" branch: the web
+ * client already persisted an assistant placeholder — `POST /api/runs` emits a
+ * terminal `failed` status before its error, and a terminal row is not caught
+ * by the phantom guard — and now has to take it back so the turn collapses
+ * into the user bubble's send-failed state instead of leaving a second retry
+ * entry point behind after a reload.
+ *
+ * Scoped to a conversation on purpose: message ids are unique globally, so an
+ * unscoped delete would let one conversation's route reach into another's row.
+ * Returns false when there is nothing to withdraw, which callers treat as a
+ * no-op rather than an error — withdrawing is best-effort cleanup that can be
+ * retried by a second tab, a reload, or a network retry.
+ */
+export function deleteMessage(
+  db: SqliteDb,
+  conversationId: string,
+  messageId: string,
+): boolean {
+  const existing = db
+    .prepare(`SELECT id FROM messages WHERE id = ? AND conversation_id = ?`)
+    .get(messageId, conversationId) as DbRow | undefined;
+  if (!existing) return false;
+  clearMessageAgentEventBatches(db, messageId);
+  db.prepare(`DELETE FROM messages WHERE id = ? AND conversation_id = ?`).run(
+    messageId,
+    conversationId,
+  );
+  db.prepare(`UPDATE conversations SET updated_at = ? WHERE id = ?`).run(
+    Date.now(),
+    conversationId,
+  );
+  return true;
 }
 
 export function conversationTurnIndexForRun(
@@ -2719,6 +2765,7 @@ export function upsertMessage(db: SqliteDb, conversationId: string, m: DbRow) {
               pre_turn_file_names_json = ?,
               session_mode = ?, run_context_json = ?, task_analytics_json = ?,
               applied_plugin_snapshot_json = ?, forked_into_json = ?,
+              send_failed = ?,
               telemetry_finalized_at = CASE
                 WHEN ? THEN COALESCE(telemetry_finalized_at, ?)
                 ELSE telemetry_finalized_at
@@ -2746,6 +2793,7 @@ export function upsertMessage(db: SqliteDb, conversationId: string, m: DbRow) {
       m.taskAnalytics ? JSON.stringify(m.taskAnalytics) : null,
       m.appliedPluginSnapshot ? JSON.stringify(m.appliedPluginSnapshot) : null,
       normalizeForkedIntoForStorage(m.forkedInto),
+      normalizeSendFailedForStorage(m.sendFailed),
       m.telemetryFinalized === true ? 1 : 0,
       now,
       m.startedAt ?? null,
@@ -2762,12 +2810,12 @@ export function upsertMessage(db: SqliteDb, conversationId: string, m: DbRow) {
     const createdAt = typeof m.createdAt === 'number' && Number.isFinite(m.createdAt)
       ? m.createdAt
       : now;
-    // 27 values: id, conversation_id, role, content, agent_id, agent_name,
+    // 28 values: id, conversation_id, role, content, agent_id, agent_name,
     // run_id, run_status, result_delivery_state, last_run_event_id, events_json, attachments_json,
     // comment_attachments_json, produced_files_json, trace_object_files_json,
     // feedback_json, pre_turn_file_names_json, session_mode, run_context_json,
     // task_analytics_json, applied_plugin_snapshot_json, forked_into_json,
-    // telemetry_finalized_at, started_at, ended_at, position, created_at.
+    // send_failed, telemetry_finalized_at, started_at, ended_at, position, created_at.
     db.prepare(
       `INSERT INTO messages
          (id, conversation_id, role, content, agent_id, agent_name,
@@ -2775,9 +2823,9 @@ export function upsertMessage(db: SqliteDb, conversationId: string, m: DbRow) {
           attachments_json, comment_attachments_json, produced_files_json,
           trace_object_files_json, feedback_json, pre_turn_file_names_json,
           session_mode, run_context_json, task_analytics_json,
-          applied_plugin_snapshot_json, forked_into_json,
+          applied_plugin_snapshot_json, forked_into_json, send_failed,
           telemetry_finalized_at, started_at, ended_at, position, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       m.id,
       conversationId,
@@ -2801,6 +2849,7 @@ export function upsertMessage(db: SqliteDb, conversationId: string, m: DbRow) {
       m.taskAnalytics ? JSON.stringify(m.taskAnalytics) : null,
       m.appliedPluginSnapshot ? JSON.stringify(m.appliedPluginSnapshot) : null,
       normalizeForkedIntoForStorage(m.forkedInto),
+      normalizeSendFailedForStorage(m.sendFailed),
       m.telemetryFinalized === true ? now : null,
       m.startedAt ?? null,
       m.endedAt ?? null,
@@ -2831,6 +2880,7 @@ export function upsertMessage(db: SqliteDb, conversationId: string, m: DbRow) {
               task_analytics_json AS taskAnalyticsJson,
               applied_plugin_snapshot_json AS appliedPluginSnapshotJson,
               forked_into_json AS forkedIntoJson,
+              send_failed AS sendFailed,
               created_at AS createdAt, started_at AS startedAt, ended_at AS endedAt,
               position
          FROM messages WHERE id = ?`,
@@ -3094,10 +3144,6 @@ export function appendMessageAgentEvent(
   event: DbRow,
 ): DbRow[] | null {
   return appendMessageAgentEvents(db, messageId, [event]);
-}
-
-export function deleteMessage(db: SqliteDb, id: string) {
-  db.prepare(`DELETE FROM messages WHERE id = ?`).run(id);
 }
 
 // ---------- preview comments ----------
@@ -4158,6 +4204,7 @@ function normalizeMessage(db: SqliteDb, row: DbRow, eventBatches?: DbRow[][]) {
     taskAnalytics: parseJsonOrUndef(row.taskAnalyticsJson),
     appliedPluginSnapshot: parseJsonOrUndef(row.appliedPluginSnapshotJson),
     forkedInto: normalizeForkedInto(parseJsonOrUndef(row.forkedIntoJson)),
+    sendFailed: row.sendFailed === 1 ? true : undefined,
     createdAt: row.createdAt ?? undefined,
     startedAt: row.startedAt ?? undefined,
     endedAt: row.endedAt ?? undefined,
@@ -4208,6 +4255,17 @@ function normalizeForkedInto(
 function normalizeForkedIntoForStorage(value: unknown): string | null {
   const normalized = normalizeForkedInto(value);
   return normalized ? JSON.stringify(normalized) : null;
+}
+
+/**
+ * `sendFailed` is a latch the client owns, not a daemon-derived state: only the
+ * browser knows whether `POST /api/runs` ever produced a run. Store `1` when the
+ * snapshot claims the message never left, and `null` otherwise — a later
+ * snapshot without the flag (a successful resend) must clear it, or the bubble
+ * keeps a red retry on a message that did go through.
+ */
+function normalizeSendFailedForStorage(value: unknown): 1 | null {
+  return value === true ? 1 : null;
 }
 
 function parseJsonOrUndef(s: unknown): any {

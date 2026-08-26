@@ -952,6 +952,20 @@ export interface ChatMessage {
   telemetryFinalized?: boolean;
 }
 
+/**
+ * `DELETE /api/projects/:id/conversations/:cid/messages/:mid` —
+ * withdraw one persisted message.
+ *
+ * Idempotent by contract: `ok` says the row is gone, `deleted` says whether
+ * THIS call is the one that removed it. The caller (a turn taking back an
+ * assistant placeholder whose run was never created) treats a repeat as a
+ * no-op, not an error.
+ */
+export interface ChatMessageDeleteResponse {
+  ok: true;
+  deleted: boolean;
+}
+
 export interface ChatTaskExecutionAnalytics {
   taskExecutionId: string;
   initialRunId?: string;
