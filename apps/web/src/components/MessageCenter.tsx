@@ -198,6 +198,14 @@ export function MessageCenter({
     // boundary has moved shows the previous account's signed-in state, and
     // nothing re-syncs on a generation change to correct it.
     if (currentWorkspaceAccountGeneration() !== issuedAccountGeneration) return;
+    // The generation guard answers "is this still the right ACCOUNT"; it says
+    // nothing about whether this run is still the right RUN. Refreshes overlap
+    // routinely — open, visibility, the 60s interval, a remount joining and
+    // then refreshing — so a held status answer can land after a newer run has
+    // already captured the transition, and re-stamp the authority it moved on
+    // from. The request-id check used to sit only after the pull, which is
+    // after every mutation below.
+    if (requestId !== syncRequestIdRef.current) return;
     const wasAccount = loggedInRef.current;
     // Publish only an ANSWER. `unavailable` is the daemon failing to ask, and
     // writing `false` for it spent the very transition marker the branch below

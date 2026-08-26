@@ -106,10 +106,14 @@ function notifyWorkspaceAccountGenerationListeners(): void {
   for (const listener of [...workspaceAccountGenerationListeners]) {
     try {
       listener();
-    } catch {
-      // One bad subscriber must not stop the rest from learning the boundary
-      // moved — a listener that throws is strictly less harmful than a
-      // component left rendering the previous account's data.
+    } catch (error) {
+      // Isolated, but not swallowed. Stopping the loop would leave the
+      // remaining hosts rendering the previous account's data, which is worse
+      // than one broken subscriber; silently continuing would leave a host
+      // that never learned the boundary moved with no signal to find it by.
+      // The sibling stores in this codebase do not isolate at all — the
+      // account boundary is worth the deviation, an unreported failure is not.
+      console.error('[workspace-identity] account-boundary subscriber failed', error);
     }
   }
 }

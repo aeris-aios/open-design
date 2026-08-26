@@ -1024,6 +1024,79 @@ describe('MessageCenter remount snapshot', () => {
       .not.toContain('shared-id');
   });
 
+  it('ignores a superseded run\'s auth answer before it touches component state', async () => {
+    // Refreshes overlap routinely — open, visibility, the interval, a remount
+    // that joins and then refreshes. The request-id check sat only after the
+    // pull, so a held status answer from run A landed after run B had already
+    // captured the signed-out transition, and re-stamped `loggedInRef` to
+    // `true`. The next signed-out refresh then read `wasAccount === true`,
+    // cleared the anonymous overlay, and persisted an empty read-id set —
+    // erasing a read the current anonymous session had just made.
+    const hold = { armed: false, release: null as (() => void) | null };
+    let loggedIn = true;
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/integrations/vela/status')) {
+        statusCalls += 1;
+        const answeredWith = loggedIn;
+        if (hold.armed) {
+          hold.armed = false;
+          await new Promise<void>((resolve) => {
+            hold.release = resolve;
+          });
+        }
+        return Response.json({ loggedIn: answeredWith });
+      }
+      if (url.includes('/read') && init?.method === 'POST') {
+        return Response.json({ read: true, markedCount: 1 });
+      }
+      if (url.includes('/message-center') && url.includes('/messages')) {
+        messageCalls += 1;
+        return Response.json({ messages: [row('anon-ack', null)], nextCursor: null, unreadCount: 1 });
+      }
+      return Response.json({});
+    }));
+
+    const counts: number[] = [];
+    render(
+      <I18nProvider initial="zh-CN">
+        <MessageCenter onUnreadCountChange={(n) => counts.push(n)} />
+      </I18nProvider>,
+    );
+    await waitFor(() => expect(messageCalls).toBeGreaterThan(0));
+
+    // Run A: a refresh whose status answer is held while still signed in.
+    hold.armed = true;
+    document.dispatchEvent(new Event('visibilitychange'));
+    await waitFor(() => expect(hold.release).not.toBeNull());
+
+    // Run B overtakes it and settles the signed-out transition. No account
+    // boundary is crossed — this is one identity's runs racing each other.
+    loggedIn = false;
+    let before = messageCalls;
+    document.dispatchEvent(new Event('visibilitychange'));
+    await waitFor(() => expect(messageCalls).toBeGreaterThan(before));
+
+    // The anonymous session reads the row.
+    fireEvent.click(screen.getByTestId('message-center-trigger'));
+    fireEvent.click(await screen.findByRole('button', { name: /anon-ack/ }));
+    await waitFor(() => expect(counts[counts.length - 1]).toBe(0));
+
+    // Only now does run A's stale `signed-in` answer land.
+    hold.release!();
+    await new Promise((r) => setTimeout(r, 30));
+
+    // A later refresh must not see a signed-in predecessor and wipe the read.
+    before = messageCalls;
+    document.dispatchEvent(new Event('visibilitychange'));
+    await waitFor(() => expect(messageCalls).toBeGreaterThan(before));
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(counts[counts.length - 1]).toBe(0);
+    expect(window.localStorage.getItem('open-design.message-center.anonymous-read-ids.v1') ?? '')
+      .toContain('anon-ack');
+  });
+
   it('does not re-sync when it is remounted straight away', async () => {
     const first = await mountAndSettle();
     const afterFirst = { status: statusCalls, messages: messageCalls };
