@@ -1525,6 +1525,11 @@ function isEndTagBoundary(code: number): boolean {
 }
 
 function findRawTextClose(lowerHtml: string, tagName: string, from: number): number {
+  // `<plaintext>` switches the tokenizer to PLAINTEXT, which has no way out:
+  // everything to end of input is character data and `</plaintext>` is text
+  // like anything else. Reporting no close is what keeps the scan from
+  // resuming in it.
+  if (tagName === 'plaintext') return -1;
   if (tagName === 'script') return findScriptClose(lowerHtml, from);
   const needle = `</${tagName}`;
   let at = lowerHtml.indexOf(needle, from);

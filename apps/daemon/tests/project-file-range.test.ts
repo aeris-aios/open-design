@@ -213,6 +213,16 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
           + '<main id="slot"></main></body></html>',
       ),
     );
+    // `<plaintext>` has no way out of PLAINTEXT state: everything after it is
+    // character data, `</plaintext>` included. A scan that honours the close
+    // tag resumes in text that the parser never treats as markup.
+    await writeFile(
+      path.join(dir, 'plaintext-tail.html'),
+      Buffer.from(
+        '<!doctype html><html><head></head><body><plaintext></body></plaintext>'
+          + '<main id="slot">real</main></body></html>',
+      ),
+    );
     // Foreign content is the one place `<![CDATA[ … ]]>` is real markup. The
     // `>` inside the section is still text, so a scan that ends declarations at
     // the next `>` resumes inside it and returns the `</body>` it holds. Inside
@@ -623,6 +633,20 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
     expect(html).toContain('<![CDATA[a > </body>]]>');
     expect(injectedAt).toBeGreaterThan(html.indexOf('<main id="slot">real</main>'));
     expect(injectedAt).toBeLessThan(html.lastIndexOf('</body>'));
+  });
+
+  it('appends the URL preview scroll bridge rather than splicing into plaintext', async () => {
+    const bridged = await fetch(`${rawUrl('plaintext-tail.html')}?odPreviewBridge=scroll`);
+    expect(bridged.status).toBe(200);
+    const html = await bridged.text();
+    const injectedAt = html.indexOf('data-od-url-scroll-bridge');
+    expect(injectedAt).toBeGreaterThan(-1);
+    // Everything after `<plaintext>` is character data — both `</body>` copies
+    // included — so there is no boundary to splice at and the bridge is
+    // appended, where it still runs. Splicing at either copy would bury it in
+    // inert text, so it would never run at all.
+    expect(injectedAt).toBeGreaterThan(html.lastIndexOf('</body>'));
+    expect(html).toContain('<plaintext></body></plaintext>');
   });
 
   it('injects the URL preview selection bridge only when requested', async () => {
