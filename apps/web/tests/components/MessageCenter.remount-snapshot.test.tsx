@@ -831,6 +831,139 @@ describe('MessageCenter remount snapshot', () => {
     expect(pulled[1]).toBe('account');
   });
 
+  it('does not stamp a pre-boundary login answer into component state', async () => {
+    // `resolveLoggedInForWrite` used to assign `loggedInRef`/`setLoggedIn`
+    // before returning, so the write landed BEFORE the caller's boundary check
+    // wherever that check sat. A status request issued while signed in then
+    // resolved after the sign-out, re-stamped `true` over the settled
+    // signed-out state, and the next sync read `wasAccount === true`, took the
+    // signed-out transition a second time, and wiped the read the signed-out
+    // user had just made.
+    const hold = { armed: false, release: null as (() => void) | null };
+    let loggedIn = true;
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/integrations/vela/status')) {
+        statusCalls += 1;
+        // The answer reflects the moment the request was ISSUED, which is the
+        // point: it returns describing an authority that has moved on.
+        const answeredWith = loggedIn;
+        if (hold.armed) {
+          hold.armed = false;
+          await new Promise<void>((resolve) => {
+            hold.release = resolve;
+          });
+        }
+        return Response.json({ loggedIn: answeredWith });
+      }
+      if (url.includes('/read') && init?.method === 'POST') {
+        return Response.json({ read: true, markedCount: 1 });
+      }
+      if (url.includes('/message-center') && url.includes('/messages')) {
+        messageCalls += 1;
+        return Response.json({ messages: [row('boundary-row', null)], nextCursor: null, unreadCount: 1 });
+      }
+      return Response.json({});
+    }));
+
+    const counts: number[] = [];
+    render(
+      <I18nProvider initial="zh-CN">
+        <MessageCenter onUnreadCountChange={(n) => counts.push(n)} />
+      </I18nProvider>,
+    );
+    await waitFor(() => expect(messageCalls).toBeGreaterThan(0));
+    fireEvent.click(screen.getByTestId('message-center-trigger'));
+    await new Promise((r) => setTimeout(r, 30));
+
+    // A read begins while signed in; its status call is held on the wire.
+    hold.armed = true;
+    fireEvent.click(await screen.findByRole('button', { name: /boundary-row/ }));
+    await waitFor(() => expect(hold.release).not.toBeNull());
+
+    // The user signs out and a signed-out sync settles first.
+    loggedIn = false;
+    advanceWorkspaceAccountGeneration('read-status-boundary');
+    let before = messageCalls;
+    document.dispatchEvent(new Event('visibilitychange'));
+    await waitFor(() => expect(messageCalls).toBeGreaterThan(before));
+    await waitFor(() => expect(counts[counts.length - 1]).toBe(1));
+
+    // The signed-out user reads it for themselves.
+    fireEvent.click(await screen.findByRole('button', { name: /boundary-row/ }));
+    await waitFor(() => expect(counts[counts.length - 1]).toBe(0));
+
+    // Only now does the pre-sign-out status answer land, carrying `true`.
+    hold.release!();
+    await new Promise((r) => setTimeout(r, 30));
+
+    // A later sync must not treat this host as a signed-in predecessor and
+    // discard that read.
+    before = messageCalls;
+    document.dispatchEvent(new Event('visibilitychange'));
+    await waitFor(() => expect(messageCalls).toBeGreaterThan(before));
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(counts[counts.length - 1]).toBe(0);
+  });
+
+  it('does not take the signed-out transition on a transient 503', async () => {
+    // `account` collapses `unavailable` into `false`, so the signed-out branch
+    // ran during a runtime outage and discarded `pendingReadIdsRef` — the
+    // optimistic reads the server projection has not caught up on. When the
+    // runtime returned before the projection did, the badge came back for a row
+    // the user had already read.
+    let mode: 'up' | 'down' = 'up';
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/integrations/vela/status')) {
+        statusCalls += 1;
+        if (mode === 'down') {
+          return new Response(JSON.stringify({ error: 'amr-runtime-unavailable' }), {
+            status: 503,
+            headers: { 'content-type': 'application/json' },
+          });
+        }
+        return Response.json({ loggedIn: true });
+      }
+      if (url.includes('/read') && init?.method === 'POST') {
+        return Response.json({ read: true, markedCount: 1 });
+      }
+      if (url.includes('/message-center') && url.includes('/messages')) {
+        messageCalls += 1;
+        // The projection never catches up for the length of this test.
+        return Response.json({ messages: [row('pending-ack', null)], nextCursor: null, unreadCount: 1 });
+      }
+      return Response.json({});
+    }));
+
+    const counts: number[] = [];
+    render(
+      <I18nProvider initial="zh-CN">
+        <MessageCenter onUnreadCountChange={(n) => counts.push(n)} />
+      </I18nProvider>,
+    );
+    await waitFor(() => expect(messageCalls).toBeGreaterThan(0));
+    fireEvent.click(screen.getByTestId('message-center-trigger'));
+    fireEvent.click(await screen.findByRole('button', { name: /pending-ack/ }));
+    await waitFor(() => expect(counts[counts.length - 1]).toBe(0));
+
+    // The runtime goes away and a refresh lands during the outage.
+    mode = 'down';
+    let before = messageCalls;
+    document.dispatchEvent(new Event('visibilitychange'));
+    await waitFor(() => expect(messageCalls).toBeGreaterThan(before));
+
+    // It comes back before the projection does; the optimistic read must have
+    // survived the outage.
+    mode = 'up';
+    before = messageCalls;
+    document.dispatchEvent(new Event('visibilitychange'));
+    await waitFor(() => expect(messageCalls).toBeGreaterThan(before));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(counts[counts.length - 1]).toBe(0);
+  });
+
   it('does not re-sync when it is remounted straight away', async () => {
     const first = await mountAndSettle();
     const afterFirst = { status: statusCalls, messages: messageCalls };

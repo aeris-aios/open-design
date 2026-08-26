@@ -201,7 +201,14 @@ export function MessageCenter({
     const wasAccount = loggedInRef.current;
     loggedInRef.current = account;
     setLoggedIn(account);
-    if (wasAccount && !account) {
+    // Only a real sign-out discards the signed-in overlay. `account` has
+    // already collapsed `unavailable` into `false`, and taking this branch on
+    // a 503 threw away `pendingReadIdsRef` — the optimistic reads the server
+    // projection has not caught up on — so when the runtime came back before
+    // the projection did, the badge returned for rows the user had read. The
+    // public rows are still committed and shown; it is only the transition
+    // that is withheld until someone actually answers.
+    if (wasAccount && authMode === 'signed-out') {
       readIdsRef.current = new Set();
       pendingReadIdsRef.current = new Set();
       setPriorityMessage(null);
@@ -269,12 +276,16 @@ export function MessageCenter({
     setSyncState('ready');
   }, [commitState, locale]);
 
-  const resolveLoggedInForWrite = useCallback(async () => {
-    const account = await isAmrLoggedIn();
-    loggedInRef.current = account;
-    setLoggedIn(account);
-    return account;
-  }, []);
+  /**
+   * Answers, and does not publish. It used to assign `loggedInRef` and call
+   * `setLoggedIn` before returning, which put the write BEFORE the caller's
+   * boundary check no matter where that check sat: a status request issued
+   * under the old account could resolve after a sign-out, stamp `true`, and
+   * only then be turned away. The next sync then read `wasAccount === true`,
+   * took the signed-out transition, and cleared read ids the new account had
+   * already recorded.
+   */
+  const resolveLoggedInForWrite = useCallback(async () => isAmrLoggedIn(), []);
 
   const retrySync = useCallback(() => {
     // Publish the run so a mount that lands mid-flight can wait for it instead
@@ -461,6 +472,7 @@ export function MessageCenter({
     // outranks it for the shared-cache clear below.
     const readWriteToken = issueSnapshotWriteToken();
     const account = await resolveLoggedInForWrite();
+    // Published only once the boundary is confirmed, below.
     if (options?.requireAccount && !account) {
       throw new Error('A signed-in account is required to acknowledge this announcement');
     }
@@ -473,6 +485,8 @@ export function MessageCenter({
     // same-id message read for whoever signed in — and the anonymous cache
     // had already been cleared on the way out of a signed-in session.
     if (currentWorkspaceAccountGeneration() !== issuedAccountGeneration) return;
+    loggedInRef.current = account;
+    setLoggedIn(account);
     const nextIds = new Set(readIdsRef.current).add(messageId);
     const nextMessages = messagesRef.current.map((item) => (item.id === messageId ? { ...item, readAt } : item));
     if (account) {
