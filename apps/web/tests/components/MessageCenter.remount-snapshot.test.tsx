@@ -1518,6 +1518,86 @@ describe('MessageCenter remount snapshot', () => {
     expect(window.localStorage.getItem('open-design.message-center.anonymous-messages.v1')).toBeNull();
   });
 
+  it('keeps a read that finishes after a language switch', async () => {
+    // `markRead` closes over the locale of the render the user clicked in. If
+    // the POST is still pending when the language changes, the new-locale sync
+    // publishes first and the read\'s delta was then rejected for a locale
+    // mismatch — so the shared snapshot still showed the row unread, and a
+    // remount inside the window brought the badge back. The message id is the
+    // same row in either language; only the ROWS are language-specific.
+    const post = { armed: false, release: null as (() => void) | null };
+    let pulls = 0;
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/integrations/vela/status')) {
+        statusCalls += 1;
+        return Response.json({ loggedIn: true });
+      }
+      if (url.includes('/read') && init?.method === 'POST') {
+        if (post.armed) {
+          post.armed = false;
+          await new Promise<void>((resolve) => { post.release = resolve; });
+        }
+        return Response.json({ read: true, markedCount: 1 });
+      }
+      if (url.includes('/message-center') && url.includes('/messages')) {
+        messageCalls += 1;
+        pulls += 1;
+        return Response.json({ messages: [row('bilingual-row', null)], nextCursor: null, unreadCount: 1 });
+      }
+      return Response.json({});
+    }));
+
+    function Harness() {
+      const { setLocale } = useI18n();
+      return (
+        <>
+          <button type="button" data-testid="to-en" onClick={() => setLocale('en')}>en</button>
+          <MessageCenter />
+        </>
+      );
+    }
+
+    render(
+      <I18nProvider initial="zh-CN">
+        <Harness />
+      </I18nProvider>,
+    );
+    await waitFor(() => expect(messageCalls).toBeGreaterThan(0));
+    fireEvent.click(screen.getByTestId('message-center-trigger'));
+    const target = await screen.findByRole('button', { name: /bilingual-row/ });
+    await new Promise((r) => setTimeout(r, 30));
+
+    // The read parks on its POST, then the language changes and the new-locale
+    // sync publishes a snapshot of its own.
+    post.armed = true;
+    fireEvent.click(target);
+    await waitFor(() => expect(post.release).not.toBeNull());
+    const before = messageCalls;
+    fireEvent.click(screen.getByTestId('to-en'));
+    await waitFor(() => expect(messageCalls).toBeGreaterThan(before));
+
+    // Only now does the read land, carrying the previous locale.
+    post.release!();
+    await new Promise((r) => setTimeout(r, 40));
+
+    // A remount inside the window must not resurrect the badge.
+    cleanup();
+    const counts: number[] = [];
+    render(
+      <I18nProvider initial="en">
+        <MessageCenter
+          hideTrigger
+          open={false}
+          onOpenChange={() => {}}
+          onUnreadCountChange={(n) => counts.push(n)}
+        />
+      </I18nProvider>,
+    );
+    await waitFor(() => expect(counts.length).toBeGreaterThan(0));
+    expect(counts[counts.length - 1]).toBe(0);
+  });
+
   it('does not re-sync when it is remounted straight away', async () => {
     const first = await mountAndSettle();
     const afterFirst = { status: statusCalls, messages: messageCalls };

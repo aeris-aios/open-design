@@ -446,8 +446,9 @@ export function MessageCenter({
   // successor kept the row unread until some later refresh, which is the very
   // thing a remount is supposed to preserve.
   useEffect(() => subscribeMessageCenterReads((delta) => {
+    // Account, yes; language, no. The id is the same row in either language, so
+    // a host rendering en must still honour a read recorded under zh-CN.
     if (delta.accountGeneration !== currentWorkspaceAccountGeneration()) return;
-    if (delta.locale !== locale) return;
     const rows = messagesRef.current;
     const target = rows.find((item) => item.id === delta.messageId);
     if (!target || target.readAt) return;
@@ -604,7 +605,6 @@ export function MessageCenter({
       messageId,
       readAt,
       accountGeneration: issuedAccountGeneration,
-      locale,
       account,
     });
     if (priorityMessage?.id === messageId) setPriorityMessage(null);

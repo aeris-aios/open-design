@@ -148,7 +148,6 @@ export interface MessageCenterReadDelta {
   messageId: string;
   readAt: string;
   accountGeneration: number;
-  locale: string;
   account: boolean;
 }
 
@@ -188,8 +187,14 @@ export function recordSnapshotRead(args: MessageCenterReadDelta): void {
   if (!snapshot) return;
   // Matched against the generation the read BEGAN under, so this can only ever
   // update a snapshot belonging to that account.
+  //
+  // Deliberately NOT matched on locale. A snapshot is language-specific because
+  // its ROWS are; a read is not — the message id is stable across languages, so
+  // "the user read this" stays true after a switch. Requiring the locales to
+  // agree meant a read begun in zh-CN and finishing after an en snapshot had
+  // published was dropped, and the next remount adopted rows that still showed
+  // it unread.
   if (snapshot.accountGeneration !== args.accountGeneration) return;
-  if (snapshot.locale !== args.locale) return;
   lastSyncSnapshot = {
     ...snapshot,
     messages: snapshot.messages.map((item) => (
