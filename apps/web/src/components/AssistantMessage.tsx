@@ -59,6 +59,7 @@ import {
   splitOnOdCards,
   stripCritiqueGrammar,
   stripTrailingOpenOdCard,
+  todoStatusIsUnfinished,
   type ChatSessionMode,
   type OdCard,
   type OdCardBrandBrowserAssist,
@@ -405,6 +406,13 @@ interface Props {
   nextUserContent?: string;
   onSubmitQuestionForm?: QuestionFormSubmitHandler;
   questionFormSubmitDisabled?: boolean;
+  /**
+   * 更早轮次已经出现过的那份清单(ChatPane 用 `previousTodosByAssistantMessageId` 算)。
+   *
+   * 它**只做认领**:本轮清单里出现同一条内容时标成召回(划线)。agent 没重发,
+   * `previous` 根本不会被查到 —— 这一轮天然一条都不显示,不需要额外规则。
+   */
+  previousTodos?: TodoItem[];
   onContinueRemainingTasks?: (todos: TodoItem[]) => void;
   onForkFromMessage?: () => void;
   forking?: boolean;
@@ -487,6 +495,12 @@ const ASSISTANT_MESSAGE_COMPARED_PROPS: Array<keyof Props> = [
   // refreshes the More → Design toolbox flyout's global resources.
   'nextStepSkills',
   'nextStepVariant',
+  // `previousTodos` is deliberately ABSENT. It is derived from the messages
+  // BEFORE this one, so ChatPane re-derives it (new array identity) on every
+  // streamed frame while its content stays fixed — comparing it would re-render
+  // all N messages per token. A settled earlier turn cannot change its task list
+  // without the whole message array being replaced, which moves `message`
+  // identity and re-renders this row anyway.
   // Live streaming tool input changes identity on every `tool_input_delta`.
   // ChatPane passes it only to the streaming row (undefined elsewhere), so
   // comparing it re-renders just that row as the card grows — without it the
@@ -563,6 +577,7 @@ function AssistantMessageImpl({
   nextUserContent,
   onSubmitQuestionForm,
   questionFormSubmitDisabled = false,
+  previousTodos,
   onContinueRemainingTasks,
   onForkFromMessage,
   forking = false,
@@ -659,6 +674,9 @@ function AssistantMessageImpl({
     const turn = buildTurnBlocks({
       events: displayEvents,
       runStatus: turnRunStatus,
+      // 只在本轮清单里出现过的条目上取值(`build-turn-blocks` 的 `previous.has`),
+      // 所以 agent 不重发时它是纯空转,不会凭空造出任何一行。
+      ...(previousTodos?.length ? { previousTodos } : {}),
       ...(nowMs != null ? { nowMs } : {}),
     });
     return {
@@ -666,7 +684,7 @@ function AssistantMessageImpl({
       /** 壳【外】的结论(D43)—— done 之后的那几段 */
       prose: turn.filter((b) => b.kind === 'prose').map((b) => (b as { text: string }).text),
     };
-  }, [displayEvents, turnRunStatus, nowMs]);
+  }, [displayEvents, turnRunStatus, nowMs, previousTodos]);
   /**
    * 执行记录里**真的有东西**。
    *
@@ -859,6 +877,22 @@ function AssistantMessageImpl({
   const hasTodoSnapshot = events.some(
     (event) => event.kind === "tool_use" && isTodoWriteToolName(event.name),
   );
+  /*
+   * 〔继续剩余任务〕这一次要送回去的是哪几条。
+   *
+   * 这是 **agent 不照做时唯一的用户出口**,所以它不能只认「本轮自己发过清单」——
+   * 上一轮留了活、这一轮 agent 判断跟用户新问题无关而没重发,恰恰是最需要这个出口
+   * 的那一刻,而那时本轮的 `unfinishedTodos` 是空的。
+   *
+   * 取值顺序因此是:本轮发过清单就以本轮为准(它是最新事实,可能已经把旧账做掉了);
+   * 本轮没发清单才回落到带过来的那份。它不依赖任何 agent 能力 —— 21 家从不发清单的
+   * runtime 走的就是第二条路。
+   */
+  const continuableTodos = streaming
+    ? []
+    : hasTodoSnapshot
+      ? unfinishedTodos
+      : (previousTodos ?? []).filter((todo) => todoStatusIsUnfinished(todo.status));
   const runSucceeded =
     !streaming &&
     !hasResultDeliveryFailure &&
@@ -907,9 +941,20 @@ function AssistantMessageImpl({
     !!message.endedAt ||
     !!usage ||
     unfinishedTodos.length > 0 ||
+    // 只剩「还欠着上一轮的活」这一条理由时,这一行也得出 —— 出口挂在它上面
+    continuableTodos.length > 0 ||
     hasEmptyResponse ||
     !!copyMarkdown ||
     canFork);
+  /*
+   * 回合状态行只在**最后一轮**出(产品裁决,见上面那段注释),所以这颗按钮也只在
+   * 最后一轮够得着。这不是疏漏:「还欠着活」是**当下**的状态,用户往下发了新的一轮
+   * 之后,该由新的那一轮来回答它还欠不欠。历史轮次要留入口得连同整行的门控一起改。
+   */
+  const continueRemaining =
+    onContinueRemainingTasks && continuableTodos.length > 0
+      ? () => onContinueRemainingTasks(continuableTodos)
+      : undefined;
   const canShowOpenDesignSubmission = !!onShareToOpenDesign && showFeedback && runSucceeded;
   const showOpenDesignSubmission =
     canShowOpenDesignSubmission && (!!isLast || shareToOpenDesignBusy);
@@ -1233,6 +1278,7 @@ function AssistantMessageImpl({
                    * 只在报错卡那一轮仍然让位:原因和下一步由报错卡说。
                    */
                   hideRunStatus: message.id === errorCardOwnerId,
+                  onContinueRemaining: continueRemaining,
                 }}
               />
             ) : (
@@ -1249,6 +1295,7 @@ function AssistantMessageImpl({
                 isLast={!!isLast}
                 createdAt={message.createdAt}
                 hideRunStatus={message.id === errorCardOwnerId}
+                onContinueRemaining={continueRemaining}
               />
             )}
           </div>
@@ -1775,6 +1822,11 @@ interface AssistantFooterProps {
   // When the turn has an execution disclosure, its run state lives at the top
   // of the answer. The footer keeps only actions so run state is not repeated.
   hideRunStatus?: boolean;
+  /**
+   * 〔继续剩余任务〕。**只有还欠着活的时候才传** —— 传了就画,没传就不画,
+   * 这一行不自己判断有没有未完成的活(镜像陈列页要能单独摆出两种形态)。
+   */
+  onContinueRemaining?: () => void;
   /** 这一轮的时间,靠右端(设计稿 15-1 的 `.tm`)。拿不到就不显示,不估算 */
   createdAt?: number;
 }
@@ -1795,6 +1847,7 @@ export function AssistantFooter({
   forceVisible = false,
   isLast = false,
   hideRunStatus = false,
+  onContinueRemaining,
   createdAt,
 }: AssistantFooterProps) {
   const t = useT();
@@ -1805,7 +1858,8 @@ export function AssistantFooter({
     !hasEmptyResponse &&
     !canceled &&
     !copyMarkdown &&
-    !onFork
+    !onFork &&
+    !onContinueRemaining
   )
     return null;
   return (
@@ -1849,8 +1903,26 @@ export function AssistantFooter({
           </span>
         </>
       ) : null}
-      {copyMarkdown || onFork || feedbackControls ? (
+      {copyMarkdown || onFork || feedbackControls || onContinueRemaining ? (
         <span className="assistant-footer-controls">
+          {/*
+            〔继续剩余任务〕排在最前面。
+            ------------------------------------------------------------
+            它和后面几个不是一类:复制 / 赞踩 / Fork 是「对这段回答做点什么」,
+            这一颗是**把没干完的活接着往下推**,是这一行状态词(「已停止,仍有未完成任务」)
+            的直接下一步 —— 挨着那句话才读得通。
+            它也是 agent 判断「这一轮跟旧账无关」时用户唯一的出口,不能被折进更里面。
+          */}
+          {onContinueRemaining ? (
+            <button
+              type="button"
+              className="assistant-copy-button"
+              data-testid="assistant-continue-remaining"
+              onClick={onContinueRemaining}
+            >
+              {t("assistant.continueRemaining")}
+            </button>
+          ) : null}
           {/* 稿子的顺序是 赞 → 踩 → 复制 → Fork:先是「这答案好不好」,再是「拿它做点什么」 */}
           {feedbackControls}
           {copyMarkdown ? <AssistantMarkdownCopyButton markdown={copyMarkdown} /> : null}

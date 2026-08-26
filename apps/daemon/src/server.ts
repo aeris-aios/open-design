@@ -20,6 +20,11 @@ import net from 'node:net';
 import { executionProfileFromStreamFormat, PLUGIN_SHARE_ACTION_PLUGIN_IDS } from '@open-design/contracts';
 import { isTodoWriteToolName, stopReasonIsTruncation, todoItemsFromTodoWriteInput } from '@open-design/contracts';
 import { renderDoneMarker } from '@open-design/contracts';
+import {
+  renderUnfinishedTodoRecall,
+  unfinishedTodosFromTodoWriteInput,
+  type RecalledTodo,
+} from '@open-design/contracts';
 import { renderNextStepMarkerExample } from '@open-design/contracts';
 import type {
   CollabCloudMemberDirectoryEntry,
@@ -644,6 +649,7 @@ import {
   insertScheduledRoutineRun,
   insertTemplate,
   latchConversationIntentSignals,
+  latestTodoWriteInputForConversation,
   findTemplateByNameAndProject,
   updateTemplate,
   listProjectsAwaitingInput,
@@ -1940,7 +1946,24 @@ function formAnswerTransitionForCurrentPrompt(currentPrompt) {
 export function composeChatUserRequestForAgent(
   message,
   currentPrompt,
-  options: { skipTranscript?: boolean } = {},
+  options: {
+    skipTranscript?: boolean;
+    /**
+     * Task-list items the conversation left open on an earlier turn (see
+     * `latestTodoWriteInputForConversation` + `unfinishedTodosFromTodoWriteInput`).
+     *
+     * This is the ONLY keyhole that reaches both branches below. A resumed
+     * session throws the rendered transcript away entirely (`skipTranscript`),
+     * so anything appended to the transcript is invisible to the 6 runtimes
+     * with native resume; anything put in the system prompt moves the cached
+     * stable prefix on every turn. The per-turn user body is the one place a
+     * per-turn fact can ride for free, and `formAnswerTransitionForCurrentPrompt`
+     * below is the existing precedent for synthesizing into it.
+     *
+     * Empty/omitted MUST leave the composed body byte-identical to before.
+     */
+    unfinishedTodosFromPreviousTurn?: readonly RecalledTodo[];
+  } = {},
 ) {
   // When the adapter resumes its own session, the
   // daemon-rendered `## user` / `## assistant` transcript is a duplicate
@@ -1962,19 +1985,26 @@ export function composeChatUserRequestForAgent(
       ? bodySource
       : '(No extra typed instruction.)';
   const transition = formAnswerTransitionForCurrentPrompt(currentPrompt);
-  if (!transition) return body;
-  if (skip) {
+  // Stated before the turn's own words, the same way the form-answer transition
+  // is: it is background the agent reads first, not something the user said.
+  const recall = renderUnfinishedTodoRecall(options.unfinishedTodosFromPreviousTurn);
+  const parts: string[] = [];
+  if (recall) parts.push(recall);
+  if (!transition) {
+    parts.push(body);
+  } else if (skip) {
     // The transition block already embeds the trimmed `currentPrompt`
     // (the submitted form answers). On the resume path `body` IS
     // `currentPrompt`, so appending it would ship the answers twice
     // (issue #6239); the transition alone carries the whole turn.
-    return transition;
+    parts.push(transition);
+  } else {
+    parts.push(transition, '## Full conversation transcript', body);
   }
-  return [
-    transition,
-    '## Full conversation transcript',
-    body,
-  ].join('\n\n');
+  // With no recall block this is byte-for-byte the pre-feature result in all
+  // three branches — a conversation with nothing outstanding cannot shift a
+  // single prompt byte (and so cannot move an upstream cache boundary).
+  return parts.join('\n\n');
 }
 
 export function createFinalizedMessageTelemetryReporter({
@@ -10490,6 +10520,31 @@ export async function startServer({
       invalidationReason: agentResumeCtx.invalidationReason,
     });
     publishNativeSessionRecoveryMetadata();
+    /*
+     * What the previous turn left open.
+     *
+     * Read here, on the path that already queries this conversation for the
+     * resume cursor, and handed to the agent as a fact it decides about — see
+     * `renderUnfinishedTodoRecall`. Every runtime gets it, not just the 6 with
+     * native resume: the 21 that start a fresh process each turn are exactly
+     * the ones with no other way to know. A read failure degrades to "nothing
+     * outstanding" rather than failing the run.
+     */
+    const unfinishedTodosFromPreviousTurn: RecalledTodo[] = run.conversationId
+      ? (() => {
+          try {
+            return unfinishedTodosFromTodoWriteInput(
+              latestTodoWriteInputForConversation(
+                db,
+                run.conversationId,
+                run.assistantMessageId ?? '',
+              ),
+            );
+          } catch {
+            return [];
+          }
+        })()
+      : [];
     const userRequestPrompt = composeChatUserRequestForAgent(
       message,
       currentPrompt,
@@ -10497,7 +10552,7 @@ export async function startServer({
       // existing session. A create turn still sends the full transcript so
       // a brand-new session (incl. first turn after another agent)
       // is seeded with prior context.
-      { skipTranscript: agentResumeCtx.isResuming },
+      { skipTranscript: agentResumeCtx.isResuming, unfinishedTodosFromPreviousTurn },
     );
     // The stable instruction slice (daemon prompt + tool contract + system
     // prompt = design system / skills / memory) is identical across turns of

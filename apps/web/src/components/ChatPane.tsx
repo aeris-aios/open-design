@@ -76,6 +76,7 @@ import {
   isTodoWriteToolName,
   latestTodoWriteInputFromMessages,
   parseTodoWriteInput,
+  previousTodosByAssistantMessageId,
   unfinishedTodosFromEvents,
 } from '../runtime/todos';
 import type { AppConfig, ChatAttachment, ChatCommentAttachment, ChatMessage, ChatMessageFeedbackChange, Conversation, DesignSystemSummary, PreviewComment, Project, ProjectFile, ProjectMetadata, SkillSummary } from '../types';
@@ -2954,6 +2955,8 @@ export function ChatPane({
                   nextStepSkills={skills}
                   nextStepVariant={nextStepVariant}
                   onForkFromMessage={viewerOnly ? undefined : onForkFromMessage}
+                  // 只读访客发不出这一轮,自然也接不了上一轮的活 —— 和 Fork 同一条门
+                  onContinueRemainingTasks={viewerOnly ? undefined : onContinueRemainingTasks}
                   onAssistantFeedback={onAssistantFeedback}
                   forkingMessageId={forkingMessageId}
                   t={t}
@@ -3788,6 +3791,7 @@ function ChatRows({
   nextStepSkills,
   nextStepVariant,
   onForkFromMessage,
+  onContinueRemainingTasks,
   onAssistantFeedback,
   forkingMessageId,
   t,
@@ -3851,6 +3855,10 @@ function ChatRows({
   nextStepSkills?: SkillSummary[];
   nextStepVariant?: NextStepActionsVariant;
   onForkFromMessage?: (message: ChatMessage) => void;
+  onContinueRemainingTasks?: (
+    assistantMessage: ChatMessage,
+    todos: TodoItem[],
+  ) => boolean | void | Promise<boolean | void>;
   onAssistantFeedback?: (message: ChatMessage, change: ChatMessageFeedbackChange) => void;
   forkingMessageId?: string | null;
   t: TranslateFn;
@@ -3915,6 +3923,18 @@ function ChatRows({
     }
     return byMessageId;
   }, [activeDesignSystem, activePluginSnapshot, messages, nextStepSkills]);
+  /**
+   * 每条助手消息「在它之前这场对话已经宣布过的那份清单」。
+   *
+   * 只有这一层拿得到别的轮次 —— `AssistantMessage` 只认识自己那一条消息,所以
+   * 跨轮召回的判定材料必须在这里算好递下去。它**不控制显示**:本轮清单里没有同名条目
+   * 时它一次都不会被查到(`build-turn-blocks` 的 `previous.has`),agent 不重发
+   * 就天然什么都不出。
+   */
+  const previousTodosByMessageId = useMemo(
+    () => previousTodosByAssistantMessageId(messages),
+    [messages],
+  );
   const assistantRoleByMessageId = useMemo(() => {
     const byMessageId = new Map<string, boolean>();
     let previousAssistantIdentity: string | null = null;
@@ -3993,6 +4013,12 @@ function ChatRows({
         isLast={m.id === lastAssistantId}
         errorCardOwnerId={errorCardOwnerId}
         nextUserContent={nextUserContentByAssistantId.get(m.id)}
+        previousTodos={previousTodosByMessageId.get(m.id)}
+        onContinueRemainingTasks={
+          onContinueRemainingTasks
+            ? (todos) => assistantCallbacksRef.current.onContinueRemainingTasks?.(m, todos)
+            : undefined
+        }
         suppressDirectionForms={hasActiveDesignSystem}
         hasDesignSystemContext={hasActiveDesignSystem || !!activeDesignSystem}
         onSubmitQuestionForm={
