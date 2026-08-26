@@ -495,6 +495,68 @@ describe('MessageCenter remount snapshot', () => {
     held.release?.();
   });
 
+  it('keeps the targeted announcement alive across a remount that adopts', async () => {
+    // The announcement is derived from the rows plus the signed-in state, both
+    // of which the snapshot carries — but adoption restored the rows only, so a
+    // project<->home remount inside the window dropped the required notice (and
+    // its pending signal) until the next network sync, which is also long
+    // enough for a lower-priority campaign to take the screen instead.
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/integrations/vela/status')) {
+        statusCalls += 1;
+        return Response.json({ loggedIn: true });
+      }
+      if (url.includes('/message-center') && url.includes('/messages')) {
+        messageCalls += 1;
+        return Response.json({
+          messages: [{
+            ...row('go-plan-sunset', null),
+            audienceType: 'targeted',
+            messageKey: 'go-plan-sunset-2026-08',
+          }],
+          nextCursor: null,
+          unreadCount: 1,
+        });
+      }
+      return Response.json({});
+    }));
+
+    const pending: boolean[] = [];
+    const first = render(
+      <I18nProvider initial="zh-CN">
+        <MessageCenter
+          hideTrigger
+          open={false}
+          onOpenChange={() => {}}
+          priorityAnnouncementActive
+          onPriorityAnnouncementPendingChange={(v) => pending.push(v)}
+        />
+      </I18nProvider>,
+    );
+    await waitFor(() => expect(pending[pending.length - 1]).toBe(true));
+    const afterFirst = messageCalls;
+    first.unmount();
+
+    const pendingAfter: boolean[] = [];
+    render(
+      <I18nProvider initial="zh-CN">
+        <MessageCenter
+          hideTrigger
+          open={false}
+          onOpenChange={() => {}}
+          priorityAnnouncementActive
+          onPriorityAnnouncementPendingChange={(v) => pendingAfter.push(v)}
+        />
+      </I18nProvider>,
+    );
+
+    // Adopted, not refetched — so this is asserting the snapshot path.
+    await waitFor(() => expect(pendingAfter.length).toBeGreaterThan(0));
+    expect(messageCalls).toBe(afterFirst);
+    expect(pendingAfter[pendingAfter.length - 1]).toBe(true);
+  });
+
   it('does not re-sync when it is remounted straight away', async () => {
     const first = await mountAndSettle();
     const afterFirst = { status: statusCalls, messages: messageCalls };

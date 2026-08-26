@@ -311,6 +311,13 @@ export function MessageCenter({
       setLoggedIn(snapshot.loggedIn);
       pendingReadIdsRef.current = new Set(snapshot.pendingReadIds);
       commitState(snapshot.messages, snapshot.readIds);
+      // Derived here for the same reason `sync` derives it: the announcement is
+      // a function of the rows and the signed-in state, both of which the
+      // snapshot carries. Adopting the rows without it dropped the required
+      // notice — and its `onPriorityAnnouncementPendingChange(true)` — for the
+      // length of the window on every project<->home remount, which is also
+      // long enough for a lower-priority campaign to take the screen instead.
+      setPriorityMessage(snapshot.loggedIn ? findGoPlanSunsetMessage(snapshot.messages) : null);
       setSyncState('ready');
     };
     const adopted = adoptableSnapshot(locale);
