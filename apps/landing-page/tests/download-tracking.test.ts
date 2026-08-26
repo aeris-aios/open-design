@@ -91,6 +91,23 @@ test('posthog: page_view fires on load', () => {
   assert.equal(pv!.props.page_name, 'landing_home');
 });
 
+test('posthog: locale redirect handoff corrects referrer before the automatic pageview', () => {
+  const html = posthogHeadHtml('phc_test_key', 'https://us.i.posthog.com');
+  const handoffRead = html.indexOf("sessionStorage.getItem('od.localeAttribution')");
+  const init = html.indexOf('posthog.init(');
+
+  assert.ok(handoffRead > 0 && handoffRead < init, 'handoff must be read before PostHog init');
+  assert.match(html, /before_send: function \(event\)/);
+  assert.match(html, /event\.properties\.\$referrer = odLocaleAttribution\.referrer/);
+  assert.match(html, /event\.properties\.\$referring_domain = odLocaleAttribution\.referringDomain/);
+  assert.match(html, /event\.properties\.locale_redirect_reason/);
+  assert.match(html, /event\.properties\.original_landing_url/);
+  assert.match(html, /event\.properties\['original_' \+ odAttributionKey\]/);
+  assert.match(html, /posthog\.register_for_session\(odSessionAttribution\)/);
+  assert.match(html, /locale_switch_manual: true/);
+  assert.match(html, /locale_from: localeNow\(\)/);
+});
+
 test('posthog: hero direct download (rewritten to .dmg) → direct + placement=hero', () => {
   const { captures, click } = runPosthogTracker();
   // After the enhancer rewrites the hero CTA, its href is a direct .dmg asset.
