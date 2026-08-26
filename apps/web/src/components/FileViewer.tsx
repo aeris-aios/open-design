@@ -14667,8 +14667,11 @@ function HtmlViewer({
         return;
       }
       const activationFileIdentity = previewFileIdentityRef.current;
+      const activationFrame = previewRuntimeConvergence
+        ? iframeRef.current
+        : urlPreviewIframeRef.current;
       manualEditActivationPendingRef.current = true;
-      void capturePreviewRuntimeState(urlPreviewIframeRef.current)
+      void capturePreviewRuntimeState(activationFrame)
         .then((state) => {
           if (previewFileIdentityRef.current !== activationFileIdentity) return;
           if (state) previewRuntimeStateRef.current = state;

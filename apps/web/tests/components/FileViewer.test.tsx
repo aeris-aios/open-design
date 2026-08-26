@@ -8524,7 +8524,7 @@ describe('FileViewer tweaks toolbar', () => {
       });
     };
 
-    signal('od:preview:hello', [...baseCapabilities, 'comment']);
+    signal('od:preview:hello', [...baseCapabilities, 'comment', 'edit']);
     signal('od:preview:capabilities-applied', baseCapabilities);
     signal('od:preview:visible-paint', baseCapabilities);
     expect(screen.getByTestId('preview-runtime-frame-current')).toBe(frame);
@@ -8566,6 +8566,30 @@ describe('FileViewer tweaks toolbar', () => {
       type: 'od:comment-mode',
       enabled: true,
       mode: 'inspect',
+    }, '*');
+
+    fireEvent.click(screen.getByTestId('board-mode-toggle'));
+    signal('od:preview:capabilities-applied', baseCapabilities);
+    postMessage.mockClear();
+    fireEvent.click(screen.getByTestId('manual-edit-mode-toggle'));
+    await waitFor(() => {
+      expect(screen.getByTestId('preview-runtime-frame-current')).toBe(frame);
+      expect(frame.getAttribute('src')).toBe(initialSrc);
+      expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({
+        type: 'od:preview:set-capabilities',
+        enabledCapabilities: [...baseCapabilities, 'edit'],
+      }), '*');
+    });
+    expect(postMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'od-edit-mode' }),
+      '*',
+    );
+
+    signal('od:preview:capabilities-applied', [...baseCapabilities, 'edit']);
+    expect(frame.getAttribute('src')).toBe(initialSrc);
+    expect(postMessage).toHaveBeenCalledWith({
+      type: 'od-edit-mode',
+      enabled: true,
     }, '*');
 
     const mintCount = fetchMock.mock.calls.filter(([input]) => (
