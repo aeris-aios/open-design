@@ -130,6 +130,45 @@ describe('PreviewRuntimeTransport', () => {
     }, '*');
   });
 
+  it('does not replay semantically unchanged host state from fresh object identities', () => {
+    const viewerState = { ...defaultViewerState, edit: true };
+    const currentModeState = () => bridgeModeState({
+      commentActiveTarget: { elementId: 'hero', selector: '#hero' },
+      editEnabled: true,
+      selectedEditTargetId: 'hero',
+      editLiveStyles: [{ id: 'hero', styles: { color: 'red' }, version: 4 }],
+    });
+    const { rerender } = render(view({ viewerState, modeState: currentModeState() }));
+    const frame = screen.getByTestId('preview-runtime-frame-standby') as HTMLIFrameElement;
+    const postMessage = vi.spyOn(frame.contentWindow!, 'postMessage');
+    const capabilities: PreviewRuntimeCapability[] = ['observability', 'comment', 'edit'];
+    signal(frame, 'od:preview:hello', capabilities);
+    signal(frame, 'od:preview:capabilities-applied', capabilities);
+    signal(frame, 'od:preview:visible-paint', capabilities);
+
+    postMessage.mockClear();
+    rerender(view({ viewerState, modeState: currentModeState() }));
+
+    expect(postMessage).not.toHaveBeenCalled();
+
+    rerender(view({
+      viewerState,
+      modeState: bridgeModeState({
+        commentActiveTarget: { elementId: 'hero', selector: '#hero' },
+        editEnabled: true,
+        selectedEditTargetId: 'hero',
+        editLiveStyles: [{ id: 'hero', styles: { color: 'blue' }, version: 5 }],
+      }),
+    }));
+
+    expect(postMessage).toHaveBeenCalledWith({
+      type: 'od-edit-preview-style',
+      id: 'hero',
+      styles: { color: 'blue' },
+      version: 5,
+    }, '*');
+  });
+
   it('replays live edit state after enabling edit without replacing the frame', () => {
     const { rerender } = render(view({
       viewerState: { ...defaultViewerState, comment: false },

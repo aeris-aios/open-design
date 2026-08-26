@@ -62,6 +62,11 @@ export function PreviewRuntimeTransport({
   );
   const modeStateRef = useRef(bridgeModeState);
   const callbacksRef = useRef({ onCurrentFrameChange, onCapabilitiesApplied });
+  const commentTargetElementId = bridgeModeState.commentActiveTarget?.elementId ?? null;
+  const commentTargetSelector = bridgeModeState.commentActiveTarget?.selector ?? null;
+  const editLiveStylesRevision = JSON.stringify(
+    bridgeModeState.editLiveStyles.map(({ id, version }) => [id, version]),
+  );
   modeStateRef.current = bridgeModeState;
   callbacksRef.current = { onCurrentFrameChange, onCapabilitiesApplied };
 
@@ -102,10 +107,11 @@ export function PreviewRuntimeTransport({
     bridgeModeState.active,
     bridgeModeState.commentEnabled,
     bridgeModeState.commentMode,
-    bridgeModeState.commentActiveTarget,
+    commentTargetElementId,
+    commentTargetSelector,
     bridgeModeState.deckSlideIndex,
     bridgeModeState.editEnabled,
-    bridgeModeState.editLiveStyles,
+    editLiveStylesRevision,
     bridgeModeState.inspectEnabled,
     bridgeModeState.inspectOverrides,
     bridgeModeState.selectedEditTargetId,
