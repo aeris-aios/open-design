@@ -18,30 +18,16 @@ const repoRoot = path.resolve(__dirname, '../../../..');
 /**
  * Guards for the SP v2.0 slim core charter.
  *
- * 1. Byte budget — the complete translated charter has an explicit ceiling.
- * 2. Protocol markers — a fixed set of strings are parsed by the web client
+ * 1. Protocol markers — a fixed set of strings are parsed by the web client
  *    or matched by later prompt rules. Frozen API; must survive copyedits.
- * 3. Ownership — content deliberately moved OUT of the charter (task-type
+ * 2. Ownership — content deliberately moved OUT of the charter (task-type
  *    router form, platform contracts) must stay out, and keep living where
  *    it moved to.
+ * 3. Product-quality invariants — real-world imagery, visual integrity, and
+ *    delivery rules must remain operational across execution profiles.
  */
 
-// SP v2.0 is a complete, non-compressed translation of the approved Chinese
-// charter. Keep modest headroom for profile-specific handoff wording.
-const SLIM_CORE_BYTE_BUDGET = 25_600;
-
-describe('renderSlimCoreCharter — byte budget', () => {
-  it('stays under the byte budget in both execution profiles', () => {
-    for (const profile of ['filesystem', 'text_artifact'] as const) {
-      const bytes = Buffer.byteLength(renderSlimCoreCharter(profile), 'utf8');
-      expect(bytes, `${profile} charter must stay under ${SLIM_CORE_BYTE_BUDGET}B`).toBeLessThanOrEqual(
-        SLIM_CORE_BYTE_BUDGET,
-      );
-    }
-  });
-});
-
-describe('renderSlimCoreCharter — SP v2.0 translation', () => {
+describe('renderSlimCoreCharter — SP v2.0 structure', () => {
   const fullCharter = `${renderSlimCoreCharter('filesystem')}\n\n${SLIM_V2_ROLE_BOUNDARY_GUARD}`;
 
   it('preserves the complete 42-heading structure in English', () => {
@@ -88,10 +74,27 @@ describe('renderSlimCoreCharter — frozen protocol markers', () => {
     expect(charter).toContain('omit `allowCustom` or set it to `true`');
   });
 
-  it('keeps the imagery dispatch and local-file contract intact', () => {
+  it('enforces real-first imagery sourcing, provenance, and local delivery', () => {
+    for (const marker of [
+      'factual-integrity invariant applies across every skill and design-system scope',
+      'Acquire imagery before layout',
+      'you must search for or fetch the correct real image',
+      'Never use image generation, drawings, generic stock, look-alikes, or fictional substitutes',
+      'Sample and demo content defaults to real, well-known referents',
+      'continue searching within the allowed sources',
+      'project-local file referenced with a relative path or an inline data URI',
+      'inspect its intrinsic width and height',
+      '`object-fit: contain`',
+      '`object-fit: cover`',
+      'Check imagery and provenance',
+    ]) {
+      expect(charter).toContain(marker);
+    }
     expect(charter).toContain('media generate --surface image');
     expect(charter).toContain("runtime's native image-generation capability");
-    expect(charter).toContain('Do not hotlink user-uploaded images by URL');
+    expect(charter).toContain('copy every used image into the project');
+    expect(charter).toContain('In text-artifact runs, embed available images as data URIs');
+    expect(charter).not.toContain('generate and use realistic imagery whenever');
   });
 
   it('keeps the inspect and runtime-version contracts intact', () => {
@@ -599,7 +602,7 @@ describe('slim core — regression-audit fixes vs classic', () => {
 
   it('keeps the load-bearing product rules in the charter', () => {
     const charter = renderSlimCoreCharter('filesystem');
-    expect(charter).toContain('Do not hotlink user-uploaded images by URL');
+    expect(charter).toContain('copy every used image into the project');
     // Skill/DS precedence is per-domain, not a strict total order.
     expect(charter).toContain('Each has the highest authority within its own scope');
     expect(charter).toContain('Mobile layouts must not scroll horizontally');

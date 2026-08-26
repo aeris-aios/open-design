@@ -39,7 +39,7 @@ Use when the page leads with a thesis sentence (most landings, most marketing pa
 
 ## Layout 2 — Hero, split (text + visual)
 
-Use when there is a real product visual (product UI, screenshot, photograph). Left half copy, right half a `ph-img` placeholder the user replaces.
+Use when there is a real product visual (product UI, screenshot, photograph). Left half copy, right half a `ph-img` scaffold. During Step 3, replace the scaffold with the acquired project-local image; retain it only as a labeled fallback when acquisition genuinely fails.
 
 ```html
 <section class="section" data-od-id="hero-split">

@@ -69,7 +69,7 @@ State the chosen list in one sentence to the user *before* writing — they can 
 
 ### Step 3 — Paste and fill
 
-For each chosen layout, copy the `<section>` block from `layouts.md` into `<main id="content">` of the project HTML. Replace bracketed `[REPLACE]` strings with real, specific copy from the user's brief. **No filler** — if a slot is empty, the section is the wrong choice; pick a different layout.
+For each chosen layout, copy the `<section>` block from `layouts.md` into `<main id="content">` of the project HTML. Replace bracketed `[REPLACE]` strings with real, specific copy from the user's brief. **No filler** — if a slot is empty, the section is the wrong choice; pick a different layout. Treat every `.ph-img` block as layout scaffolding and replace it when the section requires imagery, following the real-first rule below before self-checking.
 
 ### Step 4 — Self-check
 
@@ -83,7 +83,7 @@ Write the completed HTML to the canonical project file, normally `index.html`. T
 
 - **Single accent, used at most twice per screen.** Eyebrow + primary CTA is the default budget.
 - **Display font is serif** (Iowan Old Style / Charter / Georgia in the seed). Sans for body. Mono for numerics, captions, eyebrows.
-- **Image placeholders, not external URLs.** Use the `.ph-img` class — never link to a stock photo CDN.
+- **Real imagery, never remote hotlinks.** `.ph-img` is temporary layout scaffolding, not the default final treatment. For a named real-world referent, search/fetch the correct real image, copy it into the project, and reference it relatively; never generate, draw, or invent a substitute. For illustrative or atmospheric subjects, prefer suitable fetched real photography and use image generation only as a fallback. If no compliant asset can be acquired, keep an intentional labeled `.ph-img` and disclose the limitation in the delivery summary.
 - **Mobile reflow already works** via the seed's media query at 920px. Don't break it by adding fixed widths.
 - **`data-od-id` on every `<section>`** so comment mode can target it.
 
