@@ -22,6 +22,7 @@ import {
 import { GoPlanSunsetDialog } from './GoPlanSunsetDialog';
 import {
   adoptableSnapshot,
+  currentSnapshotWriteToken,
   issueSnapshotWriteToken,
   joinableSync,
   ownsLatestSnapshotWrite,
@@ -533,9 +534,13 @@ export function MessageCenter({
     // the new account has already published. Captured BEFORE the await, so the
     // announcement contract below still reports its own failure first.
     const issuedAccountGeneration = currentWorkspaceAccountGeneration();
-    // Claimed before the awaits so a sync issued while this read is in flight
-    // outranks it for the shared-cache clear below.
-    const readWriteToken = issueSnapshotWriteToken();
+    // OBSERVED, not claimed. The question below is only "has a sync been issued
+    // since this read began", and claiming a slot to answer it made every early
+    // return — a missing row, an already-read row, a moved boundary, an
+    // unavailable runtime — bump the counter for nothing, which strips a
+    // concurrent sync of its right to publish and costs the next host swap the
+    // very fetch this module exists to avoid.
+    const writeTokenAtStart = currentSnapshotWriteToken();
     const writeAuthMode = await resolveAuthModeForWrite();
     // `unavailable` is not an answer about the user, and every branch below
     // needs one: the account path would skip its POST, and the anonymous path
@@ -578,7 +583,7 @@ export function MessageCenter({
       // after a sign-out, and clearing then destroys read ids a signed-out run
       // has since persisted. The token claimed at entry loses to any sync
       // issued since, which is the run that knows better.
-      if (ownsLatestSnapshotWrite(readWriteToken)) clearAnonymousState(window.localStorage);
+      if (currentSnapshotWriteToken() === writeTokenAtStart) clearAnonymousState(window.localStorage);
     }
     invalidateSyncResponses();
     // Component state only — the durable anonymous cache is shared, so it takes

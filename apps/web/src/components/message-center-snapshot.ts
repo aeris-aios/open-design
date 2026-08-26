@@ -88,6 +88,18 @@ export function issueSnapshotWriteToken(): number {
   return snapshotWriteToken;
 }
 
+/**
+ * Read the counter WITHOUT claiming a slot.
+ *
+ * A caller that only needs to know "has anything been issued since I started"
+ * must not consume a token to find out: every early return then bumps the
+ * counter for nothing, and a concurrent sync loses its right to publish — which
+ * costs exactly the redundant fetch this module exists to prevent.
+ */
+export function currentSnapshotWriteToken(): number {
+  return snapshotWriteToken;
+}
+
 /** Whether the run holding `token` is still the newest issued one. */
 export function ownsLatestSnapshotWrite(token: number): boolean {
   return token === snapshotWriteToken;

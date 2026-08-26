@@ -15,7 +15,10 @@ import { flushSync } from 'react-dom';
 import { I18nProvider, useI18n } from '../../src/i18n';
 import { MessageCenter } from '../../src/components/MessageCenter';
 import { recordAnonymousRead } from '../../src/message-center-client';
-import { resetMessageCenterSnapshot } from '../../src/components/message-center-snapshot';
+import {
+  currentSnapshotWriteToken,
+  resetMessageCenterSnapshot,
+} from '../../src/components/message-center-snapshot';
 import { advanceWorkspaceAccountGeneration } from '../../src/collab/workspace-identity';
 
 let statusCalls = 0;
@@ -1371,6 +1374,62 @@ describe('MessageCenter remount snapshot', () => {
     fireEvent.click(screen.getByRole('button', { name: /我知道了/ }));
     await waitFor(() => expect(readPosts).toBe(1));
     await waitFor(() => expect(pending[pending.length - 1]).toBe(false));
+  });
+
+  it('does not spend a publication slot on a click it cannot act on', async () => {
+    // `markRead` CLAIMED a slot before it knew whether it could act, so an
+    // `unavailable` click returned having done nothing while the counter had
+    // moved — stripping a sync already waiting on its pull of the right to
+    // publish, and costing the next host swap the fetch this module exists to
+    // avoid.
+    //
+    // Asserted as the property rather than the downstream fetch on purpose: to
+    // observe the consequence, the parked sync would have to be the ONLY
+    // publisher, and a row can only be clicked once some earlier sync has
+    // settled — which has already published a snapshot the remount would adopt
+    // regardless. The property is what the guard is; the fetch follows from it.
+    let statusMode: 'up' | 'down' = 'up';
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/integrations/vela/status')) {
+        statusCalls += 1;
+        if (statusMode === 'down') {
+          return new Response(JSON.stringify({ error: 'amr-runtime-unavailable' }), {
+            status: 503,
+            headers: { 'content-type': 'application/json' },
+          });
+        }
+        return Response.json({ loggedIn: false });
+      }
+      if (url.includes('/message-center') && url.includes('/messages')) {
+        messageCalls += 1;
+        return Response.json({ messages: [row('slot-row', null)], nextCursor: null, unreadCount: 1 });
+      }
+      return Response.json({});
+    }));
+
+    render(
+      <I18nProvider initial="zh-CN">
+        <MessageCenter />
+      </I18nProvider>,
+    );
+    await waitFor(() => expect(messageCalls).toBeGreaterThan(0));
+    fireEvent.click(screen.getByTestId('message-center-trigger'));
+    const target = await screen.findByRole('button', { name: /slot-row/ });
+    await new Promise((r) => setTimeout(r, 30));
+
+    // The runtime drops; the click can do nothing.
+    statusMode = 'down';
+    const tokenBefore = currentSnapshotWriteToken();
+    fireEvent.click(target);
+    await new Promise((r) => setTimeout(r, 40));
+
+    expect(currentSnapshotWriteToken()).toBe(tokenBefore);
+
+    // And a click it CAN act on still supersedes earlier pulls, as it must.
+    statusMode = 'up';
+    fireEvent.click(screen.getByRole('button', { name: /slot-row/ }));
+    await waitFor(() => expect(currentSnapshotWriteToken()).toBeGreaterThan(tokenBefore));
   });
 
   it('does not re-sync when it is remounted straight away', async () => {
