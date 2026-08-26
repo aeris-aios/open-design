@@ -116,6 +116,30 @@ export interface BackgroundPullSizeGuardDeps {
   onError?: (error: unknown) => void;
 }
 
+/**
+ * How much this process has let the BACKGROUND lanes materialize. Reported
+ * unconditionally — including while the cumulative ceiling is disabled, which
+ * is the shipping default — because choosing that ceiling is a capacity
+ * decision that needs real per-launch volume, and a counter that only runs
+ * once the ceiling is already set can never supply it.
+ */
+export interface BackgroundPullVolume {
+  /** Entries cleared for background materialization, summed over every
+   *  allowed decision that carried a count. */
+  entries: number;
+  /** Allowed decisions that carried a count — pairs with `entries` to give a
+   *  per-project mean without a second reading. */
+  countedProjects: number;
+  /**
+   * Allowed decisions whose version carried NO count (old server output, so
+   * the guard fails open). Reported separately because a small `entries` is
+   * otherwise ambiguous: a fleet that counts nothing looks identical to a
+   * fleet that pulls nothing, and reading the first as the second would set
+   * the ceiling far below what real teams need.
+   */
+  uncountedProjects: number;
+}
+
 export interface BackgroundPullSizeGuard {
   /**
    * Decide whether the background lane may materialize this exact
@@ -126,6 +150,9 @@ export interface BackgroundPullSizeGuard {
     scope: BackgroundPullSizeGuardScope,
     version: number,
   ): Promise<'pull' | 'defer'>;
+  /** Snapshot of what this process has cleared so far. Read-only; callers
+   *  must never mutate the returned object. */
+  volume(): BackgroundPullVolume;
 }
 
 export function createBackgroundPullSizeGuard(
@@ -146,8 +173,16 @@ export function createBackgroundPullSizeGuard(
   const deferredVersions = new Map<string, number>();
   /** Entries already cleared for background materialization this process. Only
    *  counted for decisions this guard actually allowed, so a project deferred
-   *  for size never consumes budget it did not spend. */
+   *  for size never consumes budget it did not spend.
+   *
+   *  Accumulated whether or not a ceiling is set: with `maxCumulativeEntries`
+   *  unset this number enforces nothing and exists purely to be reported, so
+   *  the ceiling can be chosen from what real launches actually pull. */
   let cumulativeEntries = 0;
+  /** Allowed decisions that carried a count, and those that did not. See
+   *  `BackgroundPullVolume` for why the two must stay distinguishable. */
+  let countedProjects = 0;
+  let uncountedProjects = 0;
   /** Versions deferred because the session budget was spent. Kept apart from
    *  `deferredVersions` (which means "permanently too big") so the two reasons
    *  stay distinguishable, while both avoid re-probing. */
@@ -181,6 +216,7 @@ export function createBackgroundPullSizeGuard(
     }
     if (inspection.kind === 'uncounted') {
       allowedVersions.set(key, version);
+      uncountedProjects += 1;
       return 'pull';
     }
     // Per-project ceiling FIRST. Exceeding it is a permanent property of the
@@ -234,7 +270,12 @@ export function createBackgroundPullSizeGuard(
       return 'defer';
     }
     allowedVersions.set(key, version);
-    if (cumulativeLimit > 0) cumulativeEntries += inspection.entryCount;
+    // Unconditional: `cumulativeLimit` decides whether this number STOPS a
+    // pull, never whether it is measured. Gating the counter on the ceiling
+    // meant every default-configured client reported zero, which left the
+    // ceiling unchoosable for exactly as long as it stayed unset.
+    cumulativeEntries += inspection.entryCount;
+    countedProjects += 1;
     return 'pull';
   };
 
@@ -266,6 +307,13 @@ export function createBackgroundPullSizeGuard(
       };
       void probe.then(clear, clear);
       return probe;
+    },
+    volume() {
+      return {
+        entries: cumulativeEntries,
+        countedProjects,
+        uncountedProjects,
+      };
     },
   };
 }

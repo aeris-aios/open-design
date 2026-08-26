@@ -3334,6 +3334,7 @@ describe('parseAmrEntryAnalyticsPayload — entry sources added in this PR', () 
     const cases: Array<[string, string]> = [
       ['settings_amr_upgrade', 'settings'],
       ['inline_amr_upgrade', 'chat_panel'],
+      ['go_plan_sunset_modal', 'home'],
       ['deepseek_unpaid_modal', 'home'],
       ['deepseek_workbench_badge', 'home'],
       ['deepseek_model_switcher_upgrade', 'chat_panel'],
@@ -3380,6 +3381,18 @@ describe('parseAmrEntryAnalyticsPayload — entry sources added in this PR', () 
     expect(parsed).toMatchObject({
       campaignId: 'deepseek_v4_pro',
       conversionSource: 'deepseek_workbench_badge',
+    });
+  });
+
+  it('accepts the targeted Go Plan sunset campaign dimensions', () => {
+    const parsed = parseAmrEntryAnalyticsPayload({
+      ...payloadFor('go_plan_sunset_modal', 'home'),
+      campaignId: 'go_plan_sunset_202608',
+      conversionSource: 'go_plan_sunset_modal',
+    });
+    expect(parsed).toMatchObject({
+      campaignId: 'go_plan_sunset_202608',
+      conversionSource: 'go_plan_sunset_modal',
     });
   });
 
