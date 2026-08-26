@@ -89,7 +89,7 @@ describe('AMR terminal report delivery', () => {
     const { db, store, now } = fixture();
     store.enqueue({ runId: 'run-1', outcome: 'canceled', terminalAt: now });
     const run = vi.fn(async (args: string[]) => JSON.stringify({
-      runId: args[3], outcome: args[5], terminalAt: args[7], replay: false,
+      runId: args[3], outcome: args[5], terminalAt: args[7], recorded: true,
     }));
     const service = createAmrTerminalReportDeliveryService({ store, run, now: () => now });
 
@@ -103,7 +103,7 @@ describe('AMR terminal report delivery', () => {
     }));
     expect(store.diagnostics(now)).toMatchObject({ pending: 0, delivered: 1 });
     expect(db.prepare('SELECT receipt FROM amr_terminal_report_outbox WHERE run_id = ?').get('run-1'))
-      .toMatchObject({ receipt: expect.stringContaining('"replay":false') });
+      .toMatchObject({ receipt: expect.stringContaining('"recorded":true') });
   });
 
   it('persists exponential backoff and resumes unchanged after reconstruction', async () => {
@@ -120,7 +120,7 @@ describe('AMR terminal report delivery', () => {
     const reopened = openDatabase(tempDir!);
     const recovered = createAmrTerminalReportOutboxStore(reopened, () => now + 1_000);
     const run = vi.fn(async (args: string[], _options?: VelaCommandOptions) => JSON.stringify({
-      runId: args[3], outcome: args[5], terminalAt: args[7], replay: true,
+      runId: args[3], outcome: args[5], terminalAt: args[7], recorded: false,
     }));
     await createAmrTerminalReportDeliveryService({
       store: recovered, run, now: () => now + 1_000,
@@ -306,7 +306,7 @@ describe('AMR terminal report delivery', () => {
         runId: 'secret-receipt',
         outcome: 'canceled',
         terminalAt: new Date(now).toISOString(),
-        replay: true,
+        recorded: false,
         token: secret,
         raw: { prompt: 'private' },
       })),
@@ -319,16 +319,51 @@ describe('AMR terminal report delivery', () => {
       runId: 'secret-receipt',
       outcome: 'canceled',
       terminalAt: new Date(now).toISOString(),
-      replay: true,
+      recorded: false,
     });
     expect(delivered.receipt).not.toContain(secret);
     expect(delivered.receipt).not.toContain('private');
   });
 
   it.each([
+    ['2027-01-15T08:00:00.120Z', '2027-01-15T08:00:00.12Z'],
+    ['2027-01-15T08:00:00.100Z', '2027-01-15T08:00:00.1Z'],
+    ['2027-01-15T08:00:00.000Z', '2027-01-15T08:00:00Z'],
+  ])('accepts equivalent Go RFC3339 timestamps: %s -> %s', async (requested, returned) => {
+    const now = Date.parse(requested);
+    const { db, store } = fixture(now);
+    store.enqueue({ runId: 'equivalent-time', outcome: 'failed', terminalAt: now });
+    await createAmrTerminalReportDeliveryService({
+      store,
+      run: vi.fn().mockResolvedValue(JSON.stringify({
+        runId: 'equivalent-time',
+        outcome: 'failed',
+        terminalAt: returned,
+        recorded: true,
+      })),
+      now: () => now,
+    }).processDue();
+
+    expect(store.diagnostics(now)).toMatchObject({ delivered: 1, terminalFailed: 0 });
+    const row = db.prepare(`
+      SELECT receipt FROM amr_terminal_report_outbox WHERE run_id = 'equivalent-time'
+    `).get() as { receipt: string };
+    expect(JSON.parse(row.receipt)).toEqual({
+      runId: 'equivalent-time',
+      outcome: 'failed',
+      terminalAt: new Date(now).toISOString(),
+      recorded: true,
+    });
+  });
+
+  it.each([
     ['not json'],
-    [JSON.stringify({ runId: 'other', outcome: 'failed', terminalAt: new Date(1_800_000_000_000).toISOString() })],
-    [JSON.stringify({ runId: 'receipt-run', outcome: 'canceled', terminalAt: new Date(1_800_000_000_000).toISOString() })],
+    [JSON.stringify({ runId: 'other', outcome: 'failed', terminalAt: new Date(1_800_000_000_000).toISOString(), recorded: true })],
+    [JSON.stringify({ runId: 'receipt-run', outcome: 'canceled', terminalAt: new Date(1_800_000_000_000).toISOString(), recorded: true })],
+    [JSON.stringify({ runId: 'receipt-run', outcome: 'failed', terminalAt: new Date(1_800_000_000_000).toISOString() })],
+    [JSON.stringify({ runId: 'receipt-run', outcome: 'failed', terminalAt: new Date(1_800_000_000_000).toISOString(), recorded: 'true' })],
+    [JSON.stringify({ runId: 'receipt-run', outcome: 'failed', terminalAt: new Date(1_800_000_000_000).toISOString(), recorded: 1 })],
+    [JSON.stringify({ runId: 'receipt-run', outcome: 'failed', terminalAt: new Date(1_800_000_000_000).toISOString(), recorded: null })],
   ])('terminal-fails malformed or mismatched receipt %#', async (receipt) => {
     const { store, now } = fixture();
     store.enqueue({ runId: 'receipt-run', outcome: 'failed', terminalAt: now });

@@ -44,7 +44,7 @@ describe('canonical Vela terminal command integration', () => {
     };
 
     await expect(runVelaCommand(args, common)).resolves.toBe(
-      '{"runId":"integration-run","outcome":"failed","terminalAt":"2026-08-05T01:02:03.456Z","replay":false}\n',
+      '{"runId":"integration-run","outcome":"failed","terminalAt":"2026-08-05T01:02:03.456Z","recorded":true}\n',
     );
     const successLog = JSON.parse(fs.readFileSync(logPath, 'utf8').trim()) as {
       args: string[];

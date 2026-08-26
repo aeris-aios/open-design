@@ -638,7 +638,7 @@ if (argv[2] === 'run' && argv[3] === 'terminal') {
     stdout.write(`${JSON.stringify(failures[mode])}\n`);
     exit(1);
   }
-  stdout.write(`${JSON.stringify({ runId, outcome, terminalAt, replay: mode === 'replay' })}\n`);
+  stdout.write(`${JSON.stringify({ runId, outcome, terminalAt, recorded: mode !== 'replay' })}\n`);
   exit(0);
 }
 

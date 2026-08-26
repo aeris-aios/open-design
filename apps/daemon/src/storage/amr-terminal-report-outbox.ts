@@ -344,16 +344,21 @@ function canonicalReceipt(
   stdout: string,
 ): string | null {
   const receipt = jsonObject(stdout.trim());
+  const receiptTerminalAt = typeof receipt?.terminalAt === 'string'
+    ? Date.parse(receipt.terminalAt)
+    : Number.NaN;
   if (
     receipt?.runId !== record.runId
     || receipt.outcome !== record.outcome
-    || receipt.terminalAt !== record.terminalAtIso
+    || !Number.isFinite(receiptTerminalAt)
+    || receiptTerminalAt !== record.terminalAt
+    || typeof receipt.recorded !== 'boolean'
   ) return null;
   return JSON.stringify({
     runId: record.runId,
     outcome: record.outcome,
     terminalAt: record.terminalAtIso,
-    ...(typeof receipt.replay === 'boolean' ? { replay: receipt.replay } : {}),
+    recorded: receipt.recorded,
   });
 }
 
