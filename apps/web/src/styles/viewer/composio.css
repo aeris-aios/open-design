@@ -3815,11 +3815,17 @@ body.entry-resizing { cursor: col-resize; user-select: none; }
   align-items: flex-start;
   gap: 6px;
 }
+/* 稿子 `.fb { display: flex; align-items: center; gap: 2px }` —— 两条要照抄:
+   ① **没有内距**。我们的 `padding: 4px 0` 把整行从 26px 顶成 34px,行内每一件东西
+      (勾、状态词、四枚按钮、时间)都跟着下沉 4px。
+   ② **gap 是 2px 不是 6px**。稿子里按钮之间那 2px 就是这条;状态词与第一枚按钮之间
+      的 6px 是 `.fin { margin-inline-end: 4px }` 再加这 2px 凑出来的,而不是把 gap
+      调宽 —— 调宽 gap 会把按钮组整体右移。 */
 .assistant-footer {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 0;
+  gap: 2px;
+  padding: 0;
   background: none;
   border: none;
   border-radius: 0;

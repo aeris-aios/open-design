@@ -1788,9 +1788,18 @@
   font-size: 12px;
   font-weight: 500;
 }
+/*
+ * 这里原本还压着 `padding: 4px 0` 和 `gap: 6px` —— 旧皮肤自己那一档盒模型。
+ *
+ * 交付稿的 `.fb` 是 `gap: 2px` 且**没有内距**:26px 高的一行,状态词与第一枚
+ * 按钮之间的 6px 由 `.fin { margin-inline-end: 4px }` 加这 2px 凑出来。
+ * 按稿子写的那份在 `styles/viewer/composio.css` 的 `.assistant-footer` (0,1,0),
+ * 而这条靠 `.app` 拔到 (0,2,0),`index.css` 又把 routines 排在最后 ——
+ * 特异性和顺序两头都赢,于是产品里始终是旧的 4px / 6px:整行高 34px 而不是 26px,
+ * 四枚按钮整体右移 4px。删掉这两条,让稿子那份直接生效;
+ * 其余几条(字号、字色、hover 才显形)与 composio 同值,留着不冲突。
+ */
 .app .assistant-footer {
-  padding: 4px 0;
-  gap: 6px;
   font-size: 12px;
   color: var(--text-faint);
   opacity: 0;
