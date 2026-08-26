@@ -48,6 +48,16 @@ export type SidecarGenerationRef = Readonly<{
   stamp: SidecarStamp;
 }>;
 
+class AmbiguousSidecarGenerationsError extends Error {
+  readonly rootPids: readonly number[];
+
+  constructor(rootPids: readonly number[]) {
+    super(`cannot mutate sidecar with multiple stamped generation roots: ${rootPids.join(", ")}`);
+    this.name = "AmbiguousSidecarGenerationsError";
+    this.rootPids = Object.freeze([...rootPids]);
+  }
+}
+
 type PrivateEndpointIdentity = Readonly<{ dev: number; ino: number }>;
 
 /** One invocation-fenced observation used by discovery-based mutation paths. */
@@ -120,10 +130,18 @@ export async function observeSidecarGenerations(
     typeof descriptionTimeoutMs === "number" ? descriptionTimeoutMs : descriptionTimeoutMs[index],
   ));
   let retryDeadline: number | null = null;
+  let ambiguousReobservationUsed = false;
   while (true) {
     try {
       return await observeSidecarGenerationsOnce(stamps, descriptionTimeouts);
     } catch (error) {
+      if (error instanceof AmbiguousSidecarGenerationsError) {
+        if (ambiguousReobservationUsed) throw error;
+        const transitioned = await waitForAmbiguousRootExit(error.rootPids, 1_000);
+        if (!transitioned) throw error;
+        ambiguousReobservationUsed = true;
+        continue;
+      }
       // Guarantee one real re-observation even when the first Windows CIM
       // capture itself takes longer than the old one-second retry deadline.
       if (!isTransientGenerationObservation(error)) throw error;
@@ -156,9 +174,7 @@ async function observeSidecarGenerationsOnce(
     }
     const snapshot = snapshots[index]!;
     if (snapshot.roots.length > 1) {
-      throw new Error(
-        `cannot mutate sidecar with multiple stamped generation roots: ${snapshot.roots.map(({ pid }) => pid).join(", ")}`,
-      );
+      throw new AmbiguousSidecarGenerationsError(snapshot.roots.map(({ pid }) => pid));
     }
     const description = descriptions[index] ?? null;
     const rootPid = snapshot.roots[0]?.pid ?? null;
@@ -179,8 +195,16 @@ async function observeSidecarGenerationsOnce(
 
 function isTransientGenerationObservation(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
-  return error.message.startsWith("cannot mutate sidecar with multiple stamped generation roots") ||
-    error.message.startsWith("cannot mutate sidecar because endpoint");
+  return error.message.startsWith("cannot mutate sidecar because endpoint");
+}
+
+async function waitForAmbiguousRootExit(rootPids: readonly number[], timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (rootPids.some((pid) => !isProcessAlive(pid))) return true;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return rootPids.some((pid) => !isProcessAlive(pid));
 }
 
 export async function retireObservedSidecarGeneration(

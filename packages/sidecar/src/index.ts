@@ -43,6 +43,8 @@ export type {
   SidecarResources,
 } from "./client.js";
 export { SidecarClient, SidecarFactory } from "./client.js";
+export type { SidecarLifecycleLockOptions } from "./lifecycle-lock.js";
+export { withSidecarLifecycleLock } from "./lifecycle-lock.js";
 export type { SidecarStamp, SidecarStampField } from "./stamp.js";
 export {
   normalizeSidecarStamp,

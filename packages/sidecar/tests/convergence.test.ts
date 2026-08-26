@@ -1149,22 +1149,33 @@ describe("server-side atomic operations", () => {
     const second = await spawnSidecar({ args: [fixture], command: process.execPath, resources, stamp: ambiguousStamp });
     const firstPid = first.process.pid;
     const secondPid = second.process.pid;
+    let budgetTimer: NodeJS.Timeout | null = null;
+    let stopping: Promise<unknown> | null = null;
     try {
       await vi.waitFor(async () => {
         expect((await findSidecarProcesses(ambiguousStamp)).map(({ pid }) => pid).sort())
           .toEqual([firstPid, secondPid].sort());
       }, { timeout: FIXTURE_READY_TIMEOUT_MS });
-      await expect(stopSidecar(ambiguousStamp, { termGraceMs: 0 }))
+      stopping = stopSidecar(ambiguousStamp, { termGraceMs: 0 });
+      const boundedStop = Promise.race([
+        stopping,
+        new Promise<never>((_resolve, reject) => {
+          budgetTimer = setTimeout(() => reject(new Error("ambiguous generation observation exceeded 4900ms")), 4_900);
+        }),
+      ]);
+      await expect(boundedStop)
         .rejects.toThrow("multiple stamped generation roots");
       expect((await findSidecarProcesses(ambiguousStamp)).map(({ pid }) => pid).sort())
         .toEqual([firstPid, secondPid].sort());
     } finally {
+      if (budgetTimer != null) clearTimeout(budgetTimer);
       await Promise.all([
         first.stop({ killGraceMs: 2_000, termGraceMs: 0 }),
         second.stop({ killGraceMs: 2_000, termGraceMs: 0 }),
       ]);
+      await stopping?.catch(() => undefined);
     }
-  });
+  }, 15_000);
 
   it("retires a multi-resource lifecycle set at one declared boundary", async () => {
     const fixture = fileURLToPath(new URL("./fixtures/stamped-child.ts", import.meta.url));

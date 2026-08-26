@@ -98,7 +98,7 @@ vi.mock("@/win/registry.js", async () => {
   };
 });
 
-const { cleanupPackedWinNamespace, diagnosePackedWinIpc, inspectPackedWinApp, installPackedWinApp, stopPackedWinApp } = await import(
+const { cleanupPackedWinNamespace, diagnosePackedWinIpc, inspectPackedWinApp, installPackedWinApp, startPackedWinApp, stopPackedWinApp } = await import(
   "@/win/lifecycle.js"
 );
 const { resolveWinPaths } = await import("@/win/paths.js");
@@ -383,6 +383,49 @@ describe("inspectPackedWinApp", () => {
 });
 
 describe("stopPackedWinApp", () => {
+  it.runIf(process.platform === "win32")("lets a start invoked during an in-flight stop launch after that stop completes", async () => {
+    const root = await mkdtemp(join(tmpdir(), "open-design-win-lifecycle-"));
+    const config = createConfig(root);
+    let releaseStop!: () => void;
+    let markStopEntered!: () => void;
+    const stopEntered = new Promise<void>((resolve) => { markStopEntered = resolve; });
+    const stopRelease = new Promise<void>((resolve) => { releaseStop = resolve; });
+
+    try {
+      await writeFakeUnpackedExe(config);
+      convergeSidecarLaunch.mockClear();
+      stopSidecars.mockImplementationOnce(async (requests) => {
+        markStopEntered();
+        await stopRelease;
+        const results = await Promise.all(requests.map(async ({ stamp }) => ({ result: await stopSidecar(stamp), stamp })));
+        const stopped = results.map(({ result }) => result);
+        return {
+          alreadyStopped: stopped.every(({ alreadyStopped }) => alreadyStopped),
+          forcedPids: [],
+          gracefulAccepted: stopped.some(({ gracefulAccepted }) => gracefulAccepted),
+          matchedPids: [...new Set(stopped.flatMap(({ matchedPids }) => matchedPids))],
+          remainingPids: [],
+          results,
+          stoppedPids: [...new Set(stopped.flatMap(({ stoppedPids }) => stoppedPids))],
+        };
+      });
+
+      const stopping = stopPackedWinApp(config);
+      await stopEntered;
+      const starting = startPackedWinApp(config, { waitForStatus: false });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(convergeSidecarLaunch).not.toHaveBeenCalled();
+
+      releaseStop();
+      await expect(stopping).resolves.toMatchObject({ status: "stopped" });
+      await expect(starting).resolves.toMatchObject({ pid: 12345, status: null });
+      expect(convergeSidecarLaunch).toHaveBeenCalledOnce();
+    } finally {
+      releaseStop();
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+
   it("waits for a packaged-source payload desktop to exit after graceful shutdown", async () => {
     const root = await mkdtemp(join(tmpdir(), "open-design-win-lifecycle-"));
     const config = createConfig(root);

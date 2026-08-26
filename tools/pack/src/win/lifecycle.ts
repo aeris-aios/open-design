@@ -22,6 +22,7 @@ import {
   getSidecarStatus,
   invokeSidecar,
   stopSidecars,
+  withSidecarLifecycleLock,
   type SidecarStamp,
 } from "@open-design/sidecar";
 import { readLogTail } from "@open-design/platform";
@@ -281,6 +282,11 @@ async function resolveStartTarget(config: ToolPackConfig): Promise<{ configPath:
 }
 
 export async function startPackedWinApp(config: ToolPackConfig, options: { waitForStatus?: boolean } = {}): Promise<WinStartResult> {
+  const lifecycleStamps = allPackagedSidecarStopRequests(config).map(({ stamp }) => stamp);
+  return await withSidecarLifecycleLock(lifecycleStamps, async () => await startPackedWinAppLocked(config, options));
+}
+
+async function startPackedWinAppLocked(config: ToolPackConfig, options: { waitForStatus?: boolean }): Promise<WinStartResult> {
   const target = await resolveStartTarget(config);
   const stamp = appStamp(config);
   const logPath = desktopLogPath(config);
@@ -333,16 +339,19 @@ async function waitForNoManagedDesktopProcesses(config: ToolPackConfig, timeoutM
 }
 
 export async function stopPackedWinApp(config: ToolPackConfig): Promise<WinStopResult> {
-  const stopped = await stopSidecars(allPackagedSidecarStopRequests(config));
-  return {
-    gracefulRequested: stopped.gracefulAccepted,
-    namespace: config.namespace,
-    remainingPids: stopped.remainingPids,
-    status: stopped.remainingPids.length > 0
-      ? "partial"
-      : stopped.matchedPids.length > 0 || stopped.gracefulAccepted ? "stopped" : "not-running",
-    stoppedPids: stopped.stoppedPids,
-  };
+  const requests = allPackagedSidecarStopRequests(config);
+  return await withSidecarLifecycleLock(requests.map(({ stamp }) => stamp), async () => {
+    const stopped = await stopSidecars(requests);
+    return {
+      gracefulRequested: stopped.gracefulAccepted,
+      namespace: config.namespace,
+      remainingPids: stopped.remainingPids,
+      status: stopped.remainingPids.length > 0
+        ? "partial"
+        : stopped.matchedPids.length > 0 || stopped.gracefulAccepted ? "stopped" : "not-running",
+      stoppedPids: stopped.stoppedPids,
+    };
+  });
 }
 
 export async function readPackedWinLogs(config: ToolPackConfig) {
