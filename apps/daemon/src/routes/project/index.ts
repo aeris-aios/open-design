@@ -1567,42 +1567,6 @@ const PREVIEW_RAW_TEXT_ELEMENTS = [
  * `--!>` and the abrupt forms, and then resumes scanning inside author text —
  * where the next `-->` it finds may well be in a script string.
  */
-/**
- * Whether the tag whose `>` sits at `tagEnd` is self-closing.
- *
- * `html[tagEnd - 1] === '/'` is not enough: an unquoted attribute value may
- * end in one (`<svg data-href=http://x/>`), and reading that as self-closing
- * makes the scan step into a foreign subtree it should have skipped. Re-walk
- * the tag so the solidus is only counted when it is not part of a value.
- */
-function isSelfClosingTag(html: string, from: number, tagEnd: number): boolean {
-  if (html.charCodeAt(tagEnd - 1) !== 47 /* / */) return false;
-  let i = from;
-  let lastSignificant = 0;
-  let inUnquotedValue = false;
-  let pendingValue = false;
-  while (i < tagEnd) {
-    const ch = html.charCodeAt(i);
-    if ((ch === 34 /* " */ || ch === 39 /* ' */) && lastSignificant === 61 /* = */) {
-      const close = html.indexOf(String.fromCharCode(ch), i + 1);
-      if (close < 0 || close > tagEnd) return false;
-      i = close + 1;
-      lastSignificant = 0;
-      inUnquotedValue = false;
-      continue;
-    }
-    // `=` may be followed by whitespace before the value starts, so whitespace
-    // alone does not end the pending-value state — only a real value character
-    // followed by whitespace does.
-    if (ch === 61 /* = */) { inUnquotedValue = true; pendingValue = true; }
-    else if (ch <= 32) { if (!pendingValue) inUnquotedValue = false; }
-    else if (pendingValue) pendingValue = false;
-    if (ch > 32) lastSignificant = ch;
-    i += 1;
-  }
-  return !inUnquotedValue;
-}
-
 /** Lowercase only A–Z, so the result is the same length as the input. */
 function asciiLower(value: string): string {
   return value.replace(/[A-Z]/g, (c) => c.toLowerCase());
@@ -1624,24 +1588,93 @@ function endOfComment(html: string, from: number): number {
   return -1;
 }
 
-function endOfTag(html: string, from: number): number {
-  let i = from;
-  let lastSignificant = 0;
-  while (i < html.length) {
-    const ch = html.charCodeAt(i);
-    if ((ch === 34 /* " */ || ch === 39 /* ' */) && lastSignificant === 61 /* = */) {
-      const close = html.indexOf(String.fromCharCode(ch), i + 1);
-      if (close < 0) return -1;
-      i = close + 1;
-      lastSignificant = 0;
-      continue;
-    }
-    if (ch === 62 /* > */) return i;
-    if (ch > 32) lastSignificant = ch;
-    i += 1;
-  }
-  return -1;
+/**
+ * One walk of a start or end tag, in the tokenizer's own states.
+ *
+ * The three things callers need — where the tag ends, whether its solidus is a
+ * real self-closing marker, and what its attributes are — all depend on the
+ * same state, so they are produced together. Inferring any of them from the
+ * surrounding bytes goes wrong on tags the browser still accepts: in
+ * `<head data==">` the second `=` opens an *unquoted* value and the `"` is a
+ * character of it, so the tag ends at the very next `>`. A walker that treats
+ * that quote as opening a quoted value runs on to the next quote in the
+ * document — typically inside a script — and reports a `>` that is author text.
+ *
+ * `from` is the offset just past the tag name. `end` is the offset of the `>`
+ * that closes the tag, or -1 if the tag is unterminated.
+ */
+interface ScannedTag {
+  end: number;
+  selfClosing: boolean;
+  attrs: Map<string, string>;
 }
+
+function scanTag(html: string, from: number): ScannedTag {
+  const attrs = new Map<string, string>();
+  const unterminated: ScannedTag = { end: -1, selfClosing: false, attrs };
+  let i = from;
+  let selfClosing = false;
+  while (i < html.length) {
+    // Before attribute name.
+    const ch = html.charCodeAt(i);
+    if (ch <= 32) { i += 1; continue; }
+    if (ch === 47 /* / */) { selfClosing = true; i += 1; continue; }
+    if (ch === 62 /* > */) return { end: i, selfClosing, attrs };
+    // A solidus only self-closes when `>` comes next; anything else resumes
+    // attributes and the solidus was noise.
+    selfClosing = false;
+    const nameStart = i;
+    // An `=` where a name should start is the name's first character, not the
+    // start of a value: the tokenizer's unexpected-equals-sign-before-attribute
+    // -name rule. Reading it as a value separator instead consumes the quote
+    // that follows as a value delimiter, and the tag then appears to run to
+    // some later quote in the document.
+    if (html.charCodeAt(i) === 61 /* = */) i += 1;
+    while (i < html.length) {
+      const c = html.charCodeAt(i);
+      if (c <= 32 || c === 47 || c === 61 /* = */ || c === 62) break;
+      i += 1;
+    }
+    const name = asciiLower(html.slice(nameStart, i));
+    // After attribute name.
+    while (i < html.length && html.charCodeAt(i) <= 32) i += 1;
+    if (i >= html.length) return unterminated;
+    let value = '';
+    if (html.charCodeAt(i) === 61 /* = */) {
+      i += 1;
+      // Before attribute value.
+      while (i < html.length && html.charCodeAt(i) <= 32) i += 1;
+      if (i >= html.length) return unterminated;
+      const quote = html.charCodeAt(i);
+      if (quote === 34 /* " */ || quote === 39 /* ' */) {
+        const close = html.indexOf(String.fromCharCode(quote), i + 1);
+        if (close < 0) return unterminated;
+        value = html.slice(i + 1, close);
+        i = close + 1;
+      } else if (quote === 62 /* > */) {
+        // Missing value; the tag ends here.
+        if (name && !attrs.has(name)) attrs.set(name, '');
+        return { end: i, selfClosing: false, attrs };
+      } else {
+        const valueStart = i;
+        while (i < html.length) {
+          const c = html.charCodeAt(i);
+          if (c <= 32 || c === 62) break;
+          i += 1;
+        }
+        value = html.slice(valueStart, i);
+      }
+    }
+    if (name && !attrs.has(name)) attrs.set(name, value);
+  }
+  return unterminated;
+}
+
+/** Offset of the `>` that closes the tag whose name ends at `from`, or -1. */
+function endOfTag(html: string, from: number): number {
+  return scanTag(html, from).end;
+}
+
 
 /**
  * Offset of the first `pattern` match that the HTML parser would actually
@@ -1770,7 +1803,8 @@ function skipTemplateContent(html: string, lowerHtml: string, from: number): num
     tagOpen.lastIndex = i;
     const open = tagOpen.exec(html);
     if (!open) { i += 1; continue; }
-    const tagEnd = endOfTag(html, i + open[0].length);
+    const tag = scanTag(html, i + open[0].length);
+    const tagEnd = tag.end;
     if (tagEnd < 0) return -1;
     const tagName = (open[2] ?? '').toLowerCase();
     if (!open[1] && (PREVIEW_RAW_TEXT_ELEMENTS as readonly string[]).includes(tagName)) {
@@ -1779,7 +1813,7 @@ function skipTemplateContent(html: string, lowerHtml: string, from: number): num
       i = contentEnd;
       continue;
     }
-    if (!open[1] && (tagName === 'svg' || tagName === 'math') && !isSelfClosingTag(html, i, tagEnd)) {
+    if (!open[1] && (tagName === 'svg' || tagName === 'math') && !tag.selfClosing) {
       // Foreign content inside a template follows the same rules, CDATA
       // included, so it has to go through the same skip.
       const contentEnd = skipForeignContent(html, lowerHtml, tagName, tagEnd + 1);
@@ -1858,80 +1892,20 @@ function decodeAttributeValue(value: string): string {
         if (code === 0 || code > 0x10ffff || (code >= 0xd800 && code <= 0xdfff)) return '\uFFFD';
         return String.fromCodePoint(code);
       }
-      return ATTRIBUTE_NAMED_REFERENCES.get(asciiLower(name ?? '')) ?? whole;
+      // Named references are case-sensitive: `&sol;` is one and `&SOL;` is not,
+      // and the parser leaves the latter as literal text.
+      return ATTRIBUTE_NAMED_REFERENCES.get(name ?? '') ?? whole;
     },
   );
 }
 
-/**
- * The attributes of the tag spanning `[from, tagEnd]`, names ASCII lowercased
- * and mapped to their ASCII lowercased values.
- *
- * This walks the tag once with the tokenizer's own quote/value states rather
- * than running a regex over the raw text, because a value may contain anything
- * — including something that reads like another attribute. `<font
- * data-note=" color=red">` carries one attribute, not two, and a scanner that
- * matched textually would apply the `<font color>` breakout rule and resume
- * inside the SVG subtree. That is the same "text read as structure" mistake
- * this whole file exists to avoid, one level down.
- *
- * Names are ASCII lowercased; values are returned verbatim. Decoding belongs to
- * whoever compares a value, because the reference table is only complete for
- * the comparisons this file makes — see `annotationXmlEncodingIsHtml`. Checked
- * against parse5 on 8,000 generated tags: identical names and values.
- *
- * Duplicate names keep the first occurrence, as the parser does.
- */
-function parseTagAttributes(html: string, from: number, tagEnd: number): Map<string, string> {
-  const attrs = new Map<string, string>();
-  // Skip `<`, an optional `/`, and the tag name.
-  let i = from + 1;
-  while (i < tagEnd && html.charCodeAt(i) === 47 /* / */) i += 1;
-  while (i < tagEnd && !isEndTagBoundary(html.charCodeAt(i))) i += 1;
-  while (i < tagEnd) {
-    const ch = html.charCodeAt(i);
-    if (ch <= 32 || ch === 47 /* / */) { i += 1; continue; }
-    const nameStart = i;
-    while (i < tagEnd) {
-      const c = html.charCodeAt(i);
-      if (c <= 32 || c === 47 || c === 61 /* = */ || c === 62 /* > */) break;
-      i += 1;
-    }
-    if (i === nameStart) { i += 1; continue; }
-    const name = asciiLower(html.slice(nameStart, i));
-    while (i < tagEnd && html.charCodeAt(i) <= 32) i += 1;
-    let value = '';
-    if (i < tagEnd && html.charCodeAt(i) === 61 /* = */) {
-      i += 1;
-      while (i < tagEnd && html.charCodeAt(i) <= 32) i += 1;
-      const quote = html.charCodeAt(i);
-      if (quote === 34 /* " */ || quote === 39 /* ' */) {
-        const close = html.indexOf(String.fromCharCode(quote), i + 1);
-        const stop = close < 0 || close > tagEnd ? tagEnd : close;
-        value = html.slice(i + 1, stop);
-        i = stop + 1;
-      } else {
-        const valueStart = i;
-        while (i < tagEnd) {
-          const c = html.charCodeAt(i);
-          if (c <= 32 || c === 62 /* > */) break;
-          i += 1;
-        }
-        value = html.slice(valueStart, i);
-      }
-    }
-    if (!attrs.has(name)) attrs.set(name, value);
-  }
-  return attrs;
-}
 
 /**
  * Whether this start tag breaks out of foreign content. `font` only does so
  * when it carries a presentational attribute; everything else is by name.
  */
-function isForeignBreakoutTag(html: string, from: number, tagEnd: number, tagName: string): boolean {
+function isForeignBreakoutTag(tagName: string, attrs: ReadonlyMap<string, string>): boolean {
   if (tagName === 'font') {
-    const attrs = parseTagAttributes(html, from, tagEnd);
     return attrs.has('color') || attrs.has('face') || attrs.has('size');
   }
   return FOREIGN_BREAKOUT_TAGS.includes(tagName);
@@ -1956,17 +1930,14 @@ function annotationXmlEncodingIsHtml(value: string | undefined): boolean {
  * bytes mean different things on either side of the boundary.
  */
 function foreignChildNamespace(
-  html: string,
-  from: number,
-  tagEnd: number,
-  elementNs: string,
   tagName: string,
+  elementNs: string,
+  attrs: ReadonlyMap<string, string>,
 ): string {
   if (elementNs === 'svg' && HTML_INTEGRATION_POINTS.includes(tagName)) return 'html';
   if (elementNs === 'math') {
     if (MATHML_TEXT_INTEGRATION_POINTS.includes(tagName)) return 'html';
-    if (tagName === 'annotation-xml'
-        && annotationXmlEncodingIsHtml(parseTagAttributes(html, from, tagEnd).get('encoding'))) {
+    if (tagName === 'annotation-xml' && annotationXmlEncodingIsHtml(attrs.get('encoding'))) {
       return 'html';
     }
   }
@@ -2038,7 +2009,8 @@ function skipForeignContent(html: string, lowerHtml: string, rootName: string, f
       i += 1;
       continue;
     }
-    const tagEnd = endOfTag(html, i + open[0].length);
+    const tag = scanTag(html, i + open[0].length);
+    const tagEnd = tag.end;
     if (tagEnd < 0) return -1;
     const tagName = (open[2] ?? '').toLowerCase();
     if (open[1]) {
@@ -2053,7 +2025,7 @@ function skipForeignContent(html: string, lowerHtml: string, rootName: string, f
       i = tagEnd + 1;
       continue;
     }
-    if (currentNs !== 'html' && isForeignBreakoutTag(html, i, tagEnd, tagName)) {
+    if (currentNs !== 'html' && isForeignBreakoutTag(tagName, tag.attrs)) {
       // The tag is reprocessed as HTML after the foreign elements are popped,
       // so the scan does not consume it — it only leaves foreign content and
       // lets the next pass read the same tag under HTML rules.
@@ -2066,7 +2038,7 @@ function skipForeignContent(html: string, lowerHtml: string, rootName: string, f
     }
     // A solidus really does close the element in foreign content; in HTML it
     // is ignored on anything that is not void, so it must not pop a frame.
-    const selfClosing = isSelfClosingTag(html, i, tagEnd)
+    const selfClosing = tag.selfClosing
       && (currentNs !== 'html' || PREVIEW_VOID_ELEMENTS.includes(tagName));
     if (!selfClosing && currentNs === 'html'
         && (PREVIEW_RAW_TEXT_ELEMENTS as readonly string[]).includes(tagName)) {
@@ -2083,7 +2055,7 @@ function skipForeignContent(html: string, lowerHtml: string, rootName: string, f
         : currentNs;
       nsStack.push({
         name: tagName,
-        childNs: foreignChildNamespace(html, i, tagEnd, elementNs, tagName),
+        childNs: foreignChildNamespace(tagName, elementNs, tag.attrs),
         mathmlText: elementNs === 'math' && MATHML_TEXT_INTEGRATION_POINTS.includes(tagName),
       });
       if (tagName === rootName) depth += 1;
@@ -2139,7 +2111,8 @@ function findRealTagOffset(html: string, pattern: RegExp): number {
       i += 1;
       continue;
     }
-    const tagEnd = endOfTag(html, i + open[0].length);
+    const tag = scanTag(html, i + open[0].length);
+    const tagEnd = tag.end;
     if (tagEnd < 0) return -1;
     const tagName = (open[2] ?? '').toLowerCase();
     if (!open[1] && (PREVIEW_RAW_TEXT_ELEMENTS as readonly string[]).includes(tagName)) {
@@ -2149,7 +2122,7 @@ function findRealTagOffset(html: string, pattern: RegExp): number {
       i = contentEnd;
       continue;
     }
-    if (!open[1] && (tagName === 'svg' || tagName === 'math') && !isSelfClosingTag(html, i, tagEnd)) {
+    if (!open[1] && (tagName === 'svg' || tagName === 'math') && !tag.selfClosing) {
       const contentEnd = skipForeignContent(html, lower, tagName, tagEnd + 1);
       if (contentEnd < 0) return -1;
       i = contentEnd;

@@ -294,6 +294,30 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
           + '<main id="slot">real</main></body></html>',
       ),
     );
+    // `<head data==">` is a complete start tag: the second `=` opens an
+    // *unquoted* value and the quote is a character of it, so the tag ends at
+    // the very next `>`. Reading that quote as a value delimiter runs the scan
+    // on to the next quote in the document and reports a `>` from author text.
+    await writeFile(
+      path.join(dir, 'unquoted-equals-tag.html'),
+      Buffer.from(
+        '<!doctype html><html><head data==">'
+          + '<script>const marker = "inside>";<\/script></head>'
+          + '<body><main id="slot">real</main></body></html>',
+      ),
+    );
+    // Named character references are case-sensitive: `&sol;` is one, `&SOL;`
+    // is not, and the parser leaves the latter as literal text — so this
+    // `annotation-xml` stays MathML and its CDATA stays character data.
+    await writeFile(
+      path.join(dir, 'encoding-case.html'),
+      Buffer.from(
+        '<!doctype html><html><head></head><body>'
+          + '<math><annotation-xml encoding="text&SOL;html">'
+          + '<![CDATA[c > <\/math><body>slip</body>]]></annotation-xml></math>'
+          + '<main id="slot">real</main></body></html>',
+      ),
+    );
     // A leading BOM is the encoding signature and only counts at byte zero, so
     // the no-boundary fallback has to insert after it rather than in front of
     // it — otherwise the doctype stops applying and the artifact silently
@@ -866,6 +890,27 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
     expect(html).toContain('<![CDATA[x > </svg><body>slip</body>]]>');
     expect(html).toContain('<![CDATA[x > </math><body>slip</body>]]>');
     expect(html).toContain('const enc = "</math><body>slip</body>";');
+  });
+
+  it('ends a tag whose unquoted value contains a quote at the next angle bracket', async () => {
+    const bridged = await fetch(`${rawUrl('unquoted-equals-tag.html')}?odPreviewBridge=scroll`);
+    expect(bridged.status).toBe(200);
+    const html = await bridged.text();
+    const page = load(html);
+    expect(page('[data-od-url-scroll-bridge]').length).toBe(1);
+    expect(page('#slot').text()).toBe('real');
+    // The authored script survives; nothing was spliced into its string.
+    expect(html).toContain('const marker = "inside>";');
+  });
+
+  it('treats a named character reference as case-sensitive', async () => {
+    const bridged = await fetch(`${rawUrl('encoding-case.html')}?odPreviewBridge=scroll`);
+    expect(bridged.status).toBe(200);
+    const html = await bridged.text();
+    const page = load(html);
+    expect(page('body > [data-od-url-scroll-bridge]').length).toBe(1);
+    expect(page('#slot').text()).toBe('real');
+    expect(html).toContain('<![CDATA[c > </math><body>slip</body>]]>');
   });
 
   it('keeps a leading BOM at byte zero when there is no boundary', async () => {
