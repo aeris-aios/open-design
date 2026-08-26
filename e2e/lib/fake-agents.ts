@@ -41,7 +41,7 @@ export async function createFakeAcpHandshakeRuntime(): Promise<FakeAcpHandshakeR
   await mkdir(root, { recursive: true });
   const script = path.join(root, 'fake-acp-handshake-cli.mjs');
   await copyFile(
-    fileURLToPath(new URL('../resources/fake-acp-handshake-cli.mjs', import.meta.url)),
+    fileURLToPath(new URL('../resources/fake-acp-handshake-cli.ts', import.meta.url)),
     script,
   );
 

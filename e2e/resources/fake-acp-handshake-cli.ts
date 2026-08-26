@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// @ts-nocheck -- copied verbatim to a temporary .mjs executable by the E2E harness.
 /**
  * Fake ACP agent CLI that reproduces the Kimi Code 0.37.x / 0.38.0 failure:
  * the CLI answers `initialize` and then rejects `session/new` with a bare
