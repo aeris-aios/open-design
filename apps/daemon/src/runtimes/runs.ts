@@ -20,6 +20,7 @@ import {
   RESTART_ERROR_CODE,
   RESTART_ERROR_MESSAGE,
 } from './run-restart-recovery.js';
+import { classifyRunSteering, writeSteeringUserMessage } from './run-steering.js';
 
 export const TERMINAL_RUN_STATUSES = new Set(['succeeded', 'failed', 'canceled']);
 
@@ -1448,6 +1449,45 @@ export function createChatRunService({
     run.stdinOpen = false;
   };
 
+  /**
+   * B11 「引导对话」: hand one more user message to a turn that is still running,
+   * instead of stopping it and re-sending.
+   *
+   * `runtimeAccepts` comes from the caller's resolved runtime def
+   * (`runtimeAcceptsMidTurnInput`) because the runs service has no agent
+   * registry of its own. Everything else about admissibility lives in
+   * `classifyRunSteering`, so the HTTP route and the CLI cannot drift.
+   *
+   * Returns the refusal instead of throwing: a child racing to exit between the
+   * verdict and the write is an ordinary outcome here, not a daemon fault.
+   */
+  const steer = (run, text, runtimeAccepts) => {
+    const verdict = classifyRunSteering({
+      runtimeAccepts: !!runtimeAccepts,
+      terminal: TERMINAL_RUN_STATUSES.has(run.status),
+      stdinOpen: !!run.stdinOpen,
+    });
+    if (!verdict.ok) return verdict;
+    const write = writeSteeringUserMessage(run.child?.stdin, text);
+    if (!write.delivered) {
+      // The pipe died between the verdict and the write. Record the truth so
+      // the next caller gets the same answer, and refuse rather than pretending.
+      run.stdinOpen = false;
+      return { ok: false, refusal: 'stdin_closed' };
+    }
+    if (write.backpressure) run.stdinBackpressure = true;
+    run.updatedAt = Date.now();
+    // Observability only — the delivered text is durable as a `role: 'user'`
+    // message in the conversation, written by the route.
+    emit(run, 'steering_message', {
+      runId: run.id,
+      length: text.length,
+      at: run.updatedAt,
+    });
+    persistState(run);
+    return { ok: true, backpressure: write.backpressure };
+  };
+
   // A same-run retry can be waiting out its backoff window (server.ts
   // scheduleRetryRestart). Cancellation/shutdown must drop that pending restart
   // so a cancelled run is not resurrected after the timer fires.
@@ -1590,6 +1630,7 @@ export function createChatRunService({
     list,
     stream,
     cancel,
+    steer,
     shutdownActive,
     wait,
     emit,

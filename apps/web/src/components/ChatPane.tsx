@@ -566,6 +566,15 @@ interface Props {
   onUpdateQueuedSend?: (id: string, update: QueuedSendUpdate) => void;
   onReorderQueuedSends?: (orderedIds: string[]) => void;
   onSendQueuedNow?: (id: string) => void;
+  /**
+   * B11 「引导对话」: deliver a queued item into the turn that is still
+   * running. Supplied only when the host has both a live run and an agent
+   * whose CLI keeps reading stdin mid-turn; absent means the queue row
+   * falls back to `onSendQueuedNow` under its own name.
+   */
+  onSteerQueuedSend?: (id: string) => void;
+  /** Why steering is unavailable right now, shown on the fallback button. */
+  steerBlockedReason?: string | null;
   // Names that exist in the project folder. Tool cards and chips use this
   // set to decide whether a path can be opened as a tab.
   projectFileNames?: Set<string>;
@@ -936,6 +945,8 @@ export function ChatPane({
   onUpdateQueuedSend,
   onReorderQueuedSends,
   onSendQueuedNow,
+  onSteerQueuedSend,
+  steerBlockedReason,
   onRequestOpenFile,
   onRequestPluginDetails,
   onRequestDesignSystemDetails,
@@ -3172,6 +3183,19 @@ export function ChatPane({
                     onSendQueuedNow(id);
                   }
                 : undefined}
+              onSteer={onSteerQueuedSend
+                ? (item) => {
+                    trackMessageQueueClick(analytics.track, {
+                      page_name: 'chat_panel',
+                      area: 'message_queue',
+                      element: 'steer',
+                      project_id: projectId ?? '',
+                      queue_length: queuedItems.length,
+                    });
+                    onSteerQueuedSend(item.id);
+                  }
+                : undefined}
+              steerBlockedReason={steerBlockedReason ?? null}
             />
             <div
               className="chat-composer-slot"
@@ -4123,6 +4147,8 @@ function writeContinuedTodoSnapshotKey(storageKey: string, snapshotKey: string):
   onRemove,
   onReorder,
   onSendNow,
+  onSteer,
+  steerBlockedReason,
 }: {
   containerRef?: MutableRefObject<HTMLDivElement | null>;
   editingId?: string | null;
@@ -4131,6 +4157,15 @@ function writeContinuedTodoSnapshotKey(storageKey: string, snapshotKey: string):
   onRemove?: (id: string) => void;
   onReorder?: (orderedIds: string[]) => void;
   onSendNow?: (id: string) => void;
+  /**
+   * B11 「引导对话」. Present ONLY when steering can actually happen right now:
+   * a live run on this conversation whose agent keeps reading stdin mid-turn.
+   * The parent owns that judgement — the strip must never infer it, or the
+   * button ends up promising something the runtime cannot do.
+   */
+  onSteer?: (item: QueuedSendItem) => void;
+  /** Human-readable reason steering is unavailable, shown on the fallback button. */
+  steerBlockedReason?: string | null;
 }) {
   const t = useT();
   const [dragState, setDragState] = useState<QueuedSendDragState | null>(null);
@@ -4278,23 +4313,44 @@ function writeContinuedTodoSnapshotKey(storageKey: string, snapshotKey: string):
                     <Icon name="trash" size={13} />
                   </button>
                 ) : null}
-                {/* 第三颗:稿子标的是「引导对话」(把这条塞进正在跑的这一轮),
-                    我们这颗是**立即发送** —— 它会**打断**在跑的那一轮再发,是另一件事。
-                    位置和体量按稿子摆,语义不冒名顶替;缺的那条能力记在
-                    `specs/current/chat-panel-feedback.md` 的 B9 行。 */}
-                <button
-                  type="button"
-                  className="chat-queued-send-action chat-queued-send-tooltip od-tooltip"
-                  title={t('chat.send')}
-                  data-tooltip={t('chat.send')}
-                  data-tooltip-placement="top"
-                  aria-label={t('chat.send')}
-                  data-testid="chat-queued-send-now"
-                  onClick={() => onSendNow?.(item.id)}
-                  disabled={!onSendNow}
-                >
-                  <Icon name="arrow-up" size={13} />
-                </button>
+                {/* 第三颗 —— 稿子标的是「引导对话」:把这条塞进**正在跑**的那一轮
+                    (B11)。它和「立即发送」是两件事:引导不打断,当前这一轮的活儿
+                    全留着;立即发送要先停掉再发。
+
+                    所以这颗按谁真的能干活来决定,不靠名字撑场面:
+                      · `onSteer` 有值 = 此刻真能引导(有在跑的一轮,且这个 agent 的
+                        CLI 中途还在读 stdin) → 就是「引导对话」。
+                      · 没有 → 退回今天的「立即发送」,**连名字一起退回去**,并把
+                        `steerBlockedReason`(比如「当前 agent 不支持中途插话」)
+                        挂进 tooltip,让人知道为什么这颗不是引导。 */}
+                {steerableRow(item, Boolean(onSteer)) ? (
+                  <button
+                    type="button"
+                    className="chat-queued-send-action chat-queued-send-tooltip od-tooltip"
+                    title={t('chat.queuedSteer')}
+                    data-tooltip={t('chat.queuedSteer')}
+                    data-tooltip-placement="top"
+                    aria-label={t('chat.queuedSteer')}
+                    data-testid="chat-queued-send-steer"
+                    onClick={() => onSteer?.(item)}
+                  >
+                    <Icon name="arrow-up" size={13} />
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="chat-queued-send-action chat-queued-send-tooltip od-tooltip"
+                    title={rowSteerBlockedReason(item, Boolean(onSteer), steerBlockedReason, t)}
+                    data-tooltip={rowSteerBlockedReason(item, Boolean(onSteer), steerBlockedReason, t)}
+                    data-tooltip-placement="top"
+                    aria-label={t('chat.send')}
+                    data-testid="chat-queued-send-now"
+                    onClick={() => onSendNow?.(item.id)}
+                    disabled={!onSendNow}
+                  >
+                    <Icon name="arrow-up" size={13} />
+                  </button>
+                )}
               </div>
             </div>
           );
@@ -4302,6 +4358,32 @@ function writeContinuedTodoSnapshotKey(storageKey: string, snapshotKey: string):
       </div>
     </div>
   );
+}
+
+/**
+ * B11 「引导对话」 per row.
+ *
+ * A steering message travels as one text frame on the agent's stdin — there is
+ * no channel for attachments or annotation context in it. A row that carries
+ * either would arrive at the model stripped of exactly the part that made it
+ * meaningful, so that row keeps the honest fallback (「立即发送」) instead of a
+ * button promising something the transport cannot deliver.
+ */
+function steerableRow(item: QueuedSendItem, stripCanSteer: boolean): boolean {
+  if (!stripCanSteer) return false;
+  return (item.attachments?.length ?? 0) === 0
+    && (item.commentAttachments?.length ?? 0) === 0;
+}
+
+/** Tooltip for the fallback button: say WHY this row is not 引导对话. */
+function rowSteerBlockedReason(
+  item: QueuedSendItem,
+  stripCanSteer: boolean,
+  stripReason: string | null | undefined,
+  t: TranslateFn,
+): string {
+  if (stripCanSteer) return t('chat.queuedSteerTextOnly');
+  return stripReason ?? t('chat.send');
 }
 
   const QUEUED_SEND_DRAG_MIME = 'application/x-open-design-queued-send';

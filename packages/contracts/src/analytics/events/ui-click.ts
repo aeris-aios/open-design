@@ -1022,13 +1022,17 @@ export interface ChatPanelResourcesPopoverClickProps {
 
 // Actions on the queued-send strip ("N queued · to send") that sits above
 // the chat composer while a run is in flight: re-open a queued prompt in the
-// composer (`edit`), promote it to send immediately (`send_now`), or drop it
-// from the queue (`delete`). `queue_length` is the queue size at click time,
-// before the action applies.
+// composer (`edit`), promote it to send immediately (`send_now`), drop it
+// from the queue (`delete`), or push it into the turn that is STILL RUNNING
+// without stopping it (`steer`, B11 「引导对话」). `send_now` and `steer` are
+// deliberately separate elements: the first stops the running turn and
+// resends, the second keeps that turn's work and writes the message onto the
+// agent's still-open stdin — collapsing them would make the funnel unreadable.
+// `queue_length` is the queue size at click time, before the action applies.
 export interface ChatPanelMessageQueueClickProps {
   page_name: 'chat_panel';
   area: 'message_queue';
-  element: 'edit' | 'send_now' | 'delete';
+  element: 'edit' | 'send_now' | 'delete' | 'steer';
   project_id: string;
   queue_length: number;
 }

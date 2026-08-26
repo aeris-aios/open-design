@@ -3507,6 +3507,16 @@ export interface Dict {
   'chat.queuedCancel': string;
   'chat.queuedReorder': string;
   'chat.queuedEdit': string;
+  /** B11: push this queued item into the turn that is still running. */
+  'chat.queuedSteer': string;
+  /** Why steering is unavailable: the current agent's CLI stops reading input mid-turn. */
+  'chat.queuedSteerUnsupported': string;
+  /** Steering was refused because the turn already stopped reading input. */
+  'chat.queuedSteerClosed': string;
+  /** Steering failed for any other reason (network / daemon). */
+  'chat.queuedSteerFailed': string;
+  /** This queued item carries attachments, which a mid-turn message cannot deliver. */
+  'chat.queuedSteerTextOnly': string;
   'chat.queuedFollowUpFallback': string;
   'chat.send': string;
   'chat.stop': string;

@@ -1211,6 +1211,53 @@ export async function reportChatRunFeedback(req: {
   }
 }
 
+/**
+ * B11 「引导对话」 — push one more user message into the turn that is STILL
+ * running, instead of stopping it and resending.
+ *
+ * Deliberately NOT fire-and-forget: unlike a rating, a dropped steer means the
+ * model never heard the user, so the caller has to know. A refusal comes back
+ * as a typed daemon error code (`RUN_STEERING_UNSUPPORTED` when the agent's CLI
+ * closes stdin with the prompt, `RUN_STEERING_CLOSED` when this turn already
+ * stopped reading) so the UI can say which one it was instead of "failed".
+ */
+export async function steerChatRun(
+  req: { runId: string; text: string },
+  workspaceContext?: WorkspaceCollabContext | null,
+): Promise<
+  | { ok: true; messageId: string }
+  | { ok: false; code: string; message: string }
+> {
+  let response: Response;
+  try {
+    response = await fetch(`/api/runs/${encodeURIComponent(req.runId)}/steer`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(workspaceContext ? workspaceProjectHeaders(workspaceContext) : {}),
+      },
+      body: JSON.stringify({ text: req.text }),
+    });
+  } catch (err) {
+    return {
+      ok: false,
+      code: 'NETWORK_ERROR',
+      message: err instanceof Error ? err.message : String(err),
+    };
+  }
+  const body = await response.json().catch(() => null) as
+    | { messageId?: string; error?: { code?: string; message?: string } }
+    | null;
+  if (!response.ok) {
+    return {
+      ok: false,
+      code: body?.error?.code ?? `HTTP_${response.status}`,
+      message: body?.error?.message ?? 'steering failed',
+    };
+  }
+  return { ok: true, messageId: body?.messageId ?? '' };
+}
+
 export async function listActiveChatRuns(
   projectId: string,
   conversationId: string,

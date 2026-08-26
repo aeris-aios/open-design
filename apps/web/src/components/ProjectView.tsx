@@ -28,6 +28,7 @@ import {
   publishDaemonRunFinishedEvent,
   reattachDaemonRun,
   reportChatRunFeedback,
+  steerChatRun,
   streamViaDaemon,
 } from '../providers/daemon';
 import { normalizeCustomReason } from '@open-design/contracts/analytics';
@@ -58,6 +59,7 @@ import {
 import { useCoalescedCallback } from '../hooks/useCoalescedCallback';
 import { requestAmrArtifactUpgrade } from '../runtime/amr-artifact-upgrade';
 import {
+  agentSupportsMidTurnSteering,
   type AmrWalletSnapshot,
   type ByokChatProviderConfig,
   type ByokMediaDefaults,
@@ -8452,6 +8454,78 @@ export function ProjectView({
     })();
   }, [armSlideNavForQueuedSend, commitPreviewComments, currentConversationBusy, handleSend, handleStop, prioritizeQueuedChatSend, project.id, removeQueuedChatSend, projectRunWorkspaceContext]);
 
+  // B11 「引导对话」 —— 把队列里这条塞进**正在跑**的那一轮,而不是先打断再发。
+  //
+  // 和上面 sendQueuedChatSendNow 正好相反:那条会 handleStop() 掉在跑的这一轮,
+  // 这条一个字都不打断 —— 消息写进 agent 子进程还开着的 stdin,模型当场读到,
+  // 这一轮已经做完的活全留着。模型正卡在工具里(stop_reason: 'tool_use')的时候
+  // 引导最值钱,daemon 那一档不关 stdin,正好接得住。
+  //
+  // 接不接得住不猜:agent 的 `promptInputFormat` 决定(只有 stream-json 那类
+  // CLI 中途还在读 stdin),按钮那层已经据此退回「立即发送」,所以这里只要
+  // 处理 daemon 的拒绝——拒绝时消息**没送出去也没入库**,原样留在队列里。
+  const steerableRunId = useMemo(() => {
+    const active = messages.find(
+      (message) => message.role === 'assistant' && isActiveRunStatus(message.runStatus),
+    );
+    return typeof active?.runId === 'string' && active.runId ? active.runId : null;
+  }, [messages]);
+  const steeringAgentSupported = useMemo(
+    () => agentSupportsMidTurnSteering(
+      agents.find((agent) => agent.id === config.agentId) ?? null,
+    ),
+    [agents, config.agentId],
+  );
+  const canSteerCurrentTurn = Boolean(
+    steerableRunId && steeringAgentSupported && !currentConversationQueueDisabled,
+  );
+  // 只有「这个 agent 中途根本不读 stdin」才值得解释 —— 那是个永久事实,人需要
+  // 知道为什么这颗不是引导。没有在跑的一轮时不解释:那时候没什么可引导的,
+  // 退回去的那颗就是普通的「发送」,不打断任何东西。
+  const steerBlockedReason = steeringAgentSupported
+    ? null
+    : t('chat.queuedSteerUnsupported');
+
+  const steerQueuedChatSend = useCallback((id: string) => {
+    const item = queuedChatSendsRef.current.find((candidate) => candidate.id === id);
+    if (!item || !steerableRunId) return;
+    const conversationId = activeConversationIdRef.current;
+    void (async () => {
+      const outcome = await steerChatRun(
+        { runId: steerableRunId, text: item.prompt },
+        projectRunWorkspaceContextRef.current,
+      );
+      if (!outcome.ok) {
+        setError(
+          outcome.code === 'RUN_STEERING_UNSUPPORTED'
+            ? t('chat.queuedSteerUnsupported')
+            : outcome.code === 'RUN_STEERING_CLOSED'
+              ? t('chat.queuedSteerClosed')
+              : t('chat.queuedSteerFailed'),
+        );
+        return;
+      }
+      // 让这一屏立刻看见自己刚说的话。daemon 已经把同一条以 role:'user' 写进库,
+      // 这里复用它回来的 id,所以刷新之后不会变成两条。
+      if (
+        projectIdRef.current === project.id
+        && activeConversationIdRef.current === conversationId
+      ) {
+        setMessages((curr) => (
+          curr.some((message) => message.id === outcome.messageId)
+            ? curr
+            : [...curr, {
+                id: outcome.messageId,
+                role: 'user' as const,
+                content: item.prompt,
+                createdAt: Date.now(),
+              }]
+        ));
+      }
+      removeQueuedChatSend(id);
+    })();
+  }, [project.id, removeQueuedChatSend, setError, steerableRunId, t]);
+
   useEffect(() => {
     if (currentConversationBusy) {
       startingQueuedChatSendIdRef.current = null;
@@ -9625,6 +9699,9 @@ export function ProjectView({
             onUpdateQueuedSend: updateQueuedChatSend,
             onReorderQueuedSends: reorderCurrentConversationQueuedChatSends,
             onSendQueuedNow: sendQueuedChatSendNow,
+            // B11: only handed over when steering can really happen right now.
+            onSteerQueuedSend: canSteerCurrentTurn ? steerQueuedChatSend : undefined,
+            steerBlockedReason,
             onAssistantFeedback: handleAssistantFeedback,
           }
         : undefined,
@@ -11156,6 +11233,8 @@ export function ProjectView({
               onUpdateQueuedSend={updateQueuedChatSend}
               onReorderQueuedSends={reorderCurrentConversationQueuedChatSends}
               onSendQueuedNow={sendQueuedChatSendNow}
+              onSteerQueuedSend={canSteerCurrentTurn ? steerQueuedChatSend : undefined}
+              steerBlockedReason={steerBlockedReason}
               onRequestOpenFile={requestOpenFile}
               onRequestPluginDetails={handleOpenContextPluginDetails}
               onRequestDesignSystemDetails={handleOpenContextDesignSystemDetails}
