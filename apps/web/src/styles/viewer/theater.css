@@ -345,6 +345,21 @@
   cursor: pointer;
   overflow: visible;
 }
+/*
+ * 〔继续剩余任务〕—— 这一排里唯一一颗**有字**的按钮。
+ *
+ * 它原来直接套 `.assistant-copy-button`,而那是给图标准备的固定 26×26 方格
+ * (还带 `overflow: visible`),于是六个字整个溢出到盒子外面:真机上压在旁边的
+ * 「已取消」上,而且只有 26px 的地方点得到。这里把尺寸交回给内容,
+ * 悬停 / 焦点那一套仍然沿用上面那条,让它读起来还是同一排里的东西。
+ */
+.assistant-continue-remaining {
+  width: auto;
+  height: auto;
+  padding: 3px 8px;
+  white-space: nowrap;
+}
+
 .assistant-copy-button:hover {
   /* 稿子只上一层底色,不描边 —— 一排小按钮各自套一圈框会像四个独立控件 */
   background: var(--bg-fill-secondary);

@@ -1919,7 +1919,7 @@ export function AssistantFooter({
           {onContinueRemaining ? (
             <button
               type="button"
-              className="assistant-copy-button"
+              className="assistant-copy-button assistant-continue-remaining"
               data-testid="assistant-continue-remaining"
               onClick={onContinueRemaining}
             >
