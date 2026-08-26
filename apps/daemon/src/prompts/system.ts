@@ -1385,6 +1385,31 @@ export function composeSystemPrompt({
     "\n\n---\n\n## Structured clarification on any turn\n\nWhen clarification is materially necessary and the answer benefits from structured input, emit a `<question-form>` block instead of writing a bulleted list of options in markdown. The host renders it inline in the originating assistant message; a markdown list renders as plain text and forces the user to type a reply. Use the richest appropriate web form controls (`radio`, `checkbox`, `select`, `text`, `textarea`, `number`, `range`, `date`, `time`, `datetime-local`, `color`, `url`, `email`, `tel`, `file`, `switch`, or `direction-cards`). When the clarification needs reference images, source docs, screenshots, or other user files, combine a `type: \"file\"` question with the text/options in the same form; selected files are uploaded into Design Files and submitted as attached/context files on the answer turn. For every finite-choice question, keep user control by leaving `allowCustom` unset or setting it to `true`, and add localized `customLabel` / `customPlaceholder` when useful. Use free-form prose questions only when a form would add no structure. Do NOT also duplicate the form's questions as markdown text alongside it.\n\n`<question-form>` is assistant text for the OpenDesign UI, not a native tool call. If you need to clarify direction, emit the complete `<question-form>...</question-form>` block directly in the assistant message before any TodoWrite, file write/edit, Bash, or other native tool call. Do not stop after an introductory sentence such as \"先确认一下方向：\"; the same message must include the full form.",
   );
 
+  /*
+   * How a turn is laid out in this chat panel.
+   *
+   * The individual markers were each taught in their own place — `<question-form>`
+   * above, `<od-card>` in the memory sections, `<od-done>` in the per-turn slice —
+   * but nothing told the model what the reader actually SEES, so it could not tell
+   * which of its output lands in a collapsed drawer and which lands in front of a
+   * person. That gap shows up as turns that re-narrate the whole process after the
+   * answer, or that skip a plan and leave the user with no progress to watch.
+   *
+   * Facts about the host's rendering only — no new product rules. Kept in the
+   * cached stable prefix rather than the per-turn slice: it never varies by turn,
+   * and re-sending it every turn would pay for it every turn.
+   */
+  if (!isSlimCharterHead || isAskMode) parts.push(
+    "\n\n---\n\n## How your turn is rendered\n\n" +
+    "This panel does not print your output as one flat transcript. A turn renders as a **collapsed execution card** with your **answer below it**, and the completion marker is the boundary between them (see the turn-completion rules in this turn's instructions). Knowing which side something lands on is the difference between a readable turn and a wall of text.\n\n" +
+    "- **Inside the card** (default collapsed once the turn ends): every tool call, your thinking, and any narration you write while working. Each tool call is one row — a verb plus what it acted on — so a command whose intent is legible from its head reads well here, and a 200-character one-liner does not.\n" +
+    "- **Below the card**: only what comes after the completion marker. This is the part a person reads without clicking anything. Keep it about the outcome — what now exists, what changed, what needs their decision. Do not replay the steps; they are one click away and already legible.\n" +
+    "- **TodoWrite is the progress the user watches.** The list renders as `Plan · N steps` plus one drawer per step inside the card, and while the run is in flight a pill above the composer shows which step is current. So a multi-step task without a plan leaves the user watching a spinner. Update the list as you go — each entry's state is read live, and a plan written once and never advanced reads as a stall.\n" +
+    "- **Files you write become artifact cards** with a preview, right under the turn. Pasting file contents back into your answer duplicates something the user can already see and open.\n" +
+    "- **Questions go through `<question-form>`**, never as a markdown list of options — a list renders as plain text and forces the user to type their answer back.\n\n" +
+    "One consequence worth stating plainly: everything you write before the completion marker is filed away by default. If a caveat matters to the decision, it belongs after the marker, not buried in the working narration."
+  );
+
   // Pinned LAST so recency bias reinforces the role-marker prohibition.
   // Slim uses the SP v2.0 translation; classic retains its existing wording.
   parts.push(
