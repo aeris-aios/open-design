@@ -72,7 +72,12 @@ import {
   workspaceIdentityCacheKey,
 } from '../collab/useWorkspaceContext';
 import { canUpgradeFromPlanTier, hasTeamPlan, resolvePlanLabelTier } from '../collab/team-plan';
-import { AMR_CONSOLE_UPGRADE_INTENT, amrPlansUrlForProfile } from '../runtime/amr-guidance';
+import {
+  AMR_CONSOLE_AUTO_RECHARGE_INTENT,
+  AMR_CONSOLE_UPGRADE_INTENT,
+  amrAutoRechargeUrlForProfile,
+  amrPlansUrlForProfile,
+} from '../runtime/amr-guidance';
 import { useWorkspaceInvalidation } from '../collab/workspace-events';
 import type { EntryHomeView } from '../router';
 import type {
@@ -327,6 +332,7 @@ export function teamConsoleUrl(
     | 'upgrade'
     | 'create-team'
     | 'plans'
+    | 'auto-recharge'
     | 'invite',
   // Only consulted for `section: 'upgrade'` — see the comment below on why the
   // deep-link param depends on it.
@@ -361,6 +367,7 @@ export function teamConsoleUrl(
     section === 'members' ? 'team'
     : section === 'billing' ? 'dashboard'
     : section === 'plans' ? 'dashboard'
+    : section === 'auto-recharge' ? 'dashboard'
     : section === 'upgrade' ? 'dashboard'
     : section === 'create-team' || section === 'invite' ? 'dashboard'
     : section;
@@ -380,6 +387,12 @@ export function teamConsoleUrl(
       );
     }
     if (section === 'plans') url.searchParams.set('billing', AMR_CONSOLE_UPGRADE_INTENT);
+    // Auto-recharge lives on the same dashboard; the intent asks B to open its
+    // settings dialog on arrival. See AMR_CONSOLE_AUTO_RECHARGE_INTENT for the
+    // (unconfirmed) B-side handler this depends on.
+    if (section === 'auto-recharge') {
+      url.searchParams.set('billing', AMR_CONSOLE_AUTO_RECHARGE_INTENT);
+    }
     // Vela owns the final invite action because only its dashboard has the
     // authoritative subscription + seat state needed to choose between
     // upgrading to Team, buying seats, and sending an invite. `invite=auto`
@@ -457,6 +470,31 @@ export function workspaceUpgradeUrl(
       : teamConsoleUrl(settingsUrl, 'plans');
   }
   return options ? amrPlansUrlForProfile(options.fallbackProfile) : null;
+}
+
+/**
+ * Where the Max-tier balance card sends THIS workspace's owner — the console's
+ * auto-recharge settings (触发阈值 / 充值金额 / 每月上限).
+ *
+ * Sibling of {@link workspaceUpgradeUrl} and deliberately built the same way,
+ * so the two upgrade destinations cannot drift: same settings-URL base, same
+ * profile fallback when no workspace identity exists yet.
+ *
+ * Gated on `canManageAutoRecharge` rather than `canManageBilling` because that
+ * is the permission for the surface being linked to (contract:
+ * `writable && isOwner`, versus billing's `readable && isOwner`). The two agree
+ * for a healthy active workspace and differ only where the workspace is
+ * readable but not writable — there the link is withheld and the caller falls
+ * back to the plans link rather than sending an owner to an action B rejects.
+ */
+export function workspaceAutoRechargeUrl(
+  context: WorkspaceCollabContext | null | undefined,
+  options: { fallbackProfile: string | null | undefined },
+): string | null {
+  if (context && context.permissions?.canManageAutoRecharge !== true) return null;
+  const settingsUrl = context?.workspaceSettingsUrl?.trim() || null;
+  if (settingsUrl) return teamConsoleUrl(settingsUrl, 'auto-recharge');
+  return amrAutoRechargeUrlForProfile(options.fallbackProfile);
 }
 
 export type WorkspaceInviteTarget =

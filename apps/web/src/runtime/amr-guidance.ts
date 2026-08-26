@@ -41,6 +41,25 @@ const AMR_CONSOLE_PATH = '/dashboard?source=open_design';
  */
 export const AMR_CONSOLE_UPGRADE_INTENT = 'plan';
 
+/**
+ * The console's `billing=<intent>` value that means "open the auto-recharge
+ * (auto top-up) settings dialog for THIS workspace".
+ *
+ * Same handoff shape as {@link AMR_CONSOLE_UPGRADE_INTENT}: the client states
+ * an intent and B decides which surface satisfies it. It exists because the
+ * 2026-08-26 balance ruling gives a Max owner no dialog of our own — clicking
+ * Upgrade must land them directly on 触发阈值 / 充值金额 / 每月上限, since a Max
+ * subscriber has no higher plan to sell and topping up IS the fix.
+ *
+ * ⚠️ UNCONFIRMED ON B. As of this change B's dashboard deep-link effect only
+ * recognizes `checkout` and `plan` (vela `apps/web/src/routes/team-dashboard.tsx`);
+ * its auto top-up surface is opened by in-page interaction only. An
+ * unrecognized `billing` value is inert there, so today this link still lands
+ * the owner on the dashboard that owns the setting — it just does not pop the
+ * dialog open. Needs a B-side handler before the ruling is fully satisfied.
+ */
+export const AMR_CONSOLE_AUTO_RECHARGE_INTENT = 'auto-recharge';
+
 const AMR_CONSOLE_URL_BY_PROFILE: Record<string, string> = {
   prod: DEFAULT_AMR_RECHARGE_URL,
   test: 'https://vela.powerformer.net/dashboard?source=open_design',
@@ -129,8 +148,24 @@ export function amrPlansUrlForWorkspace(
 // Console dashboard deep-linked to open the subscription/plans modal, used by
 // the "Upgrade" affordances next to the plan tier.
 export function amrPlansUrlForProfile(profile: string | null | undefined): string {
+  return amrConsoleUrlWithBillingIntent(profile, AMR_CONSOLE_UPGRADE_INTENT);
+}
+
+/**
+ * Console dashboard deep-linked to open the auto-recharge settings, used by the
+ * Max-tier balance card whose owner has no higher plan to buy. See
+ * {@link AMR_CONSOLE_AUTO_RECHARGE_INTENT} for the B-side caveat.
+ */
+export function amrAutoRechargeUrlForProfile(profile: string | null | undefined): string {
+  return amrConsoleUrlWithBillingIntent(profile, AMR_CONSOLE_AUTO_RECHARGE_INTENT);
+}
+
+function amrConsoleUrlWithBillingIntent(
+  profile: string | null | undefined,
+  intentValue: string,
+): string {
   const base = amrConsoleUrlForProfile(profile);
-  const intent = `billing=${AMR_CONSOLE_UPGRADE_INTENT}`;
+  const intent = `billing=${intentValue}`;
   return base.includes('?') ? `${base}&${intent}` : `${base}?${intent}`;
 }
 

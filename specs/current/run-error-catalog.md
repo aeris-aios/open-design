@@ -389,6 +389,32 @@ L5 环境/外围  离线、代理、企业网、磁盘、更新器、打包壳�
 **与已定口径的关系**:「付费档余额 0 = 不限量,不拦」(§3 / R-010 / OD #7190)仍然成立 ——
 这四组说的是**该拦的时候**怎么呈现,不是把付费用户重新拦回去。
 
+#### 已实现(`feat/balance-role-branches`)
+
+判据落在 `apps/web/src/runtime/amr-balance-branch.ts`,是一支纯函数,不认识钱包:
+
+| 轴 | 字段 | 出处 |
+|---|---|---|
+| 身份 | `permissions.canManageBilling` | `packages/contracts/src/api/collab.ts:260`(声明)/ `:481`(`readable && role === 'owner'`) |
+| 订阅 | `resolvePlanTier({ billing, context, accountPlan })` | `apps/web/src/collab/team-plan.ts:78` |
+| 「Max」 | `isMaxPlanTier` —— 段匹配 `max`,个人 `max` 与 `team_max` 都命中 | `apps/web/src/collab/team-plan.ts` |
+
+两条刻意的兜底:**没有工作区上下文**按 owner(和 `workspaceUpgradeUrl` 的 profile 兜底一致);
+**个人工作区**一律按 owner(那里没有第二个人可以找,推去「联系所有者」只是换一个死胡同)。
+**档次读不出来按非 Max**,也就是保持今天的行为。
+
+呈现:`ProjectView` 在拦截发生的那一刻把分支结论记进 `amrBalanceGateBlock.dialog`
+(`'upgrade' | 'ask_owner' | null`),`EntryShell`(首页)同一套判据 —— 只是首页**没有那张卡**
+兜底,所以 `null` 在首页退回 `'upgrade'`,否则拦住了却什么都不显示。
+
+⚠️ **「自动唤起团队自动充值弹窗」需 vela 侧确认。** 客户端已经按
+`AMR_CONSOLE_UPGRADE_INTENT` 的先例发出 `billing=auto-recharge`
+(`apps/web/src/runtime/amr-guidance.ts` 的 `AMR_CONSOLE_AUTO_RECHARGE_INTENT`),
+但 B 的 dashboard 今天**只认 `checkout` 和 `plan`**
+(`vela apps/web/src/routes/team-dashboard.tsx` 的深链 effect,`origin/main` 同样如此),
+自动充值面板只能页内点开。所以这条链接目前把所有者带到了**管这件事的那一页**,
+但不会替他把弹窗打开 —— 需要 B 加一个 handler。
+
 ### 6.U ⚠️「画出来了,没接线」审计(2026-08-26)
 
 陈列页**直接 import 组件**,而产品**根本不渲染它** —— 于是陈列页全绿、真实客户端照旧。
@@ -432,6 +458,11 @@ owner 弹窗先用通用话术 / 告警可继续的不弹窗只出卡片、余�
 结果:没有账单权限的团队成员余额耗尽时,弹窗上**只有一颗「暂不需要」**,没有任何前进的路,
 任务被 park 在队列里,他既不能升级、也没有「通知管理员」、也看不到解释。
 这比设计描述的「被带到个人充值页」更糟 —— 那至少还有个地方可点。
+
+**已修(`feat/balance-role-branches`)**:这一档不再渲染 `AmrBalanceDialog`,改成
+`components/chat/AmrOwnerTopUpDialog.tsx` —— 它不外跳(账单动作 B 会拒),而是把一句
+可以直接发给所有者的话交到成员手上,一键复制。聊天流水和首页两条路都换掉了。
+文案由研发拟,**待产品复核**;「找管理员 + 复制请求」取自 §7 Q-04 已列的候选。
 
 ## 7. 待决(产品 / 设计 / 研发)
 

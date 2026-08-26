@@ -114,6 +114,11 @@ import { UpdaterPopup } from './UpdaterPopup';
 import { WhatsNewPopup } from './WhatsNewPopup';
 import { DeepSeekHarnessSetupDialog } from './DeepSeekHarnessSetupDialog';
 import { AmrBalanceDialog } from './AmrBalanceDialog';
+import { AmrOwnerTopUpDialog } from './chat/AmrOwnerTopUpDialog';
+import {
+  amrBalanceBlockedDialog,
+  resolveAmrBalanceBranch,
+} from '../runtime/amr-balance-branch';
 import { installDeepSeekHarnessCompanion } from '../providers/agent-companion';
 import { AmrLowBalanceDialog, type AmrLowBalanceDecision } from './AmrLowBalanceDialog';
 import {
@@ -1063,6 +1068,14 @@ export function EntryShell({
   const [amrBalanceGateBlock, setAmrBalanceGateBlock] = useState<
     {
       reason: 'insufficient' | 'signed_out';
+      /**
+       * 哪一张弹窗 —— 身份 × 订阅的分支(规格 §6.V)。
+       *
+       * 首页和聊天流水的差别只有一处:这里**没有那张升级卡**兜底。所以
+       * 「Max · owner 不弹窗」那一支在首页会退回原来的升级弹窗 —— 不然拦住了
+       * 发送却什么都不显示,那是把一个死胡同换成一片空白。
+       */
+      dialog: 'upgrade' | 'ask_owner';
       snapshot: AmrWalletSnapshot;
       resolve: (decision: 'retry' | 'dismiss') => void;
     } | null
@@ -1414,6 +1427,17 @@ export function EntryShell({
           const decision = await new Promise<'retry' | 'dismiss'>((resolve) => {
             setAmrBalanceGateBlock({
               reason: blocked.reason,
+              // 被登出说的是登录不是钱,无条件走原来那张(主按钮是应用内登录)。
+              // 余额耗尽才按身份分支;首页没有卡兜底,所以 `null` 退回 `upgrade`。
+              dialog:
+                blocked.reason === 'signed_out'
+                  ? 'upgrade'
+                  : amrBalanceBlockedDialog(
+                      resolveAmrBalanceBranch({
+                        context: gateWorkspaceContext,
+                        billing: workspaceBilling,
+                      }),
+                    ) ?? 'upgrade',
               snapshot: blocked.snapshot,
               resolve,
             });
@@ -1706,7 +1730,16 @@ export function EntryShell({
           {/* DeepSeek campaign badge moved into EntryNavRail's top-right
               cluster (topRightSlot above) so it sits beside the account
               module in one flex row. */}
-          {amrBalanceGateBlock ? (
+          {amrBalanceGateBlock?.dialog === 'ask_owner' ? (
+            /*
+             * 没有账单权限的成员。原来这一档给的是 `AmrBalanceDialog`,而它的
+             * 主按钮取自 `workspaceUpgradeUrl` —— 对这类成员返回 `null`,于是
+             * 弹窗上只剩一颗「暂不需要」(§6.Y)。这张弹窗至少给得出一条路。
+             */
+            <AmrOwnerTopUpDialog
+              onClose={() => amrBalanceGateBlock.resolve('dismiss')}
+            />
+          ) : amrBalanceGateBlock ? (
             <AmrBalanceDialog
               reason={amrBalanceGateBlock.reason}
               balanceUsd={amrBalanceGateBlock.snapshot.balanceUsd}

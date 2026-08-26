@@ -150,7 +150,21 @@ import {
   type AmrBalanceGateScope,
 } from '../runtime/amr-balance-gate';
 import { isPaidAmrPlan, resolveAmrPlan } from '../runtime/amr-low-balance-plan';
+import {
+  amrBalanceBlockedDialog,
+  amrBalanceUpgradeIntent,
+  resolveAmrBalanceBranch,
+  type AmrBalanceBlockedDialogKind,
+} from '../runtime/amr-balance-branch';
 import { AmrBalanceDialog } from './AmrBalanceDialog';
+import { AmrOwnerTopUpDialog } from './chat/AmrOwnerTopUpDialog';
+import { workspaceAutoRechargeUrl, workspaceUpgradeUrl } from './EntryNavRail';
+import {
+  amrHandoffDeviceId,
+  attributedAmrUrl,
+  recordAmrEntry,
+} from '../analytics/amr-attribution';
+import { getResolvedDeviceId } from '../analytics/client';
 import {
   cancelBrandExtraction,
   continueBrandExtraction,
@@ -2425,6 +2439,17 @@ export function ProjectView({
   const [amrBalanceGateBlock, setAmrBalanceGateBlock] = useState<
     {
       reason: 'insufficient' | 'signed_out';
+      /**
+       * 这一档同时唤起哪个弹窗 —— 由**身份 × 订阅**决定(规格 §6.V):
+       * `upgrade` 是现有的余额不足升级弹窗(非 Max · owner);`ask_owner` 是
+       * 「找所有者充值」那张(所有非 owner 成员);`null` 是不弹窗
+       * (Max · owner —— 他没有更高的套餐可买,卡上那颗按钮直接落在自动充值上,
+       * 中间再插一张弹窗只是多一次点击)。
+       *
+       * 决定在**拦截发生的那一刻**做完并记下来,而不是渲染时再算:身份换了
+       * (切工作区)不该把一张已经开着的弹窗换成另一张。
+       */
+      dialog: AmrBalanceBlockedDialogKind;
       snapshot: AmrWalletSnapshot;
       conversationId: string;
     } | null
@@ -2439,6 +2464,81 @@ export function ProjectView({
    * 判定本身没动(`runtime/amr-balance-gate.ts`),这只是判定结果的呈现。
    */
   const [amrBalanceCardUsd, setAmrBalanceCardUsd] = useState<number | null>(null);
+  /**
+   * 出这张卡时那份钱包读数的 profile。只在**没有工作区上下文**时用得到 ——
+   * 那种情况下升级链接退回 profile 兜底(和 `AmrBalanceDialog` 同一条规则)。
+   */
+  const [amrBalanceCardProfile, setAmrBalanceCardProfile] = useState<string | null>(null);
+  /**
+   * 这一次要付钱的工作区,把这个人放进 §6.V 的哪一格。
+   *
+   * 用的是 `projectRunPreflightContext` —— 余额门查的是同一个工作区,不是环境里
+   * 恰好选中的那个;两处不同源就会出现「查 A 的钱、按 B 的身份呈现」。
+   */
+  const amrBalanceBranch = useMemo(
+    () => resolveAmrBalanceBranch({ context: projectRunPreflightContext }),
+    [projectRunPreflightContext],
+  );
+  const amrBalanceBranchRef = useRef(amrBalanceBranch);
+  amrBalanceBranchRef.current = amrBalanceBranch;
+  /**
+   * 「找所有者充值」弹窗是从**卡上那颗按钮**点开的(而不是拦截时自动弹出的)。
+   * 拦截时自动弹出的那一份记在 `amrBalanceGateBlock.dialog` 上,两者共用同一个
+   * 组件,任一为真就渲染。
+   */
+  const [amrOwnerTopUpFromCard, setAmrOwnerTopUpFromCard] = useState(false);
+  /**
+   * 升级卡那颗按钮:**点了跳哪由身份 × 订阅决定**(规格 §6.V 的第四列)。
+   *
+   *   非 Max · owner → 现有的 Pricing 深链(和弹窗同一个落点,「卡和弹窗都直接跳 Pricing」)
+   *   Max   · owner → vela web 端 + 自动充值意图(他没有更高的套餐可买,充值才是解法)
+   *   任何非 owner  → 不外跳:账单动作 B 会拒。给他「找所有者充值」那张弹窗,
+   *                   那是他唯一真正走得通的一条路(也是 §6.Y 死胡同的出口)。
+   *
+   * 落点复用 `workspaceUpgradeUrl` / `workspaceAutoRechargeUrl` 这两个唯一决策点,
+   * 免得升级卡和账号菜单、设置面板各自长出一条不一样的链接。
+   */
+  const handleAmrBalanceCardUpgrade = useCallback(() => {
+    const branch = amrBalanceBranchRef.current;
+    const intent = amrBalanceUpgradeIntent(branch);
+    if (intent === 'ask_owner') {
+      setAmrOwnerTopUpFromCard(true);
+      return;
+    }
+    const fallbackProfile = amrBalanceCardProfile;
+    // 自动充值链接对「可读但不可写」的工作区会返回 null(权限位不同,见
+    // `workspaceAutoRechargeUrl`)。那时退回 Pricing —— 少一个功能好过一颗死按钮。
+    const url =
+      (intent === 'auto_recharge'
+        ? workspaceAutoRechargeUrl(projectRunPreflightContext, { fallbackProfile })
+        : null)
+      ?? workspaceUpgradeUrl(projectRunPreflightContext, null, { fallbackProfile });
+    if (!url) return;
+    const entrySource =
+      intent === 'auto_recharge'
+        ? ('chat_upgrade_card_auto_recharge' as const)
+        : ('chat_upgrade_card' as const);
+    const metricsConsent = config.telemetry?.metrics === true;
+    const attribution = recordAmrEntry(analytics.track, entrySource, new Date(), {
+      metricsConsent,
+    });
+    const deviceId = amrHandoffDeviceId({
+      metricsConsent,
+      resolvedDeviceId: getResolvedDeviceId(),
+      installationId: config.installationId,
+    });
+    window.open(
+      attributedAmrUrl(url, attribution, deviceId),
+      '_blank',
+      'noopener,noreferrer',
+    );
+  }, [
+    amrBalanceCardProfile,
+    analytics.track,
+    config.installationId,
+    config.telemetry?.metrics,
+    projectRunPreflightContext,
+  ]);
   // Conversations with a balance-gate check currently in flight. Sends that
   // arrive during the check queue instead of racing a duplicate run through
   // the not-yet-busy window the gate's await opens.
@@ -6786,18 +6886,27 @@ export function ProjectView({
               recoveryActionType: 'manual_retry',
               recoveryActionInstanceId,
             };
+            // 「同时唤起什么弹窗」是四组分支唯一的差别(规格 §6.V)。
+            //
+            // 被登出不在这四组里:那一档说的是登录,不是钱,主按钮是应用内登录,
+            // 所以它无条件走原来那张弹窗。
             setAmrBalanceGateBlock({
               reason: gate.reason,
+              dialog:
+                gate.reason === 'signed_out'
+                  ? 'upgrade'
+                  : amrBalanceBlockedDialog(amrBalanceBranchRef.current),
               snapshot: gate.snapshot,
               conversationId: gateConversationId,
             });
-            // 拦截档:弹窗保留(那是「不能开始」的硬话),同时把流水里那张卡也点亮
-            // —— 弹窗一关就什么都不剩,而人回到聊天里仍然需要看到「为什么开不了」。
+            // 拦截档:把流水里那张卡点亮 —— 弹窗一关就什么都不剩(Max · owner 那组
+            // 干脆没有弹窗),而人回到聊天里仍然需要看到「为什么开不了」。
             //
             // 只对「余额耗尽」出卡。被登出也走这条硬拦截,但那张卡说的是钱的事,
             // 摆一个 $0.00 去解释一次登录过期是在误导 —— 那一档交给弹窗。
             if (gate.reason === 'insufficient') {
               setAmrBalanceCardUsd(amrBalanceCardBalanceUsd(gate.snapshot));
+              setAmrBalanceCardProfile(gate.snapshot.profile ?? null);
             }
             return acceptedQueuedHomeHandoff(parkBlockedSend());
           }
@@ -6819,10 +6928,14 @@ export function ProjectView({
             }
             if (isPaidAmrPlan(plan)) {
               setAmrBalanceCardUsd(amrBalanceCardBalanceUsd(gate.snapshot));
+              setAmrBalanceCardProfile(gate.snapshot.profile ?? null);
             }
           }
           // 判定放行:撤掉那张卡 —— 余额已经不是问题了,提示不该留在屏幕上。
-          if (gate.kind === 'allow') setAmrBalanceCardUsd(null);
+          if (gate.kind === 'allow') {
+            setAmrBalanceCardUsd(null);
+            setAmrBalanceCardProfile(null);
+          }
           amrGatePausedQueueConversationsRef.current.delete(gateConversationId);
         } finally {
           amrGateInFlightConversationsRef.current.delete(gateConversationId);
@@ -11334,6 +11447,7 @@ export function ProjectView({
               config={config}
               onOpenSettings={onOpenSettings}
               amrBalanceCardUsd={amrBalanceCardUsd}
+              onAmrBalanceUpgrade={handleAmrBalanceCardUpgrade}
               showByokRecoveryAction={
                 config.mode === 'api' &&
                 daemonLive &&
@@ -11623,7 +11737,20 @@ export function ProjectView({
       {onboardingEntryRef.current && hasPreviewableArtifact && !currentConversationStreaming ? (
         <FirstArtifactHint />
       ) : null}
-      {amrBalanceGateBlock ? (
+      {amrBalanceGateBlock?.dialog === 'ask_owner' || amrOwnerTopUpFromCard ? (
+        /*
+         * 非 owner 的成员。他拿不到账单动作,所以这张弹窗不外跳,而是给他一句
+         * 可以直接发给所有者的话 —— 在此之前这一档只有一颗「暂不需要」(§6.Y)。
+         */
+        <AmrOwnerTopUpDialog
+          onClose={() => {
+            setAmrOwnerTopUpFromCard(false);
+            // 和现有弹窗的「暂不需要」同义:任务留在队列里,只是不再是唯一选项。
+            setAmrBalanceGateBlock(null);
+          }}
+        />
+      ) : null}
+      {amrBalanceGateBlock?.dialog === 'upgrade' ? (
         <AmrBalanceDialog
           reason={amrBalanceGateBlock.reason}
           balanceUsd={amrBalanceGateBlock.snapshot.balanceUsd}
