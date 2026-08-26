@@ -462,6 +462,45 @@ describe('useProjectWorkspaceScope', () => {
     view.unmount();
   });
 
+  // The condition being retried is usually "the daemon has not written this
+  // project's row yet", which clears in a second or two. A flat 5s cadence
+  // therefore spends most of the wait idle AFTER the row already exists, and
+  // that dead time is what a user sees as a slow first open. Probe tightly
+  // first, then relax to the steady cadence.
+  it('probes again quickly before settling into the steady retry cadence', async () => {
+    vi.useFakeTimers();
+    let attempts = 0;
+    const fetchMock = vi.fn(async () => {
+      attempts += 1;
+      if (attempts === 1) {
+        return new Response(
+          JSON.stringify({ error: { code: 'PROJECT_NOT_FOUND', message: 'not found' } }),
+          { status: 404 },
+        );
+      }
+      return new Response(
+        JSON.stringify(teamScope('project-backoff', 'ws-1', 'wm-1')),
+        { status: 200 },
+      );
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const view = renderHook(() => useProjectWorkspaceScope('project-backoff'));
+    await act(async () => {
+      for (let turn = 0; turn < 10; turn += 1) await Promise.resolve();
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // Well inside the steady 5s cadence.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(800);
+    });
+
+    expect(fetchMock.mock.calls.length).toBeGreaterThan(1);
+    expect(view.result.current.scope?.kind).toBe('team');
+    view.unmount();
+  });
+
   it('does not poll a settled forbidden scope on the retry timer', async () => {
     vi.useFakeTimers();
     const fetchMock = vi.fn(async () => new Response('{}', { status: 403 }));

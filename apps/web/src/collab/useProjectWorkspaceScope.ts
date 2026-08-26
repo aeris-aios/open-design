@@ -15,6 +15,17 @@ import { useWorkspaceInvalidation } from './workspace-events';
 import { workspaceIdentityCacheKey } from './workspace-identity';
 
 const PROJECT_SCOPE_RETRY_MS = 5_000;
+/**
+ * First retry delay, doubling up to {@link PROJECT_SCOPE_RETRY_MS}.
+ *
+ * What this polls for is almost always a project row the daemon has not
+ * written yet — the first open of a project pulled from the hub — and that
+ * clears in a second or two. At a flat steady cadence the reader spends most
+ * of the wait idle AFTER the row exists, which is dead time the user reads as
+ * a slow open. Probe tightly first, then relax so a genuinely long outage
+ * still settles into a cheap poll rather than hammering the daemon.
+ */
+const PROJECT_SCOPE_FIRST_RETRY_MS = 500;
 
 interface ProjectWorkspaceAuthority {
   workspaceId: string;
@@ -508,6 +519,17 @@ export function useProjectWorkspaceScope(
     const controller = new AbortController();
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
     let firstAttempt = true;
+    // Scoped to this effect run, so a project / authority change restarts the
+    // tight probe instead of inheriting the previous run's relaxed delay.
+    let retryAttempt = 0;
+    const scheduleRetry = () => {
+      const delay = Math.min(
+        PROJECT_SCOPE_RETRY_MS,
+        PROJECT_SCOPE_FIRST_RETRY_MS * 2 ** retryAttempt,
+      );
+      retryAttempt += 1;
+      retryTimer = setTimeout(() => void load(), delay);
+    };
     const refreshRevision = refreshRequest.revision;
 
     if (refreshRevision === 0 && initialScopeCanSeed && seededFromInitialScopeRef.current) {
@@ -595,7 +617,7 @@ export function useProjectWorkspaceScope(
                   resolvedCallerIdentityKey: callerIdentityKey,
                 };
           });
-          retryTimer = setTimeout(() => void load(), PROJECT_SCOPE_RETRY_MS);
+          scheduleRetry();
         } else {
           setState({
             loading: false,
@@ -645,7 +667,7 @@ export function useProjectWorkspaceScope(
         // daemon capability decision. Both still revalidate on explicit
         // identity, page-lifecycle, or workspace invalidation events.
         if (failure === 'unavailable') {
-          retryTimer = setTimeout(() => void load(), PROJECT_SCOPE_RETRY_MS);
+          scheduleRetry();
         }
       }
     };
