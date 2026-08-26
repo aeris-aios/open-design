@@ -793,6 +793,24 @@ export type PersistedAgentEvent =
       failureDetail?: RunFailureDetail;
     }
   | { kind: 'text'; text: string }
+  /**
+   * This turn's one-time done key. The daemon mints it per run, injects it into
+   * the system prompt, and emits this event BEFORE any model output; the chat
+   * client then only accepts `<od-done key="…"/>` markers carrying this exact
+   * value as the process/conclusion boundary.
+   *
+   * It exists because the boundary used to be a bare `<done/>` that no prompt
+   * ever taught — so any turn whose content happened to contain that string
+   * (agent quoting HTML, explaining the tag) flipped the boundary and threw the
+   * rest of the answer out of the execution shell. A model cannot reproduce a
+   * nonce it was never shown, which is what makes the keyed form unforgeable.
+   *
+   * Persisted with the turn's other events so a reloaded conversation validates
+   * against the same key it was recorded with. Messages from before this event
+   * existed simply have none — clients MUST fall back to the legacy bare-marker
+   * heuristic there rather than treating "no key" as "no boundary".
+   */
+  | { kind: 'done_key'; key: string }
   | { kind: 'conversation_title'; title: string }
   | { kind: 'thinking'; text: string }
   | {

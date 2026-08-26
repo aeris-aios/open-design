@@ -13,7 +13,7 @@ import type {
   ProjectBrowserWorkspaceTab,
   ProjectTabsState,
 } from '@open-design/contracts';
-import { eventsEndedWithUnfinishedWork } from '@open-design/contracts';
+import { eventsEndedWithUnfinishedWork, stripDoneMarkers } from '@open-design/contracts';
 import { migrateCollabSyncSnapshots } from './collab/sync-snapshot-store.js';
 import { migrateCommentRelayOutbox } from './collab/comment-relay-outbox.js';
 import { migratePublicFilePublications } from './collab/public-file-publication-store.js';
@@ -2996,7 +2996,17 @@ function materializeMessageAgentEvents(
   let textDelta = '';
   for (const batch of batches) {
     for (const event of batch) {
-      if (event?.kind === 'text' && typeof event.text === 'string') textDelta += event.text;
+      /*
+       * The turn-completion marker rides the text stream (that is how the chat
+       * client finds the process/conclusion boundary) but must not survive into
+       * the message body. `content` is what copy-to-clipboard, exports, title
+       * fallbacks and the legacy events-less render path read, and a raw
+       * `<od-done key="…"/>` in any of those is a protocol tag on screen — the
+       * exact failure `<od-title>` already shipped once.
+       */
+      if (event?.kind === 'text' && typeof event.text === 'string') {
+        textDelta += stripDoneMarkers(event.text);
+      }
     }
     events = mergeMessageAgentEvents(events, batch);
   }

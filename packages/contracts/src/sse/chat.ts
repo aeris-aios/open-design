@@ -109,6 +109,11 @@ export interface ChatSseEndPayload {
 export type DaemonAgentPayload =
   | { type: 'status'; label: string; model?: string; ttftMs?: number; detail?: string }
   | { type: 'text_delta'; delta: string }
+  /**
+   * This turn's one-time done key, emitted once before any model output. See
+   * the `done_key` member of `PersistedAgentEvent` for the protocol rationale.
+   */
+  | { type: 'done_key'; key: string }
   | { type: 'conversation_title'; title: string }
   | { type: 'thinking_delta'; delta: string }
   | { type: 'thinking_start' }

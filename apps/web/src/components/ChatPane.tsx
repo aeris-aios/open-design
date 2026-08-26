@@ -887,6 +887,8 @@ function hasVisibleBrandAssistantEvent(event: NonNullable<ChatMessage['events']>
     case 'usage':
     case 'diagnostic':
     case 'conversation_title':
+    // Protocol metadata for this turn's done marker — never user-visible.
+    case 'done_key':
       return false;
   }
 }

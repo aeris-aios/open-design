@@ -22,6 +22,11 @@
  * 只有 run 结束那一刻允许有一次重排(liftConclusion)。
  */
 import type { PersistedAgentEvent } from '@open-design/contracts';
+import {
+  OD_DONE_KEY_ATTR_RE,
+  OD_DONE_OPEN_TAG,
+  OD_DONE_TAG_RE,
+} from '@open-design/contracts';
 import type {
   BuildTurnInput,
   ExecutionShell,
@@ -47,13 +52,36 @@ import {
 } from './tool-kind';
 
 /**
- * done 标记(草案字样,产品定稿前只认这一个)。自闭合而不是把结论包起来:
- * 包起来要等闭合标签到了才能显示,结论会整段憋住,不符合流式。
+ * done 标记 —— **每轮一次性密钥**。
+ *
+ * 形如 `<od-done key="a7f3c91ed2b40561"/>`:daemon 每个 run 现生成一个随机 key,
+ * 注入系统提示词,同时用 `done_key` 事件随 SSE 下发。客户端只认这一轮的 key。
+ *
+ * 为什么非要密钥:原来的判据是裸 `<done/>`,而这个字样**在产品提示词里从来没教过** ——
+ * 全仓库只有设计模拟器里有。也就是说线上没有任何 agent 被要求发它,每一次命中按定义
+ * 都是「正文里碰巧出现」。于是它可以被内容伪造:让 agent 吐一段含 `<done/>` 的 HTML、
+ * 或者让它解释这个标签,后面的正文就被整段甩到壳外(有 todo 时结论甚至提前逃出 todo)。
+ * 模型复制不出它没见过的随机串,密钥形式因此伪造不了。
+ *
+ * 自闭合而不是把结论包起来:包起来要等闭合标签到了才能显示,结论会整段憋住,不符合流式。
+ *
+ * `od-` 前缀跟仓库里既有的协议标记(`<od-title>`、`<od-card>`)对齐,不会撞上
+ * agent 真的在写的 HTML 标签。
+ *
+ * 标记的**形状**是共享契约(`@open-design/contracts` 的 `api/done-marker`),
+ * 不在这里另写一份:daemon 要用同一份判据把标记挡在落库正文之外。两边各留一份正则,
+ * 迟早会对「什么算一枚标记」产生分歧,而分歧的表现形式就是协议标签出现在用户屏幕上。
  */
-const DONE_RE = /<done\s*\/?>/i;
+/**
+ * 密钥出现之前的老判据。**只在这一轮没有 key 时**启用 —— 历史消息里没有 key 事件,
+ * 落块结果必须和改动前逐块一致,不能因为「没有 key」就把正文一律吞进抽屉或一律甩到壳外。
+ */
+const LEGACY_DONE_RE = /<done\s*\/?>/i;
 /** 意图澄清表单和产物块算**隐式 done** —— 它们是交给用户看的东西,不是过程叙述 */
 const IMPLICIT_DONE_RE = /<(?:question-form|artifact)\b/i;
-const OPEN_TAGS = ['<done', '<question-form', '<artifact'];
+const OPEN_TAGS = ['<done', '<question-form', '<artifact', OD_DONE_OPEN_TAG];
+/** `<od-done` 之后属性还在路上时也要扣住;超过这个长度还没见到 `>` 就放行,免得卡死 */
+const MAX_MARKER_HOLD = 96;
 
 /** 各家 todo 工具在 daemon 归一后都叫 TodoWrite;这里仍放宽匹配,兼容 MCP 注入的 `mcp__*__todo_write` */
 const TODO_NAME_RE = /^(TodoWrite|todowrite|todo_write|update_plan)$|(^|__)todo_?write$/i;
@@ -82,13 +110,27 @@ function normalizeStatus(status: string): TodoSegment['status'] {
   return 'pending';
 }
 
-/** 结尾这几个字符会不会是某个标记的开头?是就先扣住不渲染,免得半截 `<do` 闪一下 */
+/**
+ * 结尾这几个字符会不会是某个标记的开头?是就先扣住不渲染,免得半截 `<do` 闪一下。
+ *
+ * 密钥标记把这条约束抬高了一档:`<od-done key="a7f3c91ed2b40561"/>` 有 34 个字符,
+ * SSE 随时可能把它切在 `<od-done key="a7f` 这种地方。老实现只往回看 14 个字符、
+ * 而且只认「整条尾巴是某个标记名的前缀」,`<od-done key="a7f` 两条都不满足 ——
+ * 半截标记连带半截 key 会原样画到屏幕上,然后下一帧突然消失变成别的样式。
+ *
+ * 所以判据变成两条(任一成立就扣住):
+ *   · 尾巴还是某个标记名的前缀 —— 标记名没打完,和以前一样;
+ *   · 尾巴已经是完整的 `<od-done`,但还没见到 `>` —— key 属性还在路上。
+ *
+ * 第二条用 `MAX_MARKER_HOLD` 封顶:正文里一个永远等不到 `>` 的孤立 `<` 不能把
+ * 后面的输出一直憋住。
+ */
 function pendingTagTail(text: string): number {
-  for (let k = Math.min(14, text.length); k > 0; k -= 1) {
-    const tail = text.slice(text.length - k).toLowerCase();
-    if (tail[0] !== '<') continue;
-    if (OPEN_TAGS.some((tag) => tag.startsWith(tail))) return k;
-  }
+  const open = text.lastIndexOf('<');
+  if (open < 0 || text.length - open > MAX_MARKER_HOLD) return 0;
+  const tail = text.slice(open).toLowerCase();
+  if (OPEN_TAGS.some((tag) => tag.startsWith(tail))) return text.length - open;
+  if (tail.startsWith(OD_DONE_OPEN_TAG) && !tail.includes('>')) return text.length - open;
   return 0;
 }
 
@@ -113,15 +155,112 @@ function findMarkerOutsideCode(re: RegExp, text: string): RegExpExecArray | null
   return null;
 }
 
-function findDoneCut(text: string): { index: number; length: number } | null {
-  const explicit = findMarkerOutsideCode(DONE_RE, text);
-  const implicit = findMarkerOutsideCode(IMPLICIT_DONE_RE, text);
-  if (explicit && (!implicit || explicit.index <= implicit.index)) {
-    return { index: explicit.index, length: explicit[0].length };
+/** 这一轮的 key —— 整段事件里的第一条 `done_key`。没有就是历史消息 / 旧链路 */
+function readRunDoneKey(events: PersistedAgentEvent[]): string | null {
+  for (const e of events) {
+    if (e.kind !== 'done_key') continue;
+    const key = typeof e.key === 'string' ? e.key.trim() : '';
+    if (key) return key;
   }
-  // 隐式:标签本身要留给后面的正文,由消息层去剥成卡片,所以长度记 0
-  if (implicit) return { index: implicit.index, length: 0 };
   return null;
+}
+
+interface MarkerScan {
+  /** 剥掉协议噪音之后,真正要落到界面上的文字 */
+  text: string;
+  /** done 落在 `text` 的哪个下标;没有就是 null */
+  doneAt: number | null;
+  /** done 标记本身要从 `text` 里切掉几个字符(隐式 done 的标签要留给消息层,所以是 0)*/
+  doneLength: number;
+}
+
+/**
+ * 把 `<od-done …>` 从可见文字里吃掉,顺手报告第一枚 key 对得上的标记落在**剥完之后**
+ * 的哪个下标。
+ *
+ * 「吃掉」是无条件的:key 对不上、根本没写 key、这一轮压根没启用密钥 —— 都算协议噪音。
+ * 和 daemon 的 `<od-title>` 是同一条规矩:标记任何情况下都不许出现在正文里
+ * (`apps/daemon/src/title-marker.ts` 里 `enabled` 的注释记着这条的来由:
+ * 当年「不请求标题就不剥离」,结果标记原样漏进了线上聊天正文)。
+ *
+ * 标记在**代码里**时一律不算数,也不吃掉 —— 围栏代码块和行内代码正是 agent 展示标记
+ * 本身的地方(「这个标记写作 `<od-done key="…"/>`」)。用的是产物剥离器一直在用的那套
+ * 跳过区间(`artifacts/markdown-context`),不另写一份:两处要跳过的东西是同一批,
+ * 规则分家迟早对不上。
+ */
+function stripKeyedDone(text: string, runKey: string | null): { text: string; doneAt: number | null } {
+  if (!/<od-done/i.test(text)) return { text, doneAt: null };
+  const { ranges } = computeSkipRanges(text);
+  const scan = new RegExp(OD_DONE_TAG_RE.source, OD_DONE_TAG_RE.flags);
+  let out = '';
+  let cursor = 0;
+  let doneAt: number | null = null;
+  let m: RegExpExecArray | null;
+  while ((m = scan.exec(text)) !== null) {
+    if (rangeContains(ranges, m.index)) continue; // 代码里的原样保留
+    out += text.slice(cursor, m.index);
+    if (doneAt == null && runKey) {
+      const key = OD_DONE_KEY_ATTR_RE.exec(m[0])?.[1];
+      if (key === runKey) doneAt = out.length;
+    }
+    cursor = m.index + m[0].length;
+  }
+  return { text: cursor > 0 ? out + text.slice(cursor) : text, doneAt };
+}
+
+/** done 已经定了之后只吃噪音,不再判信号 */
+function stripKeyedDoneMarkers(text: string): string {
+  return stripKeyedDone(text, null).text;
+}
+
+/**
+ * done 之后仍然要扣住半截 `<od-done` —— 但**只扣它**。
+ *
+ * `pendingTagTail` 会连 `<artifact` / `<question-form` 一起扣;那两个标签在 done 之后
+ * 要原样交给消息层去剥成卡片,多扣一帧没有好处,也改变了既有行为。
+ */
+function keyedDoneTagTail(text: string): number {
+  const open = text.lastIndexOf('<');
+  if (open < 0 || text.length - open > MAX_MARKER_HOLD) return 0;
+  const tail = text.slice(open).toLowerCase();
+  if (OD_DONE_OPEN_TAG.startsWith(tail)) return text.length - open;
+  if (tail.startsWith(OD_DONE_OPEN_TAG) && !tail.includes('>')) return text.length - open;
+  return 0;
+}
+
+/**
+ * 一段文字里的协议标记扫描:哪儿是 done、剥掉噪音之后还剩什么。
+ *
+ * 三条判据,按「谁先出现」取最早的一个:
+ *  1. `<od-done key="…"/>` 且 key 等于本轮的 key → 这就是 done。
+ *  2. 本轮**没有** key(历史消息)时,裸 `<done/>` 仍然算 —— 旧数据的落块必须原样保住。
+ *     反过来说,一旦本轮有了 key,裸 `<done/>` 就退化成普通正文:它可以被内容伪造,
+ *     而真信号已经有了不可伪造的形式,没有理由再给伪造留一条路。
+ *  3. `<question-form>` / `<artifact>` 一直算**隐式** done —— 它们是交给用户看的东西。
+ */
+function scanTurnMarkers(raw: string, runKey: string | null): MarkerScan {
+  // ① 先吃掉协议噪音,顺手记下第一枚 key 对得上的标记落在哪儿。
+  //    先剥再扫,后面两条判据的下标就直接是剥完之后的下标,不用来回换算。
+  const stripped = stripKeyedDone(raw, runKey);
+  let text = stripped.text;
+  let doneAt: number | null = stripped.doneAt;
+  let doneLength = 0;
+
+  // ② 密钥标记已经定了位置就用它;否则回落到老判据
+  if (doneAt == null) {
+    const legacy = runKey ? null : findMarkerOutsideCode(LEGACY_DONE_RE, text);
+    const implicit = findMarkerOutsideCode(IMPLICIT_DONE_RE, text);
+    if (legacy && (!implicit || legacy.index <= implicit.index)) {
+      doneAt = legacy.index;
+      doneLength = legacy[0].length;
+    } else if (implicit) {
+      // 隐式:标签本身要留给后面的正文,由消息层去剥成卡片,所以长度记 0
+      doneAt = implicit.index;
+      doneLength = 0;
+    }
+  }
+
+  return { text, doneAt, doneLength };
 }
 
 /**
@@ -160,6 +299,13 @@ export function buildTurnBlocks(input: BuildTurnInput): TurnBlock[] {
   const events = input.events ?? [];
   const blocks: TurnBlock[] = [];
   const previous = new Set((input.previousTodos ?? []).map((t) => t.content));
+  /**
+   * 本轮的 done 密钥。`null` = 这一轮没有密钥,回落到老判据。
+   *
+   * 从事件流里读,不从消息字段读:事件流既走 SSE 也落库,一条通路同时管住
+   * 「流式中途」和「历史会话重新打开」两种场景,不用为后者再加一个数据库列。
+   */
+  const runKey = readRunDoneKey(events);
 
   let shellSeq = 0;
   const nextShell = (): ExecutionShell => {
@@ -279,7 +425,9 @@ export function buildTurnBlocks(input: BuildTurnInput): TurnBlock[] {
   for (const event of events) {
     if (event.kind === 'tool_result' || event.kind === 'raw' || event.kind === 'diagnostic') continue;
     if (event.kind === 'conversation_title' || event.kind === 'plugin_candidate') continue;
-    if (event.kind === 'usage') continue;
+    // `done_key` 是协议元数据,不是这一轮的内容 —— 在 ensureShell 之前跳掉,
+    // 免得「本轮第一条事件」被一条纯协议帧顶掉(D10 的开壳时机由真实事件决定)
+    if (event.kind === 'usage' || event.kind === 'done_key') continue;
 
     ensureShell();
 
@@ -314,11 +462,11 @@ export function buildTurnBlocks(input: BuildTurnInput): TurnBlock[] {
       let text = event.text ?? '';
 
       if (!doneSeen) {
-        text = markerBuf + text;
+        const scan = scanTurnMarkers(markerBuf + text, runKey);
         markerBuf = '';
-        const cut = findDoneCut(text);
-        if (cut) {
-          const head = text.slice(0, cut.index);
+        text = scan.text;
+        if (scan.doneAt != null) {
+          const head = text.slice(0, scan.doneAt);
           if (head) routeInside(head);
           doneSeen = true;
           openText = null;
@@ -334,7 +482,7 @@ export function buildTurnBlocks(input: BuildTurnInput): TurnBlock[] {
            * (重新规划),那时 `current` 会被重新设上,正文该回到 todo 里 —— 那条仍然成立。
            */
           current = null;
-          text = text.slice(cut.index + cut.length);
+          text = text.slice(scan.doneAt + scan.doneLength);
           if (!text) continue;
         } else {
           const hold = pendingTagTail(text);
@@ -345,6 +493,25 @@ export function buildTurnBlocks(input: BuildTurnInput): TurnBlock[] {
           if (text) routeInside(text);
           continue;
         }
+      } else {
+        /*
+         * done 已经定了,但标记**可能还没到**。
+         *
+         * 兜底 (a) 在「清单全关」那一刻就把 doneSeen 置上,而 agent 通常正是在关掉
+         * 最后一条 todo 之后才发标记 —— 走到这儿时它就是一段还没被吃掉的协议噪音。
+         * 不吃掉的话 `<od-done key="a7f3c91ed2b40561"/>` 会连着那串随机字符原样画到
+         * 屏幕上。这里只吃噪音、不重新判 done,也不碰老判据:
+         * 裸 `<done/>` 与 `<artifact>` 在 done 之后的行为一个字都没变。
+         */
+        const carried = markerBuf + text;
+        markerBuf = '';
+        text = stripKeyedDoneMarkers(carried);
+        const hold = keyedDoneTagTail(text);
+        if (hold) {
+          markerBuf = text.slice(text.length - hold);
+          text = text.slice(0, text.length - hold);
+        }
+        if (!text) continue;
       }
 
       if (current) {

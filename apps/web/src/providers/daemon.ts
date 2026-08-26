@@ -1724,6 +1724,12 @@ function translateAgentEvent(data: DaemonAgentPayload): AgentEvent | null {
   if (t === 'text_delta' && typeof data.delta === 'string') {
     return { kind: 'text', text: data.delta };
   }
+  // This turn's done-marker nonce. The daemon emits it before the first
+  // text_delta so `buildTurnBlocks` already holds the key by the time a
+  // `<od-done key="…"/>` can arrive.
+  if (t === 'done_key' && typeof data.key === 'string' && data.key) {
+    return { kind: 'done_key', key: data.key };
+  }
   if (t === 'conversation_title' && typeof data.title === 'string') {
     return { kind: 'conversation_title', title: data.title };
   }

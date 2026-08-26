@@ -400,6 +400,14 @@ export function daemonAgentPayloadToPersistedAgentEvent(data: unknown): Persiste
   if (type === 'text_delta' && typeof data.delta === 'string') {
     return { kind: 'text', text: data.delta };
   }
+  /**
+   * Persisted so a reloaded conversation validates its `<od-done key="…"/>`
+   * markers against the same key the turn was recorded with. Without this the
+   * turn would render one way live and another way after refresh.
+   */
+  if (type === 'done_key' && typeof data.key === 'string' && data.key) {
+    return { kind: 'done_key', key: data.key };
+  }
   if (type === 'conversation_title' && typeof data.title === 'string') {
     return { kind: 'conversation_title', title: data.title };
   }
