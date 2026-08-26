@@ -17,6 +17,10 @@ export interface PreviewBridgeModeState {
   selectedEditTargetId: string | null;
   editLiveStyles: readonly PreviewEditLiveStyle[];
   inspectEnabled: boolean;
+  /** Host-authoritative state that must survive a replacement document. */
+  commentActiveTarget?: { elementId: string; selector: string } | null;
+  inspectOverrides?: unknown;
+  deckSlideIndex?: number | null;
 }
 
 /**
@@ -51,6 +55,13 @@ export function replayPreviewBridgeModes(
       enabled: state.commentEnabled,
       mode: state.commentMode,
     }, '*');
+    if (state.commentEnabled && state.commentActiveTarget) {
+      target.postMessage({
+        type: 'od:comment-active-target',
+        elementId: state.commentActiveTarget.elementId,
+        selector: state.commentActiveTarget.selector,
+      }, '*');
+    }
   }
   if (supports('edit')) {
     target.postMessage({ type: 'od-edit-mode', enabled: state.editEnabled }, '*');
@@ -71,5 +82,23 @@ export function replayPreviewBridgeModes(
   }
   if (supports('inspect')) {
     target.postMessage({ type: 'od:inspect-mode', enabled: state.inspectEnabled }, '*');
+    if (state.inspectEnabled && state.inspectOverrides !== undefined) {
+      target.postMessage({
+        type: 'od:inspect-replay',
+        overrides: state.inspectOverrides,
+      }, '*');
+    }
+  }
+  if (
+    supports('deck')
+    && typeof state.deckSlideIndex === 'number'
+    && Number.isFinite(state.deckSlideIndex)
+    && state.deckSlideIndex >= 0
+  ) {
+    target.postMessage({
+      type: 'od:slide',
+      action: 'go',
+      index: Math.floor(state.deckSlideIndex),
+    }, '*');
   }
 }

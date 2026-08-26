@@ -71,4 +71,23 @@ describe('replayPreviewBridgeModes', () => {
       { type: 'od-edit-selected-target', id: null },
     ]);
   });
+
+  it('restores document-scoped comment, inspect, and Deck state after capability application', () => {
+    const target = { postMessage: vi.fn() };
+
+    replayPreviewBridgeModes(target, {
+      ...state(),
+      commentActiveTarget: { elementId: 'hero', selector: '#hero' },
+      inspectOverrides: { hero: { color: 'red' } },
+      deckSlideIndex: 4.8,
+    }, ['comment', 'inspect', 'deck']);
+
+    expect(target.postMessage.mock.calls.map(([message]) => message)).toEqual([
+      { type: 'od:comment-mode', enabled: true, mode: 'picker' },
+      { type: 'od:comment-active-target', elementId: 'hero', selector: '#hero' },
+      { type: 'od:inspect-mode', enabled: true },
+      { type: 'od:inspect-replay', overrides: { hero: { color: 'red' } } },
+      { type: 'od:slide', action: 'go', index: 4 },
+    ]);
+  });
 });

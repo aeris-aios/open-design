@@ -194,4 +194,50 @@ describe('PreviewRuntimeTransport', () => {
       active: false,
     }, '*');
   });
+
+  it('restores host-owned document state before promoting a replacement frame', () => {
+    render(view({
+      viewerState: {
+        ...defaultViewerState,
+        deck: true,
+        inspect: true,
+      },
+      modeState: bridgeModeState({
+        commentActiveTarget: { elementId: 'hero', selector: '#hero' },
+        inspectEnabled: true,
+        inspectOverrides: { hero: { color: 'red' } },
+        deckSlideIndex: 6,
+      }),
+    }));
+    const frame = screen.getByTestId('preview-runtime-frame-standby') as HTMLIFrameElement;
+    const postMessage = vi.spyOn(frame.contentWindow!, 'postMessage');
+    const capabilities: PreviewRuntimeCapability[] = [
+      'observability',
+      'comment',
+      'inspect',
+      'deck',
+    ];
+
+    signal(frame, 'od:preview:hello', capabilities);
+    signal(frame, 'od:preview:capabilities-applied', capabilities);
+
+    expect(screen.queryByTestId('preview-runtime-frame-current')).toBeNull();
+    expect(postMessage).toHaveBeenCalledWith({
+      type: 'od:comment-active-target',
+      elementId: 'hero',
+      selector: '#hero',
+    }, '*');
+    expect(postMessage).toHaveBeenCalledWith({
+      type: 'od:inspect-replay',
+      overrides: { hero: { color: 'red' } },
+    }, '*');
+    expect(postMessage).toHaveBeenCalledWith({
+      type: 'od:slide',
+      action: 'go',
+      index: 6,
+    }, '*');
+
+    signal(frame, 'od:preview:visible-paint', capabilities);
+    expect(screen.getByTestId('preview-runtime-frame-current')).toBe(frame);
+  });
 });
