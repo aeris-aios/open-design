@@ -326,3 +326,55 @@
   删前确认这条不服务于 `.chat-skin` 那个宿主(`DesignSystemFlow` 的面板)。
 - **位置差别逐条追**:773 条里 y=617 / x=470 绝大多数是**下游位移**(上面多一行,底下全跟着挪)。
   源头是高度 121 条 + **75 格结构对不齐**,改源头。
+
+## F. 待办总表(2026-08-27 现场清点)
+
+> 这一节只回答「**还剩什么没做**」。每条的**裁决**归各自权威文档,这里只给指针,
+> 不复述决定内容 —— 复述必然漂移。
+
+### F-1 报错卡(权威:`run-error-catalog.md` §6)
+
+| # | 事 | 状态 | 关键事实 |
+|---|---|---|---|
+| E1 | **错误码映射表要补** | 待做 | 三张表**共 16 档**(`AGENT_AGNOSTIC_FAILURE_UI` 7 + `DETAIL_FAILURE_UI` 3 + `AGENT_AGNOSTIC_DETAIL_FAILURE_UI` 6)对 32 个场景。**`AGENT_EXECUTION_FAILED` / `process_exit` 两张表里都没有** → S19(每月 20,868 次、第二大类)整个落兜底 |
+| E2 | **兜底不许把 `rawError` 摊在卡面** | 待做 | `ChatPane.tsx:1609` `displayError = messageKey ? t(...) : rawError` —— 没命中映射表时**直接显示上游原始错误串**。S19 今天「标题 + 一段 stderr」就是这么来的。补 E1 时要连兜底文案一起给 |
+| E3 | **〔更换模型〕落点与稿子不符** | ⚠️ 已实现但有分歧 | 稿子 `error-ux-design.md:130`:「**直接打开模型选择器,选完自动重跑**」。实现落成 `onOpenSettings('execution')`,**且不自动重跑**。理由是 `InlineModelSwitcher` 只在 Home 挂载(`EntryShell.tsx:1768`),项目页里不存在。**要产品确认接受,或另想落点** |
+| E4 | 主按钮阶梯落到每一档 | 待做 | 阶梯见 §6.Z,对应关系见 §6.T。E1 补表时按阶梯算主按钮,**不要逐档再挑一次** |
+| E5 | 四种身份的余额分支 | 待做 | 规格 §6.V。前置(UpgradeCard 接线)**已完成** |
+| E6 | 〔联系支持〕第 4 档提为主 | 待做 | 现在只做了常驻次级 |
+
+### F-2 todo 判据与召回
+
+| # | 事 | 状态 | 关键事实 |
+|---|---|---|---|
+| T1 | **同一个判据有三份,口径不一** | 待做(**已复现**) | `contracts/run-completeness.ts:69` 四个精确 `===`;`web/runtime/todos.ts:127` 同样精确 `===`;`web/runtime/chat/tool-kind.ts:246` 正则**带 `/i`**。消费方:`daemon/server.ts:21`、`web/ToolCard.tsx:13` |
+| T2 | **AMR 把 `todowrite` 改成 `Todowrite`** | 待做(**已复现**) | `acp/updates.ts:438-448` title-case 兜底:`/\bwrite\b/` 因词边界匹配不到 `todowrite` → 首词 title-case。**后果是「一半坏」**:带 `/i` 的正则认得、精确 `===` 的不认 → daemon 的 `endedWithUnfinishedWork` 漏判,而客户端画得出来。九家 ACP runtime 同受影响 |
+| T3 | **召回通路不存在** | 待做 | 历史是 `buildDaemonTranscript` 拼的纯文本,只取 `message.content`;而 `content` 只累加 `kind==='text'`(`db.ts:3060`),**TodoWrite 是 `tool_use`,永远进不了**。21 家无 resume 的 runtime **结构上不可能**知道上一轮有过清单 |
+| T4 | 客户端 `previousTodos` 零调用方 | 待做 | `contract.ts:164` 定义了,没人传。**它是 T3 的下半段,单独接没用** —— agent 不重发,`previous.has()` 根本不会被调用 |
+| T5 | **`isStruck` 的注释写反了**(代码是对的) | 待做 | 规格 `chat-panel-next.md:274-283` 明确「召回 = **恒定划线**,划线与可展开解耦」。`contract.ts:121` 那句 gloss 只描述了 D35 那半条。同一句错注释在 `ExecutionShell.tsx:149` 复制了一遍 |
+| T6 | 测试洞 | 待做 | `build-turn-blocks.test.ts:425` 标题写「仍划线但可展开」,断言里**没有 `isStruck`** —— 规格表里最容易误判的那一格恰好没钉住 |
+| T7 | 〔继续未完成任务〕是**死按钮** | 待做 | `ProjectView.tsx:8765` 实现完整、一路 prop-drill 到 `AssistantMessage.tsx:566`,**然后没有然后** —— 全仓 `onContinue=` 在 chat 组件里 0 命中。`origin/main` 上也一样死。**它是 agent 不照做时唯一的用户出口**,且不依赖任何 agent 能力 |
+
+### F-3 「画出来了,没接线」(权威:`run-error-catalog.md` §6.U)
+
+已接:`UpgradeCard` / `SupportDialog` / `support-brand-icons` / `PauseLine` ✅
+
+| # | 事 | 状态 | 关键事实 |
+|---|---|---|---|
+| W1 | **`Reconnect` 仍未接线** | 待做 | 我第一次审计**数错了**(把 SSE 重连逻辑里的 `reconnect` 字样算成消费者,实际精确查 import = **0**)。它正是用户点名裁决过的 **S29**:用交付稿第 82–84 格,放在**会话最后一行** |
+| W2 | `AudioArtifact` | 阻塞 | 卡在**数据层**:`artifactCardKind` 对 `.mp3` 返回 null,契约里没有波形与时长。**不是接线能解决的**,要产品+后端立项 |
+
+### F-4 其他已知、暂不处置
+
+| # | 事 | 关键事实 |
+|---|---|---|
+| O1 | `resumable` 硬写 `false` 两处 | `daemon/runtimes/runs.ts:744`(daemon 重启)、`web/ProjectView.tsx:12606`(没生成文件)—— 把 F2〔继续运行〕关死在最需要它的两个场景。按钮实现是好的 |
+| O2 | 团队成员余额死胡同 | 见 §6.Y。没有账单权限的成员余额耗尽时弹窗**只有一颗「暂不需要」** |
+| O3 | B11 未真机验 | 「引导对话」只证明了帧到达子进程 stdin(用的假 claude),**真实 `claude --input-format stream-json` 会不会消费第二个 user frame 并照做,没验** |
+| O4 | e2e `chat-error-card-layout.test.ts` | 接线 agent 改了但**没跑**(本机不装浏览器)。特别是「4 颗按钮在 274px 窄面板不溢出」要在 CI 确认 |
+| O5 | B41 compare 截图 | 这批改完统一重拍 |
+
+### F-5 这一轮学到的两条(避免重犯)
+
+1. **陈列页照不出真相有两个原因,不是一个**:①少内联旧皮肤(已修);②**陈列页直接 import 组件,而产品根本不渲染它** —— 后者陈列页结构上照不出,6 个组件中招。
+2. **先查 `specs/current/` 再查代码**。`chat-panel-edge-audit.md` 早把 `cancelOrigin` 那条(R8)写清楚了,我却直接去 grep 代码,绕一圈还漏了两个 daemon 写入点。这个目录下有 11 份 `chat-panel-*`。
