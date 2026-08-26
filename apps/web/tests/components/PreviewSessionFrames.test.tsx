@@ -10,11 +10,15 @@ import {
   IframeKeepAliveProvider,
 } from '../../src/components/IframeKeepAlivePool';
 import {
+  PREVIEW_SESSION_STANDBY_TIMEOUT_MS,
   PreviewSessionFrames,
   type PreviewSessionNavigation,
 } from '../../src/components/PreviewSessionFrames';
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+});
 
 function navigation(
   version: string,
@@ -206,6 +210,108 @@ describe('PreviewSessionFrames', () => {
     rerender(view(2));
     expect(screen.getByTestId('preview-runtime-frame-current')).toBe(retry);
     expect(retry.getAttribute('src')).toBe(url);
+  });
+
+  it('ends an initial unpainted attempt and allows an explicit same-URL retry', () => {
+    vi.useFakeTimers();
+    const first = navigation('v1');
+    const onStandbyTimedOut = vi.fn();
+    const view = (navigationRetryToken: number) => (
+      <IframeKeepAliveProvider>
+        <PreviewSessionFrames
+          projectId="project-1"
+          fileName="index.html"
+          navigation={first}
+          navigationRetryToken={navigationRetryToken}
+          active
+          onStandbyTimedOut={onStandbyTimedOut}
+        />
+      </IframeKeepAliveProvider>
+    );
+    const { rerender } = render(view(0));
+    const failed = screen.getByTestId('preview-runtime-frame-standby') as HTMLIFrameElement;
+    const url = failed.getAttribute('src');
+
+    act(() => {
+      vi.advanceTimersByTime(PREVIEW_SESSION_STANDBY_TIMEOUT_MS);
+    });
+
+    expect(screen.queryByTestId('preview-runtime-frame-standby')).toBeNull();
+    expect(onStandbyTimedOut).toHaveBeenCalledWith(first, null);
+    expect(document.body.contains(failed)).toBe(false);
+
+    rerender(view(1));
+    const retry = screen.getByTestId('preview-runtime-frame-standby') as HTMLIFrameElement;
+    expect(retry).not.toBe(failed);
+    expect(retry.getAttribute('src')).toBe(url);
+
+    settle(retry, first);
+    expect(screen.getByTestId('preview-runtime-frame-current')).toBe(retry);
+  });
+
+  it('drops a timed-out replacement without disturbing the last-good frame', () => {
+    vi.useFakeTimers();
+    const first = navigation('v1');
+    const second = navigation('v2');
+    const onStandbyTimedOut = vi.fn();
+    const view = (next: PreviewSessionNavigation) => (
+      <IframeKeepAliveProvider>
+        <PreviewSessionFrames
+          projectId="project-1"
+          fileName="index.html"
+          navigation={next}
+          active
+          onStandbyTimedOut={onStandbyTimedOut}
+        />
+      </IframeKeepAliveProvider>
+    );
+    const { rerender } = render(view(first));
+    const current = screen.getByTestId('preview-runtime-frame-standby') as HTMLIFrameElement;
+    settle(current, first);
+
+    rerender(view(second));
+    const failed = screen.getByTestId('preview-runtime-frame-standby') as HTMLIFrameElement;
+    expect(screen.getByTestId('preview-runtime-frame-current')).toBe(current);
+
+    act(() => {
+      vi.advanceTimersByTime(PREVIEW_SESSION_STANDBY_TIMEOUT_MS);
+    });
+
+    expect(onStandbyTimedOut).toHaveBeenCalledWith(second, first);
+    expect(screen.queryByTestId('preview-runtime-frame-standby')).toBeNull();
+    expect(screen.getByTestId('preview-runtime-frame-current')).toBe(current);
+    expect(document.body.contains(failed)).toBe(false);
+  });
+
+  it('does not spend the navigation timeout while the preview is suspended', () => {
+    vi.useFakeTimers();
+    const first = navigation('v1');
+    const onStandbyTimedOut = vi.fn();
+    const view = (active: boolean) => (
+      <IframeKeepAliveProvider>
+        <PreviewSessionFrames
+          projectId="project-1"
+          fileName="index.html"
+          navigation={first}
+          active={active}
+          onStandbyTimedOut={onStandbyTimedOut}
+        />
+      </IframeKeepAliveProvider>
+    );
+    const { rerender } = render(view(false));
+    const standby = screen.getByTestId('preview-runtime-frame-standby');
+
+    act(() => {
+      vi.advanceTimersByTime(PREVIEW_SESSION_STANDBY_TIMEOUT_MS * 2);
+    });
+    expect(onStandbyTimedOut).not.toHaveBeenCalled();
+    expect(screen.getByTestId('preview-runtime-frame-standby')).toBe(standby);
+
+    rerender(view(true));
+    act(() => {
+      vi.advanceTimersByTime(PREVIEW_SESSION_STANDBY_TIMEOUT_MS);
+    });
+    expect(onStandbyTimedOut).toHaveBeenCalledWith(first, null);
   });
 
   it('reattaches the same pooled browsing context and stages it for handshaking again', () => {

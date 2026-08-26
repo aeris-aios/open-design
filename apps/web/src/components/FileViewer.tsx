@@ -8400,6 +8400,10 @@ function HtmlViewer({
   } | null>(null);
   const handledPreviewRuntimeNavigationFailureRef = useRef<string | null>(null);
   const [previewRuntimeNavigationRetryToken, setPreviewRuntimeNavigationRetryToken] = useState(0);
+  const [previewRuntimeCurrentFrame, setPreviewRuntimeCurrentFrame] =
+    useState<HTMLIFrameElement | null>(null);
+  const [previewRuntimeTimedOutGeneration, setPreviewRuntimeTimedOutGeneration] =
+    useState<string | null>(null);
   const srcDocContentReadyRef = useRef<{
     frame: HTMLIFrameElement;
     generation: string;
@@ -10179,6 +10183,11 @@ function HtmlViewer({
         previewRuntimeNavigation.navigation.documentVersion,
       ].join('\u0000')
     : null;
+  useEffect(() => {
+    setPreviewRuntimeTimedOutGeneration((failedGeneration) => (
+      failedGeneration === previewRuntimeNavigationGeneration ? failedGeneration : null
+    ));
+  }, [previewRuntimeNavigationGeneration]);
   const previewRuntimeViewerState = {
     deck: effectiveDeck,
     comment: boardMode,
@@ -17306,31 +17315,84 @@ function HtmlViewer({
                             srcDoc={redirectLoopBlockedDoc}
                           />
                         ) : previewRuntimeNavigation.navigation ? (
-                          <PreviewRuntimeTransport
-                            projectId={projectId}
-                            fileName={file.name}
-                            navigation={previewRuntimeNavigation.navigation}
-                            viewerState={previewRuntimeViewerState}
-                            bridgeModeState={previewRuntimeBridgeModeState}
-                            active={workspaceActive && mode === 'preview'}
-                            navigationRetryToken={previewRuntimeNavigationRetryToken}
-                            title={file.name}
-                            onCurrentFrameChange={(frame) => {
-                              iframeRef.current = frame;
-                              if (!frame) return;
-                              beginDesktopPreviewContentMeasurementGeneration(frame);
-                              dcViewportRestoreAtRef.current = Date.now();
-                              frame.contentWindow?.postMessage({
-                                type: '__dc_set_viewport',
-                                ...dcViewportRef.current,
-                              }, '*');
-                              restorePreviewScrollPosition();
-                              scheduleDesktopPreviewContentMeasure(frame);
-                            }}
-                            onStandbyFrameChange={(frame) => {
-                              previewRuntimeStandbyIframeRef.current = frame;
-                            }}
-                          />
+                          <>
+                            <PreviewRuntimeTransport
+                              projectId={projectId}
+                              fileName={file.name}
+                              navigation={previewRuntimeNavigation.navigation}
+                              viewerState={previewRuntimeViewerState}
+                              bridgeModeState={previewRuntimeBridgeModeState}
+                              active={workspaceActive && mode === 'preview'}
+                              navigationRetryToken={previewRuntimeNavigationRetryToken}
+                              title={file.name}
+                              onCurrentFrameChange={(frame) => {
+                                iframeRef.current = frame;
+                                setPreviewRuntimeCurrentFrame(frame);
+                                if (!frame) return;
+                                setPreviewRuntimeTimedOutGeneration(null);
+                                beginDesktopPreviewContentMeasurementGeneration(frame);
+                                dcViewportRestoreAtRef.current = Date.now();
+                                frame.contentWindow?.postMessage({
+                                  type: '__dc_set_viewport',
+                                  ...dcViewportRef.current,
+                                }, '*');
+                                restorePreviewScrollPosition();
+                                scheduleDesktopPreviewContentMeasure(frame);
+                              }}
+                              onStandbyFrameChange={(frame) => {
+                                previewRuntimeStandbyIframeRef.current = frame;
+                              }}
+                              onStandbyTimedOut={(failed, current) => {
+                                if (
+                                  current
+                                  || previewRuntimeNavigationGeneration === null
+                                  || failed.sessionId
+                                    !== previewRuntimeNavigation.navigation?.sessionId
+                                  || failed.documentVersion
+                                    !== previewRuntimeNavigation.navigation?.documentVersion
+                                ) return;
+                                setPreviewRuntimeTimedOutGeneration(
+                                  previewRuntimeNavigationGeneration,
+                                );
+                              }}
+                            />
+                            {workspaceActive
+                              && mode === 'preview'
+                              && previewRuntimeCurrentFrame === null ? (
+                                previewRuntimeTimedOutGeneration
+                                  === previewRuntimeNavigationGeneration ? (
+                                    <div
+                                      className="artifact-preview-first-load preview-runtime-navigation-error"
+                                      role="alert"
+                                      data-testid="preview-runtime-navigation-error"
+                                    >
+                                      <p>{t('fileViewer.previewUnavailable')}</p>
+                                      <Button
+                                        variant="ghost"
+                                        data-testid="preview-runtime-navigation-retry"
+                                        onClick={() => {
+                                          setPreviewRuntimeTimedOutGeneration(null);
+                                          setPreviewRuntimeNavigationRetryToken(
+                                            (currentToken) => currentToken + 1,
+                                          );
+                                        }}
+                                      >
+                                        {`${t('fileViewer.reload')} ${t('fileViewer.preview')}`}
+                                      </Button>
+                                    </div>
+                                  ) : (
+                                    <div
+                                      className="artifact-preview-first-load"
+                                      role="status"
+                                      aria-busy="true"
+                                      aria-label={t('fileViewer.loading')}
+                                      data-testid="artifact-preview-first-load"
+                                    >
+                                      <CenteredLoader label={t('fileViewer.loading')} />
+                                    </div>
+                                  )
+                              ) : null}
+                          </>
                         ) : previewRuntimeNavigation.unavailable ? (
                           <div
                             className="artifact-preview-first-load preview-runtime-navigation-error"

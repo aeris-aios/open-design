@@ -48,6 +48,11 @@ export interface PreviewSessionFramesProps extends Omit<
     current: PreviewSessionNavigation,
     previous: PreviewSessionNavigation | null,
   ) => void;
+  onStandbyTimedOut?: (
+    failed: PreviewSessionNavigation,
+    current: PreviewSessionNavigation | null,
+  ) => void;
+  standbyTimeoutMs?: number;
 }
 
 interface RenderedPreviewDocument extends PreviewSessionNavigation {
@@ -56,6 +61,10 @@ interface RenderedPreviewDocument extends PreviewSessionNavigation {
 }
 
 const EMPTY_CAPABILITIES: readonly PreviewRuntimeCapability[] = [];
+// The bootstrap is injected before author scripts and emits visible-paint
+// after two animation frames. Five seconds therefore bounds a broken runtime
+// handshake without treating slow author resources as a successful preview.
+export const PREVIEW_SESSION_STANDBY_TIMEOUT_MS = 5_000;
 
 function identityKey(identity: PreviewRuntimeDocumentIdentity): string {
   return `${identity.sessionId}\0${identity.documentVersion}`;
@@ -112,6 +121,8 @@ function PreviewSessionFramesForFile({
   onStandbyReady,
   onCapabilitiesApplied,
   onPromoted,
+  onStandbyTimedOut,
+  standbyTimeoutMs = PREVIEW_SESSION_STANDBY_TIMEOUT_MS,
   title = fileName,
   ...iframeProps
 }: PreviewSessionFramesProps) {
@@ -122,6 +133,7 @@ function PreviewSessionFramesForFile({
     onStandbyReady,
     onCapabilitiesApplied,
     onPromoted,
+    onStandbyTimedOut,
   });
   const frameByTargetRef = useRef(new Map<PreviewRuntimeMessageTarget, HTMLIFrameElement>());
   const standbyTargetRef = useRef<PreviewRuntimeMessageTarget | null>(null);
@@ -131,8 +143,11 @@ function PreviewSessionFramesForFile({
     onStandbyReady,
     onCapabilitiesApplied,
     onPromoted,
+    onStandbyTimedOut,
   };
   const [current, setCurrent] = useState<RenderedPreviewDocument | null>(null);
+  const [standbyFrame, setStandbyFrame] = useState<HTMLIFrameElement | null>(null);
+  const [failedAttemptKey, setFailedAttemptKey] = useState<string | null>(null);
   const stalePoolKeysRef = useRef<string[]>([]);
 
   const session = useMemo(() => new PreviewSession({
@@ -185,8 +200,43 @@ function PreviewSessionFramesForFile({
   }, []);
 
   const requestedIsCurrent = sameIdentity(current, navigation);
-  const standby = requestedIsCurrent ? null : navigation;
+  const requestedStandby = requestedIsCurrent ? null : navigation;
+  const standbyAttemptKey = requestedStandby
+    ? `${identityKey(requestedStandby)}\0retry:${navigationRetryToken}`
+    : null;
+  const standby = standbyAttemptKey !== null && failedAttemptKey === standbyAttemptKey
+    ? null
+    : requestedStandby;
   const previousNavigationRetryTokenRef = useRef(navigationRetryToken);
+
+  useEffect(() => {
+    if (
+      !active
+      || !standby
+      || !standbyFrame
+      || standbyTimeoutMs <= 0
+      || standbyAttemptKey === null
+    ) return undefined;
+    const timeout = window.setTimeout(() => {
+      session.discardStandby(standby);
+      setFailedAttemptKey(standbyAttemptKey);
+      callbacksRef.current.onStandbyTimedOut?.(
+        standby,
+        current ? navigationOf(current) : null,
+      );
+      pool.evictFrame(standbyFrame);
+    }, standbyTimeoutMs);
+    return () => window.clearTimeout(timeout);
+  }, [
+    active,
+    current,
+    pool,
+    session,
+    standby,
+    standbyAttemptKey,
+    standbyFrame,
+    standbyTimeoutMs,
+  ]);
 
   useEffect(() => {
     if (previousNavigationRetryTokenRef.current === navigationRetryToken) return;
@@ -199,6 +249,7 @@ function PreviewSessionFramesForFile({
   }, [fileName, navigationRetryToken, pool, projectId, standby]);
 
   const stageFrame = useCallback((frame: HTMLIFrameElement | null) => {
+    setStandbyFrame(frame);
     if (!frame) {
       const previousTarget = standbyTargetRef.current;
       if (previousTarget) frameByTargetRef.current.delete(previousTarget);

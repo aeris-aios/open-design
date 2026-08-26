@@ -12,6 +12,7 @@ import type {
 } from '@open-design/host';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ANNOTATION_EVENT } from '../../src/components/PreviewDrawOverlay';
+import { PREVIEW_SESSION_STANDBY_TIMEOUT_MS } from '../../src/components/PreviewSessionFrames';
 
 const { saveTemplateMock } = vi.hoisted(() => ({
   saveTemplateMock: vi.fn(),
@@ -195,6 +196,7 @@ const TEST_SNAPSHOT_DATA_URL = 'data:image/png;base64,c25hcHNob3Q=';
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   __resetPreviewIsolationCache();
   // `useWorkspaceContext` caches the last resolved context at module scope so a
   // remount does not flash the signed-out state. Left alone, a test that signs
@@ -9103,6 +9105,114 @@ describe('FileViewer tweaks toolbar', () => {
     });
     expect(mintAttempt).toBe(2);
     expect(screen.queryByText(/Preview unavailable/)).toBeNull();
+  });
+
+  it('bounds an unpainted converged frame and retries it without reminting the scope', async () => {
+    const file = htmlPreviewFile({ name: 'paint-timeout.html', path: 'paint-timeout.html' });
+    const sessionId = 'scope-paint-timeout';
+    const documentVersion = 'paint-timeout-v1';
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = typeof input === 'string'
+        ? input
+        : input instanceof Request
+          ? input.url
+          : String(input);
+      if (url.startsWith('/api/projects/project-1/raw/paint-timeout.html')) {
+        return new Response('<!doctype html><html><body><main>Paint timeout</main></body></html>', {
+          status: 200,
+          headers: { 'Content-Type': 'text/html' },
+        });
+      }
+      if (url === '/api/projects/project-1/files') {
+        return new Response(JSON.stringify({ files: [file] }), { status: 200 });
+      }
+      if (url.includes('/api/projects/project-1/preview-url')) {
+        return new Response(JSON.stringify({
+          url: '/api/projects/project-1/preview/legacy-scope/paint-timeout.html',
+          file: 'paint-timeout.html',
+          expiresAt: Date.now() + 60 * 60 * 1000,
+          scopedOrigin: {
+            normalUrl: `http://n-${sessionId}.localhost:43111/paint-timeout.html`,
+            poweredUrl: `http://p-${sessionId}.localhost:43111/paint-timeout.html`,
+            documentVersion,
+          },
+        }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ deployments: [] }), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const view = (workspaceActive: boolean) => (
+      <FileViewer
+        projectId="project-1"
+        projectKind="prototype"
+        file={file}
+        workspaceActive={workspaceActive}
+        previewRuntimeConvergence
+      />
+    );
+    const { rerender } = render(view(false));
+    const failed = await waitFor(() => (
+      screen.getByTestId('preview-runtime-frame-standby') as HTMLIFrameElement
+    ));
+    const frameUrl = failed.getAttribute('src');
+    expect(frameUrl).toBe(`http://n-${sessionId}.localhost:43111/paint-timeout.html`);
+
+    vi.useFakeTimers();
+    rerender(view(true));
+    expect(screen.getByTestId('artifact-preview-first-load')).toBeInTheDocument();
+
+    act(() => {
+      vi.advanceTimersByTime(PREVIEW_SESSION_STANDBY_TIMEOUT_MS);
+    });
+    expect(screen.queryByTestId('artifact-preview-first-load')).toBeNull();
+    expect(screen.getByTestId('preview-runtime-navigation-error')).toBeInTheDocument();
+    expect(screen.queryByTestId('preview-runtime-frame-standby')).toBeNull();
+
+    fireEvent.click(screen.getByTestId('preview-runtime-navigation-retry'));
+    const retry = screen.getByTestId('preview-runtime-frame-standby') as HTMLIFrameElement;
+    expect(retry).not.toBe(failed);
+    expect(retry.getAttribute('src')).toBe(frameUrl);
+    expect(screen.getByTestId('artifact-preview-first-load')).toBeInTheDocument();
+    expect(fetchMock.mock.calls.filter(([input]) => (
+      String(input).includes('/api/projects/project-1/preview-url')
+    ))).toHaveLength(1);
+
+    const capabilities: PreviewRuntimeCapability[] = [
+      'content_measurement',
+      'scroll',
+      'snapshot',
+      'observability',
+      'selection',
+      'tweaks',
+      'palette',
+    ];
+    const signal = (
+      type: 'od:preview:hello' | 'od:preview:capabilities-applied' | 'od:preview:visible-paint',
+    ) => {
+      act(() => {
+        window.dispatchEvent(new MessageEvent('message', {
+          source: retry.contentWindow,
+          data: {
+            type,
+            protocolVersion: PREVIEW_RUNTIME_PROTOCOL_VERSION,
+            sessionId,
+            documentVersion,
+            ...(type === 'od:preview:hello' ? { availableCapabilities: capabilities } : {}),
+            ...(type === 'od:preview:capabilities-applied'
+              ? { enabledCapabilities: capabilities }
+              : {}),
+          },
+        }));
+      });
+    };
+    signal('od:preview:hello');
+    signal('od:preview:capabilities-applied');
+    signal('od:preview:visible-paint');
+
+    expect(screen.getByTestId('preview-runtime-frame-current')).toBe(retry);
+    expect(screen.queryByTestId('artifact-preview-first-load')).toBeNull();
+    expect(screen.queryByTestId('preview-runtime-navigation-error')).toBeNull();
   });
 
   it('uses one powered policy for the converged URL and iframe permissions', async () => {
