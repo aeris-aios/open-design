@@ -135,7 +135,9 @@ describe('新文案进了 19 个语言包', () => {
     'chat.runError.fallbackMessage',
   ] as const;
 
-  it('每个语种都有这五条,且都不是空串', async () => {
+  // 显式给宽超时:这一条要现场 transform 19 个 locale 文件,机器忙的时候
+  // 会逼近 vitest 默认的 5s —— 那种红是环境噪音,不是回归。
+  it('每个语种都有这五条,且都不是空串', { timeout: 30_000 }, async () => {
     const modules = import.meta.glob('../../src/i18n/locales/*.ts');
     const paths = Object.keys(modules);
     expect(paths).toHaveLength(19);
@@ -150,7 +152,7 @@ describe('新文案进了 19 个语言包', () => {
   });
 
   // 稿子里 S19 那句是「{智能体} 意外退出了」—— 插值位不能在翻译里掉。
-  it('S19 文案每个语种都保留了 {agent} 插值位', async () => {
+  it('S19 文案每个语种都保留了 {agent} 插值位', { timeout: 30_000 }, async () => {
     const modules = import.meta.glob('../../src/i18n/locales/*.ts');
     for (const path of Object.keys(modules)) {
       const mod = (await modules[path]!()) as Record<string, unknown>;
