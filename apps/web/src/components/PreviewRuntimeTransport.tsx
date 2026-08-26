@@ -30,6 +30,21 @@ export interface PreviewRuntimeTransportProps extends Omit<
   ) => void;
 }
 
+interface PreviewBridgeSemanticState {
+  active: boolean;
+  workspaceActive: boolean;
+  commentEnabled: boolean;
+  commentMode: string;
+  commentTargetElementId: string | null;
+  commentTargetSelector: string | null;
+  deckSlideIndex: number | null;
+  editEnabled: boolean;
+  editLiveStylesRevision: string;
+  inspectEnabled: boolean;
+  inspectOverrides: unknown;
+  selectedEditTargetId: string | null;
+}
+
 /**
  * Compose the retained real-URL frame lifecycle with host-owned interaction
  * state. Capability acknowledgements are fenced to one exact document before
@@ -57,6 +72,7 @@ export function PreviewRuntimeTransport({
   ]);
   const currentFrameRef = useRef<HTMLIFrameElement | null>(null);
   const retainedCurrentFrameRef = useRef<HTMLIFrameElement | null>(null);
+  const previousSemanticStateRef = useRef<PreviewBridgeSemanticState | null>(null);
   const appliedCapabilitiesRef = useRef(
     new WeakMap<HTMLIFrameElement, readonly PreviewRuntimeCapability[]>(),
   );
@@ -67,6 +83,20 @@ export function PreviewRuntimeTransport({
   const editLiveStylesRevision = JSON.stringify(
     bridgeModeState.editLiveStyles.map(({ id, version }) => [id, version]),
   );
+  const semanticState: PreviewBridgeSemanticState = {
+    active: bridgeModeState.active,
+    workspaceActive: bridgeModeState.workspaceActive,
+    commentEnabled: bridgeModeState.commentEnabled,
+    commentMode: bridgeModeState.commentMode,
+    commentTargetElementId,
+    commentTargetSelector,
+    deckSlideIndex: bridgeModeState.deckSlideIndex ?? null,
+    editEnabled: bridgeModeState.editEnabled,
+    editLiveStylesRevision,
+    inspectEnabled: bridgeModeState.inspectEnabled,
+    inspectOverrides: bridgeModeState.inspectOverrides,
+    selectedEditTargetId: bridgeModeState.selectedEditTargetId,
+  };
   modeStateRef.current = bridgeModeState;
   callbacksRef.current = { onCurrentFrameChange, onCapabilitiesApplied };
 
@@ -99,23 +129,66 @@ export function PreviewRuntimeTransport({
   }, [active, replayToFrame]);
 
   useEffect(() => {
+    const previous = previousSemanticStateRef.current;
+    previousSemanticStateRef.current = semanticState;
+    if (!previous) return;
     const frame = currentFrameRef.current ?? retainedCurrentFrameRef.current;
     if (!frame) return;
     const appliedCapabilities = appliedCapabilitiesRef.current.get(frame);
-    if (appliedCapabilities) replayToFrame(frame, appliedCapabilities);
+    if (!appliedCapabilities) return;
+
+    const changedCapabilities = new Set<PreviewRuntimeCapability>();
+    if (previous.workspaceActive !== semanticState.workspaceActive) {
+      if (semanticState.workspaceActive) {
+        for (const capability of appliedCapabilities) changedCapabilities.add(capability);
+      } else {
+        changedCapabilities.add('observability');
+      }
+    } else {
+      if (previous.active !== semanticState.active) changedCapabilities.add('observability');
+      if (
+        previous.commentEnabled !== semanticState.commentEnabled
+        || previous.commentMode !== semanticState.commentMode
+        || previous.commentTargetElementId !== semanticState.commentTargetElementId
+        || previous.commentTargetSelector !== semanticState.commentTargetSelector
+      ) {
+        changedCapabilities.add('comment');
+      }
+      if (
+        previous.editEnabled !== semanticState.editEnabled
+        || previous.selectedEditTargetId !== semanticState.selectedEditTargetId
+        || previous.editLiveStylesRevision !== semanticState.editLiveStylesRevision
+      ) {
+        changedCapabilities.add('edit');
+      }
+      if (
+        previous.inspectEnabled !== semanticState.inspectEnabled
+        || previous.inspectOverrides !== semanticState.inspectOverrides
+      ) {
+        changedCapabilities.add('inspect');
+      }
+      if (previous.deckSlideIndex !== semanticState.deckSlideIndex) {
+        changedCapabilities.add('deck');
+      }
+    }
+    if (changedCapabilities.size === 0) return;
+    const capabilitiesToReplay = appliedCapabilities.filter((capability) => (
+      changedCapabilities.has(capability)
+    ));
+    if (capabilitiesToReplay.length > 0) replayToFrame(frame, capabilitiesToReplay);
   }, [
-    bridgeModeState.active,
-    bridgeModeState.commentEnabled,
-    bridgeModeState.commentMode,
+    semanticState.active,
+    semanticState.commentEnabled,
+    semanticState.commentMode,
     commentTargetElementId,
     commentTargetSelector,
-    bridgeModeState.deckSlideIndex,
-    bridgeModeState.editEnabled,
+    semanticState.deckSlideIndex,
+    semanticState.editEnabled,
     editLiveStylesRevision,
-    bridgeModeState.inspectEnabled,
-    bridgeModeState.inspectOverrides,
-    bridgeModeState.selectedEditTargetId,
-    bridgeModeState.workspaceActive,
+    semanticState.inspectEnabled,
+    semanticState.inspectOverrides,
+    semanticState.selectedEditTargetId,
+    semanticState.workspaceActive,
     replayToFrame,
   ]);
 

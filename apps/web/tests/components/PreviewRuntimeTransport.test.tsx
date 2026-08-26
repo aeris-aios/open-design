@@ -131,9 +131,10 @@ describe('PreviewRuntimeTransport', () => {
   });
 
   it('does not replay semantically unchanged host state from fresh object identities', () => {
-    const viewerState = { ...defaultViewerState, edit: true };
+    const viewerState = { ...defaultViewerState, deck: true, edit: true };
     const currentModeState = () => bridgeModeState({
       commentActiveTarget: { elementId: 'hero', selector: '#hero' },
+      deckSlideIndex: 2,
       editEnabled: true,
       selectedEditTargetId: 'hero',
       editLiveStyles: [{ id: 'hero', styles: { color: 'red' }, version: 4 }],
@@ -141,7 +142,12 @@ describe('PreviewRuntimeTransport', () => {
     const { rerender } = render(view({ viewerState, modeState: currentModeState() }));
     const frame = screen.getByTestId('preview-runtime-frame-standby') as HTMLIFrameElement;
     const postMessage = vi.spyOn(frame.contentWindow!, 'postMessage');
-    const capabilities: PreviewRuntimeCapability[] = ['observability', 'comment', 'edit'];
+    const capabilities: PreviewRuntimeCapability[] = [
+      'observability',
+      'comment',
+      'edit',
+      'deck',
+    ];
     signal(frame, 'od:preview:hello', capabilities);
     signal(frame, 'od:preview:capabilities-applied', capabilities);
     signal(frame, 'od:preview:visible-paint', capabilities);
@@ -155,6 +161,7 @@ describe('PreviewRuntimeTransport', () => {
       viewerState,
       modeState: bridgeModeState({
         commentActiveTarget: { elementId: 'hero', selector: '#hero' },
+        deckSlideIndex: 2,
         editEnabled: true,
         selectedEditTargetId: 'hero',
         editLiveStyles: [{ id: 'hero', styles: { color: 'blue' }, version: 5 }],
@@ -167,6 +174,18 @@ describe('PreviewRuntimeTransport', () => {
       styles: { color: 'blue' },
       version: 5,
     }, '*');
+    expect(postMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'od:preview-observability-host-state' }),
+      '*',
+    );
+    expect(postMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'od:comment-mode' }),
+      '*',
+    );
+    expect(postMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'od:slide' }),
+      '*',
+    );
   });
 
   it('replays live edit state after enabling edit without replacing the frame', () => {
