@@ -578,6 +578,10 @@ export function applyFacetSelection(
 // the plugin itself stays installed, runnable, and bound to its Home chip.
 const CAPABILITY_SKILL_PLUGIN_IDS: ReadonlySet<string> = new Set([
   'example-web-clone',
+  // Workflow capability with no visual example page; renders as a blank
+  // fallback tile if it reaches the grid. Stays reachable from its entry
+  // surfaces, exactly like Website Clone above.
+  'od-web-effect-extractor',
 ]);
 
 export function isCapabilitySkillPlugin(record: InstalledPluginRecord): boolean {
