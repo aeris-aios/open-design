@@ -1,5 +1,11 @@
 import { createJsonIpcServer, requestJsonIpc } from "./json-ipc.js";
-import { normalizeSidecarStamp, readCurrentSidecarStamp, resolvePrivateIpcPath, type SidecarStamp } from "./stamp.js";
+import {
+  isCurrentSidecarLauncher,
+  normalizeSidecarStamp,
+  readCurrentSidecarStamp,
+  resolvePrivateIpcPath,
+  type SidecarStamp,
+} from "./stamp.js";
 
 const RESOURCES_ENV = "OD_SIDECAR_RESOURCES";
 const CONTROL_STATUS = "sidecar:status";
@@ -171,6 +177,9 @@ export class SidecarClient<TRuntime> {
   }
 
   async #start(): Promise<void> {
+    if (isCurrentSidecarLauncher()) {
+      throw new Error("a sidecar launcher must bootstrap a generation before starting server lifecycle");
+    }
     let runtime!: TRuntime;
     let runtimeStarted = false;
     try {

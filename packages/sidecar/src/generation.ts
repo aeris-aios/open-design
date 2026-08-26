@@ -4,13 +4,13 @@ import { createConnection } from "node:net";
 import type { ProcessSnapshot, StopProcessesOptions, StopProcessesResult } from "@open-design/platform";
 import {
   captureProcessSnapshot,
-  captureStampedProcessSnapshot,
   isProcessAlive,
   matchesStampedProcess,
 } from "@open-design/platform";
 
 import { type SidecarDescription, sidecarProtocol } from "./client.js";
 import { requestJsonIpc } from "./json-ipc.js";
+import { captureSidecarGenerationSnapshot } from "./process-tree.js";
 import { retireFencedSidecarProcessTree } from "./process-retirement.js";
 import {
   normalizeSidecarStamp,
@@ -79,8 +79,20 @@ export async function describeSidecarGeneration(
 
 export async function observeSidecarGeneration(stampInput: SidecarStamp): Promise<ObservedSidecarGeneration> {
   const stamp = normalizeSidecarStamp(stampInput);
+  const deadline = Date.now() + 1_000;
+  while (true) {
+    try {
+      return await observeSidecarGenerationOnce(stamp);
+    } catch (error) {
+      if (!isTransientGenerationObservation(error) || Date.now() >= deadline) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  }
+}
+
+async function observeSidecarGenerationOnce(stamp: SidecarStamp): Promise<ObservedSidecarGeneration> {
   const endpoint = await readPrivateEndpointIdentity(stamp);
-  const snapshot = await captureStampedProcessSnapshot(stamp, SIDECAR_STAMP_CONTRACT);
+  const snapshot = await captureSidecarGenerationSnapshot(stamp);
   const endpointAfterCapture = await readPrivateEndpointIdentity(stamp);
   if (!samePrivateEndpointIdentity(endpoint, endpointAfterCapture)) {
     throw new Error("cannot mutate sidecar because endpoint ownership changed during process discovery");
@@ -110,6 +122,12 @@ export async function observeSidecarGeneration(stampInput: SidecarStamp): Promis
   };
 }
 
+function isTransientGenerationObservation(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return error.message.startsWith("cannot mutate sidecar with multiple stamped generation roots") ||
+    error.message.startsWith("cannot mutate sidecar because endpoint");
+}
+
 export async function retireObservedSidecarGeneration(
   observation: ObservedSidecarGeneration,
   options: StopProcessesOptions = {},
@@ -118,7 +136,7 @@ export async function retireObservedSidecarGeneration(
     ? alreadyStoppedResult()
     : await retireSidecarGeneration(observation.ref, options, observation.processes);
   const stamp = observation.stamp;
-  const replacements = (await captureStampedProcessSnapshot(stamp, SIDECAR_STAMP_CONTRACT)).roots
+  const replacements = (await captureSidecarGenerationSnapshot(stamp)).roots
     .filter(({ pid }) => isProcessAlive(pid));
   if (replacements.length > 0) {
     return {
@@ -149,7 +167,7 @@ export async function retireKnownSidecarGeneration(
   }
   const ownsEndpoint = description?.resources.pid === ref.rootPid;
   const result = await retireSidecarGeneration(ref, options);
-  const replacementExists = (await captureStampedProcessSnapshot(ref.stamp, SIDECAR_STAMP_CONTRACT)).roots
+  const replacementExists = (await captureSidecarGenerationSnapshot(ref.stamp)).roots
     .some(({ pid }) => isProcessAlive(pid));
   let staleEndpointRemoved = false;
   if (

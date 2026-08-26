@@ -25,6 +25,11 @@ export const SIDECAR_STAMP_FLAGS: Readonly<Record<SidecarStampField, string>> = 
   app: "--od-stamp-app",
 });
 
+/** Internal argv marker for a client-side launch attempt that has not claimed generation ownership. */
+export const SIDECAR_LIFECYCLE_FLAG = "--od-sidecar-lifecycle";
+export const SIDECAR_LAUNCHER_LIFECYCLE = "launcher";
+const SIDECAR_LAUNCHER_ARG = `${SIDECAR_LIFECYCLE_FLAG}=${SIDECAR_LAUNCHER_LIFECYCLE}`;
+
 function normalizeStampToken(value: unknown, field: SidecarStampField): string {
   if (typeof value !== "string" || value.length === 0 || value.trim() !== value) {
     throw new Error(`sidecar stamp ${field} must be a non-empty string without surrounding whitespace`);
@@ -62,6 +67,30 @@ export function readCurrentSidecarStamp(): SidecarStamp {
   const stamp = readProcessStamp(process.argv.slice(1), SIDECAR_STAMP_CONTRACT);
   if (stamp == null) throw new Error("the five-field sidecar argv stamp is required");
   return stamp;
+}
+
+export function isCurrentSidecarLauncher(): boolean {
+  return process.argv.slice(1).includes(SIDECAR_LAUNCHER_ARG);
+}
+
+export function isSidecarLauncherCommand(command: string): boolean {
+  return command.split(/\s+/).some((token) => token.replace(/^['"]|['"]$/g, "") === SIDECAR_LAUNCHER_ARG);
+}
+
+export function createSidecarLauncherArgs(stamp: SidecarStamp): string[] {
+  const normalized = normalizeSidecarStamp(stamp);
+  return [
+    ...SIDECAR_STAMP_FIELDS.map((field) => `${SIDECAR_STAMP_FLAGS[field]}=${normalized[field]}`),
+    SIDECAR_LAUNCHER_ARG,
+  ];
+}
+
+export function removeSidecarLauncherArgs(args: readonly string[]): string[] {
+  const stampPrefixes = SIDECAR_STAMP_FIELDS.map((field) => `${SIDECAR_STAMP_FLAGS[field]}=`);
+  return args.filter((argument) =>
+    argument !== SIDECAR_LAUNCHER_ARG &&
+    !stampPrefixes.some((prefix) => argument.startsWith(prefix)),
+  );
 }
 
 export function sidecarStampKey(stamp: SidecarStamp): string {

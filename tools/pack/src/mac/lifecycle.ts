@@ -16,9 +16,9 @@ import {
   type DesktopUpdateResult,
 } from "@open-design/sidecar-proto";
 import {
+  convergeSidecarLaunch,
   getSidecarStatus,
   invokeSidecar,
-  spawnSidecar,
   stopSidecar,
   type SidecarStamp as ConvergedSidecarStamp,
 } from "@open-design/sidecar";
@@ -389,7 +389,7 @@ export async function startPackedMacApp(config: ToolPackConfig): Promise<MacStar
   const logHandle = await open(logPath, "a");
   let child: ChildProcess;
   try {
-    const spawned = await spawnSidecar({
+    const convergence = await convergeSidecarLaunch({
       args: [],
       command: target.executablePath,
       cwd: target.appPath,
@@ -408,7 +408,7 @@ export async function startPackedMacApp(config: ToolPackConfig): Promise<MacStar
       },
       stamp,
     });
-    child = spawned.process;
+    child = convergence.launcherProcess;
   } finally {
     await logHandle.close().catch(() => undefined);
   }

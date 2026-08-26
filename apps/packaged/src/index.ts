@@ -11,8 +11,10 @@ import {
 } from "@open-design/launcher-proto";
 import {
   bootstrapSidecarProcess,
+  isCurrentSidecarLauncher,
   readCurrentSidecarStamp,
   registerSidecarProcess,
+  resolveSidecarLauncherExitCode,
   SidecarFactory,
   type SidecarClient,
   type SidecarRuntimeContext,
@@ -149,7 +151,14 @@ async function main(): Promise<void> {
   const oppositeDesktop = await inspectExistingDesktopForLauncher(launchStamp, {
     deeplinkUrl: findPackagedDeeplinkArg(process.argv),
     logger: console,
-    modes: [headlessRequest.headless ? SIDECAR_MODES.RUNTIME : "headless"],
+    modes: [
+      headlessRequest.headless ? SIDECAR_MODES.RUNTIME : "headless",
+      ...(
+        convergedArgvStamp == null || isCurrentSidecarLauncher()
+          ? [launchStamp.mode]
+          : []
+      ),
+    ],
     paths: initialPaths,
   });
   if (exitPackagedLauncherForExistingDesktop(oppositeDesktop, (code) => app.exit(code))) {
@@ -458,5 +467,5 @@ void main().catch(async (error: unknown) => {
       nativeModulePath: startupTelemetryContext.nativeModulePath,
     });
   }
-  process.exit(1);
+  process.exit(resolveSidecarLauncherExitCode(error));
 });

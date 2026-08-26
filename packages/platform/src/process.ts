@@ -45,6 +45,7 @@ export type ProcessSnapshot = {
 };
 
 export type StampedProcessInvocationSnapshot = {
+  matches: ProcessSnapshot[];
   processes: ProcessSnapshot[];
   roots: ProcessSnapshot[];
 };
@@ -463,6 +464,7 @@ export async function captureStampedProcessSnapshot<
   const matches = selectStampedProcessesAtInvocation(processes, criteria, contract, invokedAtMs);
   const matchedPids = new Set(matches.map(({ pid }) => pid));
   return {
+    matches,
     processes,
     roots: matches.filter(({ ppid }) => !matchedPids.has(ppid)),
   };

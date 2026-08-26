@@ -31,10 +31,10 @@ const spawnLoggedProcess = vi.fn(async ({ env }: { env: NodeJS.ProcessEnv }) => 
     unref: vi.fn(),
   }) as unknown as ChildProcess & { env: NodeJS.ProcessEnv };
 });
-const spawnSidecar = vi.fn(async (request: { env: NodeJS.ProcessEnv; stamp: Record<string, string> }) => ({
-  process: await spawnLoggedProcess(request),
-  stamp: request.stamp,
-  stop: vi.fn(),
+const convergeSidecarLaunch = vi.fn(async (request: { env: NodeJS.ProcessEnv; stamp: Record<string, string> }) => ({
+  attempts: 1,
+  description: { ready: true, resources: { pid: 1234 }, stamp: request.stamp },
+  launcherProcess: await spawnLoggedProcess(request),
 }));
 const stopSidecar = vi.fn(async (stamp: { mode: string; source: string }) => ({
   alreadyStopped: stamp.source !== "packaged" || stamp.mode !== "headless",
@@ -49,7 +49,7 @@ vi.mock("@open-design/sidecar", async () => ({
   ...(await vi.importActual<typeof import("@open-design/sidecar")>("@open-design/sidecar")),
   findSidecarProcesses,
   getSidecarStatus,
-  spawnSidecar,
+  convergeSidecarLaunch,
   stopSidecar,
 }));
 

@@ -46,12 +46,15 @@ export { SidecarClient, SidecarFactory } from "./client.js";
 export type { SidecarStamp, SidecarStampField } from "./stamp.js";
 export {
   normalizeSidecarStamp,
+  isCurrentSidecarLauncher,
   readCurrentSidecarStamp,
   SIDECAR_STAMP_FIELDS,
   SIDECAR_STAMP_FLAGS,
 } from "./stamp.js";
 export type {
   SidecarLaunchRequest,
+  SidecarLaunchConvergenceOptions,
+  SidecarLaunchConvergenceResult,
   SidecarRestartOptions,
   SidecarRestartResult,
   SidecarStopResult,
@@ -59,12 +62,16 @@ export type {
 } from "./operations.js";
 export {
   bootstrapSidecarProcess,
+  convergeSidecarLaunch,
   findSidecarProcesses,
   getSidecarStatus,
   invokeSidecar,
   launchSidecar,
   registerSidecarProcess,
   restartSidecar,
+  resolveSidecarLauncherExitCode,
+  SidecarLaunchConvergenceError,
+  spawnSidecarLauncher,
   spawnSidecar,
   stopSidecar,
 } from "./operations.js";

@@ -3,13 +3,13 @@ import { fileURLToPath } from "node:url";
 
 import type { SpawnProcessRequest, StopProcessesOptions } from "@open-design/platform";
 import {
-  captureStampedProcessSnapshot,
   createProcessStampArgs,
   isProcessAlive,
   listProcessSnapshots,
   matchesStampedProcess,
   spawnBackgroundProcess,
   spawnLoggedProcess,
+  stopProcesses,
 } from "@open-design/platform";
 
 import { requestJsonIpc } from "./json-ipc.js";
@@ -17,6 +17,7 @@ import {
   prepareSidecarLaunchEnvironment,
   SIDECAR_SUPERVISOR_TARGET_ENV,
   sidecarProtocol,
+  type SidecarDescription,
   type SidecarResources,
 } from "./client.js";
 import {
@@ -27,7 +28,18 @@ import {
   sidecarGenerationRef,
   type SidecarStopResult,
 } from "./generation.js";
-import { normalizeSidecarStamp, readCurrentSidecarStamp, resolvePrivateIpcPath, SIDECAR_STAMP_CONTRACT, type SidecarStamp } from "./stamp.js";
+import { captureSidecarGenerationSnapshot } from "./process-tree.js";
+import {
+  createSidecarLauncherArgs,
+  isCurrentSidecarLauncher,
+  isSidecarLauncherCommand,
+  normalizeSidecarStamp,
+  readCurrentSidecarStamp,
+  removeSidecarLauncherArgs,
+  resolvePrivateIpcPath,
+  SIDECAR_STAMP_CONTRACT,
+  type SidecarStamp,
+} from "./stamp.js";
 
 export type { SidecarStopResult } from "./generation.js";
 
@@ -44,10 +56,47 @@ export type SidecarRestartOptions = {
   stop?: StopProcessesOptions;
 };
 
+export type SidecarLaunchConvergenceOptions = {
+  retryDelayMs?: number;
+  stabilityMs?: number;
+  timeoutMs?: number;
+};
+
+export type SidecarLaunchConvergenceResult = {
+  attempts: number;
+  description: SidecarDescription;
+  launcherProcess: ChildProcess & { pid: number };
+};
+
+export class SidecarLaunchConvergenceError extends Error {
+  readonly launcherPid: number;
+
+  constructor(message: string, launcherPid: number) {
+    super(message);
+    this.name = "SidecarLaunchConvergenceError";
+    this.launcherPid = launcherPid;
+  }
+}
+
 const RESTART_READY_TIMEOUT_MS = 30_000;
 const BOOTSTRAP_READY_TIMEOUT_MS = 90_000;
 const EXISTING_GENERATION_STABILITY_MS = 750;
+const SIDECAR_LAUNCHER_RETRY_EXIT_CODE = 75;
 const restartTails = new Map<string, Promise<void>>();
+
+class SidecarBootstrapGenerationRetiredError extends Error {
+  constructor(pid: number) {
+    super(`sidecar bootstrap generation ${pid} exited before a generation became ready`);
+    this.name = "SidecarBootstrapGenerationRetiredError";
+  }
+}
+
+/** Map sidecar lifecycle failures to the private launcher process protocol. */
+export function resolveSidecarLauncherExitCode(error: unknown): number {
+  return error instanceof SidecarBootstrapGenerationRetiredError
+    ? SIDECAR_LAUNCHER_RETRY_EXIT_CODE
+    : 1;
+}
 
 export type SidecarRestartResult = {
   pid: number;
@@ -100,14 +149,16 @@ export async function bootstrapSidecarProcess(
   } = {},
 ): Promise<boolean> {
   const stamp = normalizeSidecarStamp(stampInput);
-  try {
-    registerSidecarProcess(stamp, resources);
-    return false;
-  } catch (error) {
-    if (!(error instanceof Error) || error.message !== "current process is missing its sidecar argv stamp") throw error;
+  if (!isCurrentSidecarLauncher()) {
+    try {
+      registerSidecarProcess(stamp, resources);
+      return false;
+    } catch (error) {
+      if (!(error instanceof Error) || error.message !== "current process is missing its sidecar argv stamp") throw error;
+    }
   }
   const launched = await (options.launch ?? launchSidecar)({
-    args: options.args ?? process.argv.slice(1),
+    args: removeSidecarLauncherArgs(options.args ?? process.argv.slice(1)),
     command: options.command ?? process.execPath,
     cwd: options.cwd ?? process.cwd(),
     env: options.env ?? process.env,
@@ -132,6 +183,125 @@ export async function bootstrapSidecarProcess(
 
 export async function launchSidecar(request: SidecarLaunchRequest): Promise<{ pid: number }> {
   return await spawnBackgroundProcess(sidecarSpawnRequest(request));
+}
+
+/** Spawn an uncommitted client-side launcher; it is stamped but is not a generation root. */
+export async function spawnSidecarLauncher(
+  request: SidecarLaunchRequest,
+): Promise<ChildProcess & { pid: number }> {
+  const stamp = normalizeSidecarStamp(request.stamp);
+  const { args = [], command, env, resources, ...spawnRequest } = request;
+  const child = await spawnLoggedProcess({
+    ...spawnRequest,
+    args: [
+      ...removeSidecarLauncherArgs(args),
+      ...createSidecarLauncherArgs(stamp),
+    ],
+    command,
+    env: prepareSidecarLaunchEnvironment(env ?? process.env, resources),
+  });
+  if (child.pid == null) throw new Error("spawned sidecar launcher has no pid");
+  return child as ChildProcess & { pid: number };
+}
+
+/**
+ * Launch a client-side entrypoint until it leaves one stable, ready generation.
+ * A clean launcher exit is not success by itself: endpoint ownership and the
+ * stamped generation root must agree for a stability window.
+ */
+export async function convergeSidecarLaunch(
+  request: SidecarLaunchRequest,
+  options: SidecarLaunchConvergenceOptions = {},
+): Promise<SidecarLaunchConvergenceResult> {
+  const stamp = normalizeSidecarStamp(request.stamp);
+  const timeoutMs = normalizeDuration(options.timeoutMs, 45_000);
+  const stabilityMs = normalizeDuration(options.stabilityMs, EXISTING_GENERATION_STABILITY_MS);
+  const retryDelayMs = normalizeDuration(options.retryDelayMs, 250);
+  const deadline = Date.now() + timeoutMs;
+  let attempts = 0;
+  let lastLauncher: (ChildProcess & { pid: number }) | null = null;
+  let lastExit: { code: number | null; signal: NodeJS.Signals | null } | null = null;
+
+  while (Date.now() < deadline) {
+    attempts += 1;
+    const launcher = await spawnSidecarLauncher({ ...request, stamp });
+    lastLauncher = launcher;
+    const readExit = observeChildExit(launcher);
+    let stableOwnerPid: number | null = null;
+    let stableSince = 0;
+    let exitedAt: number | null = null;
+
+    while (Date.now() < deadline) {
+      const exit = readExit();
+      if (exit != null && exitedAt == null) {
+        exitedAt = Date.now();
+        lastExit = exit;
+      }
+      if (exit != null && (
+        (exit.code !== 0 && exit.code !== SIDECAR_LAUNCHER_RETRY_EXIT_CODE)
+        || exit.signal != null
+      )) {
+        throw new SidecarLaunchConvergenceError(
+          `sidecar launcher exited before convergence code=${exit.code ?? "null"} signal=${exit.signal ?? "null"}`,
+          launcher.pid,
+        );
+      }
+
+      const [description, roots] = await Promise.all([
+        describeSidecarGeneration(stamp),
+        findSidecarProcesses(stamp),
+      ]);
+      const ownerPid = description?.ready === true ? description.resources.pid : null;
+      const generationStable = ownerPid != null && roots.length === 1 && roots[0]?.pid === ownerPid;
+      const launcherConverged = exit != null && exit.signal == null && (
+        exit.code === 0 || exit.code === SIDECAR_LAUNCHER_RETRY_EXIT_CODE
+      );
+      if (launcherConverged && generationStable && description != null && ownerPid != null) {
+        if (stableOwnerPid !== ownerPid) {
+          stableOwnerPid = ownerPid;
+          stableSince = Date.now();
+        }
+        if (Date.now() - stableSince >= stabilityMs) {
+          return { attempts, description, launcherProcess: launcher };
+        }
+      } else {
+        stableOwnerPid = null;
+        stableSince = 0;
+      }
+
+      if (exitedAt != null && !generationStable && Date.now() - exitedAt >= retryDelayMs) break;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+
+    if (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+    }
+  }
+
+  if (lastLauncher != null && isProcessAlive(lastLauncher.pid)) {
+    await stopProcesses([lastLauncher.pid], { killGraceMs: 1_000, termGraceMs: 1_000 });
+  }
+  const exitSuffix = lastExit == null
+    ? ""
+    : `; last launcher exit code=${lastExit.code ?? "null"} signal=${lastExit.signal ?? "null"}`;
+  throw new SidecarLaunchConvergenceError(
+    `sidecar launcher did not leave one stable ready generation after ${attempts} attempt(s) within ${timeoutMs}ms${exitSuffix}`,
+    lastLauncher?.pid ?? 0,
+  );
+}
+
+function observeChildExit(child: ChildProcess): () => { code: number | null; signal: NodeJS.Signals | null } | null {
+  let exit = child.exitCode != null || child.signalCode != null
+    ? { code: child.exitCode, signal: child.signalCode }
+    : null;
+  child.once("exit", (code, signal) => { exit = { code, signal }; });
+  return () => exit;
+}
+
+function normalizeDuration(value: number | undefined, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? Math.floor(value)
+    : fallback;
 }
 
 function sidecarSpawnRequest(request: SidecarLaunchRequest): SpawnProcessRequest {
@@ -191,7 +361,8 @@ export async function spawnSidecar(request: SidecarLaunchRequest): Promise<Spawn
 export async function findSidecarProcesses(stamp: SidecarStamp) {
   const exact = normalizeSidecarStamp(stamp);
   const matches = (await listProcessSnapshots()).filter((processInfo) =>
-    matchesStampedProcess(processInfo, exact, SIDECAR_STAMP_CONTRACT),
+    matchesStampedProcess(processInfo, exact, SIDECAR_STAMP_CONTRACT) &&
+    !isSidecarLauncherCommand(processInfo.command),
   );
   const matchedPids = new Set(matches.map(({ pid }) => pid));
   return matches.filter(({ ppid }) => !matchedPids.has(ppid));
@@ -259,7 +430,7 @@ async function restartSidecarGeneration(
     throw new Error(`cannot restart sidecar while prior generation remains: ${stop.remainingPids.join(", ")}`);
   }
 
-  const replacements = (await captureStampedProcessSnapshot(stamp, SIDECAR_STAMP_CONTRACT)).roots;
+  const replacements = (await captureSidecarGenerationSnapshot(stamp)).roots;
   if (replacements.length > 0) {
     throw new Error(`cannot restart sidecar because another generation appeared: ${replacements.map(({ pid }) => pid).join(", ")}`);
   }
@@ -334,7 +505,7 @@ async function waitForBootstrappedSidecarReady(stamp: SidecarStamp, pid: number,
       stableExisting = null;
     }
     if (!isProcessAlive(pid) && description == null) {
-      throw new Error(`sidecar bootstrap generation ${pid} exited before a generation became ready`);
+      throw new SidecarBootstrapGenerationRetiredError(pid);
     }
     await new Promise((resolve) => setTimeout(resolve, 50));
   }

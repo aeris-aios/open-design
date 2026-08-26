@@ -1,6 +1,31 @@
-import { collectProcessTreePids, readProcessStampFromCommand, type ProcessSnapshot } from "@open-design/platform";
+import {
+  captureStampedProcessSnapshot,
+  collectProcessTreePids,
+  readProcessStampFromCommand,
+  type ProcessSnapshot,
+  type StampedProcessInvocationSnapshot,
+} from "@open-design/platform";
 
-import { sidecarStampKey, SIDECAR_STAMP_CONTRACT, type SidecarStamp } from "./stamp.js";
+import {
+  isSidecarLauncherCommand,
+  sidecarStampKey,
+  SIDECAR_STAMP_CONTRACT,
+  type SidecarStamp,
+} from "./stamp.js";
+
+/** Capture stamped generation roots while excluding uncommitted launcher contenders. */
+export async function captureSidecarGenerationSnapshot(
+  stamp: SidecarStamp,
+): Promise<StampedProcessInvocationSnapshot> {
+  const snapshot = await captureStampedProcessSnapshot(stamp, SIDECAR_STAMP_CONTRACT);
+  const matches = snapshot.matches.filter(({ command }) => !isSidecarLauncherCommand(command));
+  const matchedPids = new Set(matches.map(({ pid }) => pid));
+  return {
+    matches,
+    processes: snapshot.processes,
+    roots: matches.filter(({ ppid }) => !matchedPids.has(ppid)),
+  };
+}
 
 /**
  * Collect one sidecar generation without crossing into a descendant resource.

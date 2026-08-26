@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { spawn } from "node:child_process";
-import { lstat, mkdtemp, readFile, rm } from "node:fs/promises";
+import { lstat, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,6 +11,7 @@ import {
   normalizeSidecarStamp,
   allocatePort,
   bootstrapSidecarProcess,
+  convergeSidecarLaunch,
   findSidecarProcesses,
   getSidecarStatus,
   launchSidecar,
@@ -21,6 +22,7 @@ import {
   SIDECAR_STAMP_FIELDS,
   SIDECAR_STAMP_FLAGS,
   spawnSidecar,
+  spawnSidecarLauncher,
   stopSidecar,
   type SidecarResources,
   type SidecarStamp,
@@ -308,6 +310,125 @@ describe("normalized sidecar client", () => {
 });
 
 describe("server-side atomic operations", () => {
+  it("keeps an uncommitted launcher outside generation discovery", async () => {
+    const fixture = fileURLToPath(new URL("./fixtures/stamped-child.ts", import.meta.url));
+    const launcherStamp = { ...stamp, namespace: `launcher-role-${process.pid}` };
+    const launcher = await spawnSidecarLauncher({
+      args: [fixture],
+      command: process.execPath,
+      resources: {
+        dataRoot: "/tmp/open-design-launcher-role",
+        ownerPid: null,
+        port: 0,
+        runtimeRoot: "/tmp/open-design-launcher-role-runtime",
+      },
+      stamp: launcherStamp,
+    });
+    try {
+      await vi.waitFor(() => expect(isProcessAlive(launcher.pid)).toBe(true));
+      await expect(findSidecarProcesses(launcherStamp)).resolves.toEqual([]);
+      await expect(stopSidecar(launcherStamp)).resolves.toMatchObject({ alreadyStopped: true });
+      expect(isProcessAlive(launcher.pid)).toBe(true);
+    } finally {
+      try { process.kill(launcher.pid, "SIGKILL"); } catch {}
+      await waitForProcessExit(launcher.pid, 2_000);
+    }
+  });
+
+  it("retries a clean launcher exit until one ready generation is stable", async () => {
+    const fixture = fileURLToPath(new URL("./fixtures/converging-launcher.ts", import.meta.url));
+    const root = await mkdtemp(join(tmpdir(), "open-design-converging-launcher-"));
+    const attemptPath = join(root, "attempt.txt");
+    const launchStamp = { ...stamp, namespace: `launcher-convergence-${process.pid}` };
+    await writeFile(attemptPath, "0");
+    try {
+      const result = await convergeSidecarLaunch({
+        args: ["--import", "tsx", fixture],
+        command: process.execPath,
+        env: { ...process.env, OD_TEST_LAUNCH_ATTEMPT: attemptPath },
+        resources: {
+          dataRoot: join(root, "data"),
+          ownerPid: null,
+          port: 0,
+          runtimeRoot: join(root, "runtime"),
+        },
+        stamp: launchStamp,
+      }, { stabilityMs: 100, timeoutMs: 10_000 });
+
+      expect(result.attempts).toBe(2);
+      expect(result.description).toMatchObject({ ready: true, stamp: launchStamp });
+      await expect(findSidecarProcesses(launchStamp)).resolves.toHaveLength(1);
+    } finally {
+      await stopSidecar(launchStamp, { killGraceMs: 2_000, termGraceMs: 0 }).catch(() => undefined);
+      await rm(root, { force: true, recursive: true });
+    }
+  }, 15_000);
+
+  it("retries a launcher generation retired by a competing lifecycle operation", async () => {
+    const fixture = fileURLToPath(new URL("./fixtures/converging-launcher.ts", import.meta.url));
+    const root = await mkdtemp(join(tmpdir(), "open-design-contended-launcher-"));
+    const attemptPath = join(root, "attempt.txt");
+    const launchStamp = { ...stamp, namespace: `launcher-contention-${process.pid}` };
+    await writeFile(attemptPath, "0");
+    try {
+      const result = await convergeSidecarLaunch({
+        args: ["--import", "tsx", fixture],
+        command: process.execPath,
+        env: {
+          ...process.env,
+          OD_TEST_FIRST_LAUNCH_EXIT: "75",
+          OD_TEST_LAUNCH_ATTEMPT: attemptPath,
+        },
+        resources: {
+          dataRoot: join(root, "data"),
+          ownerPid: null,
+          port: 0,
+          runtimeRoot: join(root, "runtime"),
+        },
+        stamp: launchStamp,
+      }, { stabilityMs: 100, timeoutMs: 10_000 });
+
+      expect(result.attempts).toBe(2);
+      expect(result.description).toMatchObject({ ready: true, stamp: launchStamp });
+      await expect(findSidecarProcesses(launchStamp)).resolves.toHaveLength(1);
+    } finally {
+      await stopSidecar(launchStamp, { killGraceMs: 2_000, termGraceMs: 0 }).catch(() => undefined);
+      await rm(root, { force: true, recursive: true });
+    }
+  }, 15_000);
+
+  it("quick-fails a non-retriable launcher error", async () => {
+    const fixture = fileURLToPath(new URL("./fixtures/converging-launcher.ts", import.meta.url));
+    const root = await mkdtemp(join(tmpdir(), "open-design-rejected-launcher-"));
+    const attemptPath = join(root, "attempt.txt");
+    const launchStamp = { ...stamp, namespace: `launcher-rejected-${process.pid}` };
+    await writeFile(attemptPath, "0");
+    try {
+      await expect(convergeSidecarLaunch({
+        args: ["--import", "tsx", fixture],
+        command: process.execPath,
+        env: {
+          ...process.env,
+          OD_TEST_FIRST_LAUNCH_EXIT: "1",
+          OD_TEST_LAUNCH_ATTEMPT: attemptPath,
+        },
+        resources: {
+          dataRoot: join(root, "data"),
+          ownerPid: null,
+          port: 0,
+          runtimeRoot: join(root, "runtime"),
+        },
+        stamp: launchStamp,
+      }, { stabilityMs: 100, timeoutMs: 10_000 })).rejects.toThrow(
+        "sidecar launcher exited before convergence code=1 signal=null",
+      );
+      await expect(readFile(attemptPath, "utf8")).resolves.toBe("1");
+    } finally {
+      await stopSidecar(launchStamp, { killGraceMs: 2_000, termGraceMs: 0 }).catch(() => undefined);
+      await rm(root, { force: true, recursive: true });
+    }
+  }, 15_000);
+
   it("restarts a sidecar on its known concrete port by default", async () => {
     const fixture = fileURLToPath(new URL("./fixtures/managed-child.ts", import.meta.url));
     const restartStamp = { ...stamp, namespace: `restart-port-${process.pid}` };
@@ -875,6 +996,39 @@ describe("server-side atomic operations", () => {
       ]);
     }
   });
+
+  it("re-observes a transient second root before mutating the surviving generation", async () => {
+    const fixture = fileURLToPath(new URL("./fixtures/stamped-child.ts", import.meta.url));
+    const transientStamp = { ...stamp, namespace: `transient-root-${process.pid}` };
+    const resources = {
+      dataRoot: "/tmp/open-design-transient-root",
+      ownerPid: null,
+      port: 0,
+      runtimeRoot: "/tmp/open-design-transient-root-runtime",
+    };
+    const first = await spawnSidecar({ args: [fixture], command: process.execPath, resources, stamp: transientStamp });
+    const second = await spawnSidecar({ args: [fixture], command: process.execPath, resources, stamp: transientStamp });
+    let retireSecond: Promise<unknown> = Promise.resolve();
+    try {
+      await vi.waitFor(async () => {
+        await expect(findSidecarProcesses(transientStamp)).resolves.toHaveLength(2);
+      });
+      setTimeout(() => {
+        retireSecond = second.stop({ killGraceMs: 2_000, termGraceMs: 0 });
+      }, 100);
+
+      const result = await stopSidecar(transientStamp, { killGraceMs: 2_000, termGraceMs: 0 });
+      expect(result.matchedPids).toContain(first.process.pid);
+      expect(result.matchedPids).not.toContain(second.process.pid);
+      await retireSecond;
+      await expect(findSidecarProcesses(transientStamp)).resolves.toEqual([]);
+    } finally {
+      await Promise.all([
+        first.stop({ killGraceMs: 2_000, termGraceMs: 0 }).catch(() => undefined),
+        second.stop({ killGraceMs: 2_000, termGraceMs: 0 }).catch(() => undefined),
+      ]);
+    }
+  }, 10_000);
 
   it("stops its spawned generation after the process hides its argv stamp", async () => {
     const fixture = fileURLToPath(new URL("./fixtures/renamed-child.ts", import.meta.url));
