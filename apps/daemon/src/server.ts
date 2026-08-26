@@ -2363,16 +2363,31 @@ function createProjectPreviewScopeRegistry() {
     }
   }
 
+  // A scope is either one-shot or reusable, and the two must never be
+  // confused. One-shot scopes belong to a single job that owns their whole
+  // lifetime -- a screenshot/PDF export mints one for the render and `revoke`s
+  // it in its `finally`. Reusable scopes belong to whatever live preview is
+  // currently showing an artifact and are released only by expiry.
+  //
+  // The distinction has to live on the ENTRY, not on the call site: `acquire`
+  // searches by (project, workspace), and an export shares that tuple with the
+  // preview it runs alongside. Without a marker, a preview could adopt an
+  // export's scope and lose it the moment that export finished.
+  function create(projectId, workspace, options, reusable) {
+    pruneExpired();
+    const scope = randomUUID();
+    scopes.set(scope, {
+      projectId: String(projectId),
+      workspace,
+      reusable,
+      expiresAt: Date.now() + (options.ttlMs ?? PROJECT_PREVIEW_SCOPE_TTL_MS),
+    });
+    return scope;
+  }
+
   return {
     mint(projectId, workspace = null, options = {}) {
-      pruneExpired();
-      const scope = randomUUID();
-      scopes.set(scope, {
-        projectId: String(projectId),
-        workspace,
-        expiresAt: Date.now() + (options.ttlMs ?? PROJECT_PREVIEW_SCOPE_TTL_MS),
-      });
-      return scope;
+      return create(projectId, workspace, options, false);
     },
     // Reuse the live scope for this exact (project, workspace) instead of
     // minting a new one, renewing its TTL. The preview transport injects the
@@ -2383,7 +2398,8 @@ function createProjectPreviewScopeRegistry() {
     //
     // Deliberately NOT folded into `mint`: export flows mint a scope and
     // `revoke` it when the render finishes, and sharing one id with a live
-    // preview would revoke the preview out from under it.
+    // preview would revoke the preview out from under it. That is why only
+    // entries this method created are eligible below -- see `create`.
     acquire(projectId, workspace = null, options = {}) {
       pruneExpired();
       const wantedProject = String(projectId);
@@ -2391,6 +2407,9 @@ function createProjectPreviewScopeRegistry() {
         ? `${workspace.workspaceId}\u0000${workspace.workspaceMemberId}`
         : '';
       for (const [scope, entry] of scopes) {
+        // A one-shot scope's owner will revoke it; adopting it here would let
+        // that teardown blank a preview that is still using it.
+        if (entry.reusable !== true) continue;
         if (entry.projectId !== wantedProject) continue;
         const entryWorkspace = entry.workspace
           ? `${entry.workspace.workspaceId}\u0000${entry.workspace.workspaceMemberId}`
@@ -2399,7 +2418,7 @@ function createProjectPreviewScopeRegistry() {
         entry.expiresAt = Date.now() + (options.ttlMs ?? PROJECT_PREVIEW_SCOPE_TTL_MS);
         return scope;
       }
-      return this.mint(projectId, workspace, options);
+      return create(projectId, workspace, options, true);
     },
     revoke(scope) {
       scopes.delete(String(scope || ''));

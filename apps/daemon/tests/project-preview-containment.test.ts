@@ -119,6 +119,36 @@ describe('project preview containment routes', () => {
     expect(second).toBe(first);
   });
 
+  // A scope minted for a one-shot job must never be handed to a live preview.
+  // Screenshot/PDF export mints a scope for the render and `revoke`s it in its
+  // `finally`; if a preview were allowed to adopt that scope, the export's
+  // teardown would revoke the very base the preview still serves its assets
+  // from -- blanking the artifact, which is the symptom this whole area exists
+  // to prevent. `preview-url` mints exactly the way an export does, so it
+  // stands in for one here without needing a renderer.
+  it('never reuses a one-shot minted scope for a live preview read', async () => {
+    const projectId = await createProject();
+    await writeProjectFile(projectId, 'index.html', '<html><head></head><body>hi</body></html>');
+
+    const mintResponse = await fetch(
+      `${baseUrl}/api/projects/${projectId}/preview-url?file=index.html`,
+    );
+    expect(mintResponse.ok).toBe(true);
+    const mintedUrl = (await mintResponse.json() as { url: string }).url;
+    const mintedScope = /\/preview\/([^/]+)\//.exec(mintedUrl)?.[1];
+    expect(mintedScope).toBeTruthy();
+
+    const previewResponse = await fetch(
+      `${baseUrl}/api/projects/${projectId}/raw/index.html?odPreviewBridge=scroll`,
+    );
+    expect(previewResponse.ok).toBe(true);
+    const previewScope = /<base\b[^>]*href="[^"]*\/preview\/([^/]+)\//i
+      .exec(await previewResponse.text())?.[1];
+
+    expect(previewScope).toBeTruthy();
+    expect(previewScope).not.toBe(mintedScope);
+  });
+
   it('returns a scoped preview URL with sandbox guidance and serves it with an opaque-origin CSP', async () => {
     const projectId = await createProject({ entryFile: 'pages/index.html' });
     await writeProjectFile(
