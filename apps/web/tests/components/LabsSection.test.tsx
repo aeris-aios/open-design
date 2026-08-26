@@ -144,6 +144,42 @@ describe('LabsSection', () => {
     expect(switchEl().getAttribute('aria-disabled')).toBe('false');
   });
 
+  it('starts one write for a burst of clicks in the same tick', async () => {
+    // `busy` is state, so a second click in the same tick still sees the
+    // pre-render closure: `busy` false and the old `on`. Without a guard that
+    // flips synchronously, each click in the burst starts its own write from a
+    // stale baseline.
+    const { writes } = stubFetch();
+    renderSection();
+    await waitFor(() => expect(switchEl().getAttribute('aria-disabled')).toBe('false'));
+
+    const target = switchEl();
+    target.click();
+    target.click();
+    target.click();
+
+    await waitFor(() => expect(writes.length).toBeGreaterThan(0));
+    expect(writes).toEqual([{ odNextStrategyMode: 'active' }]);
+    await waitFor(() => expect(switchEl().getAttribute('aria-checked')).toBe('true'));
+  });
+
+  it('accepts a second toggle once the first write has settled', async () => {
+    const { writes } = stubFetch();
+    renderSection();
+    await waitFor(() => expect(switchEl().getAttribute('aria-disabled')).toBe('false'));
+
+    fireEvent.click(switchEl());
+    await waitFor(() => expect(writes).toEqual([{ odNextStrategyMode: 'active' }]));
+    await waitFor(() => expect(switchEl().getAttribute('aria-disabled')).toBe('false'));
+
+    fireEvent.click(switchEl());
+    await waitFor(() => expect(writes).toEqual([
+      { odNextStrategyMode: 'active' },
+      { odNextStrategyMode: 'off' },
+    ]));
+    expect(switchEl().getAttribute('aria-checked')).toBe('false');
+  });
+
   it('locks the switch and explains when an environment variable owns the mode', async () => {
     stubFetch({
       rolloutStatus: status({ requestedMode: 'active', requestedModeSource: 'env' }),

@@ -107,6 +107,12 @@ export function LabsSection({ onAutosaveStatus }: LabsSectionProps) {
   // and against setState landing on an unmounted section.
   const writeTokenRef = useRef(0);
   const mountedRef = useRef(true);
+  // `busy` drives the disabled styling, but it cannot gate re-entry: a second
+  // click in the same tick reads the pre-render closure, where `busy` is still
+  // false and `state.on` is still the old value, so it would start a second
+  // write from a stale baseline. The ref flips synchronously and is what the
+  // guard actually reads.
+  const writeInFlightRef = useRef(false);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -132,10 +138,11 @@ export function LabsSection({ onAutosaveStatus }: LabsSectionProps) {
   }, []);
 
   const toggle = useCallback(() => {
-    if (!state || state.lock || busy) return;
+    if (!state || state.lock || writeInFlightRef.current) return;
     const next = !state.on;
     const previous = state.on;
     const token = ++writeTokenRef.current;
+    writeInFlightRef.current = true;
     setState({ ...state, on: next });
     setBusy(true);
     onAutosaveStatus?.('saving');
@@ -151,10 +158,13 @@ export function LabsSection({ onAutosaveStatus }: LabsSectionProps) {
         setState((current) => (current ? { ...current, on: previous } : current));
         onAutosaveStatus?.('error');
       } finally {
-        if (token === writeTokenRef.current && mountedRef.current) setBusy(false);
+        if (token === writeTokenRef.current) {
+          writeInFlightRef.current = false;
+          if (mountedRef.current) setBusy(false);
+        }
       }
     })();
-  }, [busy, onAutosaveStatus, state]);
+  }, [onAutosaveStatus, state]);
 
   const lockNoticeKey = state?.lock === 'latched'
     ? 'labs.latchedNotice'
