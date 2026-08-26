@@ -1562,6 +1562,26 @@ export function createChatRunService({
         };
       }
 
+      if (!Number.isInteger(child?.pid)) {
+        if (
+          gracefulWaitMs > 0
+          && await waitForChildExit(child, gracefulWaitMs)
+        ) {
+          return { quiescent: true, forced: false, remainingPids: [] };
+        }
+        signalChildProcess(child, null, 'SIGTERM');
+        if (await waitForChildExit(child, termGraceMs)) {
+          return { quiescent: true, forced: false, remainingPids: [] };
+        }
+        signalChildProcess(child, null, 'SIGKILL');
+        const quiescent = await waitForChildExit(child, killGraceMs);
+        return {
+          quiescent,
+          forced: true,
+          remainingPids: [],
+        };
+      }
+
       const snapshots = await listProcessSnapshots();
       const pids = collectProcessTreePids(snapshots, [child?.pid]);
       if (gracefulWaitMs > 0) {
@@ -1678,23 +1698,23 @@ export function createChatRunService({
     // process signals and finally SIGKILL the process group.
     if (run.acpSession?.abort) {
       const graceMs = Number(process.env.PI_ABORT_GRACE_MS) || 3000;
-      const termination = terminateProcessTree(
-        run,
-        targetChild,
-        targetProcessGroupId,
-        {
-          gracefulWaitMs: graceMs,
-          termGraceMs: graceMs,
-          killGraceMs: forceWaitMs(),
-          reason: 'run_cancel',
-        },
-      );
       try {
         run.acpSession.abort();
       } catch {
         // Signal fallback below owns eventual process termination.
       }
-      closeRunStdin(run);
+      const childExitedDuringAbort = await waitForChildExit(targetChild, graceMs);
+      if (!childExitedDuringAbort) closeRunStdin(run);
+      const termination = terminateProcessTree(
+        run,
+        targetChild,
+        targetProcessGroupId,
+        {
+          termGraceMs: graceMs,
+          killGraceMs: forceWaitMs(),
+          reason: 'run_cancel',
+        },
+      );
       const terminationResult = await termination;
       return finishCanceledFromChildState(run, terminationResult.forced ? 'SIGKILL' : 'SIGTERM');
     }
