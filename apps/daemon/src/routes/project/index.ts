@@ -1556,7 +1556,10 @@ function findScriptClose(lowerHtml: string, from: number): number {
   let doubleEscaped = false;
   while (i < lowerHtml.length) {
     if (!escaped && lowerHtml.startsWith('<!--', i)) { escaped = true; i += 4; continue; }
-    if (escaped && lowerHtml.startsWith('-->', i)) { escaped = false; doubleEscaped = false; i += 3; continue; }
+    // `-->` only returns *escaped* script data to normal script data. While
+    // double-escaped the tokenizer stays there, so clearing both flags here
+    // would accept the next `</script>` as the element close.
+    if (escaped && !doubleEscaped && lowerHtml.startsWith('-->', i)) { escaped = false; i += 3; continue; }
     if (escaped && !doubleEscaped && lowerHtml.startsWith('<script', i) && isEndTagBoundary(lowerHtml.charCodeAt(i + 7))) {
       doubleEscaped = true;
       i += 7;

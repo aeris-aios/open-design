@@ -248,6 +248,7 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
         '<!doctype html><html><head></head><body>'
           + '<template><script>const a = "</template><body>slip</body>";<\/script></template>'
           + '<script><!--\nconst open = "<script>";\nconst b = "</script><body>slip</body>";\n//--><\/script>'
+          + '<script><!--<script>--><\/script><body>slip</body><\/script>'
           + '<main id="slot">real</main></body></html>',
       ),
     );
@@ -619,6 +620,9 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
     expect(injectedAt).toBeGreaterThan(-1);
     expect(html).toContain('const a = "</template><body>slip</body>";');
     expect(html).toContain('const b = "</script><body>slip</body>";');
+    // `-->` only leaves *escaped* script data; while double-escaped the
+    // tokenizer stays there, so the first `</script>` is still script text.
+    expect(html).toContain('<script><!--<script>--><\/script><body>slip</body><\/script>');
     expect(injectedAt).toBeGreaterThan(html.indexOf('<main id="slot">real</main>'));
     expect(injectedAt).toBeLessThan(html.lastIndexOf('</body>'));
   });
