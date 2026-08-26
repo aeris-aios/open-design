@@ -3076,9 +3076,6 @@ function FormBlock({
         ...("source" in interaction
           ? { interaction_source: interaction.source }
           : {}),
-        ...("categoryId" in interaction
-          ? { category_id: interaction.categoryId }
-          : {}),
         ...("stepIndex" in interaction
           ? {
               step_index: interaction.stepIndex,

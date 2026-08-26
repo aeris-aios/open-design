@@ -1089,13 +1089,9 @@ describe('QuestionFormView', () => {
 
     /*
      * 「View all」那颗按钮已随分页一起退场 —— 整份目录本来就在这一沓里,
-     * 「看全部」改由右上角的网格切换承担。
-     *
-     * 🐞 **顺带照出一条真缺陷,已记为 B53**:`openGallery()` 现在**没有任何调用点**,
-     * 于是带分类页签(商务 / 编辑 / 创意 / 极简)的那个画廊弹窗在正常流程里打不开了,
-     * 只有输入过自定义值、点那枚 `.qf-visual-custom-summary` 才够得着;
-     * `visual_style_gallery_open` 这个埋点也跟着基本不再触发。
-     * 这条测试**不去掩盖它** —— 分类筛选那一段挪到 B53 修好之后再钉。
+     * 「看全部」改由右上角的网格切换承担(交付稿 #21 / #22 的 `.vbar > .vswitch`,
+     * `aria-label="铺成网格"`)。B53 就收敛在这里:稿子里根本没有画廊弹窗,
+     * 所以那一段整个退场,见下面那条 `[B53]`。
      */
     fireEvent.click(container.querySelector('[data-action="toggle-view"]')!);
     expect(container.querySelector('.qf-visual-picker')?.getAttribute('data-view')).toBe('grid');
@@ -1111,21 +1107,28 @@ describe('QuestionFormView', () => {
   });
 
   /*
-   * ⚠️ **停用中,不是删掉 —— 等 B53** 。
+   * B53 —— 原来停用的那条钉的是「画廊弹窗:自定义输入、分类页签、从弹窗里选一张」。
+   * 重新开启时改成钉**收敛后的形态**,理由逐条列在这里,免得下一个人以为覆盖被偷走了:
    *
-   * 下面这一段钉的是画廊弹窗:自定义输入、分类页签(商务 / 编辑 / 创意 / 极简)、
-   * 从弹窗里选一张。取消分页(2026-08-26 裁决)时,那颗「View all」按钮跟着退场,
-   * 于是 `openGallery()` **失去了全部调用点** —— 弹窗在正常流程里打不开了,
-   * 只有输入过自定义值、点那枚 `.qf-visual-custom-summary` 才够得着。
+   * 逐格核对交付稿 `docs/design/chat-matrix/matrix-82.html` 的 #21 / #22(组件 5-6 / 5-7)：
+   *  · 底栏只有三个动作 —— `换一批` / `随机` / `下一步`(#21 里「下一步」是 `disabled`)。
+   *    既没有「查看全部」,也没有「+N」,更没有第四颗按钮。
+   *  · 我记成的那个「撑开」不在底栏,是选项区右上角 `.vbar > .vswitch`
+   *    (`aria-label="铺成网格"`),它把 `.opts.mod-visual` 的 `data-view` 在
+   *    `fan` / `grid` 之间切 —— **内联**,不是弹窗。产品里就是 `[data-action="toggle-view"]`。
+   *  · 全稿 84 格里唯一的 `role="dialog"` 是「联系支持」;视觉方向这两格没有弹窗,
+   *    整份稿子也搜不到分类页签(商务 / 编辑 / 创意 / 极简)这四个词。
    *
-   * 这些能力本身没被删,只是入口没了。**停用而不是删断言**,是为了让这份覆盖
-   * 在 B53 修好之后能原样回来 —— 悄悄删掉才是真的把覆盖弄没了。
+   * 也就是说,那个弹窗是**分页时代的溢出面**:老实现的入口是卡片条末尾的
+   * `+N`(`.qf-visual-more`,`aria-label` 走 `recentProjects.viewAll` → 「View all」),
+   * 2026-08-26「整份目录进一沓」的裁决把分页撤掉,`+N` 跟着退场,溢出面也就没有存在理由了。
+   * 「看全部」这件事(`chat-panel-feedback.md` §C:「不能因为稿子是 4 张就不做看全部」)
+   * 现在由右上角那枚网格切换承担 —— 一次铺开整份目录,比弹窗里再分五个页签更直接。
+   *
+   * 所以这条测试钉三件事:自定义答案仍看得见但**不再是一扇门**、点它**不弹窗也不出页签**、
+   * 「看全部」在内联网格里真的能挑到并提交。
    */
-  it.skip('[B53] opens the gallery dialog: custom input, category tabs, pick from dialog', () => {
-    /* 自包含:这一格原来靠上面那条测试的 `container` / `onInteraction`,
-       拆出来之后必须自己 render 一次,否则连编译都过不去。
-       入口那一步(`getByRole('button', { name: 'View all' })`)现在打不开,
-       所以整条停用 —— B53 修好之后把下面的 render 换成真实入口即可。 */
+  it('[B53] retires the gallery dialog: the catalog is picked inline and nothing opens a modal', () => {
     const onInteraction = vi.fn();
     const onSubmit = vi.fn();
     const { container } = render(
@@ -1135,6 +1138,10 @@ describe('QuestionFormView', () => {
           title: 'Choose a visual direction',
           questions: [{
             id: 'tone', label: 'Visual direction', type: 'radio', required: true, allowCustom: true,
+            /* 目录里没有这个值 —— `canonicalizeQuestionValue` 原样留着,于是它成为
+               `customValue`。这是产品里自定义答案**唯一还够得着的来路**:模型给的
+               `defaultValue`,或上一轮存下来的草稿。 */
+            defaultValue: 'Warm Japanese editorial',
             options: [{ label: 'Editorial / magazine', value: 'editorial' }],
           }],
         } as QuestionForm}
@@ -1144,42 +1151,34 @@ describe('QuestionFormView', () => {
         onSubmit={onSubmit}
       />,
     );
-    fireEvent.click(screen.getByRole('button', { name: 'View all' }));
-    const dialog = screen.getByRole('dialog', { name: 'Visual direction' });
 
-    const customInput = screen.getByTestId('qf-input') as HTMLInputElement;
-    fireEvent.change(customInput, { target: { value: 'Warm Japanese editorial' } });
-    expect(customInput.value).toBe('Warm Japanese editorial');
-    expect(container.querySelector('.qf-visual-custom-summary')?.textContent).toContain(
-      'Warm Japanese editorial',
-    );
+    // 自定义答案照样看得见 —— 但它只是一句**陈述**,不再是可点的门。
+    const summary = container.querySelector<HTMLElement>('.qf-visual-custom-summary');
+    expect(summary?.textContent).toContain('Warm Japanese editorial');
+    expect(screen.queryByRole('button', { name: /Warm Japanese editorial/ })).toBeNull();
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Business' }));
-    expect(onInteraction).toHaveBeenCalledWith({
-      element: 'visual_style_category_tab',
-      questionId: 'tone',
-      styleContext: 'deck',
-      categoryId: 'business',
-    });
-    expect(dialog.querySelectorAll('.qf-visual-card')).toHaveLength(6);
-    expect(dialog.querySelector('[title="Data briefing"]')).toBeTruthy();
-    expect(dialog.querySelector('[title="Premium pitch"]')).toBeTruthy();
-    fireEvent.click(dialog.querySelector('[title="Premium pitch"]')!);
+    fireEvent.click(summary!);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.queryAllByRole('tab')).toHaveLength(0);
+
+    // 「看全部」= 右上角那枚网格切换。整份目录直接在内联网格里挑。
+    fireEvent.click(container.querySelector('[data-action="toggle-view"]')!);
+    const total = visualStyleCardsForContext('deck').length;
+    expect(container.querySelectorAll('.qf-visual-stack .qf-visual-card')).toHaveLength(total);
+
+    fireEvent.click(card('Premium pitch'));
+    /* 精确对象,不是 objectContaining —— `source` 的 `'gallery'` 那一档随弹窗一起退场,
+       多出一个键这里就会红。 */
     expect(onInteraction).toHaveBeenCalledWith({
       element: 'visual_style_card',
       questionId: 'tone',
       styleId: 'deck-premium-pitch',
       styleContext: 'deck',
-      source: 'gallery',
+      source: 'inline',
     });
-    expect(customInput.value).toBe('');
+    // 选中目录里的一张之后,自定义那句就该收走
     expect(container.querySelector('.qf-visual-custom-summary')).toBeNull();
 
-    fireEvent.click(screen.getByRole('tab', { name: 'All' }));
-    expect(dialog.querySelectorAll('.qf-visual-card')).toHaveLength(25);
-
-    fireEvent.click(screen.getByRole('button', { name: /done/i }));
-    expect(screen.queryByRole('dialog', { name: 'Visual direction' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Next' }));
     expect(onSubmit.mock.calls[0]?.[1]).toEqual({ tone: 'deck-premium-pitch' });
     expect(onSubmit.mock.calls[0]?.[0]).toContain(

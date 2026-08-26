@@ -268,8 +268,30 @@
 
 | 编号 | 现象 | 状态 |
 | --- | --- | --- |
-| B53 | (接 B39 照出)取消分页时「View all」按钮跟着退场,于是 `openGallery()` **失去全部调用点** —— 带分类页签(商务/编辑/创意/极简)的画廊弹窗在正常流程里打不开了,只有输入过自定义值、点 `.qf-visual-custom-summary` 才够得着;`visual_style_gallery_open` 埋点也基本不再触发 | `[ ]` 对应覆盖已**停用而非删除**(`QuestionForm.test.tsx` 里 `it.skip('[B53] …')`),修好后原样恢复 |
+| B53 | (接 B39 照出)取消分页时「View all」按钮跟着退场,于是 `openGallery()` **失去全部调用点** —— 带分类页签(商务/编辑/创意/极简)的画廊弹窗在正常流程里打不开了,只有输入过自定义值、点 `.qf-visual-custom-summary` 才够得着;`visual_style_gallery_open` 埋点也基本不再触发 | `[x]` **弹窗整体退场**,不补入口。逐格核对交付稿 #21 / #22:底栏只有 `换一批 / 随机 / 下一步`,「铺开」是选项区右上角 `.vbar > .vswitch`(`aria-label="铺成网格"`)在 `fan` / `grid` 之间切、**是内联的**;全稿 84 格里唯一的 `role="dialog"` 是「联系支持」。那个弹窗本就是**分页时代的溢出面**(入口是卡片条末尾的 `+N`),分页撤掉后它没有存在理由;「看全部」由 `[data-action="toggle-view"]` 一次铺开整份目录承担。已清:`Dialog` 那一段、分类页签、`visual_style_gallery_open` / `visual_style_category_tab` 两个埋点、`interaction_source` 的 `'gallery'` 一档、`category_id` 参数、`.qf-visual-dialog*` 那族样式。停用的覆盖已开启并改钉收敛后的形态。**没有 i18n 键变孤儿**(`common.close` / `tool.done` / `qf.custom*` 都另有用处)。详见 §B53-1 |
 | B54 | (同上照出)「随机」抽中的那张**没被翻到最前面**,选完还压在底下看不见。真因:`VisualStylePicker` 只传了 `revealToken`、**漏了 `revealValue`**,那个 effect 拿不到目标就 `at = -1`、弹回第一张。一沓只有 4 张时概率 1/4 撞对,整份目录进来才露馅 | `[x]` 已补 `revealValue`(旁边 `DirectionCardsPicker` 本来就传了,只有这一处漏) |
+
+### B53-1 · 随弹窗一起没掉的「自己填」——**要产品拍**
+
+那个弹窗里除了分类页签,还长着视觉方向题**唯一的自定义输入框**(`allowCustom` /
+`customLabel` / `customPlaceholder`)。弹窗退场后这条路没了,现在按稿子实现 ——
+**不自造一个稿子上没有的输入位**:
+
+- 交付稿的视觉方向卡(#21 / #22)本来就没有「自己填」;稿子里的 `.opt.mod-own`
+  只出现在 #19 / #20 那种**文字选项**上。
+- 另一条视觉路径 `direction-cards`(`DirectionCardsPicker`)**从来就没有**自定义输入,
+  所以「视觉题没有 Other 出口」在产品里已经是既成状态的一半。
+- 目录外的答案仍然**看得见**:模型给的 `defaultValue` / 上一轮草稿会渲染成
+  `.qf-visual-custom-summary` 那句陈述(B53 之前它是一颗按钮,点开弹窗;现在降成 `<span>`)。
+
+**冲突点**:`apps/daemon/src/prompts/discovery.ts:81` 明写着「host 会在每道有限选项题
+(含 `direction-cards`)上自动渲染一个 Other 出口」,并据此**要求模型不要自己写**
+「其它 / 我来描述」这类兜底选项。视觉题这条路现在兑现不了这句承诺。
+
+三条路,**没有原文依据,不自己拍**:
+(a) 承认视觉题没有 Other,把 `discovery.ts` 那句话的适用范围从 `direction-cards` 摘掉;
+(b) 给视觉题补一个稿子上没有的自定义位(两条路径一起补,别只补目录那条);
+(c) 请设计在 #21 / #22 补一处放它。
 
 ## C. 长期约束(用户反复强调过的,不是单条 bug)
 

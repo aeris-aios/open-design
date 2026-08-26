@@ -14,22 +14,13 @@ import type {
   PointerEvent as ReactPointerEvent,
   ReactNode,
 } from 'react';
-import { createPortal } from 'react-dom';
-import {
-  Button,
-  Dialog,
-  DialogBody,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@open-design/components';
+import { Button } from '@open-design/components';
 import { tForLanguageTag, useT } from '../i18n';
 import type { DirectionCard, FormOption, QuestionForm } from '../artifacts/question-form';
 import { formatFormAnswers, formOptionValueForLabel } from '../artifacts/question-form';
 import {
   visualStyleCardsForContext,
   type VisualStyleCard,
-  type VisualStyleCategory,
   type VisualStyleContext,
   type VisualStyleVariant,
 } from '../runtime/visual-style-catalog';
@@ -41,18 +32,18 @@ export type QuestionFormInteraction =
       questionId: string;
       styleId: string;
       styleContext: VisualStyleContext;
-      source: 'inline' | 'gallery';
+      /**
+       * 挑中这张卡的地方。曾经还有 `'gallery'`(画廊弹窗里挑的)——
+       * 那个弹窗是分页时代的溢出面,整份目录进一沓之后已整体退场(B53),
+       * 于是只剩卡片自己这一条路。留着这个键是因为它描述的是**位置**,
+       * 以后真要区分「一沓里挑的」和「网格里挑的」就往这里加档。
+       */
+      source: 'inline';
     }
   | {
-      element: 'visual_style_refresh' | 'visual_style_gallery_open';
+      element: 'visual_style_refresh';
       questionId: string;
       styleContext: VisualStyleContext;
-    }
-  | {
-      element: 'visual_style_category_tab';
-      questionId: string;
-      styleContext: VisualStyleContext;
-      categoryId: 'all' | 'business' | 'editorial' | 'creative' | 'minimal';
     }
   | {
       element: 'step_back' | 'step_next' | 'step_skip';
@@ -170,7 +161,8 @@ export const QuestionFormView = forwardRef<QuestionFormHandle, Props>(function Q
   const isLastQuestion = activeQuestionIndex === form.questions.length - 1;
   const questionsToRender = stepped && activeQuestion ? [activeQuestion] : form.questions;
   /*
-   * 交付稿第 21 / 22 格的底栏**只有一行**:`换一批 | 撑开 | 随机 | 下一步`。
+   * 交付稿第 21 / 22 格的底栏**只有一行**,逐颗核对过是 `换一批 | 随机 | 下一步` 三颗
+   * (曾经记成还有一颗「撑开」——**没有**;「铺开成网格」是选项区右上角那枚开关,不在底栏)。
    * 我们原来是两行 —— 选择器自带一行(换一批 / 随机),卡片底栏又是一行(跳过 / 下一步)。
    *
    * 合并的方向是**把「下一步」交给选择器那一行**,不是反过来把两颗动作提上来:
@@ -693,10 +685,6 @@ export const QuestionFormView = forwardRef<QuestionFormHandle, Props>(function Q
                   context={visualStyleContext}
                   formId={form.id}
                   questionId={q.id}
-                  title={q.label}
-                  allowCustom={shouldRenderCustomChoice(q)}
-                  customLabel={q.customLabel ?? t('qf.customLabel')}
-                  customPlaceholder={q.customPlaceholder ?? t('qf.customPlaceholder')}
                   value={
                     Array.isArray(value)
                       ? value
@@ -1123,27 +1111,37 @@ const VISUAL_STACK_THROW_MS = 190;
 /** 叠成一沓（默认）/ 铺成网格。右上角那枚开关在两者之间切。 */
 type VisualStyleView = 'fan' | 'grid';
 
-type VisualStyleGalleryCategory = 'all' | VisualStyleCategory;
-const VISUAL_STYLE_GALLERY_CATEGORIES: Array<{
-  value: VisualStyleGalleryCategory;
-  label: string;
-}> = [
-  { value: 'all', label: 'All' },
-  { value: 'business', label: 'Business' },
-  { value: 'editorial', label: 'Editorial' },
-  { value: 'creative', label: 'Creative' },
-  { value: 'minimal', label: 'Minimal' },
-];
+/*
+ * **画廊弹窗已整体退场**(B53,2026-08-27)。
+ *
+ * 它原来的入口是卡片条末尾那颗 `+N`(`.qf-visual-more`),干的是「这一页只放得下 4 张,
+ * 其余的到弹窗里翻」——**分页时代的溢出面**。2026-08-26 裁决「整份目录进一沓」把分页撤掉,
+ * `+N` 跟着退场,`openGallery()` 就此没有任何调用点,弹窗连同它的分类页签
+ * (All / Business / Editorial / Creative / Minimal)在正常流程里再也打不开。
+ *
+ * 收敛方向按交付稿定:`docs/design/chat-matrix/matrix-82.html` 第 #21 / #22 格底栏
+ * **只有** `换一批 / 随机 / 下一步` 三个动作;稿子里的「铺开」是选项区右上角那枚
+ * `.vbar > .vswitch`(`aria-label="铺成网格"`),把 `data-view` 在 `fan` / `grid`
+ * 之间切,**是内联的**,不是弹窗 —— 也就是这里的 `[data-action="toggle-view"]`。
+ * 全稿 84 格里唯一的 `role="dialog"` 是「联系支持」。
+ *
+ * 「看全部」这件事没丢(`chat-panel-feedback.md` §C:「不能因为稿子是 4 张就不做看全部」)——
+ * 一次铺开整份目录,比弹窗里再分五个页签更直接。
+ *
+ * **一并去掉的**:`visual_style_gallery_open` / `visual_style_category_tab` 两个埋点、
+ * `interaction_source` 的 `'gallery'` 一档、`category_id` 参数、`.qf-visual-dialog*` 那族样式。
+ *
+ * **要产品拍的一条**(已写进 `specs/current/chat-panel-feedback.md` 的 B53 行):
+ * 自定义答案的输入框原来只长在这个弹窗里,跟着一起没了。稿子的视觉方向卡本来就没有
+ * 「自己填」(#20 那种文字多选才有),而 `direction-cards` 那条路一直就没有 ——
+ * 所以这里按稿子实现,不自造一个稿子上没有的输入位。
+ */
 
 function VisualStylePicker({
   cards,
   context,
   formId,
   questionId,
-  title,
-  allowCustom,
-  customLabel,
-  customPlaceholder,
   value,
   disabled,
   selectionMode,
@@ -1156,10 +1154,6 @@ function VisualStylePicker({
   context: VisualStyleContext;
   formId: string;
   questionId: string;
-  title: string;
-  allowCustom: boolean;
-  customLabel: string;
-  customPlaceholder: string;
   value: string[];
   disabled: boolean;
   selectionMode: 'single' | 'multiple';
@@ -1167,7 +1161,9 @@ function VisualStylePicker({
   onChange: (value: string[]) => void;
   onInteraction?: (interaction: QuestionFormInteraction) => void;
   /**
-   * 稿子第 21 / 22 格的底栏是**一行**:`换一批 | 撑开 | 随机 | 下一步`。
+   * 稿子第 21 / 22 格的底栏是**一行**,逐颗核对过只有三个动作:
+   * `换一批 | 随机 | 下一步`(#21 那格「下一步」是 `disabled`)。**没有第四颗** ——
+   * 「铺开 / 撑开」不在底栏,是选项区右上角那枚 `.vbar > .vswitch`(见 `VisualDirectionStack`)。
    * 「下一步」由外层 `QuestionFormView` 造好交下来 —— 它只依赖那边的 `handleSubmit` / `ready`;
    * 反过来把「换一批 / 随机」提上去就要搬走翻牌、重置这一沓、还剩几张一整套状态。
    */
@@ -1179,9 +1175,6 @@ function VisualStylePicker({
   const [stackResetToken, setStackResetToken] = useState(0);
   /** 「随机」抽中的那张 —— 交给这一沓翻到最前面(见 `pickRandomStyle`) */
   const [revealValue, setRevealValue] = useState<string | undefined>(undefined);
-  const [galleryOpen, setGalleryOpen] = useState(false);
-  const [galleryCategory, setGalleryCategory] =
-    useState<VisualStyleGalleryCategory>('all');
   const selectedCards = cards.filter((card) => value.includes(card.value));
   const customValue =
     value.find((candidate) => !cards.some((card) => card.value === candidate)) ?? '';
@@ -1197,10 +1190,6 @@ function VisualStylePicker({
   const compactCards = Array.from({ length: cards.length }, (_, index) =>
     cards[(offset + index) % cards.length]!,
   );
-  const galleryCards =
-    galleryCategory === 'all'
-      ? cards
-      : cards.filter((card) => card.category === galleryCategory);
 
   /** 每张卡交给叠放外壳的那一份：值、方向名、预览面，以及自己能不能点。 */
   const stackOptions: VisualDirectionOption[] = compactCards.map((card) => ({
@@ -1236,7 +1225,7 @@ function VisualStylePicker({
     const pool = unpicked.length > 0 ? unpicked : cards;
     const card = pool[Math.floor(Math.random() * pool.length)];
     if (!card) return;
-    selectStyle(card, 'inline');
+    selectStyle(card);
     /*
      * 把随机选中的那张**翻到最前面**,不然选完它还压在底下,用户看不见自己抽到了什么。
      *
@@ -1248,13 +1237,13 @@ function VisualStylePicker({
     setStackResetToken((current) => current + 1);
   }
 
-  function selectStyle(card: VisualStyleCard, source: 'inline' | 'gallery') {
+  function selectStyle(card: VisualStyleCard) {
     onInteraction?.({
       element: 'visual_style_card',
       questionId,
       styleId: card.value,
       styleContext: context,
-      source,
+      source: 'inline',
     });
     if (selectionMode === 'single') {
       onChange([card.value]);
@@ -1266,15 +1255,6 @@ function VisualStylePicker({
     }
     if (maxSelections !== undefined && value.length >= maxSelections) return;
     onChange([...value, card.value]);
-  }
-
-  function openGallery() {
-    onInteraction?.({
-      element: 'visual_style_gallery_open',
-      questionId,
-      styleContext: context,
-    });
-    setGalleryOpen(true);
   }
 
   const reshuffleAction = (
@@ -1308,172 +1288,42 @@ function VisualStylePicker({
     </>
   );
   return (
-    <>
-      <VisualDirectionStack
-        artifactType={context}
-        options={stackOptions}
-        formId={formId}
-        questionId={questionId}
-        values={value}
-        disabled={disabled}
-        inputType={selectionMode === 'single' ? 'radio' : 'checkbox'}
-        revealToken={stackResetToken}
-        revealValue={revealValue}
-        onSelect={(option) => {
-          const card = cards.find((candidate) => candidate.value === option.value);
-          if (card) selectStyle(card, 'inline');
-        }}
-        footer={
-          <>
-            {reshuffleAction}
-            <span className="qf-visual-foot-gap" />
-            {decideActions}
-            {/* 稿子里「下一步」和这两颗在**同一行**;它由外层交下来(见 `submitSlot`) */}
-            {submitSlot}
-          </>
-        }
-      >
-        {customValue ? (
-          <Button
-            type="button"
-            variant="ghost"
-            className="qf-visual-custom-summary"
-            disabled={disabled}
-            onClick={() => setGalleryOpen(true)}
-          >
-            <Icon name="check" size={12} />
-            <span>{customValue}</span>
-          </Button>
-        ) : null}
-      </VisualDirectionStack>
-      {galleryOpen
-        ? createPortal(
-            <Dialog
-              className="qf-visual-dialog"
-              backdropClassName="qf-visual-dialog-backdrop"
-              layout="sectioned"
-              ariaLabel={title}
-              onClose={() => setGalleryOpen(false)}
-              closeOnEscape
-            >
-              <DialogHeader className="qf-visual-dialog-head">
-                <DialogTitle className="qf-visual-dialog-title">{title}</DialogTitle>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  className="qf-visual-dialog-close"
-                  aria-label={t('common.close')}
-                  title={t('common.close')}
-                  onClick={() => setGalleryOpen(false)}
-                >
-                  <Icon name="close" size={16} />
-                </Button>
-              </DialogHeader>
-              <DialogBody className="qf-visual-dialog-body">
-                <div
-                  className="qf-visual-dialog-tabs"
-                  role="tablist"
-                  aria-label={`${title} categories`}
-                >
-                  {VISUAL_STYLE_GALLERY_CATEGORIES.map((category) => {
-                    const active = galleryCategory === category.value;
-                    return (
-                      <Button
-                        key={category.value}
-                        type="button"
-                        variant="ghost"
-                        role="tab"
-                        aria-selected={active}
-                        tabIndex={active ? 0 : -1}
-                        className={`qf-visual-dialog-tab${active ? ' qf-visual-dialog-tab-active' : ''}`}
-                        onClick={() => {
-                          onInteraction?.({
-                            element: 'visual_style_category_tab',
-                            questionId,
-                            styleContext: context,
-                            categoryId: category.value,
-                          });
-                          setGalleryCategory(category.value);
-                        }}
-                      >
-                        {category.label}
-                      </Button>
-                    );
-                  })}
-                </div>
-                <div className="qf-visual-dialog-grid">
-                  {galleryCards.map((card) => (
-                    <VisualDirectionCardView
-                      key={card.value}
-                      option={{
-                        value: card.value,
-                        title: card.title,
-                        preview: (
-                          <VisualStylePreview
-                            context={context}
-                            variant={card.variant}
-                            preview={card.preview}
-                          />
-                        ),
-                      }}
-                      formId={`${formId}-gallery`}
-                      questionId={questionId}
-                      selected={value.includes(card.value)}
-                      disabled={
-                        disabled ||
-                        (selectionMode === 'multiple' &&
-                          !value.includes(card.value) &&
-                          maxSelections !== undefined &&
-                          value.length >= maxSelections)
-                      }
-                      inputType={selectionMode === 'single' ? 'radio' : 'checkbox'}
-                      onSelect={() => selectStyle(card, 'gallery')}
-                    />
-                  ))}
-                </div>
-                {allowCustom ? (
-                  <label className="qf-visual-custom">
-                    <span className="qf-visual-custom-label">{customLabel}</span>
-                    <input
-                      type="text"
-                      className="qf-input"
-                      data-testid="qf-input"
-                      value={customValue}
-                      placeholder={customPlaceholder}
-                      disabled={
-                        disabled ||
-                        (selectionMode === 'multiple' &&
-                          !customValue &&
-                          maxSelections !== undefined &&
-                          value.length >= maxSelections)
-                      }
-                      onChange={(event) => {
-                        const presets = value.filter((candidate) =>
-                          cards.some((card) => card.value === candidate),
-                        );
-                        const nextCustom = event.target.value;
-                        onChange(
-                          nextCustom
-                            ? selectionMode === 'single'
-                              ? [nextCustom]
-                              : [...presets, nextCustom]
-                            : presets,
-                        );
-                      }}
-                    />
-                  </label>
-                ) : null}
-              </DialogBody>
-              <DialogFooter className="qf-visual-dialog-foot">
-                <Button type="button" variant="primary" onClick={() => setGalleryOpen(false)}>
-                  {t('tool.done')}
-                </Button>
-              </DialogFooter>
-            </Dialog>,
-            document.body,
-          )
-        : null}
-    </>
+    <VisualDirectionStack
+      artifactType={context}
+      options={stackOptions}
+      formId={formId}
+      questionId={questionId}
+      values={value}
+      disabled={disabled}
+      inputType={selectionMode === 'single' ? 'radio' : 'checkbox'}
+      revealToken={stackResetToken}
+      revealValue={revealValue}
+      onSelect={(option) => {
+        const card = cards.find((candidate) => candidate.value === option.value);
+        if (card) selectStyle(card);
+      }}
+      footer={
+        <>
+          {reshuffleAction}
+          <span className="qf-visual-foot-gap" />
+          {decideActions}
+          {/* 稿子里「下一步」和这两颗在**同一行**;它由外层交下来(见 `submitSlot`) */}
+          {submitSlot}
+        </>
+      }
+    >
+      {/*
+        目录里没有的那个答案(模型给的 `defaultValue`,或上一轮存下来的草稿)。
+        它原来是一颗 `<button>` —— 点开画廊弹窗、在里面改。弹窗退场之后那扇门就不存在了,
+        再留一颗按不出反应的按钮才是真的死码,所以整项降成**一句陈述**。
+      */}
+      {customValue ? (
+        <span className="qf-visual-custom-summary">
+          <Icon name="check" size={12} />
+          <span>{customValue}</span>
+        </span>
+      ) : null}
+    </VisualDirectionStack>
   );
 }
 
@@ -1523,7 +1373,8 @@ function VisualDirectionStack({
    */
   revealToken?: number;
   revealValue?: string;
-  /** 页脚那一行的动作（换一批 / 随机 / 看全部）。 */
+  /** 页脚那一行的动作(稿子 #21 / #22:换一批 / 随机 / 下一步)。「看全部」不在这里 ——
+      它是上面那枚 `.qf-visual-switch`,一下铺开整份目录。 */
   footer?: ReactNode;
   onSelect: (option: VisualDirectionOption) => void;
   children?: ReactNode;
