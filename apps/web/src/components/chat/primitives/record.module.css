@@ -53,11 +53,16 @@
    自己不带 auto 外距。我们原来一律 auto,于是工具行里量出 500 多像素的左外距。 */
 .meta {
   margin-left: auto;
-  flex: none;
   font-family: var(--chat-font-mono);
   font-size: var(--chat-t-cap);
   color: var(--chat-text-soft);
 }
+/* `flex: none` 只属于**工具行**那一枚:稿子是两条各自作用域的规则 ——
+     `.tool .ms        { flex: none;        font-family; font-size; color }`
+     `.fold > summary .ms { margin-left: auto; font-family; font-size; color }`
+   ——**折叠头那条一个 flex 都不写**(= `0 1 auto`,允许被压)。我们把两条并成
+   一条裸 `.meta`,等于把工具行的 `flex: none` 也发给了折叠头,秒数从此不肯让位。 */
+.tool .meta { flex: none; }
 /* 计数类(「2 处」「2/4」)用正文字体 + 等宽数字,不用整套等宽 */
 .meta.num {
   font-family: inherit;
@@ -204,6 +209,15 @@
 .fold .body.stack .body.stack > .fold > summary { padding-inline-start: 33px; }
 .fold.flat .body.stack .body.stack > *,
 .fold.flat .body.stack .body.stack > .fold > summary { padding-inline-start: 29px; }
+/*
+ * 稿子紧接着还有一条**例外**:`.fold.mod-flat .body.mod-stack .body.mod-stack > .fold
+ * { padding-inline: 0 }`。上面那条 `> *` 会连嵌套抽屉自己也一并缩进,而缩进要落在
+ * 抽屉的 **summary** 上、不能落在抽屉这只盒子上 —— 落在盒子上,整只抽屉(连同它
+ * 的悬浮底、竖引导线、里面的终端块)整体右移 29px 并窄 29px,而不是只有那行文字缩进。
+ * 一层嵌套那边同样的例外我们早就有(`.fold .body.stack > .fold { padding: 0 }`),
+ * 两层这条漏了。
+ */
+.fold.flat .body.stack .body.stack > .fold { padding-inline: 0; }
 .fold.flat > summary .stFail { color: var(--chat-red); }
 
 /* ── 工具行 ─────────────────────────────────────────────────── */
@@ -234,6 +248,15 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/*
+ * 稿子的 `.nm` 也是**两条各自作用域**的规则,不是一条:
+ *   `.tool .nm          { flex: 1;        min-width:0; overflow; ellipsis; nowrap }`
+ *   `.fold > summary .nm { flex: 0 1 auto; min-width:0; overflow; ellipsis; nowrap }`
+ * 除了 flex 一字不差 —— 所以并成一条裸 `.name` 看起来完全等价,实际是把工具行的
+ * `flex: 1` 发给了折叠头:标题从「按文字宽」变成「吃掉整行」(123px → 281px),
+ * 秒数和箭头被顶到行尾(188 → 368),整条抽屉头跟稿子对不上。
+ */
+.fold > summary .name { flex: 0 1 auto; }
 .name code {
   /* 全局 `code` 是行内代码芯片(底色 + 1px 5px 内距 + 圆角);稿子这里的 code
      只是等宽的文件名,不带芯片。不清掉的话每一行文件名都比稿子胖一圈。 */
