@@ -7697,10 +7697,25 @@ export async function startServer({
 
   app.get('/api/health', async (_req, res) => {
     const versionInfo = await readCurrentAppVersionInfo();
+    const {
+      pending,
+      delivered,
+      unsupported,
+      terminalFailed,
+      oldestPendingAgeMs,
+    } = amrTerminalReportOutbox.diagnostics();
+    res.setHeader('Cache-Control', 'no-store');
     res.json({
       ok: true,
       version: versionInfo.version,
-      amrTerminalReporter: { status: 'active' },
+      amrTerminalReporter: {
+        status: 'active',
+        pending,
+        delivered,
+        unsupported,
+        terminalFailed,
+        oldestPendingAgeMs,
+      },
     });
   });
 

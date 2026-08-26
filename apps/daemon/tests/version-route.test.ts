@@ -1,5 +1,6 @@
 import type http from 'node:http';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { openDatabase } from '../src/db.js';
 import { startAmrTerminalReportDeliveryAfterBind, startServer } from '../src/server.js';
 
 describe('/api/version', () => {
@@ -93,8 +94,62 @@ describe('/api/version', () => {
     expect(health).toEqual({
       ok: true,
       version: version.version?.version,
-      amrTerminalReporter: { status: 'active' },
+      amrTerminalReporter: {
+        status: 'active',
+        pending: 0,
+        delivered: 0,
+        unsupported: 0,
+        terminalFailed: 0,
+        oldestPendingAgeMs: null,
+      },
     });
+  });
+
+  it('exposes uncached terminal-report aggregate health without per-Run details', async () => {
+    const dataDir = process.env.OD_DATA_DIR;
+    if (!dataDir) throw new Error('OD_DATA_DIR is required by the daemon test harness');
+    const db = openDatabase(process.cwd(), { dataDir });
+    const now = Date.now();
+    const runIds = [
+      'health-pending-run',
+      'health-delivered-run',
+      'health-unsupported-run',
+      'health-terminal-failed-run',
+    ];
+    const insert = db.prepare(`
+      INSERT INTO amr_terminal_report_outbox (
+        run_id, outcome, terminal_at, terminal_at_iso, state,
+        next_attempt_at, last_error_code, created_at, updated_at
+      ) VALUES (?, 'failed', ?, ?, ?, ?, ?, ?, ?)
+    `);
+    db.transaction(() => {
+      insert.run(runIds[0], now - 10_000, new Date(now - 10_000).toISOString(), 'pending', now + 60_000, null, now - 10_000, now);
+      insert.run(runIds[1], now - 9_000, new Date(now - 9_000).toISOString(), 'delivered', now, null, now - 9_000, now);
+      insert.run(runIds[2], now - 8_000, new Date(now - 8_000).toISOString(), 'terminal_failed', now, 'unsupported', now - 8_000, now);
+      insert.run(runIds[3], now - 7_000, new Date(now - 7_000).toISOString(), 'terminal_failed', now, 'invalid_receipt', now - 7_000, now);
+    })();
+
+    try {
+      const res = await fetch(`${baseUrl}/api/health`);
+      const health = await res.json() as {
+        amrTerminalReporter?: Record<string, unknown>;
+      };
+
+      expect(res.status).toBe(200);
+      expect(res.headers.get('cache-control')).toBe('no-store');
+      expect(health.amrTerminalReporter).toEqual({
+        status: 'active',
+        pending: 1,
+        delivered: 1,
+        unsupported: 1,
+        terminalFailed: 1,
+        oldestPendingAgeMs: expect.any(Number),
+      });
+      expect(health.amrTerminalReporter).not.toHaveProperty('reports');
+      expect(Number(health.amrTerminalReporter?.oldestPendingAgeMs)).toBeGreaterThanOrEqual(10_000);
+    } finally {
+      db.prepare(`DELETE FROM amr_terminal_report_outbox WHERE run_id IN (?, ?, ?, ?)`).run(...runIds);
+    }
   });
 
   it('keeps detailed terminal-report counts on local-authorized diagnostics', async () => {
