@@ -23,12 +23,22 @@ export interface ClaimedAmrTerminalReport extends PendingAmrTerminalReport {
   version: number;
 }
 
+export interface AmrTerminalReportDiagnostic {
+  runId: string;
+  outcome: AmrTerminalReportOutcome;
+  state: AmrTerminalReportState;
+  attemptCount: number;
+  terminalAt: string;
+  errorCode: string | null;
+}
+
 export interface AmrTerminalReportDiagnostics {
   pending: number;
   delivered: number;
   unsupported: number;
   terminalFailed: number;
   oldestPendingAgeMs: number | null;
+  reports: AmrTerminalReportDiagnostic[];
 }
 
 export interface AmrTerminalReportOutboxStore {
@@ -195,6 +205,13 @@ export function createAmrTerminalReportOutboxStore(
            last_error = ?, updated_at = ?
      WHERE run_id = ? AND state = 'pending' AND version = ?
   `);
+  const diagnosticRows = db.prepare(`
+    SELECT run_id AS runId, outcome, state, attempt_count AS attemptCount,
+           terminal_at_iso AS terminalAt, last_error_code AS errorCode
+      FROM amr_terminal_report_outbox
+     ORDER BY updated_at DESC, run_id ASC
+     LIMIT 50
+  `);
   const claimTransaction = db.transaction((timestamp: number, leaseMs: number, limit: number) => {
     const rows = dueRows.all(timestamp, timestamp, limit) as ClaimedAmrTerminalReport[];
     const claimed: ClaimedAmrTerminalReport[] = [];
@@ -241,6 +258,7 @@ export function createAmrTerminalReportOutboxStore(
         unsupported: Number(counts.unsupported ?? 0),
         terminalFailed: Number(counts.terminalFailed ?? 0),
         oldestPendingAgeMs: counts.oldestPendingAt == null ? null : Math.max(0, timestamp - Number(counts.oldestPendingAt)),
+        reports: diagnosticRows.all() as AmrTerminalReportDiagnostic[],
       };
     },
   };
@@ -342,6 +360,7 @@ function canonicalReceipt(
 export function createAmrTerminalReportDeliveryService(input: {
   store: AmrTerminalReportOutboxStore;
   run?: (args: string[], options?: VelaCommandOptions) => Promise<string>;
+  env?: NodeJS.ProcessEnv;
   now?: () => number;
   pollIntervalMs?: number;
   leaseMs?: number;
@@ -349,7 +368,8 @@ export function createAmrTerminalReportDeliveryService(input: {
   baseBackoffMs?: number;
   maxBackoffMs?: number;
 }): AmrTerminalReportDeliveryService {
-  const run = input.run ?? runVelaCommand;
+  const run = input.run ?? ((args, options) =>
+    runVelaCommand(args, { ...options, env: input.env ?? process.env }));
   const now = input.now ?? Date.now;
   const pollIntervalMs = input.pollIntervalMs ?? 5_000;
   const leaseMs = input.leaseMs ?? 60_000;

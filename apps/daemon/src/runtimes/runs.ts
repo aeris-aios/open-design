@@ -1339,6 +1339,10 @@ export function createChatRunService({
       run.onFinalize = null;
       try { finalize(); } catch { /* best-effort */ }
     }
+    // Terminal finalizers can add artifact metadata after the authoritative
+    // terminal timestamp snapshot. Persist once more before publishing `end`
+    // so restart hydration sees the same artifact result as live clients.
+    persistState(run);
     emit(run, 'end', {
       code,
       signal,

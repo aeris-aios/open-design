@@ -74,6 +74,14 @@ describe('AMR terminal report delivery', () => {
       unsupported: 0,
       terminalFailed: 0,
       oldestPendingAgeMs: 5_000,
+      reports: [{
+        runId: 'legacy-run',
+        outcome: 'failed',
+        state: 'pending',
+        attemptCount: 1,
+        terminalAt: new Date(now - 5_000).toISOString(),
+        errorCode: null,
+      }],
     });
   });
 
@@ -197,6 +205,33 @@ describe('AMR terminal report delivery', () => {
       store, run: vi.fn().mockRejectedValue(error), now: () => now,
     }).processDue();
     expect(store.diagnostics(now)).toMatchObject({ pending: 1, terminalFailed: 0 });
+  });
+
+  it('returns at most 50 deterministic safe per-Run diagnostics', () => {
+    const { store, now } = fixture();
+    for (let index = 0; index < 55; index += 1) {
+      store.enqueue({
+        runId: `diagnostic-run-${String(index).padStart(2, '0')}`,
+        outcome: index % 2 === 0 ? 'failed' : 'canceled',
+        terminalAt: now + index,
+      });
+    }
+
+    const diagnostics = store.diagnostics(now + 100);
+
+    expect(diagnostics.reports).toHaveLength(50);
+    expect(diagnostics.reports[0]).toEqual({
+      runId: 'diagnostic-run-00',
+      outcome: 'failed',
+      state: 'pending',
+      attemptCount: 0,
+      terminalAt: new Date(now).toISOString(),
+      errorCode: null,
+    });
+    expect(diagnostics.reports.at(-1)?.runId).toBe('diagnostic-run-49');
+    expect(Object.keys(diagnostics.reports[0] ?? {}).sort()).toEqual([
+      'attemptCount', 'errorCode', 'outcome', 'runId', 'state', 'terminalAt',
+    ]);
   });
 
   it('tracks unsupported separately from other terminal failures', async () => {

@@ -2,11 +2,17 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import Database from 'better-sqlite3';
 
 import {
   runVelaCommand,
   velaCommandStdout,
 } from '../../src/integrations/vela-command.js';
+import {
+  createAmrTerminalReportDeliveryService,
+  createAmrTerminalReportOutboxStore,
+  migrateAmrTerminalReportOutbox,
+} from '../../src/storage/amr-terminal-report-outbox.js';
 
 const fakeVela = path.resolve('tests/fixtures/fake-vela.mjs');
 let tempDir: string | null = null;
@@ -59,5 +65,53 @@ describe('canonical Vela terminal command integration', () => {
       error: 'unsupported',
       retryable: false,
     });
+  });
+
+  it('uses the settings-backed Vela binary from the resolved daemon data root', async () => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'od-vela-terminal-settings-'));
+    const logPath = path.join(tempDir, 'terminal.jsonl');
+    fs.writeFileSync(
+      path.join(tempDir, 'app-config.json'),
+      JSON.stringify({
+        agentCliEnv: {
+          amr: {
+            VELA_BIN: fakeVela,
+            FAKE_VELA_TERMINAL_LOG: logPath,
+          },
+        },
+      }),
+    );
+    const db = new Database(':memory:');
+    try {
+      migrateAmrTerminalReportOutbox(db);
+      const store = createAmrTerminalReportOutboxStore(db);
+      const terminalAt = Date.parse('2026-08-05T02:03:04.567Z');
+      store.enqueue({ runId: 'settings-run', outcome: 'failed', terminalAt });
+      const service = createAmrTerminalReportDeliveryService({
+        store,
+        env: {
+          ...process.env,
+          OD_DATA_DIR: tempDir,
+          FAKE_VELA_TERMINAL_LOG: logPath,
+        },
+      });
+
+      await service.processDue();
+
+      expect(store.diagnostics()).toMatchObject({ pending: 0, delivered: 1 });
+      const log = JSON.parse(fs.readFileSync(logPath, 'utf8').trim()) as {
+        args: string[];
+        invocationSource: string;
+      };
+      expect(log).toEqual({
+        args: [
+          'run', 'terminal', '--run-id', 'settings-run', '--outcome', 'failed',
+          '--terminal-at', '2026-08-05T02:03:04.567Z', '--json',
+        ],
+        invocationSource: 'open-design',
+      });
+    } finally {
+      db.close();
+    }
   });
 });

@@ -106,6 +106,7 @@ describe('/api/version', () => {
       unsupported: 0,
       terminalFailed: 0,
       oldestPendingAgeMs: null,
+      reports: [],
     });
 
     const denied = await fetch(`${baseUrl}/api/diagnostics/amr-terminal-reports`, {

@@ -197,6 +197,30 @@ describe("AMR terminal report outbox", () => {
     await expect(wait).resolves.toMatchObject({ status: 'failed' });
   });
 
+  it('persists artifact metadata added by the terminal finalizer before publishing end', () => {
+    const { runs } = createFixture();
+    const run = runs.create({ agentId: 'amr' });
+    run.onFinalize = () => {
+      run.artifactCount = 2;
+      run.artifactPaths = ['artifacts/index.html', 'artifacts/preview.png'];
+    };
+
+    runs.finish(run, 'failed', 1, null);
+
+    expect(run.events.at(-1)).toMatchObject({
+      event: 'end',
+      data: {
+        artifactCount: 2,
+        artifactPaths: ['artifacts/index.html', 'artifacts/preview.png'],
+      },
+    });
+    expect(JSON.parse(fs.readFileSync(run.statePath, 'utf8'))).toMatchObject({
+      status: 'failed',
+      artifactCount: 2,
+      artifactPaths: ['artifacts/index.html', 'artifacts/preview.png'],
+    });
+  });
+
   it('stamps and backfills an AMR Run interrupted by restart with one terminal instant', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-08-05T04:00:00.000Z'));
