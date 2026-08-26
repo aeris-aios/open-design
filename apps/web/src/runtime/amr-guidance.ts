@@ -295,6 +295,48 @@ export interface RunFailureUi {
   secondaryRetry: boolean;
   // Show the AMR promotion card under the gray error card.
   showSwitchCard: boolean;
+  /**
+   * Draw no error card at all — some other surface already owns this story.
+   *
+   * Only the browser↔daemon stream drop sets it, and only because the
+   * reconnect line at the tail of the conversation (grid 82–84, S29) is
+   * already saying the same thing with the right button. Two blocks of UI for
+   * one event, in two different wordings, is exactly what the design forbids.
+   */
+  suppressCard?: boolean;
+}
+
+/**
+ * The browser↔daemon SSE stream ran out of reconnect budget.
+ *
+ * Duplicated from `providers/daemon.ts` rather than imported: that module
+ * already imports this one (`setRuntimeAmrConsoleOrigin`), so the import would
+ * close a cycle. `run-error-ladder.test.ts` pins the two copies equal, since a
+ * silently drifting copy is the failure mode of writing it twice.
+ */
+export const RECONNECT_OWNED_FAILURE_CODE = 'DAEMON_STREAM_DISCONNECTED';
+const RECONNECT_OWNED_FAILURE_MESSAGE =
+  'daemon stream disconnected before run completed';
+
+/**
+ * Is this failure the one the reconnect line already speaks for?
+ *
+ * Reads the same code-or-message pair as `ProjectView`'s
+ * `hasGenericDisconnectFailureEvent`: rows persisted before the structured code
+ * existed carry only the sentence, and they have to be recognized too or the
+ * duplicate card comes back for exactly the users with the longest history.
+ *
+ * Not the same thing as `AGENT_CONNECTION_DROPPED` (S11): that is the agent's
+ * connection to the MODEL service, which the reconnect line knows nothing about
+ * and cannot re-establish, so that failure keeps its card and its retry.
+ */
+export function isReconnectOwnedFailure(
+  code: string | null | undefined,
+  rawMessage?: string | null,
+): boolean {
+  if (code === RECONNECT_OWNED_FAILURE_CODE) return true;
+  return typeof rawMessage === 'string'
+    && rawMessage.trim() === RECONNECT_OWNED_FAILURE_MESSAGE;
 }
 
 /**
@@ -547,6 +589,21 @@ const AGENT_AGNOSTIC_FAILURE_UI: Record<string, RunFailureUi> = {
     'chat.runError.title.runtimeConfig',
     'chat.runError.runtimeConfigMessage',
   ),
+  // R9 · the browser↔daemon stream gave up reconnecting. Ladder rung 2 — the
+  // stream can be re-established, and 〔重新连接〕 already exists for exactly
+  // that. But the button lives on the reconnect line at the tail of the
+  // conversation (grid 84, S29), not on a card, so this mapping draws no card:
+  // the run may well still be alive on the daemon (`ProjectView` re-attaches
+  // any run whose only failure event is this one), and a card claiming "task
+  // failed" would be both a duplicate and a lie.
+  [RECONNECT_OWNED_FAILURE_CODE]: {
+    ...failureCard(
+      { transient: true },
+      'chat.runError.title.connectionDropped',
+      'chat.connectionDropped',
+    ),
+    suppressCard: true,
+  },
 };
 
 // Ladder rung 3: this local path cannot work at all — the provider's quota is

@@ -104,6 +104,7 @@ import {
   amrRechargeUrlForProfile,
   formatModelWindowRetryAt,
   hasSelfContainedRecovery,
+  isReconnectOwnedFailure,
   resolveRunFailureUi,
   RUN_FAILURE_FALLBACK_MESSAGE_KEY,
 } from '../runtime/amr-guidance';
@@ -1634,11 +1635,22 @@ export function ChatPane({
   // 兜底只在「确实有一次失败要说」时接手(`runFailureUi` = 这条助手消息是终态
   // 失败)。面板级的临时错误(发送失败之类)没有 `runFailureUi`,照旧原样显示,
   // 也不会因此凭空多出一张报错卡。
-  const displayError = runFailureUi?.messageKey
-    ? t(runFailureUi.messageKey, { agent: failedAgentLabel, ...runFailureMessageVars })
-    : runFailureUi && rawError
-      ? t(RUN_FAILURE_FALLBACK_MESSAGE_KEY)
-      : rawError;
+  //
+  // R9:断线是唯一一条**整张卡都不出**的 —— 流水最后一行的重连行(第 84 格 ·
+  // S29)已经在说同一件事,而且给的是对的那颗按钮〔重新连接〕。两块 UI 说一件事、
+  // 还是两种说法,正是设计稿要避免的。判据两条线索都看:结构化的 code,和这条码
+  // 引入之前落库的原文 —— 跟 `ProjectView.hasGenericDisconnectFailureEvent` 同一对。
+  // 面板级的那条错误(还没落到消息上)也要过这一道,否则重连行在场时它照样冒出来。
+  const reconnectOwnsFailure =
+    runFailureUi?.suppressCard === true
+    || isReconnectOwnedFailure(failedRunErrorEvent?.code, rawError);
+  const displayError = reconnectOwnsFailure
+    ? null
+    : runFailureUi?.messageKey
+      ? t(runFailureUi.messageKey, { agent: failedAgentLabel, ...runFailureMessageVars })
+      : runFailureUi && rawError
+        ? t(RUN_FAILURE_FALLBACK_MESSAGE_KEY)
+        : rawError;
   const errorDiagnosticText = displayError
     ? buildRunErrorDiagnosticText({
         message: displayError,

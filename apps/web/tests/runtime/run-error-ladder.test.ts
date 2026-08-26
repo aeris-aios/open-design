@@ -10,10 +10,16 @@
 //   - `account_suspended`(封号)没有分类,落兜底 → 拿到一颗必然白点的〔重试〕。
 import { describe, expect, it } from 'vitest';
 import {
+  isReconnectOwnedFailure,
   primaryActionForFailure,
   resolveRunFailureUi,
+  RECONNECT_OWNED_FAILURE_CODE,
   RUN_FAILURE_FALLBACK_MESSAGE_KEY,
 } from '../../src/runtime/amr-guidance';
+import {
+  GENERIC_DAEMON_DISCONNECT_CODE,
+  GENERIC_DAEMON_DISCONNECT_MESSAGE,
+} from '../../src/providers/daemon';
 
 describe('主按钮阶梯(§6.Z)', () => {
   // 档 1:我们有能直接解决它的动作 —— 去设置改 key / 换个模型 / 新建对话 /
@@ -159,5 +165,41 @@ describe('新文案进了 19 个语言包', () => {
       const dict = (mod.default ?? Object.values(mod)[0]) as Record<string, string>;
       expect(dict['chat.runError.agentCrashedMessage'], path).toContain('{agent}');
     }
+  });
+});
+
+describe('R9 断线不许和重连行抢同一件事', () => {
+  // 交付稿第 84 格已经在流水最后一行画了「连接失败 +〔重新连接〕」(S29,
+  // 已接线:`runtime/chat/reconnect-state.ts` + `ChatPane` 流水尾部)。
+  // 而 `DAEMON_STREAM_DISCONNECTED` 今天落 `resolveRunFailureUi` 的兜底分支,
+  // 于是同一件事出两块 UI、两种说法 —— 设计稿 4058 明说要避免的。
+  it('断线码有专属分流,不落兜底', () => {
+    const ui = resolveRunFailureUi(RECONNECT_OWNED_FAILURE_CODE, null, 'claude');
+    expect(ui.suppressCard).toBe(true);
+    // 兜底那条的标志是「任务执行失败」+ 没有专属文案。命中了就说明还在兜底里。
+    expect(ui.titleKey).not.toBe('chat.runError.title.generic');
+  });
+
+  it('结构化 code 和历史行的原文两条线索都认', () => {
+    expect(isReconnectOwnedFailure(RECONNECT_OWNED_FAILURE_CODE, null)).toBe(true);
+    // 这条码引入之前落库的行只有 detail 没有 code(ProjectView 的
+    // `hasGenericDisconnectFailureEvent` 也是按同一对线索认的)。
+    expect(isReconnectOwnedFailure(null, GENERIC_DAEMON_DISCONNECT_MESSAGE)).toBe(true);
+  });
+
+  // 两个常量必须跟传输层逐字一致。amr-guidance 不能 import providers/daemon
+  // (那边已经 import 了这边的 setRuntimeAmrConsoleOrigin,会成环),所以字面量
+  // 是抄的 —— 抄的东西要有人钉住,否则改了一边就静默失配。
+  it('常量跟 providers/daemon 的原件逐字一致', () => {
+    expect(RECONNECT_OWNED_FAILURE_CODE).toBe(GENERIC_DAEMON_DISCONNECT_CODE);
+  });
+
+  // 反向:模型服务那条连接断了(S11)是**另一件事** —— 重连行管的是浏览器到
+  // daemon 的 SSE,管不到上游模型。那张卡要留着,连同它的重试。
+  it('不误伤 S11:上游连接中断照旧出卡', () => {
+    const ui = resolveRunFailureUi('AGENT_CONNECTION_DROPPED', null, 'claude');
+    expect(ui.suppressCard).toBeUndefined();
+    expect(ui.primaryAction).toBe('retry');
+    expect(ui.messageKey).toBe('chat.connectionDropped');
   });
 });
