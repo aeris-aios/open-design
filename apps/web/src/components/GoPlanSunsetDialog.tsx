@@ -175,71 +175,68 @@ export function GoPlanSunsetDialog({
       backdropClassName={styles.backdrop}
       data-testid="go-plan-sunset-dialog"
     >
-      <header className={styles.header}>
-        <h2 id={titleId} className={styles.title}>关于停售 Go 订阅的说明</h2>
-      </header>
+      <Button
+        aria-label="关闭弹窗"
+        className={styles.closeButton}
+        disabled={dismissing}
+        size="icon"
+        onClick={() => void dismiss('close')}
+      >
+        <span aria-hidden="true">×</span>
+      </Button>
 
-      <div id={descriptionId} className={styles.body}>
-        <p>尊敬的 OpenDesign 用户：</p>
-        <p>
-          OpenDesign Go 上线后获得了很多用户的关注和意见反馈。这些反馈让我们意识到，
-          目前在额度规则的表达、支付流程的设计和产品体验上还有很多问题与改善空间，
-          对此我们深表歉意。
+      <div className={styles.copyPanel}>
+        <h2 id={titleId} className={styles.title}>关于停售 Go 订阅的公告</h2>
+        <p id={descriptionId} className={styles.subtitle}>
+          尊敬的 OpenDesign 用户：OpenDesign Go 上线后获得了很多用户的关注和意见反馈，
+          我们意识到目前 OpenDesign 在额度规则/产品体验等方面仍有不足，对此我们深表歉意。
         </p>
-        <p>为了确保给大家提供最佳设计体验，我们决定：</p>
 
-        <ol className={styles.decisions}>
+        <section className={styles.announcement} aria-label="公告决定">
+          <p className={styles.announcementIntro}>为了确保给大家提供最佳设计体验，我们决定：</p>
+          <ol className={styles.decisions}>
           <li>
             <span className={styles.number}>1</span>
-            <div>
-              <strong>即日起停售 Go 新订阅</strong>
-              <p>待额度规则与产品体验完善后再重新开放。</p>
-            </div>
+            <strong>即日起停售 Go 新订阅</strong>
           </li>
           <li>
             <span className={styles.number}>2</span>
-            <div>
-              <strong>已订阅用户将在 8 月 31 日前获得全额退款</strong>
-              <p>
-                退款将原路退回；退款完成同时停止 Go 权益，到账时间以支付渠道为准。
-                你可以重新订阅其他计划，或使用 BYOK / 连接其他 Agent CLI 继续使用。
-              </p>
-            </div>
+            <strong>8 月 31 日前原路全额退款；退款后权益停止（到账以渠道为准）</strong>
           </li>
           <li>
             <span className={styles.number}>3</span>
-            <div>
-              <strong>其他订阅计划不受影响</strong>
-              <p>除 Go 外的其他订阅计划可继续正常使用。</p>
-            </div>
+            <strong>除 Go 之外的其他订阅计划用户不受影响</strong>
           </li>
-        </ol>
+          </ol>
+        </section>
 
-        <p>
-          感谢你的理解和支持，也感谢所有提出批评的用户。我们将持续聚焦更智能的设计交付，
-          让每个人和每个团队都能更好地交付满意的设计作品。
+        <p className={styles.closing}>
+          感谢您的理解和支持，也感谢所有提出批评的用户。我们将持续聚焦更智能的设计交付，
+          让每个人和每个团队都能更好地交付满意的设计作品！
         </p>
-        <p className={styles.signature}>
-          OpenDesign 团队<br />
-          2026 年 8 月 25 日
-        </p>
-      </div>
 
-      <footer className={styles.footer}>
         {dismissError ? (
           <p className={styles.error} role="alert">确认失败，请重试。</p>
         ) : null}
-        <Button disabled={dismissing} onClick={viewSubscriptions}>
-          查看其他订阅
-        </Button>
-        <Button
-          disabled={dismissing}
-          variant="primary"
-          onClick={() => void dismiss('acknowledge')}
-        >
-          {dismissing ? '正在确认…' : '我知道了'}
-        </Button>
-      </footer>
+
+        <footer className={styles.actions}>
+          <Button
+            className={`${styles.action} ${styles.secondaryAction}`}
+            disabled={dismissing}
+            onClick={viewSubscriptions}
+          >
+            查看其他订阅
+          </Button>
+          <Button
+            className={`${styles.action} ${styles.primaryAction}`}
+            disabled={dismissing}
+            variant="primary"
+            onClick={() => void dismiss('acknowledge')}
+          >
+            {dismissing ? '正在确认…' : '我知道了'}
+          </Button>
+        </footer>
+      </div>
     </Dialog>,
     document.body,
   );

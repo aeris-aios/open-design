@@ -1,176 +1,227 @@
 .backdrop {
   z-index: 1800;
   padding: 24px;
-  background: color-mix(in srgb, var(--text-strong) 27%, transparent);
-  backdrop-filter: blur(1.5px);
-  -webkit-backdrop-filter: blur(1.5px);
+  background: rgb(17 18 15 / 46%);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
 }
 
 .panel {
-  display: flex;
-  width: min(680px, calc(100vw - 48px));
-  max-height: min(760px, 84dvh);
-  flex-direction: column;
+  position: relative;
+  display: grid;
+  width: min(520px, 100%);
+  max-width: 100%;
+  min-height: min(460px, calc(100dvh - 48px));
+  max-height: calc(100dvh - 48px);
   padding: 0;
   overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: 18px;
-  color: var(--text);
-  background: var(--bg-elevated);
-  box-shadow: var(--shadow-lg);
+  border: 0;
+  border-radius: 20px;
+  color: #11120f;
+  background: #fff;
+  box-shadow: 0 28px 80px rgb(17 18 15 / 20%);
+  font-family: var(--sans);
 }
 
 .panel:focus {
   outline: none;
 }
 
-.header {
-  flex: none;
-  padding: 24px 32px 20px;
-  border-bottom: 1px solid var(--border-soft);
+.panel .closeButton {
+  position: absolute;
+  z-index: 2;
+  top: 20px;
+  right: 20px;
+  width: 34px;
+  min-width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  color: #272a25;
+  background: rgb(17 18 15 / 7%);
+  font-size: 22px;
+  font-weight: 300;
+  line-height: 1;
 }
 
-.title {
-  margin: 0;
-  color: var(--text-strong);
+.panel .closeButton:hover:not(:disabled) {
+  border-color: transparent;
+  color: #11120f;
+  background: rgb(17 18 15 / 12%);
+}
+
+.panel .closeButton:focus-visible,
+.action:focus-visible {
+  outline: 3px solid rgb(71 164 55 / 30%);
+  outline-offset: 3px;
+}
+
+.copyPanel {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  justify-content: flex-start;
+  padding: 56px 44px 36px;
+  overflow-y: auto;
+}
+
+.panel .title {
+  width: 100%;
+  margin: 0 0 14px;
+  color: #11120f;
   font-size: 30px;
   font-weight: 680;
-  line-height: 1.25;
-  letter-spacing: -0.03em;
+  line-height: 1.08;
+  letter-spacing: -0.04em;
 }
 
-.body {
-  min-height: 0;
-  padding: 22px 32px 12px;
-  overflow: auto;
-  color: var(--text-muted);
-  font-size: 15px;
-  line-height: 1.72;
+.subtitle {
+  width: 100%;
+  margin: 0;
+  color: #5f645b;
+  font-size: 13px;
+  line-height: 1.6;
 }
 
-.body > p {
-  margin: 0 0 16px;
+.announcement {
+  width: 100%;
+  margin-top: 28px;
+  padding: 16px 18px;
+  border-radius: 14px;
+  background: #f2f8ef;
+}
+
+.announcementIntro {
+  margin: 0 0 6px;
+  color: #30352d;
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.45;
 }
 
 .decisions {
-  margin: 18px 0 22px;
+  margin: 0;
   padding: 0;
-  overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--bg-subtle);
   list-style: none;
 }
 
 .decisions li {
-  display: grid;
-  grid-template-columns: 28px minmax(0, 1fr);
+  display: flex;
   align-items: start;
-  gap: 14px;
-  padding: 17px 18px;
-}
-
-.decisions li + li {
-  border-top: 1px solid var(--border-soft);
+  gap: 8px;
+  padding: 10px 0;
+  color: #30352d;
+  line-height: 1.2;
 }
 
 .number {
   display: grid;
-  width: 26px;
-  height: 26px;
+  flex: 0 0 20px;
+  width: 20px;
+  height: 20px;
   place-items: center;
   border-radius: 50%;
-  color: var(--text-muted);
-  background: var(--bg-panel);
-  font-size: 13px;
+  color: #287f23;
+  background: #dff4d9;
+  font-size: 10px;
   font-weight: 700;
   line-height: 1;
 }
 
 .decisions strong {
-  display: block;
-  min-height: 26px;
-  color: var(--text-strong);
-  font-size: 15px;
-  font-weight: 680;
-  line-height: 26px;
-}
-
-.decisions p {
-  margin: 4px 0 0;
-  color: var(--text-muted);
-  font-size: 14px;
-  line-height: 1.65;
-}
-
-.signature {
-  text-align: right;
-}
-
-.footer {
-  display: flex;
-  flex: none;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 12px;
-  padding: 16px 32px 18px;
-  border-top: 1px solid var(--border-soft);
-  background: var(--bg-elevated);
-}
-
-.footer button {
-  min-width: 132px;
-  height: 42px;
-  border-radius: 10px;
-  font-size: 14px;
+  min-width: 0;
+  color: #2a3027;
+  font-size: 12.5px;
   font-weight: 650;
+  line-height: 1.3;
+}
+
+.closing {
+  width: 100%;
+  margin: 18px 0 0;
+  color: #747970;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.actions {
+  display: grid;
+  width: 100%;
+  grid-template-columns: 132px minmax(0, 1fr);
+  gap: 12px;
+  margin-top: 22px;
+}
+
+.actions .action {
+  width: 100%;
+  min-width: 0;
+  min-height: 50px;
+  height: 50px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.actions .secondaryAction {
+  color: #454a42;
+  background: #f2f3f1;
+}
+
+.actions .secondaryAction:hover:not(:disabled) {
+  border-color: transparent;
+  background: #e8eae7;
+}
+
+.actions .primaryAction {
+  color: #14210f;
+  background: #78ea57;
+}
+
+.actions .primaryAction:hover:not(:disabled) {
+  border-color: transparent;
+  background: #86f066;
+}
+
+.actions .action:disabled,
+.panel .closeButton:disabled {
+  opacity: 0.62;
 }
 
 .error {
-  flex: 1 1 100%;
-  margin: 0;
-  color: var(--danger, #c63b3b);
-  font-size: 13px;
-  text-align: right;
+  width: 100%;
+  margin: 12px 0 -10px;
+  color: #c63b3b;
+  font-size: 11px;
+  line-height: 1.45;
 }
 
-@media (max-width: 640px) {
+@media (max-width: 720px) {
   .backdrop {
     padding: 12px;
   }
 
   .panel {
     width: calc(100vw - 24px);
+    min-height: 0;
     max-height: calc(100dvh - 24px);
+    border-radius: 18px;
   }
 
-  .header {
-    padding: 24px 22px 19px;
+  .copyPanel {
+    padding: 28px 22px 22px;
+    overflow: visible;
   }
 
-  .title {
-    font-size: 25px;
-  }
-
-  .body {
-    padding: 21px 22px 10px;
-    font-size: 14px;
-  }
-
-  .decisions li {
-    gap: 11px;
-    padding: 14px;
-  }
-
-  .footer {
-    padding: 15px 22px 18px;
+  .panel .title {
+    font-size: 24px;
   }
 }
 
-@media (max-width: 360px) {
-  .footer button {
-    flex: 1 1 100%;
-    min-width: 0;
+@media (max-height: 620px) and (min-width: 721px) {
+  .copyPanel {
+    padding-top: 30px;
   }
 }

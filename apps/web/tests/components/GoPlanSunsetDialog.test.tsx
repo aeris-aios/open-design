@@ -73,6 +73,22 @@ describe('GoPlanSunsetDialog', () => {
     }), undefined);
   });
 
+  it('uses the final announcement copy and treats the close control as dismissal', async () => {
+    const { onDismiss } = renderDialog();
+
+    expect(screen.getByRole('heading', { name: '关于停售 Go 订阅的公告' })).toBeTruthy();
+    expect(screen.getByText('即日起停售 Go 新订阅')).toBeTruthy();
+    expect(screen.getByText('除 Go 之外的其他订阅计划用户不受影响')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: '关闭弹窗' }));
+
+    await waitFor(() => expect(onDismiss).toHaveBeenCalledWith('close'));
+    expect(track).toHaveBeenCalledWith('ui_click', expect.objectContaining({
+      area: 'go_plan_sunset_modal',
+      element: 'close',
+    }), undefined);
+  });
+
   it('tracks Pricing attribution without consuming the announcement', () => {
     const open = vi.spyOn(window, 'open').mockImplementation(() => null);
     const { onDismiss } = renderDialog();

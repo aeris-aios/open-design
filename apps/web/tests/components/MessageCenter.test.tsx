@@ -90,7 +90,7 @@ describe('MessageCenter', () => {
     );
 
     expect(await screen.findByRole('alertdialog')).toBeTruthy();
-    expect(screen.getByText('关于停售 Go 订阅的说明')).toBeTruthy();
+    expect(screen.getByText('关于停售 Go 订阅的公告')).toBeTruthy();
     await waitFor(() => expect(onPendingChange).toHaveBeenCalledWith(true));
 
     fireEvent.click(screen.getByRole('button', { name: '我知道了' }));
