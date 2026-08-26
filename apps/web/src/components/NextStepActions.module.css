@@ -161,15 +161,28 @@
   border-radius: 0;
   cursor: pointer;
   text-align: left;
+  /* 稿子 `transition: background-color var(--duration-faster) var(--ease-out),
+                      color var(--duration-faster) var(--ease-out)`。
+     换底和换字色在这一族里是**同一件事**,得一起走 —— 原来只过渡 `background`
+     和一条根本不存在的 `border-color`,字色是硬跳的。 */
   transition:
-    background 140ms cubic-bezier(0.23, 1, 0.32, 1),
-    border-color 140ms cubic-bezier(0.23, 1, 0.32, 1);
+    background-color var(--duration-faster) var(--ease-out),
+    color var(--duration-faster) var(--ease-out);
 }
 
-/* 稿子 `.nexts button:hover { background: var(--bg-panel); color: var(--text-strong) }`
-   —— 只换底和字色,不动边框(它本来就没有边框) */
-.toolboxRow:hover,
-.moreRow:hover {
+/*
+ * 稿子 `.nexts button:hover { background: var(--bg-panel); color: var(--text-strong) }`
+ *
+ * `.nexts` 这个祖先不是可以省的装饰,它在稿子里**承担层叠职责**:
+ *   全局 `button:hover:not(:disabled) { background: var(--bg-subtle) }` 是 (0,2,1)
+ *   —— `:not()` 里的 `:disabled` 照样计入 b 档,再加元素名 `button` 的 c 档。
+ * 只写 `.toolboxRow:hover` 是 (0,2,0),输给它;真客户端上量到的 hover 底色是
+ * `rgb(237,237,237)`(--bg-subtle),不是稿子要的 `rgb(250,250,250)`(--bg-panel)。
+ * 把祖先补回来 = (0,3,0),这才是「照抄」。
+ * (面板的 `:where([data-chat-root]) button` reset 是 (0,0,1),压不住带 `:hover` 的那条。)
+ */
+.toolboxList .toolboxRow:hover,
+.toolboxList .moreRow:hover {
   background: var(--bg-panel);
   color: var(--text-strong);
 }
@@ -180,8 +193,9 @@
   opacity: 0.72;
 }
 
-.toolboxRow:disabled:hover,
-.moreRow:disabled:hover {
+/* 抬高之后,这条得跟着抬 —— 否则和 (0,3,0) 打平,退回源码顺序判胜负 */
+.toolboxList .toolboxRow:disabled:hover,
+.toolboxList .moreRow:disabled:hover {
   background: none;
 }
 
@@ -189,6 +203,28 @@
 .moreRow:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
+}
+
+/*
+ * 稿子 `.nexts button svg { flex: none; width: 12px; height: 12px; color: var(--text-soft) }`
+ * —— 行内的图标是**辅助信息**,和正文一个灰阶梯上的下一档,不是品牌色的重音。
+ *
+ * 关在 `.toolboxList` 这个笼子里:`.toolboxRowIcon` / `.toolboxRowArrow` 同一批类名
+ * 也用在三级浮层的行上(`.flyoutRow`),那边仍旧是 14 / 13 与品牌绿,不受这条影响。
+ */
+.toolboxList .toolboxRow svg,
+.toolboxList .moreRow svg {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  color: var(--text-soft);
+}
+
+/* 稿子 `.nexts button:hover svg { color: var(--text-strong) }` —— 指到哪一行,
+   那一行的字**和图标**一起转深,整条亮起来才算「显出自己的形状」 */
+.toolboxList .toolboxRow:hover svg,
+.toolboxList .moreRow:hover svg {
+  color: var(--text-strong);
 }
 
 .toolboxRowIcon {

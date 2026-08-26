@@ -675,7 +675,7 @@ export function NextStepActions({
                     title={description}
                     onClick={() => handlePlanPromptAction(action)}
                   >
-                    <Icon name={action.icon} size={14} className={styles.toolboxRowIcon} />
+                    <Icon name={action.icon} size={12} className={styles.toolboxRowIcon} />
                     <span className={styles.toolboxRowText}>
                       {/* Title only. The description is a hover reveal (the
                           detail panel for brand rows, the native tooltip for
@@ -683,7 +683,7 @@ export function NextStepActions({
                           instead of a wall of two-line paragraphs. */}
                       <span className={styles.toolboxRowTitle}>{title}</span>
                     </span>
-                    <Icon name="chevron-right" size={13} className={styles.toolboxRowArrow} />
+                    <Icon name="chevron-right" size={12} className={styles.toolboxRowArrow} />
                   </button>
                 );
               })
@@ -722,7 +722,7 @@ export function NextStepActions({
                   >
                     <Icon
                       name={busy ? 'spinner' : action.icon}
-                      size={14}
+                      size={12}
                       className={busy ? 'icon-spin' : styles.toolboxRowIcon}
                     />
                     <span className={styles.toolboxRowText}>
@@ -732,7 +732,7 @@ export function NextStepActions({
                           instead of a wall of two-line paragraphs. */}
                       <span className={styles.toolboxRowTitle}>{title}</span>
                     </span>
-                    <Icon name="chevron-right" size={13} className={styles.toolboxRowArrow} />
+                    <Icon name="chevron-right" size={12} className={styles.toolboxRowArrow} />
                   </button>
                 );
               })
@@ -746,9 +746,9 @@ export function NextStepActions({
                   data-testid={`next-step-project-action-${action.id}`}
                   onClick={() => handlePromptAction(action)}
                 >
-                  <Icon name={action.icon} size={14} className={styles.toolboxRowIcon} />
+                  <Icon name={action.icon} size={12} className={styles.toolboxRowIcon} />
                   <span className={styles.toolboxRowTitle}>{promptActionTitle(action, t)}</span>
-                  <Icon name="chevron-right" size={13} className={styles.toolboxRowArrow} />
+                  <Icon name="chevron-right" size={12} className={styles.toolboxRowArrow} />
                 </button>
               ))
             : null}
@@ -761,9 +761,9 @@ export function NextStepActions({
                   data-testid={`next-step-design-system-action-${action.id}`}
                   onClick={() => handlePromptAction(action)}
                 >
-                  <Icon name={action.icon} size={14} className={styles.toolboxRowIcon} />
+                  <Icon name={action.icon} size={12} className={styles.toolboxRowIcon} />
                   <span className={styles.toolboxRowTitle}>{promptActionTitle(action, t)}</span>
-                  <Icon name="chevron-right" size={13} className={styles.toolboxRowArrow} />
+                  <Icon name="chevron-right" size={12} className={styles.toolboxRowArrow} />
                 </button>
               ))
             : null}
@@ -784,11 +784,11 @@ export function NextStepActions({
                     onMouseEnter={(e) => openDetail(id, e.currentTarget.getBoundingClientRect())}
                     onMouseLeave={scheduleClose}
                   >
-                    <Icon name={action.icon} size={14} className={styles.toolboxRowIcon} />
+                    <Icon name={action.icon} size={12} className={styles.toolboxRowIcon} />
                     <span className={styles.toolboxRowTitle}>
                       {designToolboxActionTitle(action, t)}
                     </span>
-                    <Icon name="chevron-right" size={13} className={styles.toolboxRowArrow} />
+                    <Icon name="chevron-right" size={12} className={styles.toolboxRowArrow} />
                   </button>
                 );
               })
@@ -803,9 +803,9 @@ export function NextStepActions({
               onMouseLeave={scheduleClose}
               onClick={(e) => openMore(e.currentTarget.getBoundingClientRect())}
             >
-              <Icon name="more-horizontal" size={14} className={styles.toolboxRowIcon} />
+              <Icon name="more-horizontal" size={12} className={styles.toolboxRowIcon} />
               <span className={styles.toolboxRowTitle}>{t('nextStep.more')}</span>
-              <Icon name="chevron-right" size={13} className={styles.toolboxRowArrow} />
+              <Icon name="chevron-right" size={12} className={styles.toolboxRowArrow} />
             </button>
           ) : null}
         </div>

@@ -1013,7 +1013,9 @@ const OUTRO: Cell[] = [
     node: () => nextSteps(),
     notes: [
       '⚠️ **这一格挂的是「现状」,不是对齐后的样子** —— 内容被 T12 卡住:稿子要的是「跟本轮相关的三条建议」(再加一页订单列表 / 把商品卡换成两列布局 / 补一套深色模式),产品渲染的是**固定的设计工具箱目录** + 一枚「更多」。**事件流与契约里没有任何「按本轮内容生成的后续建议」字段**,daemon 侧也没有;要做只有两条路:让 agent 在正文里吐一段标记(改 system prompt,代价与 D43 的 `<done/>` 同一量级),或 daemon 在轮末再调一次模型(有成本、有延迟、要考虑 BYOK / AMR 计费)。**挂现状是为了让人看见这个差**',
-      '形态差:稿子是三条无框建议行,不画外框、不画分割线、行与行不留 gap;产品 `.root` 有 1px 边框 + 渐变底,每行是带 1px 边框和 chevron 的**独立胶囊**,还有一枚「更多」开三级 flyout',
+      '**形态已经对上**:容器无框无内距、行与行不留缝、行内距 `9px 11px`、gap `8px`、字号 12、行高 35px —— 逐值和稿子相同(浏览器里量的,不是 diff 规则文本)',
+      '**图标已按稿子改**:`.nexts button svg { width:12px; height:12px; color: var(--text-soft) }`,hover 时和字一起转 `--text-strong`。原来是 14px 的品牌绿 + 13px 的 `--text-muted` chevron,而且 hover 时一动不动',
+      '⚠️ **剩下的形态差只有一处**:行尾那枚 chevron 稿子里没有。它跟着 T12 一起留着(固定目录 + 三级 flyout 的入口指示),只压进稿子的图标节奏 —— 同第 40 格 Discord 那一条的处理',
       '⚠️ **归属**:「分享 / 下载 / 投稿社区 / 创建设计系统」现在藏在这个组件的三级菜单里;按稿子,分享和导出属于**组件 14 的卡面动作**(第 30–33 格)。对齐时要把它们拆走',
       '**唯一已经对上的一条**:点击是 `composerRef.setDraft(prompt)` —— 填入输入框、不直接发送。别改坏它',
     ],
@@ -1024,8 +1026,9 @@ const OUTRO: Cell[] = [
     node: () => nextSteps(),
     notes: [
       '这一格由陈列页**替设计师按住第一行**(`data-hover`),同第 51 格的手法;产线上仍旧是鼠标停上去才变',
-      'hover 底色现在是 `--accent-tint` + 换边框色,稿子要的是 `--bg-panel` + 字与图标一起转 `--text-strong`、不动边框',
-      '**hover 还会 portal 弹一张 detail 说明卡**,稿子里没有这个东西(它服务的是「固定目录需要解释」这个前提);静态页里 portal 出不来,所以这一格看不到它 —— 但它确实存在,对齐时要撤',
+      '**hover 已按稿子改**:`--bg-panel` 打底,字与图标一起转 `--text-strong`,边框不动(本来就没有)。过渡也照抄成 `background-color / color × var(--duration-faster) var(--ease-out)` —— 原来只过渡 `background` 和一条不存在的 `border-color`,字色是硬跳的',
+      '🐞 **这条只有在真客户端上才看得见,陈列页天生照不出来**:全局 `button:hover:not(:disabled) { background: var(--bg-subtle) }` 是 (0,2,1),原来的 `.toolboxRow:hover` 是 (0,2,0) —— **输了**,产线上量到的 hover 底色是 `rgb(237,237,237)` 而不是稿子的 `rgb(250,250,250)`。真因是搬稿子时把 `.nexts` 这个祖先省掉了,而它在稿子里承担的正是层叠职责。修法是把祖先补回来(`.toolboxList .toolboxRow:hover`),钉在 `tests/components/chat/next-step-cascade.test.ts`。**这一页把 module 关进 `.cage-next-step` 的笼子,选择器凭空多一个祖先,bug 正好被盖住**',
+      '⚠️ **hover 还会 portal 弹一张 detail 说明卡**,稿子里没有这个东西(它服务的是「固定目录需要解释」这个前提,即 T12);静态页里 portal 出不来,所以这一格看不到它。**这一轮有意留着** —— 撤它等于先把内容来源换成「按本轮生成的三条建议」,那是 T12 的账',
     ],
   },
   {
@@ -2819,9 +2822,11 @@ h1{margin:0 0 6px;font-size:20px;}
 .stage .msg-att-mini[data-broken],
 .stage .role-agent-icon[data-broken]{visibility:hidden;}
 /* 第 42 格同理:稿子的 hover 格画的就是「鼠标停在第一条上」的样子。
-   这里把 NextStepActions.module.css 里 .toolboxRow:hover 那两条原样重放到第一行。
+   这里把 NextStepActions.module.css 里 .toolboxList .toolboxRow:hover 那几条原样重放到第一行
+   —— 底、字、图标三样一起转,和组件里写的一字不差。
    (类名的哈希由 dehash 摘掉了,所以选择器就是源文件里写的那个。) */
-.cell[data-hover] .stage .toolboxRow:first-of-type{background:var(--accent-tint);border-color:var(--border);}
+.cell[data-hover] .stage .toolboxList .toolboxRow:first-of-type{background:var(--bg-panel);color:var(--text-strong);}
+.cell[data-hover] .stage .toolboxList .toolboxRow:first-of-type svg{color:var(--text-strong);}
 /* 第 71 格同理:稿子那一格画的就是「鼠标停在药丸上」的样子(它的 DOM 自带 .is-hover)。
    这里把 PlanPill.module.css 里 .wrap:hover 那两条原样重放到笼子里。
    产线上仍旧只有真的 hover / focus 才浮出,组件一个字没改。 */
