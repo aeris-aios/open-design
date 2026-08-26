@@ -50,8 +50,7 @@
       font-family: var(--md-font);
       background: var(--md-sys-color-surface);
       color: var(--md-sys-color-on-surface);
-      height: 100vh;
-      overflow: hidden;
+      min-height: 100vh;
       display: flex;
     }
 
@@ -245,9 +244,8 @@
     .status-card.alert .svc-sub { color: var(--md-sys-color-on-error-container); opacity: 0.8; }
 
     .panel-row {
-      flex: 1;
-      min-height: 0;
       display: grid;
+      align-items: start;
       grid-template-columns: 7fr 5fr;
       gap: 16px;
     }
@@ -320,7 +318,7 @@
 
     /* Rings */
     .rings {
-      flex: 1;
+      padding: 28px 0 24px;
       display: grid;
       grid-template-columns: repeat(3, 1fr);
       align-items: center;
@@ -344,7 +342,7 @@
 
     .tl-foot,
     .ring-foot {
-      margin-top: auto;
+      margin-top: 16px;
       padding: 12px 16px;
       background: var(--md-sys-color-surface-container-high);
       border-radius: var(--md-sys-shape-corner-medium);

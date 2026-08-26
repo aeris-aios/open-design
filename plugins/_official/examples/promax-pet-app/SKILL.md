@@ -15,7 +15,8 @@ A cheerful mobile-first companion app screen in a soft "clay" idiom: cream backg
 
 ## Style rules
 
-- **Layout.** Single column, 20px side padding, `padding-bottom: 80px` to clear the fixed 72px bottom nav. On >=768px viewports the body clamps to `max-width: 420px` centered, and the bottom nav clamps with it (`left: 50%; transform: translateX(-50%)`). Sticky header with a subtle background fade gradient.
+- **Device frame.** The app renders inside an iPhone-style device frame (black rounded bezel + Dynamic Island + status bar with 9:41 / 5G / battery) centered on the cream canvas; generated output must keep this frame. The frame is 390x740 with a 12px black bezel, 56px outer corners, and a 44px-radius screen; the status bar sits on the cream background in the burnt-sienna ink color.
+- **Layout.** Inside the screen: single column, 20px side padding, flex column with the 72px bottom nav pinned to the bottom edge of the frame (in-flow, never fixed to the browser viewport). The content area between status bar and nav clips overflow like a real screen. Sticky header with a subtle background fade gradient.
 - **Typography.** Fredoka (Google Fonts) for the logo, headings, section titles, and stat values; Nunito (`-apple-system, sans-serif` fallback) for everything else. Logo 1.5rem/700, hero name 1.5rem, section titles 1.1rem, body 0.85-0.95rem, labels and timestamps 0.75rem.
 - **Color.** Background cream `#FFF7ED`, card white `#FFFFFF`, ink burnt-sienna `#9A3412`, muted slate `#64748B`, border peach `#FED7AA`. Primary orange `#F97316` with secondary `#FB923C`; blue `#2563EB` reserved as a rare accent. Action icon wells rotate soft pastel gradients (peach `#FED7AA→#FDBA74`, blue `#BFDBFE→#93C5FD`, green `#BBF7D0→#86EFAC`).
 - **Radii.** Three-tier scale: hero/outer cards 28px, regular cards 20px, buttons and nav pills 16px; avatars and feed dots fully circular. Nothing sharp-cornered.

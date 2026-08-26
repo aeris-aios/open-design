@@ -34,7 +34,7 @@
   .up { color: var(--up); }
   .down { color: var(--down); }
 
-  .terminal { display: grid; grid-template-rows: 48px 1fr; height: 100vh; min-height: 720px; max-width: 1600px; margin: 0 auto; }
+  .terminal { display: grid; grid-template-rows: 48px 1fr; height: clamp(720px, 100vh, 940px); max-width: 1600px; margin: 0 auto; }
 
   /* ---------- Top bar ---------- */
   .topbar {

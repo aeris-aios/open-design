@@ -1,11 +1,11 @@
 ---
 name: m3-habit-app
-description: Material Design 3 mobile app home screen (Android-style) with a green tonal seed scheme, top app bar, primary-container streak card, checkbox habit list, tonal FAB, and bottom navigation bar in a 420px phone frame.
+description: Material Design 3 mobile app home screen (Android-style) with a green tonal seed scheme, top app bar, primary-container streak card, checkbox habit list, tonal FAB, and bottom navigation bar in an iPhone-style device frame.
 ---
 
 # Material 3 Habit Tracker
 
-A habit-tracking mobile app first screen built strictly on Google's Material Design 3: a centered 420px phone frame, a scheme generated from a green tonal seed, tonal surface layering, pill-shaped navigation, and M3 component anatomy (top app bar, FAB, navigation bar, list items, checkboxes).
+A habit-tracking mobile app first screen built strictly on Google's Material Design 3: a centered iPhone-style device frame, a scheme generated from a green tonal seed, tonal surface layering, pill-shaped navigation, and M3 component anatomy (top app bar, FAB, navigation bar, list items, checkboxes).
 
 ## When to use
 
@@ -15,7 +15,8 @@ A habit-tracking mobile app first screen built strictly on Google's Material Des
 
 ## Style rules
 
-- **Phone frame.** A single 420x768 frame with extra-large (28px) corners, `surface` fill, hairline `outline-variant` outline, centered on a `surface-container` backdrop. Content = top app bar, scrollable body, bottom navigation bar; FAB floats above the nav bar (right: 20px, bottom: 100px).
+- **Device frame.** The app renders inside an iPhone-style device frame (black rounded bezel + Dynamic Island + status bar with 9:41 / 5G / battery); generated output must keep this frame. The frame is 390x740 with a 12px black bezel, 56px outer corners, and a 44px-radius screen; the status bar uses `surface` / `on-surface` tokens.
+- **Phone screen.** The screen fills the frame with `surface`, centered on a `surface-container` backdrop. Content = status bar, top app bar, scrollable body, bottom navigation bar pinned to the bottom edge of the frame; FAB floats above the nav bar (right: 20px, bottom: 100px).
 - **Tokens first.** Every color is a `--md-sys-color-*` custom property from one green-seed light scheme: primary #3B6939, primary-container #BCF0B4 / on-primary-container #002204, secondary-container #D5E8CF, tertiary-container #BCEBF0, surface #F7FBF1, on-surface #191D17, on-surface-variant #424940, outline #72796F, outline-variant #C2C9BD. Never hardcode a hex at the point of use, and only pair roles with their `on-` partners.
 - **Tonal elevation.** No box shadows anywhere. Depth ladder: page backdrop `surface-container`, phone `surface`, habit rows `surface-container-low`, hover washes `surface-container-high`, nav bar `surface-container`.
 - **Shape ladder.** Checkboxes 4px, habit rows and icon tiles 12px (medium), streak card and FAB 16px (large), phone frame 28px (extra-large), pills/avatar/day dots 9999px (full). FAB morphs 16px to full radius on hover with `cubic-bezier(0.2, 0, 0, 1)` at 200ms.
