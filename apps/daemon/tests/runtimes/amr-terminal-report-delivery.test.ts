@@ -19,6 +19,7 @@ const createRuns = (options: Record<string, unknown>): any =>
 let tempDir: string | null = null;
 
 afterEach(() => {
+  vi.useRealTimers();
   closeDatabase();
   if (tempDir) fs.rmSync(tempDir, { recursive: true, force: true });
   tempDir = null;
@@ -83,6 +84,124 @@ describe('AMR terminal report delivery', () => {
         errorCode: null,
       }],
     });
+  });
+
+  it('contains an initial background claim failure and succeeds on the next poll', async () => {
+    vi.useFakeTimers();
+    const { db, store, now } = fixture();
+    vi.setSystemTime(now);
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    store.enqueue({ runId: 'initial-claim-storage-run', outcome: 'failed', terminalAt: now });
+    const run = vi.fn(async (args: string[]) => JSON.stringify({
+      runId: args[3], outcome: args[5], terminalAt: args[7], recorded: true,
+    }));
+    const service = createAmrTerminalReportDeliveryService({
+      store, run, now: () => now, pollIntervalMs: 1_000,
+    });
+    db.pragma('busy_timeout = 0');
+    const blocker = new Database(db.name);
+    blocker.exec('BEGIN IMMEDIATE');
+    try {
+      service.start();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(run).not.toHaveBeenCalled();
+      expect(warning).toHaveBeenCalledWith(
+        '[od] amr_terminal_delivery_storage stage=claim runId=none code=local_storage',
+      );
+      blocker.exec('ROLLBACK');
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(run).toHaveBeenCalledOnce();
+      expect(store.diagnostics(now)).toMatchObject({ pending: 0, delivered: 1 });
+    } finally {
+      if (blocker.inTransaction) blocker.exec('ROLLBACK');
+      blocker.close();
+      service.stop();
+    }
+  });
+
+  it('contains a timed background claim failure and keeps polling after recovery', async () => {
+    vi.useFakeTimers();
+    const { db, store, now } = fixture();
+    vi.setSystemTime(now);
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const run = vi.fn(async (args: string[]) => JSON.stringify({
+      runId: args[3], outcome: args[5], terminalAt: args[7], recorded: true,
+    }));
+    const service = createAmrTerminalReportDeliveryService({
+      store, run, now: () => now, pollIntervalMs: 1_000,
+    });
+    service.start();
+    await vi.advanceTimersByTimeAsync(0);
+    store.enqueue({ runId: 'timed-claim-storage-run', outcome: 'failed', terminalAt: now });
+    db.pragma('busy_timeout = 0');
+    const blocker = new Database(db.name);
+    blocker.exec('BEGIN IMMEDIATE');
+    try {
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(run).not.toHaveBeenCalled();
+      expect(warning).toHaveBeenCalledWith(
+        '[od] amr_terminal_delivery_storage stage=claim runId=none code=local_storage',
+      );
+      blocker.exec('ROLLBACK');
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(run).toHaveBeenCalledOnce();
+      expect(store.diagnostics(now)).toMatchObject({ pending: 0, delivered: 1 });
+    } finally {
+      if (blocker.inTransaction) blocker.exec('ROLLBACK');
+      blocker.close();
+      service.stop();
+    }
+  });
+
+  it('contains receipt persistence failure and idempotently replays after lease expiry', async () => {
+    const { db, store, now } = fixture();
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    let currentTime = now;
+    store.enqueue({ runId: 'receipt-storage-run', outcome: 'canceled', terminalAt: now });
+    let releaseFirstReceipt!: (receipt: string) => void;
+    const firstReceipt = new Promise<string>((resolve) => { releaseFirstReceipt = resolve; });
+    const run = vi.fn()
+      .mockImplementationOnce(() => firstReceipt)
+      .mockImplementationOnce(async (args: string[]) => JSON.stringify({
+        runId: args[3], outcome: args[5], terminalAt: args[7], recorded: false,
+      }));
+    const service = createAmrTerminalReportDeliveryService({
+      store,
+      run,
+      now: () => currentTime,
+      leaseMs: 1_000,
+    });
+    const processing = service.processDue();
+    await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
+
+    db.pragma('busy_timeout = 0');
+    const blocker = new Database(db.name);
+    blocker.exec('BEGIN IMMEDIATE');
+    try {
+      const firstArgs = run.mock.calls[0]?.[0] as string[];
+      releaseFirstReceipt(JSON.stringify({
+        runId: firstArgs[3],
+        outcome: firstArgs[5],
+        terminalAt: firstArgs[7],
+        recorded: true,
+      }));
+      await expect(processing).resolves.toBeUndefined();
+      expect(warning).toHaveBeenCalledWith(
+        '[od] amr_terminal_delivery_storage stage=persist_result runId=receipt-storage-run code=local_storage',
+      );
+      expect(warning.mock.calls.flat().join(' ')).not.toContain(
+        'amr_terminal_delivery runId=receipt-storage-run',
+      );
+    } finally {
+      blocker.exec('ROLLBACK');
+      blocker.close();
+    }
+
+    currentTime += 1_000;
+    await service.processDue();
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(run.mock.calls[1]?.[0]).toEqual(run.mock.calls[0]?.[0]);
+    expect(store.diagnostics(currentTime)).toMatchObject({ pending: 0, delivered: 1 });
   });
 
   it('uses the exact canonical Vela command, source environment, and bounded receipt', async () => {

@@ -386,11 +386,21 @@ export function createAmrTerminalReportDeliveryService(input: {
   let timer: NodeJS.Timeout | null = null;
   let controller = new AbortController();
 
+  const logStorageFailure = (
+    stage: 'claim' | 'persist_result',
+    record?: ClaimedAmrTerminalReport,
+  ): void => {
+    console.warn(
+      `[od] amr_terminal_delivery_storage stage=${stage} runId=${record?.runId ?? 'none'} code=local_storage`,
+    );
+  };
   const schedule = (): void => {
     if (stopped || timer) return;
     timer = setTimeout(() => {
       timer = null;
-      void processDue().finally(schedule);
+      void processDue()
+        .catch(() => console.warn('[od] amr_terminal_delivery_background code=unexpected'))
+        .finally(schedule);
     }, Math.max(1, pollIntervalMs));
     timer.unref();
   };
@@ -402,9 +412,17 @@ export function createAmrTerminalReportDeliveryService(input: {
       // startup sweep until no due row remains.
       while (true) {
         if (stopped && controller.signal.aborted) break;
-        const [record] = input.store.claimDue(now(), leaseMs, 1);
+        let record: ClaimedAmrTerminalReport | undefined;
+        try {
+          [record] = input.store.claimDue(now(), leaseMs, 1);
+        } catch {
+          logStorageFailure('claim');
+          break;
+        }
         if (!record) break;
         const args = ['run', 'terminal', '--run-id', record.runId, '--outcome', record.outcome, '--terminal-at', record.terminalAtIso, '--json'];
+        let storedReceipt: string | null = null;
+        let commandFailure: ReturnType<typeof failureFrom> | null = null;
         try {
           const receipt = await run(args, {
             configuredEnv: { VELA_INVOCATION_SOURCE: 'open-design' },
@@ -412,21 +430,29 @@ export function createAmrTerminalReportDeliveryService(input: {
             maxBuffer: 64 * 1024,
             signal: controller.signal,
           });
-          const storedReceipt = canonicalReceipt(record, receipt);
-          if (storedReceipt) {
+          storedReceipt = canonicalReceipt(record, receipt);
+        } catch (error) {
+          commandFailure = failureFrom(error);
+          console.warn(`[od] amr_terminal_delivery runId=${record.runId} outcome=${record.outcome} attempt=${record.attemptCount} code=${safeErrorCode(commandFailure.code)}`);
+        }
+
+        try {
+          if (commandFailure?.terminal) {
+            input.store.fail(record, commandFailure.code, commandFailure.message);
+          } else if (commandFailure) {
+            const exponent = Math.max(0, Math.min(30, record.attemptCount - 1));
+            const delay = Math.min(maxBackoffMs, baseBackoffMs * (2 ** exponent));
+            input.store.defer(record, now() + delay, commandFailure.code, commandFailure.message);
+          } else if (storedReceipt) {
             input.store.deliver(record, storedReceipt);
           } else {
             input.store.fail(record, 'invalid_receipt', 'Vela returned a malformed or mismatched terminal receipt');
           }
-        } catch (error) {
-          const failure = failureFrom(error);
-          if (failure.terminal) input.store.fail(record, failure.code, failure.message);
-          else {
-            const exponent = Math.max(0, Math.min(30, record.attemptCount - 1));
-            const delay = Math.min(maxBackoffMs, baseBackoffMs * (2 ** exponent));
-            input.store.defer(record, now() + delay, failure.code, failure.message);
-          }
-          console.warn(`[od] amr_terminal_delivery runId=${record.runId} outcome=${record.outcome} attempt=${record.attemptCount} code=${safeErrorCode(failure.code)}`);
+        } catch {
+          // The claim lease keeps the original tuple durable. Once it expires,
+          // a later sweep safely replays the idempotent Vela terminal command.
+          logStorageFailure('persist_result', record);
+          break;
         }
       }
     })().finally(() => { active = null; });
@@ -437,7 +463,9 @@ export function createAmrTerminalReportDeliveryService(input: {
       if (!stopped) return;
       stopped = false;
       if (controller.signal.aborted) controller = new AbortController();
-      void processDue().finally(schedule);
+      void processDue()
+        .catch(() => console.warn('[od] amr_terminal_delivery_background code=unexpected'))
+        .finally(schedule);
     },
     stop() {
       stopped = true;
