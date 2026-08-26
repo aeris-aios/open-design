@@ -5328,6 +5328,7 @@ export const it: Dict = {
   'chat.record.done': "Completato",
   'chat.record.failedTurn': "Esecuzione fallita",
   'chat.record.plan': "Piano · {count} passi",
+  'chat.record.planStep': "Passaggio {current} di {total}",
   'chat.record.imageBatch': "Generazione illustrazioni",
   'chat.record.imageCount': "{count} immagini",
   'chat.record.retry': "Riprova",

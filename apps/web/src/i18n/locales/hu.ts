@@ -5328,6 +5328,7 @@ export const hu: Dict = {
   'chat.record.done': "Kész",
   'chat.record.failedTurn': "A futtatás hibára futott",
   'chat.record.plan': "Terv · {count} lépés",
+  'chat.record.planStep': "{current}. lépés / {total}",
   'chat.record.imageBatch': "Illusztrációk készítése",
   'chat.record.imageCount': "{count} kép",
   'chat.record.retry': "Újra",

@@ -5506,6 +5506,8 @@ export interface Dict {
   'chat.record.done': string;
   'chat.record.failedTurn': string;
   'chat.record.plan': string;
+  /* Plan 卡收起态那枚药丸(设计稿第 71 格):N = 当前正在做第几步,M = 总步数 */
+  'chat.record.planStep': string;
   'chat.record.imageBatch': string;
   'chat.record.imageCount': string;
   'chat.record.retry': string;

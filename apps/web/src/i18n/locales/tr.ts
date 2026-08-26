@@ -5328,6 +5328,7 @@ export const tr: Dict = {
   'chat.record.done': "Tamamlandı",
   'chat.record.failedTurn': "Çalıştırma başarısız",
   'chat.record.plan': "Plan · {count} adım",
+  'chat.record.planStep': "Adım {current} / {total}",
   'chat.record.imageBatch': "Görseller oluşturuluyor",
   'chat.record.imageCount': "{count} görsel",
   'chat.record.retry': "Yeniden dene",

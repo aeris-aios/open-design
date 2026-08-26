@@ -4,7 +4,7 @@
  *
  * 为什么需要它(规格 §11 记的坑):`docs/design/chat-matrix/matrix-82.html` 抽的是
  * **设计稿自己的实体**。设计师不读代码,所以「我们做出来的和稿子对上了没有」在此之前
- * 没有任何人能判断。这里用**我们的组件**把 84 格里的 **79 格**渲染一遍,编号与
+ * 没有任何人能判断。这里用**我们的组件**把 84 格里的 **80 格**渲染一遍,编号与
  * matrix-82.html 完全一致,两个页面并排开着就能逐格对。
  * (没上页的五格是 47 / 49 / 50 / 54 / 55,要产品先裁一次「同一个失败显示在哪」,见 README。)
  *
@@ -44,6 +44,8 @@ import { QueuedSendStrip, UserMessageImpl } from '../../../src/components/ChatPa
 import { AssistantFeedback, AssistantFeedbackReasons, AssistantFooter, AssistantMessage, feedbackReasonOptions } from '../../../src/components/AssistantMessage';
 import { FileOpsSummary } from '../../../src/components/FileOpsSummary';
 import { UpgradeCard } from '../../../src/components/chat/UpgradeCard';
+import { PlanPill } from '../../../src/components/chat/PlanPill';
+import { parseTodoWriteInput } from '../../../src/runtime/todos';
 import { QuoteBarView } from '../../../src/components/chat/QuoteBar';
 import { QuotedRefs } from '../../../src/components/chat/QuotedRefs';
 import { Button } from '@open-design/components';
@@ -703,6 +705,7 @@ const CAGE_QUOTE = 'cage-quote';
 const CAGE_ERR = 'cage-err';
 const CAGE_AUDIO = 'cage-audio';
 const CAGE_EDGE = 'cage-edge';
+const CAGE_PLAN = 'cage-plan';
 
 /** 音频产物(组件 24)。静态页里放不出声,`previewCurrentSec` 直接摆出那一刻的样子 */
 /* 采样逐字取自稿子那 56 根竖条的 `--h` —— 夹具一变,比出来的就是「数据不一样」不是「画得不一样」 */
@@ -810,6 +813,26 @@ const quoteChip = (count: number) => (
         ][i] ?? `第 ${i + 1} 段`,
       }))}
       onClear={() => undefined}
+    />
+  </div>
+);
+
+/**
+ * Plan 卡的收起态(组件 6-2):钉在输入框上方的那枚「第 N / M 步」药丸。
+ *
+ * 数据走**产品那条链路**:一份 TodoWrite 快照 → `parseTodoWriteInput` → `PlanPill`。
+ * `ChatPane` 那边多一步 `latestTodoWriteInputFromMessages`(在整个会话里倒着找最新一份),
+ * 那一步找的是消息数组,这一格本来就只有一份快照,所以从解析这一步接上。
+ *
+ * 头顶那 136px 是**陈列页的脚手架**,不是组件的一部分:浮层往上开,静态格子上方没有
+ * 空处它就被切掉。稿子自己也留了同一层(`.pdemo`),并写明「真实场景里药丸钉在流水底部,
+ * 上方本来就是空的,不需要这一层」—— 所以产品那边一个像素都没有搬。
+ */
+const planPill = (items: Array<[string, string]>) => (
+  <div className={CAGE_PLAN} style={{ padding: '136px 0 0' }}>
+    <PlanPill
+      todos={parseTodoWriteInput({ todos: items.map(([content, status]) => ({ content, status })) })}
+      running
     />
   </div>
 );
@@ -1369,7 +1392,8 @@ const INPUT: Cell[] = [
 
 /* ── 边界(第 70–84 格)────────────────────────────────────────────────
  * 五个组件性质各不相同,别拿同一把尺子看:
- *  · 6 Plan 卡(70–71)—— 本期**拍板不做**(D33 / S9),照出来是为了让「不做」这件事留痕
+ *  · 6 Plan 卡(70–71)—— #70 展开态**拍板不做**(D33 / S9),出格是为了让「不做」这件事留痕;
+ *    #71 收起态的药丸**已实现**(2026-08-26 用户点名要),挂的是真组件
  *  · 17 Queue(72–74)—— 产品里早就有(`QueuedSendStrip`),已按稿子改过版式
  *  · 18 升级(75–77)/ 19 报错(78–80)—— 能力都在,但**都不在稿子那个形态上**,
  *    而且承载它们的实现要么 portal 到 body、要么绑死在 5000 行的 `ChatPane` 上,单挂不了
@@ -1396,15 +1420,42 @@ const EDGE: Cell[] = [
     missing: '**这一格已经拍板不做,不是没做完**。D33 原话:「场景稿里那张『执行中 2/4』清单式任务进度卡不用,'
       + '不实现、不模拟」;S9 又补了一句「展开态的独立卡不做」。清单的正式落点是**组件 7 执行记录内的分段**(B17)——'
       + '也就是本页第 1 / 2 格壳里那一段「执行计划 · N 步」。'
-      + '⚠️ 顺带记一条冲突(T18):S9 说「做的时候只做胶囊 + 悬停清单」,而 B17 说清单归执行记录 —— 两条对同一份数据给了两个落点,**待拍板**。',
+      + '⚠️ T18 那条冲突(S9「只做胶囊 + 悬停清单」 vs B17「清单归执行记录」)**已由用户 2026-08-26 裁定**:'
+      + '收起态的药丸(下一格)做,展开态这张卡照旧不做。两处读的是**同一份 TodoWrite 快照**,'
+      + '但形态不同 —— 执行记录里是可展开的分段(每一步下面挂本轮的工具行),药丸浮层里是一份只读一览。',
   },
   {
     gid: 71, sub: '6-2', cmp: 'Plan 卡', state: '收起 · 只留「第 N / M 步」,悬停浮出整张清单', family: '边界',
-    missing: '同第 70 格,S9 明写**本次提测范围外**。留两条给真做的时候用:'
-      + '①**计数口径不同** —— 稿子的「第 N / M 步」是*当前正在做第几步*,产品 `TodoCard` 的 `{done}/{total}` 是*已完成几步*'
-      + '(而且 `done` 把 `in_progress` 也算进去了),同一份清单上会给出两个数字;'
-      + '②**样式前置** —— 悬停浮层要 `--chat-shadow-lg`,而 `ChatRoot.module.css` 今天只定义到 `--chat-shadow-md`,亮暗两个作用域都要补。'
-      + '③ 全做完时胶囊写什么,稿子没画(S17 待设计答)。',
+    hover: true,
+    node: () => planPill([
+      ['复刻商品列表页结构与栅格', 'completed'],
+      ['抽出商品卡为共享组件', 'completed'],
+      ['按同一套间距做设置页', 'in_progress'],
+      ['接上两页之间的跳转', 'pending'],
+    ]),
+    notes: [
+      '**已实现**(`components/chat/PlanPill.tsx` + `runtime/chat/plan-pill.ts`),钉在 `ChatPane` 输入框上方、'
+        + '排在发送队列**之前** —— 队列有内容时把药丸往上顶,两者不互相压。',
+      '**计数口径按稿子来**:「第 N / M 步」的 N 是*当前正在做第几步*,不是产品 `TodoCard` 那个 `{done}/{total}`(已完成几步)。'
+        + '清单里一条 `in_progress` 都没有时,第一条未完成的算当前(D36 隐式进行中)——'
+        + 'codex 原生清单只有做完 / 没做完两档,没有这条规则它整份清单指不出「第几步」。',
+      '**出没判据**:run 在跑 **且** 清单里还有没干完的。全做完 / 全作废、或者 run 结束,药丸整枚消失 ——'
+        + '所以稿子没画的「全做完时胶囊写什么」(S17)不再是待答项:那一刻它不在屏幕上。'
+        + '「还有没干完的」用的是 `todoStatusIsUnfinished`,和 daemon 盖 `endedWithUnfinishedWork` 同一个谓词。',
+      '浮层里那份清单**复用 `StatusMark` 的四态圆**,没有另画一套:做完打勾并划掉、当前一颗绿球、没开始一圈虚线。'
+        + '稿子每个 `<li>` 里同时写了 `.tk`(SVG 四态)和 `.mk.is-run`(绿球),靠 `li` 的类名二选一显示 ——'
+        + '实测 `li.is-now` 显示绿球、其余显示 SVG,`StatusMark` 的 `running` / `ok` / `pending` 正好是同一组判据。',
+      '⚠️ **两处没照抄,都是接宿主的取舍**:'
+        + '① 浮层水平方向改成贴药丸左边缘开(稿子是 `left:50%` 居中)—— 产品里药丸钉在输入框的左内缩线上,'
+        + '而 `.pane` 是 `overflow: hidden`,居中会被面板左边切掉约 50px(稿子那张演示卡不裁,所以看不出来);'
+        + '② 「做完了」那条的划线用执行记录的 `.struck`(直接 `text-decoration`),不是稿子那条 `::after` 描出来的动效线 ——'
+        + '同一件事不在两个文件里各画一遍,代价是少了「一笔划过去」的落定感。',
+      '`--chat-shadow-lg` 其实**早就有了**(`ChatRoot.module.css` 亮暗两档都定义了),上一版注记说只到 `-md` 是记错了。',
+      NO_LAYOUT('悬停本身')
+        + '这一格由陈列页**替设计师按住**(`data-hover`),同第 42 / 51 格的手法;产线上仍旧是鼠标停上去才浮出,'
+        + '键盘 Tab 到药丸也会浮出(`:focus-within`,产品这一侧补的 a11y,稿子没有)。'
+        + '头顶那 136px 也是这一页的脚手架 —— 稿子自己那层 `.pdemo` 同理,产品里一个像素没搬。',
+    ],
   },
   {
     gid: 72, sub: '17-1', cmp: 'Queue', state: '排队中 · 生成中按发送即进入', family: '边界',
@@ -2189,7 +2240,7 @@ function pick(css: string, want: RegExp): string {
  * 把一整份 CSS Module 关进一个笼子里。
  *
  * 摘掉哈希之后 CSS Module 的类名会变成 `.root` / `.card` / `.title` / `.label` 这种大路名字,
- * 而陈列页把 79 格摞在同一张页面上。踩到过一次:`NextStepActions.module.css` 的 `.root`
+ * 而陈列页把 80 格摞在同一张页面上。踩到过一次:`NextStepActions.module.css` 的 `.root`
  * 正好和每一格外面那层 `<div class="root">`(它是 `ChatRoot.module.css` 的接缝,负责给
  * `--chat-*` 变量)撞名 —— 撞上之后**每一格**都套上了一圈下一步引导的边框和渐变底,
  * 而且 `max-width: min(360px,100%)` 那类规则还会把别的格子挤窄,看着像是我们做错了版式。
@@ -2384,6 +2435,12 @@ function buildPage(): string {
   const edge = scope(read('src/components/chat/Reconnect.module.css'), CAGE_EDGE) + '\n'
     + scope(read('src/components/chat/PauseLine.module.css'), CAGE_EDGE);
   /*
+   * Plan 药丸也关笼子:它的 `.pill` / `.pop` / `.steps` / `.wrap` 摘掉哈希之后全是大路名字,
+   * 而这一页上 `.pop`(正文取词的全文浮层)、`.steps` 都另有主人。
+   * 里面那几枚状态记号走的是 `record.module.css`(没关笼子,全页共用),不受影响。
+   */
+  const planCss = scope(read('src/components/chat/PlanPill.module.css'), CAGE_PLAN);
+  /*
    * ── 端到端那一族要用、而 84 格用不上的几张表 ──────────────────────────
    *
    * 全部**另起一组 style**,不去改上面那几条 `pick` 的正则:改了会把新规则混进
@@ -2476,7 +2533,7 @@ function buildPage(): string {
 <p><b>这一族五个组件性质各不相同,别拿同一把尺子看</b>:</p>
 <table>
 <tr><th>组件</th><th>状态</th></tr>
-<tr><td>6 Plan 卡(#70–71)</td><td><b>拍板不做</b> —— D33「不实现、不模拟」、S9「展开态的独立卡不做」;清单的正式落点是执行记录内的分段(B17)。出格是为了让「不做」这件事留痕</td></tr>
+<tr><td>6 Plan 卡(#70–71)</td><td><b>#70 拍板不做</b> —— D33「不实现、不模拟」、S9「展开态的独立卡不做」;清单的正式落点是执行记录内的分段(B17)。出格是为了让「不做」这件事留痕。<b>#71 已实现</b>:收起态的「第 N / M 步」药丸钉在输入框上方,悬停浮出整张清单(T18 那条冲突已由用户 2026-08-26 裁定:只做收起态)</td></tr>
 <tr><td>17 Queue(#72–74)</td><td><b>早就有</b>(<code>QueuedSendStrip</code>),已按稿子改过版式。这一族最接近对齐的三格</td></tr>
 <tr><td>18 升级(#75–77)</td><td><b>能力在,形态不是这个</b> —— 稿子要流水内的一张卡,产品是两个居中弹窗;而且它们 <code>createPortal</code> 到 <code>document.body</code>,SSR 渲染不了 portal,这一页拿不到标记</td></tr>
 <tr><td>19 报错(#78–80)</td><td><b>主卡拆不出来</b> —— 200 多行内联 JSX 绑在 <code>ChatPane</code> 上;#79 挂的是产品今天承接「切到 Cloud」的那张<b>附卡</b>,照出「一件事被拆成两张卡」这个差</td></tr>
@@ -2596,6 +2653,7 @@ ${tokens}</style>
 <style>/* 稿子的 .sel:选中那截的高亮底(这段在模板串里,不能带反引号) */
 .quote-sel{background:var(--selected-soft);border-radius:var(--radius-xs)}</style>
 <style>${edge}</style>
+<style>${planCss}</style>
 <!-- 端到端那一族专用,追加在最后;选择器 84 格一条都没用到 -->
 <style>${liveLogCss}</style>
 <style>${liveFlowCss}</style>
@@ -2764,6 +2822,11 @@ h1{margin:0 0 6px;font-size:20px;}
    这里把 NextStepActions.module.css 里 .toolboxRow:hover 那两条原样重放到第一行。
    (类名的哈希由 dehash 摘掉了,所以选择器就是源文件里写的那个。) */
 .cell[data-hover] .stage .toolboxRow:first-of-type{background:var(--accent-tint);border-color:var(--border);}
+/* 第 71 格同理:稿子那一格画的就是「鼠标停在药丸上」的样子(它的 DOM 自带 .is-hover)。
+   这里把 PlanPill.module.css 里 .wrap:hover 那两条原样重放到笼子里。
+   产线上仍旧只有真的 hover / focus 才浮出,组件一个字没改。 */
+.cell[data-hover] .cage-plan .pop{opacity:1;}
+.cell[data-hover] .cage-plan .pill{border-color:var(--border-strong);}
 /* 产物卡的缩略图 / 视频同样指向 daemon 的 /api/projects/:id/raw/…,离开 daemon 打不开。
    这里给它们铺一层占位底色而不是藏掉 —— 第 33 格要比的正是「竖片按 9/16 居中、两边留白」,
    把 <video> 藏了那条留白就看不见了。html 卡走的是 iframe,about:blank 本来就是白的。 */

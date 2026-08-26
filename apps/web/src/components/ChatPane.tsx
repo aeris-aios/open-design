@@ -79,6 +79,8 @@ import {
 } from '../design-system-auto-prompt';
 import {
   isTodoWriteToolName,
+  latestTodoWriteInputFromMessages,
+  parseTodoWriteInput,
   unfinishedTodosFromEvents,
 } from '../runtime/todos';
 import type { AppConfig, ChatAttachment, ChatCommentAttachment, ChatMessage, ChatMessageFeedbackChange, Conversation, DesignSystemSummary, PreviewComment, Project, ProjectFile, ProjectMetadata, SkillSummary } from '../types';
@@ -86,6 +88,7 @@ import { agentDisplayName } from '../utils/agentLabels';
 import { commentTargetDisplayName, commentsToAttachments, simplePositionLabel } from '../comments';
 import { AssistantMessage, type QuestionFormSubmitHandler } from './AssistantMessage';
 import { chatSeam } from './chat/ChatRoot';
+import { PlanPill } from './chat/PlanPill';
 import { TodoCard } from './ToolCard';
 import type { BrandBrowserAssistConfirm } from './OdCard';
 import {
@@ -1043,6 +1046,7 @@ export function ChatPane({
   const composerSlotRef = useRef<HTMLDivElement | null>(null);
   const composerLayerRef = useRef<HTMLDivElement | null>(null);
   const queuedSendStripRef = useRef<HTMLDivElement | null>(null);
+  const planPillRef = useRef<HTMLDivElement | null>(null);
   const didInitialScrollRef = useRef(false);
   const runFailedToastSurfaceKeysRef = useRef<Set<string>>(new Set());
   const runRecoverySurfaceKeysRef = useRef<Set<string>>(new Set());
@@ -1331,6 +1335,21 @@ export function ChatPane({
   const hasActiveRunMessage = displayMessages.some(
     (m) => m.role === 'assistant' && isActiveRunStatus(m.runStatus),
   );
+  /*
+   * 输入框上方那枚「第 N / M 步」药丸的两个输入。
+   *
+   * 药丸**不属于某一条消息**,所以它要的是「整个会话里最新的那一份清单」——
+   * 沿用会话级的那条既有链路(`latestTodoWriteInputFromMessages` → `parseTodoWriteInput`),
+   * 不另起一套发现逻辑;这样它和执行记录里那份分段读的是同一个 TodoWrite 快照。
+   *
+   * 「还在跑吗」照抄 `shouldBalanceFinishedTranscript` 的那对判据:`streaming` 是本地
+   * 流式旗标,`hasActiveRunMessage` 兜住刷新后 run 仍在跑的那一路(此时没有本地流)。
+   */
+  const planPillTodos = useMemo(
+    () => parseTodoWriteInput(latestTodoWriteInputFromMessages(displayMessages)),
+    [displayMessages],
+  );
+  const planPillRunning = streaming || hasActiveRunMessage;
   const retryAssistant = retryableAssistantMessage(displayMessages, lastAssistantId, streaming);
   // The failed run's error event lives on the (persisted) assistant message, so
   // the error card + AMR card survive a reload — unlike the ephemeral global
@@ -2163,30 +2182,39 @@ export function ChatPane({
       }
     };
 
-    let observedQueuedSendStrip: Element | null = null;
-    const syncQueuedSendStrip = () => {
-      if (!resizeObserver) return;
-      const queuedEl = queuedSendStripRef.current;
-      if (queuedEl && observedQueuedSendStrip !== queuedEl) {
-        if (observedQueuedSendStrip) {
-          resizeObserver.unobserve(observedQueuedSendStrip);
+    /*
+     * chat-log 之外、但会改变可用高度的那几块,各自跟一份「当前观察的是谁」。
+     * 它们随数据出没(队列空了就卸载、run 跑完药丸就消失),所以不能只 observe 一次:
+     * 下面的 MutationObserver 每次子树变动都回来重挂一遍。
+     */
+    const outsideLog = (ref: MutableRefObject<HTMLDivElement | null>) => {
+      let observed: Element | null = null;
+      return () => {
+        if (!resizeObserver) return;
+        const el2 = ref.current;
+        if (el2 && observed !== el2) {
+          if (observed) resizeObserver.unobserve(observed);
+          resizeObserver.observe(el2);
+          observed = el2;
+        } else if (!el2 && observed) {
+          resizeObserver.unobserve(observed);
+          observed = null;
         }
-        resizeObserver.observe(queuedEl);
-        observedQueuedSendStrip = queuedEl;
-      } else if (!queuedEl && observedQueuedSendStrip) {
-        resizeObserver.unobserve(observedQueuedSendStrip);
-        observedQueuedSendStrip = null;
-      }
+      };
     };
+    const syncQueuedSendStrip = outsideLog(queuedSendStripRef);
+    const syncPlanPill = outsideLog(planPillRef);
 
     syncObservedChildren();
     syncQueuedSendStrip();
+    syncPlanPill();
 
     const mutationObserver =
       typeof MutationObserver !== 'undefined'
         ? new MutationObserver(() => {
             syncObservedChildren();
             syncQueuedSendStrip();
+            syncPlanPill();
             followLatestIfPinned();
           })
         : null;
@@ -2198,9 +2226,11 @@ export function ChatPane({
       childList: true,
       subtree: true,
     });
-    // QueuedSendStrip lives outside the chat-log subtree. Watch its nearest
-    // common ancestor so resize observation follows it when it mounts or
-    // unmounts. (The pinned TodoCard that used to sit here retired with B17.)
+    // QueuedSendStrip and the Plan pill live outside the chat-log subtree. Watch
+    // their nearest common ancestor so resize observation follows them when they
+    // mount or unmount. (The pinned TodoCard that used to sit here retired with
+    // B17; the Plan pill is a different animal — a one-line pinned pill, not the
+    // list itself.)
     const paneEl = el.parentElement?.parentElement ?? null;
     if (paneEl && mutationObserver) {
       mutationObserver.observe(paneEl, { childList: true });
@@ -3093,7 +3123,16 @@ export function ChatPane({
             </div>
             {/* B17:钉在输入框上方的 TodoCard 退场 —— 同一份清单不再显示两处。
                 清单现在只在执行记录里以「执行计划 · N 步」+ 分段出现(D29 / 组件 7)。
-                根 `AGENTS.md` 的「Chat UI conventions」那一段已同步改掉。 */}
+                根 `AGENTS.md` 的「Chat UI conventions」那一段已同步改掉。
+
+                取而代之的是收起态的那枚药丸(设计稿第 71 格):它不是把清单搬回来,
+                只钉一句「第 N / M 步」,整张清单退到悬停浮层里。
+                它排在队列**之前**,所以队列有内容时把药丸往上顶,两者不互相压。 */}
+            <PlanPill
+              containerRef={planPillRef}
+              todos={planPillTodos}
+              running={planPillRunning}
+            />
             <QueuedSendStrip
               containerRef={queuedSendStripRef}
               items={queuedItems}

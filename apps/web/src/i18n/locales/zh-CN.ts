@@ -5777,6 +5777,7 @@ export const zhCN: Dict = {
   'chat.record.done': "已完成",
   'chat.record.failedTurn': "运行失败",
   'chat.record.plan': "执行计划 · {count} 步",
+  'chat.record.planStep': "第 {current} / {total} 步",
   'chat.record.imageBatch': "生成配套插图",
   'chat.record.imageCount': "{count} 张",
   'chat.record.retry': "重试",

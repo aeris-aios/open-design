@@ -5328,6 +5328,7 @@ export const ko: Dict = {
   'chat.record.done': "완료",
   'chat.record.failedTurn': "실행 실패",
   'chat.record.plan': "실행 계획 · {count}단계",
+  'chat.record.planStep': "{total}단계 중 {current}단계",
   'chat.record.imageBatch': "삽화 생성",
   'chat.record.imageCount': "{count}장",
   'chat.record.retry': "재시도",

@@ -5328,6 +5328,7 @@ export const ar: Dict = {
   'chat.record.done': "تم",
   'chat.record.failedTurn': "فشل التشغيل",
   'chat.record.plan': "الخطة · {count} خطوات",
+  'chat.record.planStep': "الخطوة {current} من {total}",
   'chat.record.imageBatch': "إنشاء الرسوم التوضيحية",
   'chat.record.imageCount': "{count} صور",
   'chat.record.retry': "إعادة المحاولة",

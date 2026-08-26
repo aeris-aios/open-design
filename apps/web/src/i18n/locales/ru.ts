@@ -5328,6 +5328,7 @@ export const ru: Dict = {
   'chat.record.done': "Готово",
   'chat.record.failedTurn': "Запуск не удался",
   'chat.record.plan': "План · {count} шагов",
+  'chat.record.planStep': "Шаг {current} из {total}",
   'chat.record.imageBatch': "Создание иллюстраций",
   'chat.record.imageCount': "{count} изобр.",
   'chat.record.retry': "Повторить",

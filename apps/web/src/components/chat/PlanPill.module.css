@@ -1,0 +1,114 @@
+/*
+ * Plan 卡的收起态 —— 一枚「第 N / M 步」的药丸(设计稿第 71 格 / `.pmini`)。
+ *
+ * 选择器**连祖先一起照抄**:稿子写 `.pmini .pill`,这里就是 `.wrap .pill`,
+ * 不因为「反正也匹配得到」把 `.wrap` 省掉 —— 祖先在那儿承担的是层叠职责。
+ * 色值一律走 `--chat-*` 接缝(chat/AGENTS.md §2),不直连全局 token。
+ *
+ * 稿子里的 `.pdemo { padding-top: 136px }` **没有搬**:那一层是稿子自己的脚手架
+ * (它那张卡有 overflow:hidden,不给头顶留高度浮层会被切掉)。稿子注释原话:
+ * 「真实场景里药丸钉在流水底部,上方本来就是空的,不需要这一层。」
+ */
+
+/* 稿子 `.pmini { position: relative; display: inline-flex }`。
+   后面两条是**接产品这一侧的宿主**,稿子那张演示卡里没有对应物:
+   · `.pane` 是 flex 列,不写 align-self 的话这枚 inline-flex 会被拉满整列宽;
+   · 左右内缩取和发送队列 / 输入框同一个 `--chat-composer-inline-inset`,
+     三者左边界必须对齐,否则药丸看着像挂偏了。 */
+.wrap {
+  position: relative;
+  display: inline-flex;
+  align-self: flex-start;
+  margin: 0 var(--chat-composer-inline-inset, 12px) 4px;
+}
+
+.wrap .pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: var(--chat-radius-pill);
+  border: var(--chat-stroke) solid var(--chat-border);
+  background: var(--chat-bg);
+  font-size: var(--chat-t-mini);
+  font-weight: 600;
+  color: var(--chat-text-strong);
+  cursor: default;
+  transition: border-color var(--chat-dur-quick) var(--chat-ease-out);
+}
+.wrap:hover .pill,
+.wrap:focus-within .pill {
+  border-color: var(--chat-border-strong);
+}
+
+/* 浮层落在药丸【上方】:药丸自己钉在流水底部,往下开会顶到输入框。
+   ------------------------------------------------------------
+   水平方向**没有照抄** `left: 50%; transform: translateX(-50%)`:
+   稿子那张演示卡里药丸浮在空处,居中的浮层往左探出 63px 没人管;
+   产品里药丸钉在输入框的左内缩线上,而 `.pane` 是 `overflow: hidden` ——
+   居中会让浮层左边被面板直接切掉约 50px。所以改成贴着药丸左边缘开,
+   这是接宿主的取舍,不是改设计意图(浮层仍旧从药丸上方浮出、仍旧 8px 缝)。
+   `pointer-events: none` 照抄:这份清单只看不点,鼠标穿过去不抢事件。 */
+.wrap .pop {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 8px);
+  z-index: 7;
+  width: max-content;
+  min-width: 232px;
+  max-width: 320px;
+  padding: 6px 4px;
+  border-radius: var(--chat-radius-lg);
+  background: var(--chat-bg);
+  box-shadow: var(--chat-shadow-lg);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--chat-dur-quick) var(--chat-ease-out);
+}
+/* `:focus-within` 是产品这一侧补的:药丸是个真按钮,键盘走得到它,
+   走到了却什么都不浮出等于这份清单对键盘用户不存在。 */
+.wrap:hover .pop,
+.wrap:focus-within .pop {
+  opacity: 1;
+}
+
+/* 稿子 `.steps` 的底子(展开态那张卡限高约 5 步、其余滚动)。
+   #70 展开态**拍板不做**(D33 / S9),所以这一档在产品里没有第二个消费者;
+   照抄它是为了让下面那条覆盖保持和稿子同一种层叠关系,不是留着当死码。 */
+.steps {
+  padding: 4px 0;
+  max-height: 148px;
+  overflow-y: auto;
+}
+/* 浮层里的清单不限高:一共就几步,收起态本来就是为了省地方,
+   到了要看的这一下,就该一次看全。(稿子 `.pmini .pop .steps`) */
+.wrap .pop .steps {
+  max-height: none;
+  overflow: visible;
+  padding: 0;
+  margin: 0;
+}
+
+.steps li {
+  display: flex;
+  gap: 8px;
+  padding: 5px 11px;
+  font-size: var(--chat-t-mini);
+  line-height: var(--chat-lh-row);
+  color: var(--chat-text);
+  list-style: none;
+}
+/* 三档行色照抄稿子。「做完了」那一档的划线不在这儿 —— 它复用执行记录的
+   `.struck`(record.module.css),同一件事不在两个文件里各画一遍。 */
+.steps li.done { color: var(--chat-text-muted); }
+.steps li.now {
+  color: var(--chat-text-strong);
+  font-weight: 600;
+}
+
+/* 稿子 `.steps li .tx { flex: 1; min-width: 0 }` —— 文字那一栏吃掉剩下的宽,
+   长标题在这里折行而不是把记号挤走。 */
+.steps li .tx {
+  flex: 1;
+  min-width: 0;
+}

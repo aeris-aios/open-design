@@ -5328,6 +5328,7 @@ export const th: Dict = {
   'chat.record.done': "เสร็จแล้ว",
   'chat.record.failedTurn': "รันไม่สำเร็จ",
   'chat.record.plan': "แผน · {count} ขั้น",
+  'chat.record.planStep': "ขั้นตอนที่ {current} จาก {total}",
   'chat.record.imageBatch': "กำลังสร้างภาพประกอบ",
   'chat.record.imageCount': "{count} ภาพ",
   'chat.record.retry': "ลองใหม่",

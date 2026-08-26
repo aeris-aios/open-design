@@ -5328,6 +5328,7 @@ export const ptBR: Dict = {
   'chat.record.done': "Concluído",
   'chat.record.failedTurn': "Execução falhou",
   'chat.record.plan': "Plano · {count} etapas",
+  'chat.record.planStep': "Etapa {current} de {total}",
   'chat.record.imageBatch': "Gerando ilustrações",
   'chat.record.imageCount': "{count} imagens",
   'chat.record.retry': "Tentar novamente",

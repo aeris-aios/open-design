@@ -5323,6 +5323,7 @@ export const fa: Dict = {
   'chat.record.done': "انجام شد",
   'chat.record.failedTurn': "اجرا ناموفق بود",
   'chat.record.plan': "برنامه · {count} مرحله",
+  'chat.record.planStep': "مرحله {current} از {total}",
   'chat.record.imageBatch': "ساخت تصویرسازی‌ها",
   'chat.record.imageCount': "{count} تصویر",
   'chat.record.retry': "تلاش دوباره",

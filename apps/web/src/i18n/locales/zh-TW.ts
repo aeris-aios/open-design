@@ -5784,6 +5784,7 @@ export const zhTW: Dict = {
   'chat.record.done': "已完成",
   'chat.record.failedTurn': "執行失敗",
   'chat.record.plan': "執行計畫 · {count} 步",
+  'chat.record.planStep': "第 {current} / {total} 步",
   'chat.record.imageBatch': "生成配套插圖",
   'chat.record.imageCount': "{count} 張",
   'chat.record.retry': "重試",
