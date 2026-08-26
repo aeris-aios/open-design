@@ -265,6 +265,127 @@ describe('MessageCenter remount snapshot', () => {
     expect(counts[counts.length - 1]).toBe(0);
   });
 
+  it('does not let an abandoned host overwrite the shared anonymous cache', async () => {
+    // `commitState` also writes `localStorage`, which is shared, not
+    // host-local. Gating only the snapshot left the cache unordered: an
+    // unmounted host passes its own request id forever, so its stale rows land
+    // on top of what a newer run just wrote, and a reload — or any remount
+    // past the snapshot window — reads them back with the read marks gone.
+    let releaseSecondPull: (() => void) | null = null;
+    let pulls = 0;
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/integrations/vela/status')) {
+        statusCalls += 1;
+        return Response.json({ loggedIn: false });
+      }
+      if (url.includes('/message-center') && url.includes('/messages')) {
+        messageCalls += 1;
+        pulls += 1;
+        if (pulls === 2) {
+          await new Promise<void>((resolve) => {
+            releaseSecondPull = resolve;
+          });
+          return Response.json({
+            messages: [row('gamma-notice', null)],
+            nextCursor: null,
+            unreadCount: 1,
+          });
+        }
+        // From the third pull on, the server reports the row as read.
+        return Response.json({
+          messages: [row('gamma-notice', pulls >= 3 ? '2026-07-16T13:00:00.000Z' : null)],
+          nextCursor: null,
+          unreadCount: pulls >= 3 ? 0 : 1,
+        });
+      }
+      return Response.json({});
+    }));
+
+    const seed = mount();
+    await waitFor(() => expect(messageCalls).toBe(1));
+    seed.unmount();
+
+    const abandoned = mount();
+    document.dispatchEvent(new Event('visibilitychange'));
+    await waitFor(() => expect(messageCalls).toBe(2));
+    abandoned.unmount();
+
+    const successor = mount();
+    document.dispatchEvent(new Event('visibilitychange'));
+    await waitFor(() => expect(messageCalls).toBe(3));
+    await waitFor(() => expect(
+      localStorage.getItem('open-design.message-center.anonymous-read-ids.v1') ?? '',
+    ).toContain('gamma-notice'));
+    successor.unmount();
+
+    // Only now does the abandoned pull land, carrying pre-read rows.
+    releaseSecondPull!();
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(
+      localStorage.getItem('open-design.message-center.anonymous-read-ids.v1') ?? '',
+    ).toContain('gamma-notice');
+  });
+
+  it('carries optimistic reads through a remount while the server projection lags', async () => {
+    // The signed-in overlay is `serverReadIds` plus `pendingReadIdsRef`, and
+    // never `readIdsRef`. Adoption restored the latter only, so a remount
+    // inside the window followed by any refresh dropped the optimistic read
+    // and put the badge back — the exact case the pending set exists for.
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/integrations/vela/status')) {
+        statusCalls += 1;
+        return Response.json({ loggedIn: true });
+      }
+      if (url.includes('/read') && init?.method === 'POST') {
+        return Response.json({ read: true, markedCount: 1 });
+      }
+      if (url.includes('/message-center') && url.includes('/messages')) {
+        messageCalls += 1;
+        // The projection never catches up for the length of this test.
+        return Response.json({
+          messages: [row('delta-notice', null)],
+          nextCursor: null,
+          unreadCount: 1,
+        });
+      }
+      return Response.json({});
+    }));
+
+    const host = render(
+      <I18nProvider initial="zh-CN">
+        <MessageCenter />
+      </I18nProvider>,
+    );
+    await waitFor(() => expect(messageCalls).toBeGreaterThan(0));
+    fireEvent.click(screen.getByTestId('message-center-trigger'));
+    fireEvent.click(await screen.findByRole('button', { name: /delta-notice/ }));
+    await new Promise((r) => setTimeout(r, 30));
+    host.unmount();
+
+    const counts: number[] = [];
+    render(
+      <I18nProvider initial="zh-CN">
+        <MessageCenter
+          hideTrigger
+          open={false}
+          onOpenChange={() => {}}
+          onUnreadCountChange={(n) => counts.push(n)}
+        />
+      </I18nProvider>,
+    );
+    await waitFor(() => expect(counts.length).toBeGreaterThan(0));
+
+    // The refresh that used to lose it.
+    const before = messageCalls;
+    document.dispatchEvent(new Event('visibilitychange'));
+    await waitFor(() => expect(messageCalls).toBeGreaterThan(before));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(counts[counts.length - 1]).toBe(0);
+  });
+
   it('does not re-sync when it is remounted straight away', async () => {
     const first = await mountAndSettle();
     const afterFirst = { status: statusCalls, messages: messageCalls };

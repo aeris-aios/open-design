@@ -75,6 +75,15 @@ let lastSyncSnapshot: {
   loggedIn: boolean;
   messages: MessageCenterMessage[];
   readIds: Set<string>;
+  /**
+   * The optimistic reads not yet visible in the server's projection. Adopting
+   * a snapshot restores `readIdsRef`, but a signed-in sync builds its overlay
+   * from `serverReadIds` plus `pendingReadIdsRef` and never consults
+   * `readIdsRef` — so without carrying these, a remount inside the window
+   * followed by any refresh drops them and marks a just-read row unread again,
+   * which is the exact regression the pending set exists to prevent.
+   */
+  pendingReadIds: Set<string>;
 } | null = null;
 
 /**
@@ -206,12 +215,16 @@ export function MessageCenter({
     // committed nor published as a snapshot.
     if (currentWorkspaceAccountGeneration() !== issuedAccountGeneration) return;
     if (account) clearAnonymousState(window.localStorage);
-    commitState(merged, overlayReadIds, { persistAnonymous: !account });
-    // Component state above is this host's own business and its own request id
-    // already ordered it. The snapshot is shared, so it is published only by
-    // the newest run: a later run has strictly fresher rows, and if it fails
-    // the absent snapshot simply sends the next mount to the network.
-    if (writeToken === snapshotWriteToken) {
+    // Refs and React state are this host's own and its request id already
+    // ordered them. The two SHARED sinks are the snapshot and the anonymous
+    // localStorage cache, and both need the global ordering: an unmounted host
+    // passes its own request id forever, so without this its stale rows
+    // overwrite the cache a newer run just wrote, and a reload — or any
+    // remount past the snapshot window — reads them back and resurrects
+    // messages the user has already read.
+    const ownsLatestWrite = writeToken === snapshotWriteToken;
+    commitState(merged, overlayReadIds, { persistAnonymous: !account && ownsLatestWrite });
+    if (ownsLatestWrite) {
       lastSyncSnapshot = {
         at: Date.now(),
         accountGeneration: issuedAccountGeneration,
@@ -219,6 +232,7 @@ export function MessageCenter({
         loggedIn: account,
         messages: merged,
         readIds: overlayReadIds,
+        pendingReadIds: new Set(pendingReadIdsRef.current),
       };
     }
     setSyncState('ready');
@@ -269,6 +283,7 @@ export function MessageCenter({
       if (cancelled) return;
       loggedInRef.current = snapshot.loggedIn;
       setLoggedIn(snapshot.loggedIn);
+      pendingReadIdsRef.current = new Set(snapshot.pendingReadIds);
       commitState(snapshot.messages, snapshot.readIds);
       setSyncState('ready');
     };
@@ -408,6 +423,9 @@ export function MessageCenter({
           item.id === messageId ? { ...item, readAt: item.readAt ?? readAt } : item
         )),
         readIds: new Set(lastSyncSnapshot.readIds).add(messageId),
+        pendingReadIds: account
+          ? new Set(lastSyncSnapshot.pendingReadIds).add(messageId)
+          : lastSyncSnapshot.pendingReadIds,
       };
     }
   };
