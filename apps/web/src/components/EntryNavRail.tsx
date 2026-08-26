@@ -1015,7 +1015,15 @@ export function EntryTopRightCluster({
                       // silently disappears with nothing left in its place.
                       resetCloudSignInTipDismissal();
                       notifyAmrLoginStatusChanged();
-                      notifyWorkspaceContextRefresh();
+                      // The account boundary is NOT notified here.
+                      // `handleActiveCloudSignOut` — awaited just above as
+                      // `onSignedOut`, and the one path every sign-out surface
+                      // shares — owns it. Notifying from both advanced the
+                      // generation twice for one sign-out, because each
+                      // unseeded call mints a fresh stamp: every account-scoped
+                      // consumer invalidated twice, and `MessageCenter`
+                      // (subscribed to the generation) ran a full
+                      // clear-and-resync per advance.
                       notifyWorkspaceBillingRefresh();
                       notifyTeamProjectsChanged();
                     });
