@@ -199,7 +199,22 @@ export function registerProjectConversationRoutes(app: Express, ctx: RegisterPro
     // messages into the fresh conversation. Be defensive — a missing or
     // cross-project source id silently yields an empty conversation.
     if (conv && seedMessages.length > 0) {
-      for (const m of seedMessages) {
+      /*
+       * 分叉分界线落在**新会话**里,盖在带过来的最后一条上(交付稿第 38 格)。
+       *
+       * 为什么是新会话而不是源会话:点完分叉页面就跳到新会话,人此刻站在这里。
+       * 那行脚注写的是「上文已带过来,接着说就行」—— 这句只有对着**新会话**里
+       * 那一截复制过来的上下文说才成立;盖在源会话上等于对着原地没动的人说
+       * 「已经带过来了」。标题用**源会话**的标题:这条线回答的是「上面这些是从哪来的」。
+       *
+       * 只盖最后一条:线是那一截上下文的**下边界**,中间每条都盖就成了一堆线。
+       */
+      const boundaryAt = seedMessages.length - 1;
+      const inheritedTitle =
+        (typeof sourceConversation?.title === 'string' && sourceConversation.title.trim())
+          ? sourceConversation.title.trim()
+          : null;
+      seedMessages.forEach((m, index) => {
         // Fresh id per copied message; upsertMessage assigns the next
         // position so role/content ordering is preserved. Drop the source's
         // run pointers (runId/runStatus/lastRunEventId): they belong to the
@@ -211,8 +226,13 @@ export function registerProjectConversationRoutes(app: Express, ctx: RegisterPro
           runId: undefined,
           runStatus: undefined,
           lastRunEventId: undefined,
+          /* 拿不到源标题就不盖 —— 没有标题的分界线是两条发丝线夹一行空白 */
+          forkedInto:
+            index === boundaryAt && inheritedTitle && seedFromConversationId
+              ? { title: inheritedTitle, conversationId: seedFromConversationId }
+              : undefined,
         });
-      }
+      });
     }
     res.json({ conversation: conv });
   });

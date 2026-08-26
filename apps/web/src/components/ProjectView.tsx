@@ -9408,24 +9408,19 @@ export function ProjectView({
           },
           { requestId },
         );
-        // Fork is "branch from this reply", not "jump away" — so the branch has
-        // to stay visible where it was taken. Stamp the source turn with the
-        // divider marker and write it back to the SOURCE conversation (this
-        // still runs before activeConversationId moves to the fork), otherwise
-        // the divider only lives in memory and is gone after a reload.
-        // The divider prints the title the fork inherited, i.e. the original
-        // conversation's title — not the "… fork" title the new row carries.
-        const forkDividerTitle = sourceTitle || fresh.title?.trim();
-        if (forkDividerTitle) {
-          updateMessageById(
-            assistantMessage.id,
-            (prev) => ({
-              ...prev,
-              forkedInto: { title: forkDividerTitle, conversationId: fresh.id },
-            }),
-            true,
-          );
-        }
+        /*
+         * 分界线**不落在源会话**(2026-08-26 用户裁决:「要在新的 fork 里出现,
+         * 而不是旧会话里出现啊」)。
+         *
+         * 这里原来给源会话那条助手消息盖 `forkedInto`,理由是「分支要留在它被拉出来
+         * 的地方」。但点完分叉页面就**跳到新会话**,人此刻站在那边 —— 源会话上的那条线
+         * 除非专门翻回去否则永远看不到;而那行脚注「上文已带过来,接着说就行」
+         * 对着原地没动的源会话说也不成立。
+         *
+         * 标记改由 daemon 在建新会话时盖在**带过来的最后一条**上,见
+         * `apps/daemon/src/routes/project/conversations.ts` 的 fork 分支。
+         * 放在 daemon 还顺带白拿了 CLI 那条路(`od project conversation --fork-after`)。
+         */
         setMessages([]);
         commitPreviewComments([]);
         setAttachedComments([]);

@@ -16,7 +16,7 @@ import type { ReactElement } from 'react';
 import type { PersistedAgentEvent } from '@open-design/contracts';
 import { I18nProvider } from '../../../src/i18n';
 import { ExecutionShell } from '../../../src/components/chat/ExecutionShell';
-import { ArtifactCards } from '../../../src/components/FileOpsSummary';
+import { ArtifactCards, FileOpsSummary } from '../../../src/components/FileOpsSummary';
 import { buildTurnBlocks } from '../../../src/runtime/chat/build-turn-blocks';
 import { liquidScheduler } from '../../../src/runtime/pixel-liquid-scheduler';
 import type { ExecutionShell as ShellData } from '../../../src/runtime/chat/contract';
@@ -184,5 +184,42 @@ describe('性能与降级', () => {
     const { container } = render(<ExecutionShell shell={partiallyGeneratedShell()} />);
     expect(container.querySelectorAll('canvas[data-liquid="static"]').length).toBe(2);
     expect(liquidScheduler.stats().registered).toBe(0);
+  });
+});
+
+describe('轮次结束之后不许还是 loading', () => {
+  /*
+   * `entry.status === 'running'` 的判据是「有 `tool_use` 配不到 `tool_result`」。
+   * 轮次结束之后这只说明那条 result **丢了**,不说明还在写 —— 挂一张永远转下去的
+   * loading 卡是在撒谎。
+   *
+   * 分叉出来的会话里尤其明显:seeded 副本会被刻意丢掉 `runStatus`(那是**源会话**
+   * 那次 run 的指针),于是没有任何东西宣布这一轮结束了,卡片就一直绿着。
+   * 用户真机指认:「fork 后的会话,怎么产物卡片一直是那个绿色的 loading 了」。
+   */
+  const runningEntry = [{ path: 'a.html', ops: ['write'], status: 'running' } as never];
+
+  it('轮次还在跑:是 loading', () => {
+    const { container } = render(
+      <FileOpsSummary
+        entries={runningEntry}
+        projectFileNames={new Set(['a.html'])}
+        projectId="p1"
+        turnIsLive
+      />,
+    );
+    expect(container.querySelector('.is-pending')).not.toBeNull();
+  });
+
+  it('轮次已结束:同一份数据不再是 loading', () => {
+    const { container } = render(
+      <FileOpsSummary
+        entries={runningEntry}
+        projectFileNames={new Set(['a.html'])}
+        projectId="p1"
+        turnIsLive={false}
+      />,
+    );
+    expect(container.querySelector('.is-pending')).toBeNull();
   });
 });

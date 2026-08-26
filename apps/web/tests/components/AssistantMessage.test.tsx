@@ -215,9 +215,12 @@ describe('AssistantMessage feedback gate', () => {
         ],
       });
       render(
+        // 回合状态行(复制所在那一行)**只在最后一轮出**(2026-08-26 产品裁决),
+        // 所以这条测试必须把这条消息摆成最后一条,否则它测的是一行不存在的 UI。
         <AssistantMessage
           message={message}
           streaming={false}
+          isLast
           projectId="proj-1"
         />,
       );
@@ -292,9 +295,11 @@ describe('AssistantMessage feedback gate', () => {
   it('calls the fork handler from completed assistant turns', () => {
     const onForkFromMessage = vi.fn();
     render(
+      // 分叉按钮同样住在回合状态行里,只在最后一轮出(见上面同族注释)
       <AssistantMessage
         message={baseMessage()}
         streaming={false}
+        isLast
         projectId="proj-1"
         onForkFromMessage={onForkFromMessage}
       />,
@@ -380,6 +385,7 @@ describe('AssistantMessage feedback gate', () => {
       <AssistantMessage
         message={baseMessage({ producedFiles: [producedFile('index.html')] })}
         streaming={false}
+        isLast
         projectId="proj-1"
         onFeedback={vi.fn()}
       />,
@@ -394,6 +400,7 @@ describe('AssistantMessage feedback gate', () => {
       <AssistantMessage
         message={baseMessage({ producedFiles: [] })}
         streaming={false}
+        isLast
         projectId="proj-1"
         onFeedback={vi.fn()}
       />,
@@ -425,6 +432,7 @@ describe('AssistantMessage feedback gate', () => {
           runStatus: 'failed',
         })}
         streaming={false}
+        isLast
         projectId="proj-1"
         onFeedback={vi.fn()}
       />,

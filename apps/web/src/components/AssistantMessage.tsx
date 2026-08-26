@@ -1111,6 +1111,7 @@ function AssistantMessageImpl({
             projectId={projectId ?? undefined}
             onPublish={isLast ? onArtifactShare : undefined}
             onExport={isLast ? onArtifactDownload : undefined}
+            turnIsLive={streaming || turnRunStatus === 'running'}
           />
         ) : null}
         {/* Exactly one "files from this turn" panel per message. When the
@@ -1221,23 +1222,6 @@ function AssistantMessageImpl({
             )}
           </div>
         ) : null}
-        {/* 分叉分界(稿子第 38 格):点过「新开会话」之后**原地**落一条线,
-            中间那行字是承接过来的会话标题。不留痕迹的话,人只会以为按钮没反应。 */}
-        {message.forkedInto ? (
-          <>
-            <div className="fork-sep" data-testid="assistant-fork-divider">
-              <i aria-hidden />
-              <span title={message.forkedInto.title}>{message.forkedInto.title}</span>
-              <i aria-hidden />
-            </div>
-            {/* 脚注跟着分界线【居中】:它是这条线的注解,不是新会话里的第一句话。
-                左对齐会让人读成「新会话已经开口说了一句」。 */}
-            <div className="fork-note" data-testid="assistant-fork-note">
-              <Icon name="fork" size={12} />
-              {t('assistant.forkNote')}
-            </div>
-          </>
-        ) : null}
         {showNextStepActions ? (
           <NextStepActions
             fileName={isLast ? nextStepFileName : null}
@@ -1264,6 +1248,32 @@ function AssistantMessageImpl({
             shareToOpenDesignBusy={shareToOpenDesignBusy}
             variant={effectiveNextStepVariant}
           />
+        ) : null}
+        {/* 分叉分界(稿子第 38 格)。
+            ------------------------------------------------------------
+            它是**这一截带过来的上下文的下边界**,所以必须排在这条消息的**最后** ——
+            回合状态行、下一步引导都属于上面那一轮,得在线的**上面**。
+            原来它排在下一步引导之前,于是那三行落到了线下面,读起来像是
+            「新会话开口就给了三条建议」;用户真机指认过。
+
+            落在**新会话**里,不是源会话:点完分叉页面就跳到新会话,人此刻站在这里,
+            而那行脚注「上文已带过来,接着说就行」也只有对着这一截复制过来的上下文
+            才说得通。标题用**源会话**的标题 —— 这条线回答的是「上面这些是从哪来的」。
+            盖标记的地方在 daemon 的 fork 分支(`routes/project/conversations.ts`)。 */}
+        {message.forkedInto ? (
+          <>
+            <div className="fork-sep" data-testid="assistant-fork-divider">
+              <i aria-hidden />
+              <span title={message.forkedInto.title}>{message.forkedInto.title}</span>
+              <i aria-hidden />
+            </div>
+            {/* 脚注跟着分界线【居中】:它是这条线的注解,不是新会话里的第一句话。
+                左对齐会让人读成「新会话已经开口说了一句」。 */}
+            <div className="fork-note" data-testid="assistant-fork-note">
+              <Icon name="fork" size={12} />
+              {t('assistant.forkNote')}
+            </div>
+          </>
         ) : null}
       </div>
     </div>

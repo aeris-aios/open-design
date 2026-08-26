@@ -275,6 +275,31 @@ describe('GET /api/projects/:id resolvedDir', () => {
     expect(forkMessagesBody.messages[1]?.runId).toBeUndefined();
     expect(forkMessagesBody.messages[1]?.runStatus).toBeUndefined();
     expect(forkMessagesBody.messages[1]?.lastRunEventId).toBeUndefined();
+
+    /*
+     * 分叉分界线落在**新会话**里(2026-08-26 用户真机指认两次:
+     * 「为什么点了 fork 按钮,这个分界没出现??」「要在新的 fork 里出现,
+     * 而不是旧会话里出现啊」)。
+     *
+     * 点完分叉页面就跳到新会话,人此刻站在这里;那行脚注「上文已带过来,接着说就行」
+     * 也只有对着这一截复制过来的上下文才说得通。盖在源会话上等于对着原地没动的人
+     * 说「已经带过来了」。标题用**源会话**的标题 —— 这条线回答的是「上面这些从哪来」。
+     * 只盖最后一条:线是那一截的下边界,中间每条都盖就成了一堆线。
+     */
+    const forkedMarkers = forkMessagesBody.messages.map(
+      (message) => (message as { forkedInto?: { title: string } }).forkedInto,
+    );
+    expect(forkedMarkers.at(-1)).toMatchObject({ title: 'Source' });
+    expect(forkedMarkers.slice(0, -1).every((marker) => marker == null)).toBe(true);
+
+    // 源会话一条都不许盖
+    const sourceAfterResp = await fetch(
+      `${baseUrl}/api/projects/${projectId}/conversations/${sourceId}/messages`,
+    );
+    const sourceAfterBody = (await sourceAfterResp.json()) as {
+      messages: Array<{ forkedInto?: unknown }>;
+    };
+    expect(sourceAfterBody.messages.every((message) => message.forkedInto == null)).toBe(true);
   });
 
   it('round-trips forkedInto on an assistant message so the fork divider survives a reload', async () => {

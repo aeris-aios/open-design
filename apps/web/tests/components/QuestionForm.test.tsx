@@ -1122,6 +1122,31 @@ describe('QuestionFormView', () => {
    * 在 B53 修好之后能原样回来 —— 悄悄删掉才是真的把覆盖弄没了。
    */
   it.skip('[B53] opens the gallery dialog: custom input, category tabs, pick from dialog', () => {
+    /* 自包含:这一格原来靠上面那条测试的 `container` / `onInteraction`,
+       拆出来之后必须自己 render 一次,否则连编译都过不去。
+       入口那一步(`getByRole('button', { name: 'View all' })`)现在打不开,
+       所以整条停用 —— B53 修好之后把下面的 render 换成真实入口即可。 */
+    const onInteraction = vi.fn();
+    const onSubmit = vi.fn();
+    const { container } = render(
+      <QuestionFormView
+        form={{
+          id: 'discovery',
+          title: 'Choose a visual direction',
+          questions: [{
+            id: 'tone', label: 'Visual direction', type: 'radio', required: true, allowCustom: true,
+            options: [{ label: 'Editorial / magazine', value: 'editorial' }],
+          }],
+        } as QuestionForm}
+        interactive
+        visualStyleContext="deck"
+        onInteraction={onInteraction}
+        onSubmit={onSubmit}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'View all' }));
+    const dialog = screen.getByRole('dialog', { name: 'Visual direction' });
+
     const customInput = screen.getByTestId('qf-input') as HTMLInputElement;
     fireEvent.change(customInput, { target: { value: 'Warm Japanese editorial' } });
     expect(customInput.value).toBe('Warm Japanese editorial');

@@ -45,6 +45,8 @@ interface Props {
   onPublish?: ((name: string) => void) | undefined;
   /** D28 "export". Falls back to a direct `download` link when absent. */
   onExport?: ((name: string) => void) | undefined;
+  /** 这一轮还在跑吗 —— 决定产物卡能不能是「还在写」的 loading 态(见 cardItems) */
+  turnIsLive?: boolean;
 }
 
 type ArtifactOpKind = Extract<FileOpKind, 'write' | 'edit'>;
@@ -68,6 +70,7 @@ export function FileOpsSummary({
   projectId,
   onPublish,
   onExport,
+  turnIsLive = false,
 }: Props) {
   const t = useT();
   const [expanded, setExpanded] = useState(false);
@@ -82,7 +85,16 @@ export function FileOpsSummary({
         if (entry.ops.includes('delete')) return [];
         const kind = artifactCardKind(entry.path);
         if (!kind) return [];
-        return [{ name: entry.path, kind, pending: entry.status === 'running' }];
+        /*
+         * **轮次还在跑的时候才算「还在写」**。
+         *
+         * `entry.status === 'running'` 的判据是「有 `tool_use` 配不到 `tool_result`」。
+         * 轮次结束之后这只说明那条 result **丢了**,不说明还在写 —— 挂着一张永远
+         * 转下去的 loading 卡是在撒谎。分叉出来的会话里尤其明显:seeded 副本会
+         * 被刻意丢掉 `runStatus`(那是**源会话**那次 run 的指针),于是没有任何东西
+         * 宣布这一轮结束了,卡片就一直绿着。用户真机指认过。
+         */
+        return [{ name: entry.path, kind, pending: turnIsLive && entry.status === 'running' }];
       })
     : [];
   const cardNames = new Set(cardItems.map((item) => item.name));
