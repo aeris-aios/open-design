@@ -8910,6 +8910,103 @@ describe('FileViewer tweaks toolbar', () => {
     );
   });
 
+  it('gates converged Team navigation on exact project authority', async () => {
+    const file = htmlPreviewFile({ name: 'team-gated.html', path: 'team-gated.html' });
+    const rawReads: Array<{ init?: RequestInit; url: string }> = [];
+    const previewMints: Array<{ init?: RequestInit; url: string }> = [];
+    const fetchMock = vi.fn(async (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ) => {
+      const url = typeof input === 'string'
+        ? input
+        : input instanceof Request
+          ? input.url
+          : String(input);
+      if (url.startsWith('/api/projects/project-1/raw/team-gated.html')) {
+        rawReads.push({ init, url });
+        return new Response('<!doctype html><html><body><main>Team</main></body></html>', {
+          status: 200,
+          headers: { 'Content-Type': 'text/html' },
+        });
+      }
+      if (url === '/api/projects/project-1/files') {
+        return new Response(JSON.stringify({ files: [file] }), { status: 200 });
+      }
+      if (url.includes('/api/projects/project-1/preview-url')) {
+        previewMints.push({ init, url });
+        return new Response(JSON.stringify({
+          url: '/api/projects/project-1/preview/legacy-scope/team-gated.html',
+          file: 'team-gated.html',
+          expiresAt: Date.now() + 60 * 60 * 1000,
+          scopedOrigin: {
+            normalUrl: 'http://n-scope-team.localhost:43111/team-gated.html',
+            poweredUrl: 'http://p-scope-team.localhost:43111/team-gated.html',
+            documentVersion: 'team-v1',
+          },
+        }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ deployments: [] }), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const view = (value: CollabContextValue) => (
+      <CollabProvider value={value}>
+        <FileViewer
+          projectId="project-1"
+          projectKind="prototype"
+          file={file}
+          previewRuntimeConvergence
+        />
+      </CollabProvider>
+    );
+    const { rerender } = render(view({
+      ...projectWorkspaceCollabValue(null),
+      workspaceContextLoading: true,
+      projectResourceAuthority: 'pending',
+    }));
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(rawReads).toEqual([]);
+    expect(previewMints).toEqual([]);
+    expect(screen.queryByTestId('preview-runtime-frame-standby')).toBeNull();
+
+    rerender(view({
+      ...projectWorkspaceCollabValue(teamWorkspaceContext()),
+      workspaceContextLoading: false,
+      projectResourceAuthority: 'workspace',
+    }));
+    const standby = await waitFor(() => (
+      screen.getByTestId('preview-runtime-frame-standby') as HTMLIFrameElement
+    ));
+    expect(rawReads).toHaveLength(1);
+    expect(new Headers(rawReads[0]?.init?.headers).get('x-od-workspace-id')).toBe('ws-1');
+    expect(new Headers(rawReads[0]?.init?.headers).get('x-od-workspace-member-id')).toBe('wm-1');
+    expect(previewMints).toHaveLength(1);
+    expect(previewMints[0]?.url).not.toContain('workspaceId=');
+    expect(previewMints[0]?.url).not.toContain('workspaceMemberId=');
+    expect(new Headers(previewMints[0]?.init?.headers).get('x-od-workspace-id')).toBeNull();
+    expect(standby).toHaveAttribute(
+      'src',
+      'http://n-scope-team.localhost:43111/team-gated.html',
+    );
+
+    rerender(view({
+      ...projectWorkspaceCollabValue(null),
+      workspaceContextLoading: false,
+      projectResourceAuthority: 'denied',
+    }));
+    await waitFor(() => {
+      expect(screen.getByText(/Preview unavailable/)).toBeTruthy();
+      expect(screen.queryByTestId('preview-runtime-frame-standby')).toBeNull();
+      expect(screen.queryByTestId('preview-runtime-frame-current')).toBeNull();
+    });
+    expect(rawReads).toHaveLength(1);
+    expect(previewMints).toHaveLength(1);
+  });
+
   it('retries an exact aborted converged standby once without touching a painted frame', async () => {
     const file = htmlPreviewFile({ name: 'retry.html', path: 'retry.html' });
     let navigationFailureListener: OpenDesignHostPreviewNavigationFailureListener | null = null;

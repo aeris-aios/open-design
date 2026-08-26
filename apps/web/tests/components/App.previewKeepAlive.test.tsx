@@ -268,6 +268,7 @@ describe('App preview keep-alive invalidation', () => {
       attach: vi.fn(),
       release: vi.fn(),
       evict: vi.fn(),
+      evictFrame: vi.fn(),
       evictProject: evictProjectMock,
       evictMatching: evictMatchingMock,
       subscribe: vi.fn(() => () => {}),
