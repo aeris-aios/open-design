@@ -33,7 +33,13 @@ import type { IconName } from '../Icon';
 // independently of the default-binding mapping.
 export type ChipScenarioPluginId =
   | DefaultScenarioPluginId
-  | 'example-hyperframes';
+  | 'example-hyperframes'
+  // Powered-preview scenarios: real-time GPU / off-main-thread artifacts that
+  // render in the cross-origin-isolated "powered preview" iframe. They ship
+  // their own bundled example plugins under plugins/_official/examples/, so —
+  // like example-hyperframes — they carry their plugin id directly rather than
+  // routing through the default kind→plugin table.
+  | 'example-webgl-experience';
 
 export type ChipAction =
   | {
@@ -229,14 +235,12 @@ export const HOME_HERO_CHIPS: ReadonlyArray<HomeHeroChip> = [
     group: 'create',
     description: 'Shaders, 3D & generative GPU visuals',
     hint: 'Build a full-screen real-time WebGL2 shader / 3D scene that runs live on the GPU.',
-    // Powered-preview scenario. The dedicated WebGL-experience seed plugin
-    // was pruned from plugins/_official (pending rebuild), so the
-    // chip binds the generic prototype seed and keeps its identity through
-    // `intent: 'webgl-experience'`. The artifact still auto-detects into
+    // Powered-preview scenario: binds the bundled `example-webgl-experience`
+    // plugin (shader/3D seed + P0 checklist). The artifact auto-detects into
     // powered preview via its `getContext('webgl2')` call.
     action: {
       kind: 'apply-scenario',
-      pluginId: 'example-web-prototype',
+      pluginId: 'example-webgl-experience',
       projectKind: 'prototype',
       projectMetadata: {
         kind: 'prototype',

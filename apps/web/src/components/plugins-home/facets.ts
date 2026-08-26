@@ -582,6 +582,10 @@ const CAPABILITY_SKILL_PLUGIN_IDS: ReadonlySet<string> = new Set([
   // fallback tile if it reaches the grid. Stays reachable from its entry
   // surfaces, exactly like Website Clone above.
   'od-web-effect-extractor',
+  // Powered-preview seed behind the Home "WebGL experience" chip. Kept out
+  // of the curated four-type grid (2026-08 curation decision) while the chip
+  // stays bound to its shader/3D generation contract.
+  'example-webgl-experience',
 ]);
 
 export function isCapabilitySkillPlugin(record: InstalledPluginRecord): boolean {
