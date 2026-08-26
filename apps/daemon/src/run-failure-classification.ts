@@ -901,7 +901,7 @@ function classifyRunFailureBase(
   // envelope. Claim the named policy limit before fatal close promotion. Even
   // when the envelope says retryable, an immediate automatic replay only hits
   // the same occupied slots, so leave retry to the user after the reset time.
-  if (isMembershipConcurrencyLimitFailure(text)) {
+  if (input.agentId === 'amr' && isMembershipConcurrencyLimitFailure(text)) {
     return classification(
       'rate_limit',
       'membership_concurrency_limit',
