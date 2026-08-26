@@ -1259,12 +1259,12 @@ const INPUT: Cell[] = [
     ],
   },
   {
-    gid: 50, sub: '1-6', cmp: '用户消息-文本', state: 'hover · 背景加深;时间与复制浮出,重试常驻', family: '输入',
+    gid: 50, sub: '1-6', cmp: '用户消息-文本', state: 'hover · 时间与复制浮出,重试常驻(不变色)', family: '输入',
     hover: true,
     node: () => msg({ ...userMsg('等一下,价格行的字号先别动'), sendFailed: true }),
     notes: [
       '同第 49 格的数据,这一页替设计师按住了 hover(`data-hover`):时间与复制浮出、「重试」照旧常驻',
-      '状态名写的是「背景加深」,但稿子自己的 CSS 是 `--bub-bg: var(--text-strong)` → `var(--text)`,在白底上**是变浅**。按稿子的**值**实现(名字和值打架时以值为准,值是能渲染的那一个)'
+      '**气泡 hover 不变色**(2026-08-26 用户裁决)。稿子里那条 `.msg-row:hover .bub` 在交付稿自己那一页上是**死规则** —— 普通气泡的祖先是 `.msg-me`,全文只有两格摆拍用了 `.msg-row.is-hover`,所以在原稿上 hover 本来就没有任何反应。顺带解掉了它自带的矛盾:状态名写「背景加深」,值却是 `#202020 → #494949`,白底上是变浅'
     ],
   },
   {
@@ -2755,7 +2755,6 @@ h1{margin:0 0 6px;font-size:20px;}
 .cell[data-scroll="prev"] .msg-att-nav.mod-prev,
 .cell[data-scroll="both"] .msg-att-nav.mod-prev{display:flex;}
 .cell[data-hover] .msg.user .user-actions{opacity:1;}
-.cell[data-hover] .msg.user .user-text-wrap{--bub-bg:var(--text);}
 /* 图卡的缩略图指向 daemon 的 /api/projects/:id/raw/…,离开 daemon 就是一张打不开的图。
    取不到就把 <img> 藏掉,露出卡自己的底色当占位(标记由下面那段脚本打)——
    浏览器画的「碎图」图标会盖住要比的那件事:卡多大、圆角多少、一行里两种卡同不同高。 */
