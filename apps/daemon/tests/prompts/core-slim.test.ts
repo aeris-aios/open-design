@@ -84,8 +84,12 @@ describe('renderSlimCoreCharter — frozen protocol markers', () => {
       'continue searching within the allowed sources',
       'project-local file referenced with a relative path or an inline data URI',
       'inspect its intrinsic width and height',
+      "rendered box or container must adopt that measured ratio",
+      "never reuse a placeholder's fixed ratio",
       '`object-fit: contain`',
       '`object-fit: cover`',
+      'Do not lock both rendered axes',
+      'leave the other axis automatic',
       'Check imagery and provenance',
     ]) {
       expect(charter).toContain(marker);
