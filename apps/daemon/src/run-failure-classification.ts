@@ -437,6 +437,22 @@ const PROCESS_CRASH_SIGNALS = new Set([
   'SIGBUS',
 ]);
 
+/**
+ * The signals a child never chooses: the OS or an operator ended it. Read from
+ * either the normalized error code or the raw status, because a run can carry
+ * the signal without ever getting an `AGENT_SIGNAL_*` code stamped on it.
+ */
+function forcedSignalName(errorCode: string, signal: unknown): string | null {
+  const named = errorCode.startsWith('AGENT_SIGNAL_')
+    ? errorCode.slice('AGENT_SIGNAL_'.length)
+    : typeof signal === 'string'
+      ? signal
+      : '';
+  if (!named) return null;
+  if (named === 'SIGKILL' || PROCESS_CRASH_SIGNALS.has(named)) return named;
+  return null;
+}
+
 // Classifies a run that died from an OS signal or an interrupt exit code
 // (130 = 128 + SIGINT). Returns null when the failure is not signal/interrupt
 // shaped so the caller can fall through to the generic exit-code bucket.
@@ -451,11 +467,18 @@ function signalInterruptClassification(
   errorCode: string,
   text: string,
   retryableHint: boolean | undefined,
+  /**
+   * The signal when the caller already knows it. A killed run does NOT reliably
+   * carry an `AGENT_SIGNAL_*` code — a real `kill -9` lands as
+   * `AGENT_EXECUTION_FAILED` with the signal only on `status.signal` — so the
+   * code alone is not enough to recognize one.
+   */
+  signalOverride?: string | null,
 ): RunFailureClassification | null {
   const isInterruptExit = errorCode === 'AGENT_EXIT_130';
   const signal = errorCode.startsWith('AGENT_SIGNAL_')
     ? errorCode.slice('AGENT_SIGNAL_'.length)
-    : '';
+    : (signalOverride ?? '');
   if (!signal && !isInterruptExit) return null;
 
   if (signal === 'SIGKILL') {
@@ -753,6 +776,31 @@ function classifyRunFailureBase(
       false,
       'login',
     );
+  }
+
+  /*
+   * A forced signal is a STRUCTURAL fact — the child did not report it, the OS
+   * or an operator ended the process — so no amount of leftover stderr can
+   * explain it away. Claimed here, ahead of every text heuristic below.
+   *
+   * Found on a real run (2026-08-27): `kill -9` on the agent child produced
+   * `signal: SIGKILL, exitCode: null`, and the classifier answered
+   * `auth / stale_profile` because a half-written line about local profiles
+   * happened to be in the buffer. The chat card then told the user to run
+   * `/login` — sending them to fix something that was never broken.
+   *
+   * `signalInterruptClassification` already carries the right reasoning ("a
+   * signal is the strongest evidence we have"); it just sat 300 lines too late
+   * to win. Deliberately narrow:
+   *  · only SIGKILL and the crash signals — SIGTERM/SIGINT genuinely accompany
+   *    graceful shutdown and interrupts, where the text does carry more meaning;
+   *  · timeout still wins, because the daemon's watchdog writes its own reason
+   *    before escalating to a kill, and WHY it was killed beats the bare signal.
+   */
+  const forcedSignal = forcedSignalName(errorCode, input.status.signal);
+  if (forcedSignal && !isTimeoutText(text) && errorCode !== 'TIMEOUT') {
+    const forced = signalInterruptClassification(errorCode, text, retryableHint, forcedSignal);
+    if (forced) return forced;
   }
 
   const promptSizeDetail = promptTooLargeDetail(text);
