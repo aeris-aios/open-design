@@ -614,7 +614,7 @@ test('[P0] definitively expired Cloud auth also gates project deep links', async
   await expect(page.getByRole('alertdialog')).toHaveCount(0);
 });
 
-test('[P0] active Cloud sign-out clears execution setup, preserves unrelated preferences, and returns to sign-in', async ({ page }) => {
+test('[P0] active Cloud sign-out preserves BYOK and unrelated preferences while returning to sign-in', async ({ page }) => {
   const config = await wireOnboardingMocks(page, {
     amrAvailable: true,
     initialLoggedIn: true,
@@ -646,7 +646,9 @@ test('[P0] active Cloud sign-out clears execution setup, preserves unrelated pre
   await expect(page.getByTestId('home-hero-input')).toHaveCount(0);
   await pollStoredConfig(page).toMatchObject({
     mode: 'daemon',
-    apiKey: '',
+    apiKey: 'private-key',
+    baseUrl: 'https://private.example/v1',
+    model: 'private-model',
     agentId: null,
     designSystemId: 'keep-design-system',
     onboardingCompleted: false,
