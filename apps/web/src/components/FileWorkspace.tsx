@@ -173,6 +173,12 @@ import type { CommentSendResult } from './comment-send-result';
 
 type TranslateFn = (key: keyof Dict, vars?: Record<string, string | number>) => string;
 
+// Internal packaged-Electron acceptance gate. The product build remains on
+// the legacy transport until the convergence matrix passes; test packages can
+// opt into the terminal runtime without a user-visible setting or URL switch.
+const PREVIEW_RUNTIME_CONVERGENCE_BUILD_ENABLED =
+  process.env.NEXT_PUBLIC_OD_PREVIEW_RUNTIME_CONVERGENCE === '1';
+
 function syncInertAttribute(element: HTMLElement | null, inert: boolean): void {
   if (!element) return;
   // React 18 treats `inert` as an unknown string attribute while React 19
@@ -360,6 +366,8 @@ interface Props {
   viewerOnly?: boolean;
   /** First-open placeholder: do not mount cached/write-capable workspace tabs. */
   materializationPending?: boolean;
+  /** Internal terminal-runtime acceptance harness; defaults from the build flag. */
+  previewRuntimeConvergence?: boolean;
   /** Optional override for the read-only notice text. */
   readonlyNotice?: string;
   /**
@@ -1371,6 +1379,7 @@ export function FileWorkspace({
   headerActions,
   viewerOnly = false,
   materializationPending = false,
+  previewRuntimeConvergence = PREVIEW_RUNTIME_CONVERGENCE_BUILD_ENABLED,
   readonlyNotice,
   fileSyncBadge = null,
 }: Props) {
@@ -3393,6 +3402,7 @@ export function FileWorkspace({
       manualEditEntryAllowed={
         protectedHtmlViewerFileNames.size === 0 || protectedHtmlViewerFileNames.has(file.name)
       }
+      previewRuntimeConvergence={previewRuntimeConvergence}
     />
   );
 

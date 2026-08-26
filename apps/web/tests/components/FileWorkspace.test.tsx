@@ -12,6 +12,10 @@ import {
   buildWorkspaceSeatSummary,
   type WorkspaceCollabContext,
 } from '@open-design/contracts';
+import {
+  PREVIEW_RUNTIME_PROTOCOL_VERSION,
+  type PreviewRuntimeCapability,
+} from '@open-design/contracts/runtime/preview-runtime';
 
 import {
   DESIGN_FILES_TAB,
@@ -37,6 +41,7 @@ import {
 } from '../../src/collab/collab-context';
 import { IframeKeepAliveProvider } from '../../src/components/IframeKeepAlivePool';
 import { navigate } from '../../src/router';
+import { projectPreviewNavigationCache } from '../../src/runtime/project-preview-navigation-cache';
 
 describe('settleManualEditExit', () => {
   it.each([
@@ -1498,6 +1503,150 @@ describe('FileWorkspace launcher tab creation', () => {
     expect(document.body.contains(betaFrame)).toBe(true);
     expect(screen.getAllByTestId('retained-file-viewer')).toEqual(retainedAfterBeta);
     expect(mockedFetchProjectFileText).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps converged runtime frames and scopes stable across rapid HTML file switches', async () => {
+    const alpha = workspaceFile('terminal-alpha.html');
+    const beta = workspaceFile('terminal-beta.html');
+    const files = [alpha, beta];
+    projectPreviewNavigationCache.clear();
+    mockedFetchProjectFileText.mockImplementation(async (_projectId, fileName) => (
+      `<!doctype html><html><body><main>${fileName}</main></body></html>`
+    ));
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const rawUrl = typeof input === 'string' ? input : input.toString();
+      const url = new URL(rawUrl, window.location.href);
+      if (url.pathname === '/api/projects/project-1/files') {
+        return new Response(JSON.stringify({ files }), { status: 200 });
+      }
+      if (url.pathname === '/api/projects/project-1/preview-url') {
+        const fileName = url.searchParams.get('file');
+        if (!fileName) return new Response(null, { status: 400 });
+        const stem = fileName.startsWith('terminal-alpha') ? 'alpha' : 'beta';
+        const sessionId = `scope-${stem}-0001`;
+        return new Response(JSON.stringify({
+          url: `/api/projects/project-1/preview/legacy-${stem}/${fileName}`,
+          file: fileName,
+          expiresAt: Date.now() + 60 * 60 * 1000,
+          scopedOrigin: {
+            normalUrl: `http://n-${sessionId}.localhost:43111/${fileName}`,
+            poweredUrl: `http://p-${sessionId}.localhost:43111/${fileName}`,
+            documentVersion: `${stem}-v1`,
+            previewPolicy: {
+              sandboxProfile: 'normal',
+              guards: { storage: false, focus: false, redirect: false },
+            },
+          },
+        }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ deployments: [] }), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    function Harness() {
+      const [tabsState, setTabsState] = useState<OpenTabsState>({
+        tabs: files.map((file) => file.name),
+        active: alpha.name,
+      });
+      return (
+        <IframeKeepAliveProvider>
+          <CollabProvider value={collabValue(teamContext('workspace-a', 'member-a'))}>
+            <FileWorkspace
+              projectId="project-1"
+              projectKind="prototype"
+              files={files}
+              liveArtifacts={[]}
+              onRefreshFiles={vi.fn()}
+              isDeck={false}
+              tabsState={tabsState}
+              onTabsStateChange={setTabsState}
+              previewRuntimeConvergence
+            />
+          </CollabProvider>
+        </IframeKeepAliveProvider>
+      );
+    }
+
+    render(<Harness />);
+    const capabilities: PreviewRuntimeCapability[] = [
+      'content_measurement',
+      'scroll',
+      'snapshot',
+      'observability',
+      'selection',
+      'tweaks',
+      'palette',
+    ];
+    const settle = (
+      frame: HTMLIFrameElement,
+      sessionId: string,
+      documentVersion: string,
+    ) => {
+      for (const type of [
+        'od:preview:hello',
+        'od:preview:capabilities-applied',
+        'od:preview:visible-paint',
+      ] as const) {
+        act(() => {
+          window.dispatchEvent(new MessageEvent('message', {
+            source: frame.contentWindow,
+            data: {
+              type,
+              protocolVersion: PREVIEW_RUNTIME_PROTOCOL_VERSION,
+              sessionId,
+              documentVersion,
+              ...(type === 'od:preview:hello' ? { availableCapabilities: capabilities } : {}),
+              ...(type === 'od:preview:capabilities-applied'
+                ? { enabledCapabilities: capabilities }
+                : {}),
+            },
+          }));
+        });
+      }
+    };
+
+    const alphaFrame = await waitFor(() => {
+      const frame = document.querySelector(
+        'iframe[title="terminal-alpha.html"][data-testid="preview-runtime-frame-standby"]',
+      ) as HTMLIFrameElement | null;
+      expect(frame).not.toBeNull();
+      return frame!;
+    });
+    settle(alphaFrame, 'scope-alpha-0001', 'alpha-v1');
+    const alphaUrl = alphaFrame.src;
+
+    fireEvent.click(screen.getByRole('tab', { name: /terminal-beta\.html/i }));
+    const betaFrame = await waitFor(() => {
+      const frame = document.querySelector(
+        'iframe[title="terminal-beta.html"][data-testid="preview-runtime-frame-standby"]',
+      ) as HTMLIFrameElement | null;
+      expect(frame).not.toBeNull();
+      return frame!;
+    });
+    settle(betaFrame, 'scope-beta-0001', 'beta-v1');
+    const betaUrl = betaFrame.src;
+    const mintCount = fetchMock.mock.calls.filter(([input]) => (
+      String(input).includes('/preview-url')
+    )).length;
+    expect(mintCount).toBe(2);
+
+    for (let round = 0; round < 6; round += 1) {
+      const targetName = round % 2 === 0 ? alpha.name : beta.name;
+      fireEvent.click(screen.getByRole('tab', { name: new RegExp(targetName, 'i') }));
+      const activeFrame = targetName === alpha.name ? alphaFrame : betaFrame;
+      const inactiveFrame = targetName === alpha.name ? betaFrame : alphaFrame;
+      expect(activeFrame.dataset.odActive).toBe('true');
+      expect(inactiveFrame.dataset.odActive).toBe('false');
+      expect(document.body.contains(alphaFrame)).toBe(true);
+      expect(document.body.contains(betaFrame)).toBe(true);
+      expect(alphaFrame.src).toBe(alphaUrl);
+      expect(betaFrame.src).toBe(betaUrl);
+      expect(alphaFrame.src).not.toBe('about:blank');
+      expect(betaFrame.src).not.toBe('about:blank');
+    }
+    expect(fetchMock.mock.calls.filter(([input]) => (
+      String(input).includes('/preview-url')
+    ))).toHaveLength(mintCount);
   });
 
   it('evicts the fourth HTML tab without reattaching the three surviving preview frames', async () => {
