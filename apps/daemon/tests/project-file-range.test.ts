@@ -433,6 +433,26 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
           + '<main id="slot">real</main></body></html>',
       ),
     );
+    // The in-select mode ends in more ways than `</select>`: `input`, `keygen`
+    // and `textarea` close it and are then reprocessed, so the SVG that
+    // follows really is foreign content and its CDATA really is character
+    // data. `textarea` is also raw text, so the select state has to be updated
+    // before that branch consumes the tag.
+    for (const [name, closer] of [
+      ['select-exit-input.html', '<input>'],
+      ['select-exit-keygen.html', '<keygen>'],
+      ['select-exit-textarea.html', '<textarea></textarea>'],
+    ] as const) {
+      await writeFile(
+        path.join(dir, name),
+        Buffer.from(
+          '<!doctype html><html><head></head><body>'
+            + `<select>${closer}`
+            + '<svg><![CDATA[x > <\/body>]]></svg>'
+            + '<main id="slot">real</main></body></html>',
+        ),
+      );
+    }
     // A leading BOM is the encoding signature and only counts at byte zero, so
     // the no-boundary fallback has to insert after it rather than in front of
     // it — otherwise the doctype stops applying and the artifact silently
@@ -1122,6 +1142,22 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
     expect(page('body > [data-od-url-scroll-bridge]').length).toBe(1);
     expect(page('#slot').text()).toBe('real');
     expect(html).toContain('<![CDATA[x > </body>]]>');
+  });
+
+  it('leaves the in-select mode on input, keygen and textarea', async () => {
+    for (const fixture of [
+      'select-exit-input.html',
+      'select-exit-keygen.html',
+      'select-exit-textarea.html',
+    ]) {
+      const bridged = await fetch(`${rawUrl(fixture)}?odPreviewBridge=scroll`);
+      expect(bridged.status).toBe(200);
+      const html = await bridged.text();
+      const page = load(html);
+      expect(page('body > [data-od-url-scroll-bridge]').length).toBe(1);
+      expect(page('#slot').text()).toBe('real');
+      expect(html).toContain('<![CDATA[x > </body>]]>');
+    }
   });
 
   it('keeps a leading BOM at byte zero when there is no boundary', async () => {

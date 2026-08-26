@@ -1844,6 +1844,15 @@ function skipTemplateContent(html: string, lowerHtml: string, from: number): num
 
 // Void elements never have contents, so they never open a namespace frame and
 // a trailing solidus on them is redundant rather than meaningful.
+// Start tags that close an open `<select>` and are then reprocessed, in every
+// select context.
+const SELECT_CLOSING_START_TAGS: readonly string[] = ['input', 'keygen', 'textarea'];
+// Tags that close it only in "in select in table" — outside a table the
+// in-select mode ignores them and the select stays open.
+const SELECT_IN_TABLE_CLOSING_TAGS: readonly string[] = [
+  'caption', 'table', 'tbody', 'tfoot', 'thead', 'tr', 'td', 'th',
+];
+
 const PREVIEW_VOID_ELEMENTS: readonly string[] = [
   'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input',
   'link', 'meta', 'source', 'track', 'wbr',
@@ -2103,6 +2112,7 @@ function findRealTagOffset(html: string, pattern: RegExp): number {
   // units), and every offset taken from the shadow is used against `html`.
   const lower = asciiLower(html);
   let inSelect = false;
+  let tableDepth = 0;
   let i = 0;
   while (i < html.length) {
     if (html.charCodeAt(i) !== 60 /* < */) {
@@ -2146,6 +2156,25 @@ function findRealTagOffset(html: string, pattern: RegExp): number {
     const tagEnd = tag.end;
     if (tagEnd < 0) return -1;
     const tagName = (open[2] ?? '').toLowerCase();
+    // `<select>` is the one HTML context this scan has to know about: the
+    // in-select insertion mode *ignores* an `<svg>` / `<math>` start tag
+    // outright, so no foreign element is created and the bytes after it are
+    // still ordinary HTML. Walking them as foreign content is how
+    // `<select><svg></select><script>…` ended up reading a script string as
+    // markup. Everything else about insertion modes stays unmodelled.
+    //
+    // Knowing where the mode *ends* is the whole job, and it ends in more ways
+    // than `</select>`. A second `<select>` start tag closes the open one
+    // rather than nesting. `input`, `keygen` and `textarea` close it and are
+    // then reprocessed. Inside a table the mode is "in select in table", where
+    // the table tokens below close it too — and outside a table those same
+    // tokens are simply ignored, which is why the table has to be tracked
+    // rather than assumed.
+    if (!open[1] && tagName === 'table' && !tag.selfClosing) tableDepth += 1;
+    else if (open[1] && tagName === 'table' && tableDepth > 0) tableDepth -= 1;
+    if (tagName === 'select') inSelect = !open[1] && !inSelect;
+    else if (inSelect && !open[1] && SELECT_CLOSING_START_TAGS.includes(tagName)) inSelect = false;
+    else if (inSelect && tableDepth > 0 && SELECT_IN_TABLE_CLOSING_TAGS.includes(tagName)) inSelect = false;
     if (!open[1] && (PREVIEW_RAW_TEXT_ELEMENTS as readonly string[]).includes(tagName)) {
       const contentEnd = findRawTextClose(lower, tagName, tagEnd + 1);
       // Unclosed raw text runs to the end of the document — same as above.
@@ -2153,17 +2182,6 @@ function findRealTagOffset(html: string, pattern: RegExp): number {
       i = contentEnd;
       continue;
     }
-    // `<select>` is the one HTML context this scan has to know about: the
-    // in-select insertion mode *ignores* an `<svg>` / `<math>` start tag
-    // outright, so no foreign element is created and the bytes after it are
-    // still ordinary HTML. Walking them as foreign content is how
-    // `<select><svg></select><script>…` ended up reading a script string as
-    // markup. Everything else about insertion modes stays unmodelled.
-    // A `<select>` start tag while a select is already open *closes* it rather
-    // than nesting — the tree builder treats it as the end tag — so this is a
-    // flag, not a counter. Counting it left the guard asserted after the
-    // select had actually ended.
-    if (tagName === 'select') inSelect = !open[1] && !inSelect;
     if (!open[1] && !inSelect && (tagName === 'svg' || tagName === 'math') && !tag.selfClosing) {
       const contentEnd = skipForeignContent(html, lower, tagName, tagEnd + 1);
       if (contentEnd < 0) return -1;
