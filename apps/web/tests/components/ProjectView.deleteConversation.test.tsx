@@ -492,10 +492,19 @@ describe('ProjectView conversation fork analytics', () => {
     );
   });
 
-  it('marks the forked assistant turn with forkedInto and persists it to the source conversation', async () => {
-    // 设计稿第 38 格:Fork 之后那条回复下面要**原地**留一条分界。分界靠
-    // `ChatMessage.forkedInto` 渲染,而这个字段之前没有任何代码写过 ——
-    // 所以这一态在产品里永远出不来。写回源会话才能「刷新之后还在」。
+  it('leaves the fork divider to the new conversation instead of stamping the source', async () => {
+    /*
+     * 2026-08-26 用户裁决:「要在新的 fork 里出现,而不是旧会话里出现啊」。
+     *
+     * 这一条原来断言客户端给**源会话**那条助手消息盖 `forkedInto` 并写回。
+     * 可点完分叉页面就跳到新会话,人此刻站在那边 —— 源会话上的那条线除非专门
+     * 翻回去否则永远看不到,而那行脚注「上文已带过来,接着说就行」对着原地没动的
+     * 源会话说也不成立。
+     *
+     * 标记改由 daemon 在建新会话时盖在**带过来的最后一条**上
+     * (`apps/daemon/src/routes/project/conversations.ts` 的 fork 分支),
+     * 顺带白拿了 CLI 那条路。所以这一层现在要钉的是**客户端不再写源会话**。
+     */
     prepareForkHarness();
     createConversation.mockResolvedValue({ id: 'conv-fork', title: 'Conversation 1 fork' });
 
@@ -506,16 +515,12 @@ describe('ProjectView conversation fork analytics', () => {
       await chatPaneProps.onForkFromMessage?.(sourceMessages[1]!);
     });
 
-    expect(saveMessage).toHaveBeenCalledWith(
-      'project-1',
-      'conv-1',
-      expect.objectContaining({
-        id: 'assistant-1',
-        // 分界上写的是**承接过来的**会话标题,不是「… 分叉」那个新标题。
-        forkedInto: { title: 'Conversation 1', conversationId: 'conv-fork' },
-      }),
-      expect.anything(),
+    const stampedSource = saveMessage.mock.calls.filter(
+      ([, conversationId, message]) =>
+        conversationId === 'conv-1'
+        && !!(message as { forkedInto?: unknown } | undefined)?.forkedInto,
     );
+    expect(stampedSource, '源会话不该被盖分界 —— 那条线归新会话').toEqual([]);
   });
 
   it('leaves forkedInto unset when the fork never produced a conversation', async () => {

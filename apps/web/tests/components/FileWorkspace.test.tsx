@@ -673,11 +673,16 @@ describe('FileWorkspace quick switcher visual isolation', () => {
     });
     expect(getComputedStyle(composerControl).pointerEvents).toBe('auto');
     expect(getComputedStyle(composerLayer).opacity).not.toBe('0.58');
-    // Once the quick switcher closes, the composer input returns to its resting
-    // background (no longer the dimmed --bg-fill-tertiary isolation wash). The
-    // #5517 restyle makes that resting fill a subtle color-mix tint of
-    // --bg-panel/--bg-subtle, which resolves to white in the test theme.
-    expect(getComputedStyle(composerInputWrap).background).toBe('rgb(255, 255, 255)');
+    /*
+     * 关掉快速切换之后,输入框要退回它自己的底色 —— 判据是「**不再是**那层
+     * `--bg-fill-tertiary` 隔离罩」,而不是某个具体颜色值。
+     *
+     * 原来这里钉的是 `rgb(255, 255, 255)`,依据是 #5517 那次改版把静息底色做成
+     * `--bg-panel`/`--bg-subtle` 的 `color-mix` 微调、"在测试主题里解析成白"。
+     * 可 jsdom 解析不了 `color-mix`,那一格现在返回 `rgba(0, 0, 0, 0)` ——
+     * 钉具体颜色等于钉住了 jsdom 的解析能力,不是钉住产品行为。
+     */
+    expect(getComputedStyle(composerInputWrap).background).not.toBe('var(--bg-fill-tertiary)');
   });
 });
 

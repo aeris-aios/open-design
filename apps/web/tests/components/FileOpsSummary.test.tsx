@@ -316,6 +316,13 @@ describe('FileOpsSummary artifact cards', () => {
         onRequestOpenFile={vi.fn()}
         onPublish={vi.fn()}
         onExport={vi.fn()}
+        /*
+         * 「还在写」需要**轮次也还在跑**。轮次结束之后 `status: 'running'` 只说明
+         * 那条 `tool_result` 丢了,不说明还在写 —— 挂一张永远转下去的 loading 卡
+         * 是在撒谎(分叉出来的会话尤其明显,用户真机指认过)。这一条原来没传这个
+         * 旗标,断言的其实是修掉那个谎之前的形态。
+         */
+        turnIsLive
       />,
     );
 

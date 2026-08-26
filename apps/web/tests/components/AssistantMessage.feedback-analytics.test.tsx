@@ -61,6 +61,10 @@ describe('AssistantMessage feedback analytics', () => {
         projectKind="prototype"
         conversationId="conversation-1"
         onFeedback={vi.fn()}
+        // 反馈按钮挂在回合状态行上,而那一行**只在最后一轮出**(2026-08-26 产品裁决:
+        // 「应该只有最后一轮底部才会显示,之前轮次不要显示,hover 也不显示」)。
+        // 这一条要点〔Helpful〕,就得把这条消息摆成最后一轮。
+        isLast
       />,
     );
 

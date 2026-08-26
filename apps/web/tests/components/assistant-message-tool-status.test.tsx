@@ -28,10 +28,14 @@ function messageWithEvents(events: AgentEvent[]): ChatMessage {
 
 /** 执行记录壳:`.assistant-flow` 里的第一个顶层 `<details>`(ExecutionShell → Foldable) */
 function record(container: HTMLElement): HTMLDetailsElement {
-  const el = container.querySelector<HTMLDetailsElement>('.assistant-flow > details');
+  const el = maybeRecord(container);
   if (!el) throw new Error('执行记录壳没有渲染出来');
   return el;
 }
+
+/** 同上,但**允许没有** —— B47 之后「跑完了却空着」的壳整个不渲染 */
+const maybeRecord = (container: HTMLElement): HTMLDetailsElement | null =>
+  container.querySelector<HTMLDetailsElement>('.assistant-flow > details');
 
 /** 壳头那行字:状态词(+ 耗时) */
 const recordHead = (container: HTMLElement): string =>
@@ -49,7 +53,7 @@ const rowCount = (container: HTMLElement): number => recordBody(container)?.chil
 describe('AssistantMessage 执行记录', () => {
   afterEach(() => cleanup());
 
-  it('没有配对结果的调用不落行,壳仍然是「已完成」(D3)', () => {
+  it('没有配对结果的调用不落行,而空壳跑完就整个不渲染(D3 + B47)', () => {
     const { container } = render(
       <AssistantMessage
         projectKind="prototype"
@@ -67,13 +71,18 @@ describe('AssistantMessage 执行记录', () => {
       />,
     );
 
-    expect(recordHead(container)).toContain('Done');
-    // D3:界面上没有「执行中」这一档 —— 调用没回来就不落行,所以壳里是空的。
-    // 老链路会把它画成一张「运行中」的卡,这是**故意改掉**的行为。
-    expect(recordBody(container)).toBeNull();
+    /*
+     * 两条规则叠起来的结果,分开说清楚:
+     *  · D3:界面上没有「执行中」这一档 —— 调用没回来就不落行,所以壳里是空的
+     *    (老链路会把它画成一张「运行中」的卡,这是**故意改掉**的行为);
+     *  · B47(用户原话「下拉展开卡片里如果没有工具调用或任何内容,就不显示这个了」):
+     *    跑完之后空着的壳整个不渲染 —— 一行孤零零的「已完成」不告诉任何人任何事。
+     * 这一条原来断言「壳仍然是已完成」,那是 B47 之前的形态。
+     */
+    expect(maybeRecord(container)).toBeNull();
   });
 
-  it('没有 runStatus 的历史消息仍然算「已完成」', () => {
+  it('没有 runStatus 的历史消息按「已完成」处理,于是空壳同样不渲染(B47)', () => {
     const { container } = render(
       <AssistantMessage
         projectKind="prototype"
@@ -94,7 +103,9 @@ describe('AssistantMessage 执行记录', () => {
       />,
     );
 
-    expect(recordHead(container)).toContain('Done');
+    // 缺 `runStatus` 时落回「已完成」,所以走的是 B47 那条丢空壳的路 ——
+    // 反过来说,壳没了本身就是「这一轮被当成跑完了」的证据。
+    expect(maybeRecord(container)).toBeNull();
   });
 
   it('没有 runStatus 的历史消息里有调用报错 → 整轮算「运行失败」', () => {
@@ -139,7 +150,7 @@ describe('AssistantMessage 执行记录', () => {
     expect(bodyText(container)).toContain('source.ts');
   });
 
-  it('一轮里多个调用都没有结果:壳仍是「已完成」,一行都不落(D3)', () => {
+  it('一轮里多个调用都没有结果:一行都不落,空壳也不留(D3 + B47)', () => {
     const { container } = render(
       <AssistantMessage
         projectKind="prototype"
@@ -163,8 +174,7 @@ describe('AssistantMessage 执行记录', () => {
       />,
     );
 
-    expect(recordHead(container)).toContain('Done');
-    expect(recordBody(container)).toBeNull();
+    expect(maybeRecord(container)).toBeNull();
   });
 
   it('同一个 tool_use id 出现两次不折成 ×2', () => {
@@ -278,6 +288,10 @@ describe('AssistantMessage 执行记录', () => {
         }}
         streaming={false}
         projectId="project-1"
+        // 回合状态行**只在最后一轮出**(2026-08-26 产品裁决,用户原话:「应该只有
+        // 最后一轮底部才会显示,之前轮次不要显示,hover 也不显示」)。这一条要断言
+        // 那一行的词,就得把这条消息摆成最后一轮 —— 原来没传,于是整行不渲染。
+        isLast
       />,
     );
 
@@ -299,6 +313,8 @@ describe('AssistantMessage 执行记录', () => {
         }}
         streaming={false}
         projectId="project-1"
+        // 同上:回合状态行只在最后一轮出。
+        isLast
       />,
     );
 
@@ -411,6 +427,7 @@ describe('AssistantMessage 执行记录', () => {
   });
 
   it('壳外的结论带着流式光标;done 之前的叙述留在壳里(D43)', () => {
+    // 注意这一条的名字就是结论:done **之前**的叙述在壳里。
     const { container } = render(
       <AssistantMessage
         projectKind="prototype"
@@ -437,18 +454,20 @@ describe('AssistantMessage 执行记录', () => {
     const prose = container.querySelector('.prose-block[data-stream-cursor="true"]');
     expect(prose?.textContent).toContain('The answer is still streaming.');
     /*
-     * 2026-08-26 裁决:**还没有 todo 时,正文一律在壳外** —— 壳里只装工具调用和 thinking。
-     * 所以 done 之前那句现在也在壳外,只是**另起一段**(标记两侧不粘连)。
-     * 原来它在壳里,那是 D43 的老形态。
+     * 这里曾经断言「两段都在壳外」,依据是 2026-08-26 早些时候那条
+     * 「还没有 todo 时正文一律在壳外」—— **用户当天晚些时候把它推翻了**
+     * (`chat-panel-feedback.md`「被推翻的两条」;原话:「没有 todowrite 时,
+     * 所有工具调用或普通文本或者 thinking,都收拢在展开收起卡片里;当有了 done
+     * 信号之后,输出的平台文本内容才会显示到卡片外面」)。
+     *
+     * 推翻的理由是真机截图指认的坏画面:`ensureShell` 在循环开头就把壳压进了
+     * `blocks`,于是开场白排到了**整张卡之后**,还和结论粘成一段。
+     *
+     * 所以判据只有一个 —— **done 到没到**:之前的进壳,之后的出壳。
      */
-    // 两段都在壳外(裁决:没有 todo 时正文不进壳),壳里只剩工具调用
     const paragraphs = [...container.querySelectorAll('.prose-block')].map((n) => n.textContent ?? '');
-    expect(paragraphs.some((p) => p.includes('Let me check the guard first.'))).toBe(true);
-    expect(bodyText(container)).not.toContain('Let me check the guard first.');
-    /*
-     * ⚠️ 已知未修(记在 `chat-panel-feedback.md` 的 B42):`<done/>` 两侧现在**粘成了一段**。
-     * 两段都在壳外之后,标记本该仍然分段 —— 过程叙述和结论不是一回事。
-     */
+    expect(paragraphs.some((p) => p.includes('Let me check the guard first.'))).toBe(false);
+    expect(bodyText(container)).toContain('Let me check the guard first.');
   });
 
   it('壳跟着 run 走:thinking → 进行中 → 结束收起', () => {

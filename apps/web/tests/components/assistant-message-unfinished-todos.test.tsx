@@ -148,7 +148,7 @@ describe('AssistantMessage unfinished todo state', () => {
     expect(screen.queryByText(/\$0\.0123/)).toBeNull();
   });
 
-  it('leaves unfinished Todo status to the canonical pinned card', () => {
+  it('says on the turn-status row that this turn still owes work', () => {
     render(
       <AssistantMessage
         projectKind="prototype"
@@ -177,9 +177,15 @@ describe('AssistantMessage unfinished todo state', () => {
       />,
     );
 
-    expect(screen.queryByText('Stopped with unfinished work')).toBeNull();
-    expect(screen.queryByText('2 task(s) remain')).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Continue remaining tasks' })).toBeNull();
+    /*
+     * 这一条原来断言三样东西都**不**出现,理由是「归那张常驻的 TodoCard 管」——
+     * 那张卡已经不在了(见 `chat-panel-feedback.md` 的 T7),于是「还欠着活」这件事
+     * 现在由**轮次状态行**自己说,〔继续未完成任务〕也挂在那一行上。
+     *
+     * 按钮要有回调才画得出来,所以这里只钉住那句话:出口本身在
+     * `tests/components/chat/todo-recall.test.tsx` 里验。
+     */
+    expect(screen.getByText('Stopped with unfinished work')).toBeTruthy();
   });
 
   it('does not duplicate an older Todo snapshot inline', () => {
