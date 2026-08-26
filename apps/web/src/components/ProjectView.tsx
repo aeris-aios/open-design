@@ -8343,6 +8343,12 @@ export function ProjectView({
               taskAnalytics: resolvedTaskAnalytics,
             };
             latestAssistantMsg = pinnedAssistant;
+            // 这一行 BYOK 分支历史上漏了。`currentRunId` 是本轮的重连登记簿钥匙:
+            // onError 里几乎所有断线善后都锁在 `if (currentRunId)` 里 —— 通用断线
+            // 的重试计数、次数用尽后去 daemon 问一次终态、以及把这条 run 封进
+            // `completedReattachRunsRef` 不再重连。变量一直是 undefined 的话,
+            // BYOK 下这些一次都不会跑,一条其实已经跑成功的 run 只会停在「失败」上。
+            currentRunId = runId;
             trackedSaveMessage(runConversationId, pinnedAssistant, {
               workspaceContext: projectRunWorkspaceContext,
             });

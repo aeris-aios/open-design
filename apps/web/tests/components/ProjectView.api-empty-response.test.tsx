@@ -44,14 +44,22 @@ vi.mock('../../src/providers/anthropic', () => ({
   streamMessage: vi.fn(),
 }));
 
-vi.mock('../../src/providers/daemon', () => ({
-  fetchChatRunStatus: vi.fn(),
-  listActiveChatRuns: vi.fn().mockResolvedValue([]),
-  listProjectRuns: vi.fn().mockResolvedValue([]),
-  publishDaemonRunFinishedEvent: vi.fn(),
-  reattachDaemonRun: vi.fn(),
-  streamViaDaemon: vi.fn(),
-}));
+// 走 importOriginal:这个 mock 原来是一份**完整替换**,于是模块里的常量
+// (`GENERIC_DAEMON_DISCONNECT_CODE` / `_MESSAGE`)在 mock 下根本不存在 ——
+// 产品代码一旦读到它们就抛,而抛在 onError 中途会把后面的收尾整段吃掉
+// (流式标记不清、会话卡在「忙」)。只替换要打桩的那几个函数,常量原样带过来。
+vi.mock('../../src/providers/daemon', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/providers/daemon')>();
+  return {
+    ...actual,
+    fetchChatRunStatus: vi.fn(),
+    listActiveChatRuns: vi.fn().mockResolvedValue([]),
+    listProjectRuns: vi.fn().mockResolvedValue([]),
+    publishDaemonRunFinishedEvent: vi.fn(),
+    reattachDaemonRun: vi.fn(),
+    streamViaDaemon: vi.fn(),
+  };
+});
 
 vi.mock('../../src/providers/project-events', () => ({
   useProjectFileEvents: vi.fn(),
