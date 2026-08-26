@@ -347,12 +347,12 @@
 
 | # | 事 | 状态 | 关键事实 |
 |---|---|---|---|
-| T1 | **同一个判据有三份,口径不一** | 待做(**已复现**) | `contracts/run-completeness.ts:69` 四个精确 `===`;`web/runtime/todos.ts:127` 同样精确 `===`;`web/runtime/chat/tool-kind.ts:246` 正则**带 `/i`**。消费方:`daemon/server.ts:21`、`web/ToolCard.tsx:13` |
-| T2 | **AMR 把 `todowrite` 改成 `Todowrite`** | 待做(**已复现**) | `acp/updates.ts:438-448` title-case 兜底:`/\bwrite\b/` 因词边界匹配不到 `todowrite` → 首词 title-case。**后果是「一半坏」**:带 `/i` 的正则认得、精确 `===` 的不认 → daemon 的 `endedWithUnfinishedWork` 漏判,而客户端画得出来。九家 ACP runtime 同受影响 |
+| T1 | **同一个判据有三份,口径不一** | ✅ **已完成** —— 三份合并成一个出处:`contracts/run-completeness.ts` 的 `isTodoWriteToolName` 改成大小写不敏感的正则(含 `write_todos` 与 MCP 前缀名),另两处改为 import 转发。红测 `packages/contracts/tests/todo-tool-name.test.ts`(6 条) |
+| T2 | **AMR 把 `todowrite` 改成 `Todowrite`** | ✅ **已完成** —— 治本不靠下游宽容:`acp/updates.ts` 在**进 title 启发式之前**先认 todo 家族并归一成 `TodoWrite`。红测 `apps/daemon/tests/acp-todo-tool-name.test.ts`(4 条,喂 vela 真实帧形状:只有 kind 没有 name)。ACP 全套 80 条绿 |
 | T3 | **召回通路不存在** | 待做 | 历史是 `buildDaemonTranscript` 拼的纯文本,只取 `message.content`;而 `content` 只累加 `kind==='text'`(`db.ts:3060`),**TodoWrite 是 `tool_use`,永远进不了**。21 家无 resume 的 runtime **结构上不可能**知道上一轮有过清单 |
 | T4 | 客户端 `previousTodos` 零调用方 | 待做 | `contract.ts:164` 定义了,没人传。**它是 T3 的下半段,单独接没用** —— agent 不重发,`previous.has()` 根本不会被调用 |
-| T5 | **`isStruck` 的注释写反了**(代码是对的) | 待做 | 规格 `chat-panel-next.md:274-283` 明确「召回 = **恒定划线**,划线与可展开解耦」。`contract.ts:121` 那句 gloss 只描述了 D35 那半条。同一句错注释在 `ExecutionShell.tsx:149` 复制了一遍 |
-| T6 | 测试洞 | 待做 | `build-turn-blocks.test.ts:425` 标题写「仍划线但可展开」,断言里**没有 `isStruck`** —— 规格表里最容易误判的那一格恰好没钉住 |
+| T5 | **`isStruck` 的注释写反了**(代码是对的) | ✅ **已完成** —— 改的是**注释**不是代码。新表述:划线 =「这一条不是本轮新开的活」,三种情况独立(召回 / 作废 / 本轮开出来但没干过)。`ExecutionShell.tsx` 里那句复制的错注释一并改掉 |
+| T6 | 测试洞 | ✅ **已完成** —— `build-turn-blocks.test.ts` 补上「召回 + 本轮继续做 → 既划线又可展开」,规格里最容易误判的那一格现在钉住了 |
 | T7 | 〔继续未完成任务〕是**死按钮** | 待做 | `ProjectView.tsx:8765` 实现完整、一路 prop-drill 到 `AssistantMessage.tsx:566`,**然后没有然后** —— 全仓 `onContinue=` 在 chat 组件里 0 命中。`origin/main` 上也一样死。**它是 agent 不照做时唯一的用户出口**,且不依赖任何 agent 能力 |
 
 ### F-3 「画出来了,没接线」(权威:`run-error-catalog.md` §6.U)
