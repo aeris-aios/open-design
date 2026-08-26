@@ -1642,9 +1642,11 @@ export function ChatPane({
   // **不再把上游原文摊在卡上**(设计原则五)。原文没有丢:它仍旧进
   // `errorDiagnosticText`,收在下面折叠的「诊断原文」里,那段是给工程看的。
   //
-  // 兜底只在「确实有一次失败要说」时接手(`runFailureUi` = 这条助手消息是终态
-  // 失败)。面板级的临时错误(发送失败之类)没有 `runFailureUi`,照旧原样显示,
-  // 也不会因此凭空多出一张报错卡。
+  // 兜底只接手**这一轮自己的原始报错**。两个条件缺一不可:
+  //  · `runFailureUi` —— 这条助手消息确实是终态失败,不然凭空多出一张卡;
+  //  · 没有 `currentGlobalError` —— 面板级那条错误(会话加载失败之类)本来就是
+  //    我们自己写的人话,而且优先级更高(见上面 `rawError` 的取值顺序)。少了这一条,
+  //    「一边是面板错误、一边有条失败的旧运行」时,那句人话会被兜底句顶掉。
   //
   // R9:断线是唯一一条**整张卡都不出**的 —— 流水最后一行的重连行(第 84 格 ·
   // S29)已经在说同一件事,而且给的是对的那颗按钮〔重新连接〕。两块 UI 说一件事、
@@ -1658,7 +1660,7 @@ export function ChatPane({
     ? null
     : runFailureUi?.messageKey
       ? t(runFailureUi.messageKey, { agent: failedAgentLabel, ...runFailureMessageVars })
-      : runFailureUi && rawError
+      : runFailureUi && !currentGlobalError && rawError
         ? t(RUN_FAILURE_FALLBACK_MESSAGE_KEY)
         : rawError;
   const errorDiagnosticText = displayError
