@@ -2035,12 +2035,15 @@ describe('镜像陈列页', () => {
     expect(html('E2E-3')).toContain('data-kind="image"');
 
     /*
-     * 一轮两张壳。`.fold.flat` 是**壳**那一层(抽屉是 `.fold`,不带 `flat`),
-     * 所以数它就等于数壳。84 格的 `renderCell` 只取 `shells[shells.length - 1]`,
-     * 那边**结构上**看不到第二张。
+     * 一轮**一张**壳(2026-08-26 最终裁决:卡片边界由「卡外落过东西」决定,不由清单
+     * 决定;而 TodoWrite 必然在 done 之前,卡外那时还什么都没有)。
+     * `.fold.flat` 是**壳**那一层(抽屉是 `.fold`,不带 `flat`),数它就等于数壳。
+     *
+     * 这一格原本是拿来照「分张」的,裁决之后它照的变成了「不分张」—— 断言跟着改,
+     * 因为它现在守的正是那条裁决:先散活、后清单,前后都在同一张卡里。
      */
     const shells = html('E2E-4').match(/class="fold flat"/g) ?? [];
-    expect(shells, '先散活、后清单应当分出两张壳').toHaveLength(2);
+    expect(shells, '先散活、后清单应当在同一张卡里').toHaveLength(1);
 
     // 失败轮 + 报错卡;`errorCardOwnerId` 命中时消息内那枚错误药丸不出
     expect(html('E2E-5')).toContain('chat-run-error-card');
@@ -2058,24 +2061,26 @@ describe('镜像陈列页', () => {
   });
 
   /**
-   * **84 格摆拍会把第一张壳吞掉** —— 这一条钉的是「为什么需要端到端那一族」。
+   * 裁决之后「一轮一张卡」—— 连带把 `renderCell` 的一个**隐患**也解掉了。
    *
-   * `renderCell` 只取 `shells[shells.length - 1]`(它一格只摆一个实体)。而分张的判据
-   * 宽到「清单之前说过一句话」就成立,所以第 2 格那份夹具其实是**两张壳**,
-   * 开头那句 thinking 在陈列页上从来没出现过 —— 摆拍看到的和产线看到的不是一回事。
-   * 哪天 `renderCell` 改成摆全部壳,这一条会红,那时候把它删掉就是。
+   * `renderCell` 只取 `shells[shells.length - 1]`(它一格只摆一个实体)。在
+   * 「清单一到就分张」的旧规则下,第 2 格那份夹具其实是**两张壳**,开头那句 thinking
+   * 在陈列页上从来没出现过 —— 摆拍看到的和产线看到的不是一回事。
+   * 2026-08-26 最终裁决把分张取消之后,那句 thinking 回到了唯一那张壳里,摆拍才照得全。
+   *
+   * 这一条现在钉的是**裁决本身**:同一份夹具在摆拍和端到端两条路上都必须是一张壳,
+   * 而且那句 thinking 两边都看得见。哪天又冒出第二张壳,这里会红。
    */
-  it('84 格摆拍只摆最后一张壳,第一张连同它那句 thinking 一起看不见', () => {
+  it('先说一句、再出清单:摆拍与端到端都是一张壳,那句 thinking 不再被吞', () => {
     const shellsOf = (events: PersistedAgentEvent[]): number =>
       buildTurnBlocks({ events, runStatus: 'succeeded', nowMs: 31_000 })
         .filter((b) => b.kind === 'shell').length;
     // 第 2 格(gid 2)喂的就是 PLAN_DONE:开头一句 thinking,然后才出清单
-    expect(shellsOf(PLAN_DONE)).toBe(2);
+    expect(shellsOf(PLAN_DONE)).toBe(1);
     const cell2 = CELLS[1] as Cell;
     expect(cell2.gid).toBe(2);
     expect(renderCell(cell2).match(/class="fold flat"/g) ?? []).toHaveLength(1);
-    // 同样是「先说一句、再出清单」,端到端那一族两张都在
-    expect(renderLive(LIVE[0] as LiveCell).match(/class="fold flat"/g) ?? []).toHaveLength(2);
+    expect(renderLive(LIVE[0] as LiveCell).match(/class="fold flat"/g) ?? []).toHaveLength(1);
   });
 
   /**
