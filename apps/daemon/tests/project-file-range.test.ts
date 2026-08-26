@@ -213,6 +213,19 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
           + '<main id="slot"></main></body></html>',
       ),
     );
+    // Tokenizer states the scan has to follow, not just tag text: a
+    // `</template>` inside a nested script is content, and after `<!--` a
+    // nested `<script` puts script data in double-escaped state, where
+    // `</script>` steps back out instead of closing.
+    await writeFile(
+      path.join(dir, 'tokenizer-states.html'),
+      Buffer.from(
+        '<!doctype html><html><head></head><body>'
+          + '<template><script>const a = "</template><body>slip</body>";<\/script></template>'
+          + '<script><!--\nconst open = "<script>";\nconst b = "</script><body>slip</body>";\n//--><\/script>'
+          + '<main id="slot">real</main></body></html>',
+      ),
+    );
     // A raw-text element only closes on `</name` followed by whitespace, `/` or
     // `>`. A longer name that merely starts with it stays character data, so a
     // scan that accepts the prefix resumes inside the author's script and hands
@@ -570,6 +583,18 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
     expect(html).toContain('const doc = "</script-template><body>slip</body>";');
     expect(html).toContain('<textarea id="t"></textarea-note></textarea>');
     expect(injectedAt).toBeGreaterThan(html.indexOf('<main id="slot">'));
+    expect(injectedAt).toBeLessThan(html.lastIndexOf('</body>'));
+  });
+
+  it('injects the URL preview scroll bridge after template and script escape states', async () => {
+    const bridged = await fetch(`${rawUrl('tokenizer-states.html')}?odPreviewBridge=scroll`);
+    expect(bridged.status).toBe(200);
+    const html = await bridged.text();
+    const injectedAt = html.indexOf('data-od-url-scroll-bridge');
+    expect(injectedAt).toBeGreaterThan(-1);
+    expect(html).toContain('const a = "</template><body>slip</body>";');
+    expect(html).toContain('const b = "</script><body>slip</body>";');
+    expect(injectedAt).toBeGreaterThan(html.indexOf('<main id="slot">real</main>'));
     expect(injectedAt).toBeLessThan(html.lastIndexOf('</body>'));
   });
 

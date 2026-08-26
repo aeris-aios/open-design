@@ -1519,17 +1519,95 @@ function endOfTag(html: string, from: number): number {
  * inside a `<script>` — is character data, so resuming there would drop the
  * scan back into the author's string and hand back a boundary from inside it.
  */
+/** tab, LF, FF, space, `/`, `>` — what may follow a tag name in an end tag. */
+function isEndTagBoundary(code: number): boolean {
+  return code === 9 || code === 10 || code === 12 || code === 32 || code === 47 || code === 62;
+}
+
 function findRawTextClose(lowerHtml: string, tagName: string, from: number): number {
+  if (tagName === 'script') return findScriptClose(lowerHtml, from);
   const needle = `</${tagName}`;
   let at = lowerHtml.indexOf(needle, from);
   while (at >= 0) {
-    const next = lowerHtml.charCodeAt(at + needle.length);
-    // tab, LF, FF, space, '/', '>'. NaN past end of input fails every test,
-    // which is correct: an unterminated end tag does not close the element.
-    if (next === 9 || next === 10 || next === 12 || next === 32 || next === 47 || next === 62) return at;
+    // NaN past end of input fails the test, which is correct: an unterminated
+    // end tag does not close the element.
+    if (isEndTagBoundary(lowerHtml.charCodeAt(at + needle.length))) return at;
     at = lowerHtml.indexOf(needle, at + needle.length);
   }
   return -1;
+}
+
+/**
+ * Offset of the `</script` that actually closes a script, or -1.
+ *
+ * Script data has escape states the other raw-text elements do not: after
+ * `<!--` a nested `<script` moves the tokenizer to double-escaped, where
+ * `</script>` steps back out instead of closing. Treating that first
+ * `</script>` as the close resumes the scan inside the author's string.
+ */
+function findScriptClose(lowerHtml: string, from: number): number {
+  let i = from;
+  let escaped = false;
+  let doubleEscaped = false;
+  while (i < lowerHtml.length) {
+    if (!escaped && lowerHtml.startsWith('<!--', i)) { escaped = true; i += 4; continue; }
+    if (escaped && lowerHtml.startsWith('-->', i)) { escaped = false; doubleEscaped = false; i += 3; continue; }
+    if (escaped && !doubleEscaped && lowerHtml.startsWith('<script', i) && isEndTagBoundary(lowerHtml.charCodeAt(i + 7))) {
+      doubleEscaped = true;
+      i += 7;
+      continue;
+    }
+    if (lowerHtml.startsWith('</script', i) && isEndTagBoundary(lowerHtml.charCodeAt(i + 8))) {
+      if (!doubleEscaped) return i;
+      doubleEscaped = false;
+      i += 8;
+      continue;
+    }
+    i += 1;
+  }
+  return -1;
+}
+
+/**
+ * Offset just past the `</template>` that closes the template opened before
+ * `from`, or -1. Counted with the same skip rules the main scan uses: a
+ * `</template>` inside a nested script string is content, and counting it
+ * would end the template early and drop the scan back into author text.
+ */
+function skipTemplateContent(html: string, lowerHtml: string, from: number): number {
+  const tagOpen = /<(\/?)([a-z][a-z0-9]*)/iy;
+  let depth = 1;
+  let i = from;
+  while (i < html.length && depth > 0) {
+    if (html.charCodeAt(i) !== 60 /* < */) { i += 1; continue; }
+    if (html.startsWith('<!--', i)) {
+      const end = html.indexOf('-->', i + 4);
+      if (end < 0) return -1;
+      i = end + 3;
+      continue;
+    }
+    if (html.startsWith('<!', i) || html.startsWith('<?', i)) {
+      const end = html.indexOf('>', i + 2);
+      if (end < 0) return -1;
+      i = end + 1;
+      continue;
+    }
+    tagOpen.lastIndex = i;
+    const open = tagOpen.exec(html);
+    if (!open) { i += 1; continue; }
+    const tagEnd = endOfTag(html, i + open[0].length);
+    if (tagEnd < 0) return -1;
+    const tagName = (open[2] ?? '').toLowerCase();
+    if (!open[1] && (PREVIEW_RAW_TEXT_ELEMENTS as readonly string[]).includes(tagName)) {
+      const contentEnd = findRawTextClose(lowerHtml, tagName, tagEnd + 1);
+      if (contentEnd < 0) return -1;
+      i = contentEnd;
+      continue;
+    }
+    if (tagName === 'template') depth += open[1] ? -1 : 1;
+    i = tagEnd + 1;
+  }
+  return depth === 0 ? i : -1;
 }
 
 function findRealTagOffset(html: string, pattern: RegExp): number {
@@ -1580,15 +1658,9 @@ function findRealTagOffset(html: string, pattern: RegExp): number {
       // Template content is an inert fragment the tree builder keeps out of the
       // document, so a `</body>` inside one is not this document's boundary and
       // an injection placed there would never run.
-      const boundary = /<(\/?)template(?=[\s/>])/gi;
-      boundary.lastIndex = tagEnd + 1;
-      let depth = 1;
-      let next: RegExpExecArray | null;
-      while (depth > 0 && (next = boundary.exec(html)) !== null) {
-        depth += next[1] ? -1 : 1;
-      }
-      if (depth > 0) return -1;
-      i = boundary.lastIndex;
+      const contentEnd = skipTemplateContent(html, lower, tagEnd + 1);
+      if (contentEnd < 0) return -1;
+      i = contentEnd;
       continue;
     }
     i = tagEnd + 1;
