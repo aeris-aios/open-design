@@ -1510,6 +1510,11 @@ function isSelfClosingTag(html: string, from: number, tagEnd: number): boolean {
   return !inUnquotedValue;
 }
 
+/** Lowercase only A–Z, so the result is the same length as the input. */
+function asciiLower(value: string): string {
+  return value.replace(/[A-Z]/g, (c) => c.toLowerCase());
+}
+
 function endOfComment(html: string, from: number): number {
   let i = from + 4;
   if (html.startsWith('>', i)) return i + 1;
@@ -1765,7 +1770,10 @@ function skipForeignContent(html: string, lowerHtml: string, rootName: string, f
 function findRealTagOffset(html: string, pattern: RegExp): number {
   const anchored = new RegExp(pattern.source, `${pattern.flags.replace(/[gy]/g, '')}y`);
   const tagOpen = /<(\/?)([a-z][^\t\n\f \/>]*)/iy;
-  const lower = html.toLowerCase();
+  // ASCII-only, so the shadow stays index-aligned with `html`. A full
+  // toLowerCase() is not length-preserving (U+0130 lowercases to two code
+  // units), and every offset taken from the shadow is used against `html`.
+  const lower = asciiLower(html);
   let i = 0;
   while (i < html.length) {
     if (html.charCodeAt(i) !== 60 /* < */) {
@@ -1843,14 +1851,16 @@ function findRealTagOffset(html: string, pattern: RegExp): number {
  * must never do that to an artifact.
  */
 function prependAfterDoctype(html: string, payload: string): string {
-  const match = /^\s*<!doctype[^>]*>/i.exec(html);
+  // Comments (and whitespace) may legally precede the doctype, and a script
+  // token before it still forces quirks mode — so skip past them too.
+  const match = /^(?:\s|<!--[\s\S]*?-->)*<!doctype[^>]*>/i.exec(html);
   if (!match) return payload + html;
   return html.slice(0, match[0].length) + payload + html.slice(match[0].length);
 }
 
 function injectBeforeBodyClose(html: string, marker: string, injection: string): string {
   if (html.includes(marker)) return html;
-  const bodyCloseIndex = findRealTagOffset(html, /<\/body(?=[\s>])/i);
+  const bodyCloseIndex = findRealTagOffset(html, /<\/body(?=[\t\n\f\r >])/i);
   if (bodyCloseIndex >= 0) {
     return `${html.slice(0, bodyCloseIndex)}${injection}${html.slice(bodyCloseIndex)}`;
   }
@@ -1859,14 +1869,14 @@ function injectBeforeBodyClose(html: string, marker: string, injection: string):
 
 function injectAfterHeadOpen(html: string, marker: string, injection: string): string {
   if (html.includes(marker)) return html;
-  const headOpenIndex = findRealTagOffset(html, /<head(?=[\s/>])/i);
+  const headOpenIndex = findRealTagOffset(html, /<head(?=[\t\n\f\r />])/i);
   if (headOpenIndex >= 0) {
     const openTagEnd = endOfTag(html, headOpenIndex);
     if (openTagEnd >= 0) {
       return `${html.slice(0, openTagEnd + 1)}${injection}${html.slice(openTagEnd + 1)}`;
     }
   }
-  const htmlOpenIndex = findRealTagOffset(html, /<html(?=[\s/>])/i);
+  const htmlOpenIndex = findRealTagOffset(html, /<html(?=[\t\n\f\r />])/i);
   if (htmlOpenIndex >= 0) {
     const openTagEnd = endOfTag(html, htmlOpenIndex);
     if (openTagEnd >= 0) {
@@ -2077,7 +2087,10 @@ function daemonFindRealTitleOffset(html: string, searchLimit: number): number {
  * Exported for unit testing; not part of the public API surface.
  */
 export function daemonSanitizeTitleInDoc(html: string): string {
-  const lower = html.toLowerCase();
+  // ASCII-only, so the shadow stays index-aligned with `html`. A full
+  // toLowerCase() is not length-preserving (U+0130 lowercases to two code
+  // units), and every offset taken from the shadow is used against `html`.
+  const lower = asciiLower(html);
   const bodyStart = lower.indexOf('<body');
   const headEnd = lower.lastIndexOf('</head>', bodyStart >= 0 ? bodyStart - 1 : lower.length - 1);
   const searchLimit = headEnd >= 0
@@ -6346,7 +6359,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
     // (for example `img.src = payload.logo`) on the minted preview scope. A
     // `<base>` an author merely wrote into a string does not govern this
     // document, so it must not suppress containment.
-    if (findRealTagOffset(html, /<base(?=[\s/>])/i) >= 0) return html;
+    if (findRealTagOffset(html, /<base(?=[\t\n\f\r />])/i) >= 0) return html;
     const ownerDir = path.posix.dirname(ownerFilePath);
     const dirSuffix = ownerDir === '.'
       ? ''
@@ -6358,7 +6371,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
     const bridge = buildPreviewBaseHrefBridge({ href: baseHref, expiresAt });
     // Same structural rule as the bridge injectors above: a `<head>` inside a
     // script string is text, not this document's head.
-    const headOpenIndex = findRealTagOffset(html, /<head(?=[\s/>])/i);
+    const headOpenIndex = findRealTagOffset(html, /<head(?=[\t\n\f\r />])/i);
     if (headOpenIndex >= 0) {
       const openTagEnd = endOfTag(html, headOpenIndex);
       if (openTagEnd >= 0) {
