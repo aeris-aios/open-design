@@ -32,7 +32,7 @@ export type FakeAcpHandshakeRuntime = {
   invocationLog: string;
 };
 
-/** Install the daemon's intentionally failing ACP fixture for cross-layer E2E. */
+/** Install the intentionally failing ACP fixture owned by the E2E harness. */
 export async function createFakeAcpHandshakeRuntime(): Promise<FakeAcpHandshakeRuntime> {
   const root = path.join(
     tmpdir(),
@@ -41,7 +41,7 @@ export async function createFakeAcpHandshakeRuntime(): Promise<FakeAcpHandshakeR
   await mkdir(root, { recursive: true });
   const script = path.join(root, 'fake-acp-handshake-cli.mjs');
   await copyFile(
-    fileURLToPath(new URL('../../apps/daemon/tests/fixtures/fake-acp-handshake-cli.mjs', import.meta.url)),
+    fileURLToPath(new URL('../resources/fake-acp-handshake-cli.mjs', import.meta.url)),
     script,
   );
 
