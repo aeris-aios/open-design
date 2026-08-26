@@ -75,6 +75,7 @@ function detectClientType(): 'desktop' | 'web' | 'unknown' {
   if (ua) return 'web';
   return 'unknown';
 }
+import { BackoffController } from '../lib/backoff';
 import { parseSseFrame } from './sse';
 import {
   summarizeArtifactsForTranscript,
@@ -341,6 +342,21 @@ export interface DaemonReconnectState {
  * 免得两边各写一个 5。
  */
 export const DAEMON_STREAM_RECONNECT_LIMIT = 5;
+
+/**
+ * 掉线之后隔多久再试一次 —— 和 `providers/project-events.ts`、`state/projects.ts`
+ * 共用 `lib/backoff.ts` 那支退避原语,这条流以前是唯一漏掉退避的。
+ *
+ * 为什么非等不可,理由不止「别打服务端」:
+ *  · 连接被拒的 fetch 大约 1ms 就 reject。不等的话,5 次预算在同一个 tick 里烧光,
+ *    合上盖子、切一下 Wi-Fi 这种几秒钟就自愈的抖动会被直接判成不可恢复。
+ *  · 交付稿第 82 格那一行「正在重新连接 N/5」是给人读的读数;毫秒内跑完等于没画。
+ *
+ * 上限压在 8s 而不是共用默认的 30s:预算只有 5 次,更高的天花板只会把「放弃」
+ * 推到用户已经走开之后 —— 5 次退避合起来约 9–18s,正好是还愿意等的量级。
+ */
+const DAEMON_STREAM_RECONNECT_BACKOFF_INITIAL_MS = 700;
+const DAEMON_STREAM_RECONNECT_BACKOFF_MAX_MS = 8_000;
 
 export interface DaemonStreamOptions {
   agentId: string;
@@ -1419,6 +1435,12 @@ async function consumeDaemonRun({
    * 为什么要单独记一份而不是直接把 `reconnects` 抛出去:见 DaemonReconnectState。
    */
   let reconnectAttempt = 0;
+  const reconnectBackoff = new BackoffController({
+    initialMs: DAEMON_STREAM_RECONNECT_BACKOFF_INITIAL_MS,
+    maxMs: DAEMON_STREAM_RECONNECT_BACKOFF_MAX_MS,
+    factor: 2,
+    jitter: true,
+  });
   const emitReconnect = (phase: DaemonReconnectState['phase']): void => {
     handlers.onReconnect?.({
       attempt: reconnectAttempt,
@@ -1433,9 +1455,33 @@ async function consumeDaemonRun({
   };
   /** 不再重连中:撤掉那一行、读数归零。从没显示过就什么也不发。 */
   const clearReconnect = (): void => {
+    reconnectBackoff.reset();
     if (reconnectAttempt === 0) return;
     reconnectAttempt = 0;
     emitReconnect('cleared');
+  };
+
+  /**
+   * 睡到下一次重连。取消信号一到就立刻醒 —— 否则用户按了停止,还要陪这一觉睡完
+   * 才看得到反应。
+   */
+  const waitBeforeReconnect = async (): Promise<void> => {
+    const delay = reconnectBackoff.nextDelay();
+    if (!(delay > 0) || cancelSignal?.aborted || signal?.aborted) return;
+    await new Promise<void>((resolve) => {
+      let settled = false;
+      const finish = (): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        cancelSignal?.removeEventListener('abort', finish);
+        signal?.removeEventListener('abort', finish);
+        resolve();
+      };
+      const timer = setTimeout(finish, delay);
+      cancelSignal?.addEventListener('abort', finish, { once: true });
+      signal?.addEventListener('abort', finish, { once: true });
+    });
   };
 
   cancelSignal?.addEventListener('abort', cancelRun, { once: true });
@@ -1460,6 +1506,7 @@ async function consumeDaemonRun({
         if ((err as Error).name === 'AbortError') throw err;
         reconnects += 1;
         noteReconnectAttempt();
+        if (reconnects < DAEMON_STREAM_RECONNECT_LIMIT) await waitBeforeReconnect();
         continue;
       }
 
@@ -1632,6 +1679,10 @@ async function consumeDaemonRun({
       // UI 读数与预算分头算:预算认 keepalive,读数只认运行事件(见 sawRunEvent)。
       if (sawRunEvent) clearReconnect(); else noteReconnectAttempt();
       reconnects = shouldResetReconnects ? 0 : reconnects + 1;
+      if (shouldResetReconnects) reconnectBackoff.reset();
+      else if (endStatus === null && reconnects < DAEMON_STREAM_RECONNECT_LIMIT) {
+        await waitBeforeReconnect();
+      }
     }
 
     // 循环里 break 出来的都是已经拿到终态的路径 —— 那一行该撤了。

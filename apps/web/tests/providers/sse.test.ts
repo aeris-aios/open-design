@@ -2138,31 +2138,41 @@ describe('streamViaDaemon', () => {
   });
 
   it('reports an error when reconnects are exhausted before an end event', async () => {
-    const handlers = createDaemonHandlers();
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      const url = String(input);
-      if (url === '/api/runs') return jsonResponse({ runId: 'run-1' });
-      if (url === '/api/runs/run-1/events') return sseResponse('');
-      throw new Error(`unexpected fetch ${url}`);
-    });
-    vi.stubGlobal('fetch', fetchMock);
+    // 走满 5 次预算的路径现在会**退避**(见 providers/daemon.ts 的
+    // DAEMON_STREAM_RECONNECT_BACKOFF_*),整段要十几秒真实时间。用假时钟推,
+    // 既保住确定性也不让这一条把套件拖慢。
+    vi.useFakeTimers();
+    try {
+      const handlers = createDaemonHandlers();
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url === '/api/runs') return jsonResponse({ runId: 'run-1' });
+        if (url === '/api/runs/run-1/events') return sseResponse('');
+        throw new Error(`unexpected fetch ${url}`);
+      });
+      vi.stubGlobal('fetch', fetchMock);
 
-    await streamViaDaemon({
-      agentId: 'mock',
-      history: [{ id: '1', role: 'user', content: 'hello' }],
-      systemPrompt: '',
-      signal: new AbortController().signal,
-      handlers,
-    });
+      const streaming = streamViaDaemon({
+        agentId: 'mock',
+        history: [{ id: '1', role: 'user', content: 'hello' }],
+        systemPrompt: '',
+        signal: new AbortController().signal,
+        handlers,
+      });
+      await vi.runAllTimersAsync();
+      await streaming;
 
-    expect(fetchMock).not.toHaveBeenCalledWith('/api/runs/run-1/cancel', { method: 'POST' });
-    expect(handlers.onError).toHaveBeenCalledWith(
-      expect.objectContaining({
-        message: 'daemon stream disconnected before run completed',
-        code: 'DAEMON_STREAM_DISCONNECTED',
-      }),
-    );
-    expect(handlers.onDone).not.toHaveBeenCalled();
+      expect(fetchMock).not.toHaveBeenCalledWith('/api/runs/run-1/cancel', { method: 'POST' });
+      expect(handlers.onError).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: 'daemon stream disconnected before run completed',
+          code: 'DAEMON_STREAM_DISCONNECTED',
+        }),
+      );
+      expect(handlers.onDone).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   /*
@@ -2225,78 +2235,98 @@ describe('streamViaDaemon', () => {
   });
 
   it('hands the reconnect row an exhausted phase when the retry budget runs out', async () => {
-    const handlers = createDaemonHandlers();
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      const url = String(input);
-      if (url === '/api/runs') return jsonResponse({ runId: 'run-1' });
-      if (url === '/api/runs/run-1/events') return sseResponse('');
-      throw new Error(`unexpected fetch ${url}`);
-    });
-    vi.stubGlobal('fetch', fetchMock);
+    // 走满 5 次预算的路径现在会**退避**(见 providers/daemon.ts 的
+    // DAEMON_STREAM_RECONNECT_BACKOFF_*),整段要十几秒真实时间。用假时钟推,
+    // 既保住确定性也不让这一条把套件拖慢。
+    vi.useFakeTimers();
+    try {
+      const handlers = createDaemonHandlers();
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url === '/api/runs') return jsonResponse({ runId: 'run-1' });
+        if (url === '/api/runs/run-1/events') return sseResponse('');
+        throw new Error(`unexpected fetch ${url}`);
+      });
+      vi.stubGlobal('fetch', fetchMock);
 
-    await streamViaDaemon({
-      agentId: 'mock',
-      history: [{ id: '1', role: 'user', content: 'hello' }],
-      systemPrompt: '',
-      signal: new AbortController().signal,
-      handlers,
-    });
+      const streaming = streamViaDaemon({
+        agentId: 'mock',
+        history: [{ id: '1', role: 'user', content: 'hello' }],
+        systemPrompt: '',
+        signal: new AbortController().signal,
+        handlers,
+      });
+      await vi.runAllTimersAsync();
+      await streaming;
 
-    const states = handlers.onReconnect.mock.calls.map(([state]) => state);
-    // 5 次尝试走满,最后一格(83)是 5/5,下一条就是「交回给人」(84)
-    expect(states.map((state) => state.attempt)).toEqual([1, 2, 3, 4, 5, 5]);
-    expect(states.at(-1)).toEqual({
-      attempt: DAEMON_STREAM_RECONNECT_LIMIT,
-      max: DAEMON_STREAM_RECONNECT_LIMIT,
-      phase: 'exhausted',
-    });
-    expect(handlers.onError).toHaveBeenCalledWith(
-      expect.objectContaining({ code: 'DAEMON_STREAM_DISCONNECTED' }),
-    );
+      const states = handlers.onReconnect.mock.calls.map(([state]) => state);
+      // 5 次尝试走满,最后一格(83)是 5/5,下一条就是「交回给人」(84)
+      expect(states.map((state) => state.attempt)).toEqual([1, 2, 3, 4, 5, 5]);
+      expect(states.at(-1)).toEqual({
+        attempt: DAEMON_STREAM_RECONNECT_LIMIT,
+        max: DAEMON_STREAM_RECONNECT_LIMIT,
+        phase: 'exhausted',
+      });
+      expect(handlers.onError).toHaveBeenCalledWith(
+        expect.objectContaining({ code: 'DAEMON_STREAM_DISCONNECTED' }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('marks a daemon run failed when the SSE stream closes silently and status is still active', async () => {
-    const handlers = createDaemonHandlers();
-    const onRunStatus = vi.fn();
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      const url = String(input);
-      if (url === '/api/runs') return jsonResponse({ runId: 'run-1' });
-      if (url === '/api/runs/run-1/events') return sseResponse('');
-      if (url === '/api/runs/run-1') {
-        return new Response(
-          JSON.stringify({
-            id: 'run-1',
-            status: 'running',
-            createdAt: 1,
-            updatedAt: 2,
-            exitCode: null,
-            signal: null,
-          }),
-          { status: 200, headers: { 'content-type': 'application/json' } },
-        );
-      }
-      throw new Error(`unexpected fetch ${url}`);
-    });
-    vi.stubGlobal('fetch', fetchMock);
+    // 走满 5 次预算的路径现在会**退避**(见 providers/daemon.ts 的
+    // DAEMON_STREAM_RECONNECT_BACKOFF_*),整段要十几秒真实时间。用假时钟推,
+    // 既保住确定性也不让这一条把套件拖慢。
+    vi.useFakeTimers();
+    try {
+      const handlers = createDaemonHandlers();
+      const onRunStatus = vi.fn();
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url === '/api/runs') return jsonResponse({ runId: 'run-1' });
+        if (url === '/api/runs/run-1/events') return sseResponse('');
+        if (url === '/api/runs/run-1') {
+          return new Response(
+            JSON.stringify({
+              id: 'run-1',
+              status: 'running',
+              createdAt: 1,
+              updatedAt: 2,
+              exitCode: null,
+              signal: null,
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          );
+        }
+        throw new Error(`unexpected fetch ${url}`);
+      });
+      vi.stubGlobal('fetch', fetchMock);
 
-    await streamViaDaemon({
-      agentId: 'mock',
-      history: [{ id: '1', role: 'user', content: 'hello' }],
-      systemPrompt: '',
-      signal: new AbortController().signal,
-      handlers,
-      onRunStatus,
-    });
+      const streaming = streamViaDaemon({
+        agentId: 'mock',
+        history: [{ id: '1', role: 'user', content: 'hello' }],
+        systemPrompt: '',
+        signal: new AbortController().signal,
+        handlers,
+        onRunStatus,
+      });
+      await vi.runAllTimersAsync();
+      await streaming;
 
-    expect(fetchMock.mock.calls.some(([input]) => String(input) === '/api/runs/run-1')).toBe(true);
-    expect(onRunStatus).toHaveBeenCalledWith('failed');
-    expect(handlers.onError).toHaveBeenCalledWith(
-      expect.objectContaining({
-        message: 'daemon stream disconnected before run completed',
-        code: 'DAEMON_STREAM_DISCONNECTED',
-      }),
-    );
-    expect(handlers.onDone).not.toHaveBeenCalled();
+      expect(fetchMock.mock.calls.some(([input]) => String(input) === '/api/runs/run-1')).toBe(true);
+      expect(onRunStatus).toHaveBeenCalledWith('failed');
+      expect(handlers.onError).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: 'daemon stream disconnected before run completed',
+          code: 'DAEMON_STREAM_DISCONNECTED',
+        }),
+      );
+      expect(handlers.onDone).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('includes selected preview comments without requiring visible draft text', async () => {
