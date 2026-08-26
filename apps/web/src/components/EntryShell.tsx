@@ -2127,6 +2127,8 @@ function OnboardingView({
   } | null>(null);
   const cliRefreshPendingTokenRef = useRef<number | null>(null);
   const amrLoginPollCancelledRef = useRef(false);
+  const amrHydratedLoginPollStartedRef = useRef(false);
+  const onboardingMountedRef = useRef(true);
   const amrLoginStartPendingRef = useRef(false);
   const amrLoginCancelRequestedRef = useRef(false);
   const amrAuthAttemptIdRef = useRef<string | null>(null);
@@ -2264,7 +2266,9 @@ function OnboardingView({
         );
 
   useEffect(() => {
+    onboardingMountedRef.current = true;
     return () => {
+      onboardingMountedRef.current = false;
       amrLoginPollCancelledRef.current = true;
       agentRevealTimersRef.current.forEach((timer) => clearTimeout(timer));
       agentRevealTimersRef.current = [];
@@ -2313,6 +2317,21 @@ function OnboardingView({
             setAmrLoginPending(true);
             if (next.authAttemptId) {
               amrAuthAttemptIdRef.current = next.authAttemptId;
+            }
+            if (!amrHydratedLoginPollStartedRef.current) {
+              amrHydratedLoginPollStartedRef.current = true;
+              amrLoginPollCancelledRef.current = false;
+              void pollAmrLoginCompletion()
+                .then((completed) => {
+                  if (completed && onboardingMountedRef.current) {
+                    continueAfterCloudSignIn();
+                  }
+                })
+                .finally(() => {
+                  if (onboardingMountedRef.current) {
+                    setAmrLoginPending(false);
+                  }
+                });
             }
           }
           onAmrLoginStatusChange?.(next);

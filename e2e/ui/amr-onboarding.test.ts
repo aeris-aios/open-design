@@ -35,6 +35,7 @@ type OnboardingConfig = {
 declare global {
   interface Window {
     __amrOnboardingCancelCalls?: number;
+    __amrOnboardingCompleteLogin?: boolean;
     __amrOnboardingDelayNextSignedOutStatus?: boolean;
     __amrOnboardingLoginCalls?: number;
     __amrOnboardingSlowStatusResolved?: boolean;
@@ -390,6 +391,29 @@ test('[P0] onboarding reload restores and cancels an active Cloud login', async 
   await expect.poll(() => page.evaluate(() => window.__amrOnboardingCancelCalls ?? 0)).toBe(1);
   await expect(page.getByRole('button', { name: /Local (coding )?agent/i })).toBeVisible();
   await expect(page.getByRole('button', { name: /Bring Your Own Key/i })).toBeVisible();
+});
+
+test('[P0] onboarding reload resumes an active Cloud login through completion', async ({ page }) => {
+  const config = await wireOnboardingMocks(page, {
+    amrAvailable: true,
+    initialLoggedIn: false,
+    initialLoginInFlight: true,
+    keepAmrLoginIncomplete: true,
+  });
+
+  await seedOnboardingConfig(page, config);
+  await gotoOnboarding(page);
+  await expect(page.getByRole('button', { name: /Cancel sign-in/i })).toBeVisible();
+
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await waitForLoadingToClear(page);
+  await expect(page.getByRole('button', { name: /Cancel sign-in/i })).toBeVisible();
+  await page.evaluate(() => {
+    window.__amrOnboardingCompleteLogin = true;
+  });
+
+  await expectModelSourceChooser(page);
+  await expect(page.getByRole('button', { name: /Cancel sign-in/i })).toHaveCount(0);
 });
 
 // The AMR card + per-runtime model picker on the connect step were removed.
@@ -1064,6 +1088,12 @@ async function wireOnboardingMocks(
         body: JSON.stringify({ error: 'status unavailable' }),
       });
       return;
+    }
+    if (loginInFlight && await page.evaluate(() => (
+      window.__amrOnboardingCompleteLogin === true
+    ))) {
+      loggedIn = true;
+      loginInFlight = false;
     }
     const delayAllStatusMs = options.delayAllStatusMs ?? 0;
     const shouldDelayAllStatuses = delayAllStatusMs > 0;
