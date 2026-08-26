@@ -452,6 +452,11 @@ describe('useProjectWorkspaceScope', () => {
       for (let turn = 0; turn < 10; turn += 1) await Promise.resolve();
     });
     expect(view.result.current.scope).toBeNull();
+    // Retrying must not widen the failure KIND. Consumers read that kind to
+    // decide how much authority the project has -- reporting `unavailable`
+    // here flipped `projectResourceAuthority` from `denied` to `workspace`
+    // mid-materialization and broke the first-open P0.
+    expect(view.result.current.failure).toBe('unsupported');
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(30_000);

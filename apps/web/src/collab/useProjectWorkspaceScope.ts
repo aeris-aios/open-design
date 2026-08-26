@@ -195,28 +195,30 @@ export function projectWorkspaceScopeAuthorizesAmr(
 }
 
 /**
- * Which kind of "no scope" this response is — the answer decides whether the
- * reader ever asks again.
+ * How to read a non-OK scope response: which failure kind the app should see,
+ * and whether asking again can change it.
  *
- * A 404 from this endpoint carries two unrelated meanings and they must not be
- * collapsed. A daemon that never had the route is authoritatively
- * `unsupported`, and polling it forever would be pointless. But
- * `PROJECT_NOT_FOUND` says only that this daemon has no local row for the
- * project YET — the first open of a project pulled from the hub, where the row
- * appears a few seconds later once materialization lands. That is exactly the
- * transient condition `unavailable` already models.
+ * A 404 from this endpoint carries two unrelated meanings. A daemon that never
+ * had the route is authoritatively `unsupported` and asking again is
+ * pointless. But `PROJECT_NOT_FOUND` says only that this daemon has no local
+ * row for the project YET — the first open of a project pulled from the hub,
+ * where the row appears a few seconds later once materialization lands.
  *
- * Treating the second as the first is not a cosmetic misclassification: the
- * scope stays null forever, and every consumer that needs a resolved scope
- * KIND silently stalls with it. Measured on a first open of a team project,
- * the chat pane spun indefinitely because the empty-conversation seed can only
- * act once the scope resolves to personal/unbound/team (OPEND-2283 follow-up).
+ * Both report the same failure KIND, because to every consumer of that kind
+ * the project is equally unusable right now. They differ only in whether the
+ * reader keeps asking. Treating "not yet" as final is not cosmetic: the scope
+ * stays null forever and everything needing a resolved scope kind stalls with
+ * it — measured on a first open, the chat pane spun indefinitely because the
+ * empty-conversation seed can only act once the scope resolves.
  */
 async function classifyScopeFetchFailure(
   response: Response,
-): Promise<'unsupported' | 'forbidden' | 'unavailable'> {
-  if (response.status === 403) return 'forbidden';
-  if (response.status !== 404) return 'unavailable';
+): Promise<{
+  failure: NonNullable<ProjectWorkspaceScopeState['failure']>;
+  retryable: boolean;
+}> {
+  if (response.status === 403) return { failure: 'forbidden', retryable: false };
+  if (response.status !== 404) return { failure: 'unavailable', retryable: true };
   let code: unknown;
   try {
     const body = (await response.json()) as { error?: { code?: unknown } } | null;
@@ -225,12 +227,22 @@ async function classifyScopeFetchFailure(
     // A body-less or non-JSON 404 is the old-daemon shape.
     code = undefined;
   }
-  return code === 'PROJECT_NOT_FOUND' ? 'unavailable' : 'unsupported';
+  return { failure: 'unsupported', retryable: code === 'PROJECT_NOT_FOUND' };
 }
 
 class ProjectWorkspaceScopeFetchError extends Error {
   constructor(
     readonly failure: NonNullable<ProjectWorkspaceScopeState['failure']>,
+    /**
+     * Whether asking again can change the answer. Deliberately independent of
+     * `failure`: the failure kind is what the REST of the app reads to decide
+     * how much authority this project has, so widening a kind just to unlock a
+     * retry silently changes those decisions too. (Reclassifying a
+     * not-yet-materialized project as `unavailable` did exactly that — it
+     * flipped `projectResourceAuthority` from `denied` to `workspace` during
+     * first open.)
+     */
+    readonly retryable: boolean,
   ) {
     super(`project workspace scope ${failure}`);
     this.name = 'ProjectWorkspaceScopeFetchError';
@@ -292,9 +304,8 @@ async function fetchProjectWorkspaceScope(
         },
       );
       if (!response.ok) {
-        throw new ProjectWorkspaceScopeFetchError(
-          await classifyScopeFetchFailure(response),
-        );
+        const { failure, retryable } = await classifyScopeFetchFailure(response);
+        throw new ProjectWorkspaceScopeFetchError(failure, retryable);
       }
       const body = (await response.json()) as ProjectWorkspaceScopeResponse;
       if (!body.scope || !validScopeForProject(body.scope, projectId)) {
@@ -662,13 +673,14 @@ export function useProjectWorkspaceScope(
                 failure,
               };
         });
-        // Only a transient directory/backend outage earns polling. Forbidden
-        // is an authoritative access decision; unsupported is an authoritative
-        // daemon capability decision. Both still revalidate on explicit
-        // identity, page-lifecycle, or workspace invalidation events.
-        if (failure === 'unavailable') {
-          scheduleRetry();
-        }
+        // Poll only what asking again can change. A forbidden access decision
+        // and an old daemon without the route are both final; they still
+        // revalidate on explicit identity, page-lifecycle, or workspace
+        // invalidation events.
+        const retryable = error instanceof ProjectWorkspaceScopeFetchError
+          ? error.retryable
+          : true;
+        if (retryable) scheduleRetry();
       }
     };
 
