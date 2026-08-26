@@ -386,6 +386,19 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
           + '<plaintext>tail</body></html>',
       ),
     );
+    // The in-select insertion mode ignores an `<svg>` / `<math>` start tag
+    // outright, so no foreign element exists and what follows is still
+    // ordinary HTML — here a `<script>`, whose string contains both a
+    // breakout tag and a `</body>`.
+    await writeFile(
+      path.join(dir, 'select-foreign-start.html'),
+      Buffer.from(
+        '<!doctype html><html><head></head><body>'
+          + '<select><svg></select>'
+          + '<script>const x = "<table><\/body>";<\/script>'
+          + '<main id="slot">real</main></body></html>',
+      ),
+    );
     // A leading BOM is the encoding signature and only counts at byte zero, so
     // the no-boundary fallback has to insert after it rather than in front of
     // it — otherwise the doctype stops applying and the artifact silently
@@ -1040,6 +1053,16 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
     expect(injectedAt).toBeGreaterThan(doctypeAt);
     expect(html.indexOf('<?xml')).toBeLessThan(doctypeAt);
     expect(load(html)('[data-od-url-scroll-bridge]').length).toBe(1);
+  });
+
+  it('does not enter foreign content for an svg start tag inside select', async () => {
+    const bridged = await fetch(`${rawUrl('select-foreign-start.html')}?odPreviewBridge=scroll`);
+    expect(bridged.status).toBe(200);
+    const html = await bridged.text();
+    const page = load(html);
+    expect(page('body > [data-od-url-scroll-bridge]').length).toBe(1);
+    expect(page('#slot').text()).toBe('real');
+    expect(html).toContain('const x = "<table></body>";');
   });
 
   it('keeps a leading BOM at byte zero when there is no boundary', async () => {

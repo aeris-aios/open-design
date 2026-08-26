@@ -2029,7 +2029,10 @@ function skipForeignContent(html: string, lowerHtml: string, rootName: string, f
     if (tagEnd < 0) return -1;
     const tagName = (open[2] ?? '').toLowerCase();
     if (open[1]) {
-      // Unwind to the matching open element; a stray end tag closes nothing.
+      // Unwind to the matching open element. An end tag that matches nothing is
+      // walked down to the first HTML-namespace ancestor and reprocessed in the
+      // current insertion mode, where it meets a `special` element and is
+      // ignored — so it closes nothing here either.
       for (let frame = nsStack.length - 1; frame >= 1; frame -= 1) {
         if (nsStack[frame]?.name === tagName) {
           nsStack.length = frame;
@@ -2094,6 +2097,7 @@ function findRealTagOffset(html: string, pattern: RegExp): number {
   // toLowerCase() is not length-preserving (U+0130 lowercases to two code
   // units), and every offset taken from the shadow is used against `html`.
   const lower = asciiLower(html);
+  let selectDepth = 0;
   let i = 0;
   while (i < html.length) {
     if (html.charCodeAt(i) !== 60 /* < */) {
@@ -2144,7 +2148,15 @@ function findRealTagOffset(html: string, pattern: RegExp): number {
       i = contentEnd;
       continue;
     }
-    if (!open[1] && (tagName === 'svg' || tagName === 'math') && !tag.selfClosing) {
+    // `<select>` is the one HTML context this scan has to know about: the
+    // in-select insertion mode *ignores* an `<svg>` / `<math>` start tag
+    // outright, so no foreign element is created and the bytes after it are
+    // still ordinary HTML. Walking them as foreign content is how
+    // `<select><svg></select><script>…` ended up reading a script string as
+    // markup. Everything else about insertion modes stays unmodelled.
+    if (!open[1] && tagName === 'select') selectDepth += 1;
+    else if (open[1] && tagName === 'select' && selectDepth > 0) selectDepth -= 1;
+    if (!open[1] && selectDepth === 0 && (tagName === 'svg' || tagName === 'math') && !tag.selfClosing) {
       const contentEnd = skipForeignContent(html, lower, tagName, tagEnd + 1);
       if (contentEnd < 0) return -1;
       i = contentEnd;
