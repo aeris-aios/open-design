@@ -20,6 +20,7 @@ import { recoverHtmlDocumentFromMarkdownFence, recoverStandaloneHtmlDocument, re
 import { createArtifactParser } from '../artifacts/parser';
 import { useI18n } from '../i18n';
 import {
+  type DaemonReconnectState,
   fetchChatRunStatus,
   GENERIC_DAEMON_DISCONNECT_CODE,
   GENERIC_DAEMON_DISCONNECT_MESSAGE,
@@ -31,6 +32,12 @@ import {
   steerChatRun,
   streamViaDaemon,
 } from '../providers/daemon';
+import {
+  type ChatReconnectSignal,
+  type ChatReconnectView,
+  nextChatReconnectView,
+  reconnectViewForConversation,
+} from '../runtime/chat/reconnect-state';
 import { normalizeCustomReason } from '@open-design/contracts/analytics';
 import {
   deletePreviewComment,
@@ -2570,6 +2577,42 @@ export function ProjectView({
   // Timer handles for pending transient-retry callbacks; cleared on cleanup.
   const transientRetryTimersRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
   const [recoveryTick, setRecoveryTick] = useState(0);
+  /**
+   * 组件 22 · 重连 · S29:流水最后一行此刻该不该有、写几分之几。
+   *
+   * 读数来自传输层的 `onReconnect`(`providers/daemon.ts` 的 `DaemonReconnectState`),
+   * 推演规则全在 `runtime/chat/reconnect-state.ts` —— 包括「恢复后整行消失」
+   * 与「和组件 20 PauseLine 不同时出现」这两条边界。这里只做搬运。
+   */
+  const [reconnectView, setReconnectView] = useState<ChatReconnectView | null>(null);
+  const pushReconnectSignal = useCallback((signal: ChatReconnectSignal) => {
+    setReconnectView((prev) => nextChatReconnectView(prev, signal));
+  }, []);
+  /**
+   * 22-3 那颗〔重新连接〕。
+   *
+   * 语义是**接回同一轮的流**,不是重试 —— 复用已有的重挂通道
+   * (`attachRecoverableRuns` → `reattachDaemonRun`,带 `?after=<lastRunEventId>` 游标),
+   * 所以已经跑出来的东西不会丢,也不会在 daemon 上多起一轮。
+   *
+   * 用尽预算后那条通道被 `genericDisconnectBackoffUntilRef` 压了一段冷却窗口
+   * (给还在跑的 daemon 留喘息),这里是用户明确要求现在就试,所以先撤掉冷却与
+   * 重试计数,再推一拍 `recoveryTick` 把重挂扫描叫醒。
+   *
+   * 按下之后这一行先撤掉:「用尽、交回给人」这句话此刻已经不成立了。要是又断,
+   * 传输层会再从 1/5 报起 —— 计数由它说了算,这里不自己编一个。
+   */
+  const reconnectRunId = reconnectView?.runId ?? null;
+  const handleManualReconnect = useCallback(() => {
+    const runId = reconnectRunId;
+    if (!runId) return;
+    transientFailedRetriesRef.current.delete(runId);
+    genericDisconnectRetriesRef.current.delete(runId);
+    genericDisconnectBackoffUntilRef.current.delete(runId);
+    completedReattachRunsRef.current.delete(runId);
+    setReconnectView((prev) => nextChatReconnectView(prev, { kind: 'dropped', runId }));
+    setRecoveryTick((t) => t + 1);
+  }, [reconnectRunId]);
   const recoveredArtifactMessagesRef = useRef<Set<string>>(new Set());
   const messagesRef = useRef<ChatMessage[]>([]);
   const startingQueuedChatSendIdRef = useRef<string | null>(null);
@@ -5127,6 +5170,16 @@ export function ProjectView({
     genericDisconnectBackoffUntilRef.current = new Map();
   }, [activeConversationId, daemonLive]);
 
+  // 组件 22 · 重连 · S29:换项目 / 离开这一屏,本地就不再跟着那条流了,
+  // 掉线那一行不该跟着走。会话之间的隔离由渲染前的
+  // `reconnectViewForConversation` 负责;这里管的是整屏的收尾。
+  useEffect(
+    () => () => {
+      setReconnectView(null);
+    },
+    [project.id],
+  );
+
   useEffect(() => {
     if (config.mode !== 'daemon' || !daemonLive || !activeConversationId || streaming) return;
     let cancelled = false;
@@ -5631,6 +5684,10 @@ export function ProjectView({
           isActiveRunStatus(message.runStatus)
           || spuriouslyFailedPending
           || recoverableGenericDisconnectFailed;
+        // 组件 22 · 重连 · S29:重挂即将开始 ——「次数用尽、交回给人」这句话此刻
+        // 已经不成立了,先把那一行撤掉。这次重挂的读数从 0 起,断不了就永远不会
+        // 发 `cleared`,留着那一行会在正文重新流进来时挂着一句反话。
+        pushReconnectSignal({ kind: 'dropped', runId });
         void reattachDaemonRun({
           agentId: message.agentId,
           runId,
@@ -5674,6 +5731,19 @@ export function ProjectView({
             },
             onArtifactCount: (count) => {
               daemonArtifactCount = count;
+            },
+            // 组件 22 · 重连 · S29,重挂那条流上的同一份读数。
+            // 会话取被重挂消息自己的 `reattachConversationId`(后台重挂可能发生在
+            // 别的会话上),渲染前再按当前会话过一道,免得串到别人的流水里。
+            onReconnect: (state: DaemonReconnectState) => {
+              pushReconnectSignal({
+                kind: 'transport',
+                runId,
+                conversationId: reattachConversationId,
+                attempt: state.attempt,
+                max: state.max,
+                phase: state.phase,
+              });
             },
             onDone: async () => {
               // A reattached run interrupted by a "send now" still receives a
@@ -6145,6 +6215,8 @@ export function ProjectView({
           },
           onRunStatus: (runStatus) => {
             textBuffer.flush();
+            // 见发送路径同名回调:落终态就把重连那一行让出去。
+            pushReconnectSignal({ kind: 'settled', runId, status: runStatus });
             updateMessageById(
               message.id,
               (prev) => ({
@@ -7377,6 +7449,19 @@ export function ProjectView({
         onArtifactCount: (count: number) => {
           daemonArtifactCount = count;
         },
+        // 组件 22 · 重连 · S29:掉线期间流水最后一行的读数。传输层如实上报,
+        // 该不该显示、显示到几分之几由 reconnect-state 判(它也负责与组件 20 互斥)。
+        onReconnect: (state: DaemonReconnectState) => {
+          if (!currentRunId) return;
+          pushReconnectSignal({
+            kind: 'transport',
+            runId: currentRunId,
+            conversationId: runConversationId,
+            attempt: state.attempt,
+            max: state.max,
+            phase: state.phase,
+          });
+        },
         onToolInputDelta: (id: string, name: string, delta: string) => {
           setLiveToolInput((prev) => ({
             ...prev,
@@ -8049,6 +8134,11 @@ export function ProjectView({
             const endedAt = isTerminalRunStatus(runStatus) ? Date.now() : undefined;
             const runMayFinalize =
               !supersededRunsRef.current.has(controller);
+            // 这一轮落终态,掉线那一行就该让位 —— canceled 交给组件 20(PauseLine),
+            // succeeded 直接消失(不留「已恢复」)。见 reconnect-state 的规则表。
+            if (currentRunId) {
+              pushReconnectSignal({ kind: 'settled', runId: currentRunId, status: runStatus });
+            }
             updateMessageById(
               assistantId,
               (prev) => ({
@@ -8234,6 +8324,10 @@ export function ProjectView({
           onRunStatus: (runStatus) => {
             const endedAt = isTerminalRunStatus(runStatus) ? Date.now() : undefined;
             const runMayFinalize = !supersededRunsRef.current.has(controller);
+            // 见 CLI / AMR 路径同名回调:落终态就把重连那一行让出去。
+            if (currentRunId) {
+              pushReconnectSignal({ kind: 'settled', runId: currentRunId, status: runStatus });
+            }
             updateMessageById(
               assistantId,
               (prev) => ({
@@ -11261,6 +11355,10 @@ export function ProjectView({
               onDiscardAmrAuthRetryContinuation={onDiscardAmrAuthRetryContinuation}
               onResumeRun={handleResumeRun}
               onStop={handleStop}
+              // 组件 22 · 重连 · S29:掉线时流水的最后一行。按当前会话过一道 ——
+              // 后台重挂可能发生在别的会话上,那一行不该串进这一屏。
+              reconnect={reconnectViewForConversation(reconnectView, activeConversationId)}
+              onManualReconnect={handleManualReconnect}
               onRemoveQueuedSend={removeQueuedChatSend}
               onUpdateQueuedSend={updateQueuedChatSend}
               onReorderQueuedSends={reorderCurrentConversationQueuedChatSends}

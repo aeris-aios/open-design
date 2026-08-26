@@ -84,6 +84,8 @@ import { commentTargetDisplayName, commentsToAttachments, simplePositionLabel } 
 import { AssistantMessage, type QuestionFormSubmitHandler } from './AssistantMessage';
 import { chatSeam } from './chat/ChatRoot';
 import { PlanPill } from './chat/PlanPill';
+import { Reconnect } from './chat/Reconnect';
+import type { ChatReconnectView } from '../runtime/chat/reconnect-state';
 import { TodoCard } from './ToolCard';
 import type { BrandBrowserAssistConfirm } from './OdCard';
 import {
@@ -795,6 +797,21 @@ interface Props {
   // scroll-area wrapper keeps it structurally above the variable-height
   // composer instead of guessing a bottom offset from outside ChatPane.
   chatLogTray?: ReactNode;
+  /**
+   * 组件 22 · 重连(第 82–84 格)· S29。掉线期间流水的**最后一行**,`null` = 没掉线。
+   *
+   * 状态由 `runtime/chat/reconnect-state.ts` 推,信号来自传输层的 `onReconnect`;
+   * 这里只负责把它画在该在的位置。恢复后调用方把这个 prop 置回 `null`,整行消失
+   * ——设计稿明说不留「已恢复」。
+   */
+  reconnect?: ChatReconnectView | null;
+  /**
+   * 〔重新连接〕按下去做什么(22-3,预算用尽后那颗按钮)。
+   *
+   * 语义是**接回同一轮的流**(`?after=<lastEventId>` 续上),不是「重试」——
+   * 重试会新建一轮,把已经跑出来的东西丢掉。不传就不出那颗按钮。
+   */
+  onManualReconnect?: () => void;
   // Project header slot. The former standalone chrome header row was removed;
   // its back button, project title (editable) and design-system picker moved
   // into the top of the chat pane. ProjectView owns the project record so it
@@ -1043,6 +1060,8 @@ export function ChatPane({
   onActiveDesignSystemChange,
   onShowToast,
   chatLogTray,
+  reconnect = null,
+  onManualReconnect,
   onBack,
   onCollapse,
   collapseControlLifted,
@@ -3218,8 +3237,30 @@ export function ChatPane({
                     onUpgrade={() => openAmrPlans('chat_upgrade_card')}
                   />
                 ) : null}
-                {/* 「已手动暂停任务」那一行(交付稿第 81 格)。判据见 `userStoppedTurn`。 */}
-                {userStoppedTurn ? (
+                {/*
+                 * 流水最后一行,三者**互斥**,顺序即优先级。
+                 *
+                 * 组件 20(暂停)自己的注释把这条边界写死了:「断线不走这一行 ——
+                 * 那由组件 22 · 重连全程接管。掉线时调用方渲染 `Reconnect`,
+                 * 不渲染这一行;**两者不同时出现是调用方的接线约束**」。
+                 * 所以重连排在前面,`userStoppedTurn` 那一支要显式让位 ——
+                 * 靠两个 `? :` 各判各的,迟早会同时出现。
+                 *
+                 * 组件 22(重连,第 82–84 格 · S29):产品裁决用设计稿现有的设计,
+                 * 位置在**会话中最后一行**。`reconnect` 为空就整行不在 ——
+                 * 「恢复后自动消失」是这样成立的,不是靠再画一句「已恢复」。
+                 */}
+                {reconnect ? (
+                  <Reconnect
+                    attempt={reconnect.attempt}
+                    max={reconnect.max}
+                    exhausted={reconnect.exhausted}
+                    onReconnect={onManualReconnect}
+                  />
+                ) : userStoppedTurn ? (
+                  /* 「已手动暂停任务」那一行(交付稿第 81 格)。判据见 `userStoppedTurn`;
+                     写在 `reconnect` 的 else 分支里,而不是另起一个 `? :` —— 这样
+                     「两者不同时出现」由结构保证,不靠两处判据碰巧不重叠。 */
                   <PauseLine
                     cancelOrigin="user_stop"
                     remainingSteps={userStoppedTurn.remainingSteps}
