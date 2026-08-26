@@ -2,8 +2,8 @@
  * @module @open-design/sidecar
  *
  * Public boundary for sidecar clients and server-side process atomics. Transport,
- * endpoint derivation, and identity persistence are deliberately private package
- * details; callers share only the five-field argv stamp and these operations.
+ * endpoint derivation, and OS-visible identity are deliberately private package
+ * details; callers share only the five-field resource identity and these operations.
  */
 
 export type {

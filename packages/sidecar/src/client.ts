@@ -2,9 +2,11 @@ import { createJsonIpcServer, requestJsonIpc } from "./json-ipc.js";
 import {
   isCurrentSidecarLauncher,
   normalizeSidecarStamp,
-  readCurrentSidecarStamp,
+  readSupervisedSidecarContext,
   resolvePrivateIpcPath,
+  SIDECAR_SUPERVISED_CONTEXT_ENV,
   type SidecarStamp,
+  type SupervisedSidecarContext,
 } from "./stamp.js";
 
 const RESOURCES_ENV = "OD_SIDECAR_RESOURCES";
@@ -13,7 +15,6 @@ const CONTROL_STOP = "sidecar:stop";
 const CONTROL_DESCRIBE = "sidecar:describe";
 const BUSINESS_INVOKE = "sidecar:invoke";
 const INHERITED_ENDPOINT_ENV = "OD_SIDECAR_CLIENT_ENDPOINT";
-export const SIDECAR_GENERATION_PID_ENV = "OD_SIDECAR_GENERATION_PID";
 export const SIDECAR_SUPERVISOR_TARGET_ENV = "OD_SIDECAR_SUPERVISOR_TARGET";
 
 export type SidecarResources = Readonly<{
@@ -38,7 +39,7 @@ export function prepareSidecarLaunchEnvironment(
     }),
   };
   delete launchEnv[INHERITED_ENDPOINT_ENV];
-  delete launchEnv[SIDECAR_GENERATION_PID_ENV];
+  delete launchEnv[SIDECAR_SUPERVISED_CONTEXT_ENV];
   delete launchEnv[SIDECAR_SUPERVISOR_TARGET_ENV];
   return launchEnv;
 }
@@ -77,7 +78,7 @@ type ControlEnvelope =
 
 export function normalizeSidecarLaunchResources(input: unknown): Omit<SidecarResources, "pid"> {
   if (typeof input !== "object" || input == null || Array.isArray(input)) {
-    throw new Error(`${RESOURCES_ENV} must contain a resource object`);
+    throw new Error("sidecar launch resources must contain a resource object");
   }
   const value = input as Record<string, unknown>;
   if (typeof value.dataRoot !== "string" || value.dataRoot.length === 0) {
@@ -108,13 +109,9 @@ export function readSidecarLaunchResources(env: NodeJS.ProcessEnv = process.env)
   }
 }
 
-function readCurrentResources(): SidecarResources {
-  const resources = readSidecarLaunchResources();
-  const generationPid = Number(process.env[SIDECAR_GENERATION_PID_ENV] ?? process.pid);
-  if (!Number.isSafeInteger(generationPid) || generationPid <= 0) {
-    throw new Error(`${SIDECAR_GENERATION_PID_ENV} must be a positive safe integer`);
-  }
-  return Object.freeze({ ...resources, pid: generationPid });
+function readCurrentResources(context: SupervisedSidecarContext): SidecarResources {
+  const resources = normalizeSidecarLaunchResources(context.resources);
+  return Object.freeze({ ...resources, pid: context.generationPid });
 }
 
 function assertEnvelope(message: unknown): InvokeEnvelope | ControlEnvelope {
@@ -153,14 +150,16 @@ export class SidecarClient<TRuntime> {
   #runtime: TRuntime | null = null;
   #startPromise: Promise<void> | null = null;
   #stopPromise: Promise<void> | null = null;
-  #ownerTimer: NodeJS.Timeout | null = null;
+  #supervisorTimer: NodeJS.Timeout | null = null;
   readonly #signalHandler = () => { this.#stopAndExit(); };
   #resolveStopped!: () => void;
   readonly #stopped = new Promise<void>((resolve) => { this.#resolveStopped = resolve; });
 
   constructor(options: SidecarClientOptions<TRuntime>) {
-    this.stamp = readCurrentSidecarStamp();
-    this.resources = readCurrentResources();
+    const context = readSupervisedSidecarContext();
+    if (context == null) throw new Error("SidecarFactory.create() requires a supervised sidecar context");
+    this.stamp = context.stamp;
+    this.resources = readCurrentResources(context);
     this.#handlers = options.handlers ?? {};
     this.#lifecycle = options.lifecycle;
   }
@@ -217,22 +216,19 @@ export class SidecarClient<TRuntime> {
       runtimeStarted = true;
       this.#runtime = runtime;
       for (const signal of ["SIGINT", "SIGTERM"] as const) process.on(signal, this.#signalHandler);
-      // Supervised generations delegate owner liveness to the durable process
-      // root, which signals this client for graceful lifecycle shutdown and
-      // force-retires it if necessary. Direct registered processes retain the
-      // compatibility monitor because they have no external watchdog.
-      if (this.resources.ownerPid != null && process.env[SIDECAR_GENERATION_PID_ENV] == null) {
-        this.#ownerTimer = setInterval(() => {
-          try {
-            process.kill(this.resources.ownerPid as number, 0);
-          } catch {
-            if (this.#ownerTimer != null) clearInterval(this.#ownerTimer);
-            this.#ownerTimer = null;
-            this.#stopAndExit();
-          }
-        }, 1_000);
-        this.#ownerTimer.unref();
-      }
+      // The supervisor is the durable generation root. If it disappears
+      // unexpectedly, the inner runtime quick-fails instead of surviving as
+      // an ownerless process whose argv may no longer expose any identity.
+      this.#supervisorTimer = setInterval(() => {
+        try {
+          process.kill(this.resources.pid, 0);
+        } catch {
+          if (this.#supervisorTimer != null) clearInterval(this.#supervisorTimer);
+          this.#supervisorTimer = null;
+          this.#stopAndExit();
+        }
+      }, 1_000);
+      this.#supervisorTimer.unref();
       this.#publishEndpoint();
     } catch (error) {
       this.#runtime = null;
@@ -267,8 +263,8 @@ export class SidecarClient<TRuntime> {
     try {
       await this.#startPromise?.catch(() => undefined);
       for (const signal of ["SIGINT", "SIGTERM"] as const) process.off(signal, this.#signalHandler);
-      if (this.#ownerTimer != null) clearInterval(this.#ownerTimer);
-      this.#ownerTimer = null;
+      if (this.#supervisorTimer != null) clearInterval(this.#supervisorTimer);
+      this.#supervisorTimer = null;
       await this.#ipcServer?.close();
       this.#ipcServer = null;
       if (this.#runtime != null) await this.#lifecycle.stop(this.#runtime);

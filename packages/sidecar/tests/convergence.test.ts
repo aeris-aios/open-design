@@ -32,8 +32,8 @@ import { collectSidecarGenerationPids } from "../src/process-tree.js";
 import { resolvePrivateIpcPath } from "../src/stamp.js";
 
 const originalArgv = [...process.argv];
-const originalResources = process.env.OD_SIDECAR_RESOURCES;
 const originalEndpoint = process.env.OD_SIDECAR_CLIENT_ENDPOINT;
+const originalSupervisedContext = process.env.OD_SIDECAR_SUPERVISED_CONTEXT;
 const FIXTURE_READY_TIMEOUT_MS = 10_000;
 
 const stamp: SidecarStamp = {
@@ -50,20 +50,20 @@ function installCurrentProcess(stampValue: SidecarStamp, resources = {
   port: 0,
   runtimeRoot: "/tmp/open-design-test-runtime",
 }): void {
-  process.argv = [
-    process.execPath,
-    "/tmp/sidecar-entry.js",
-    ...SIDECAR_STAMP_FIELDS.map((field) => `${SIDECAR_STAMP_FLAGS[field]}=${stampValue[field]}`),
-  ];
-  process.env.OD_SIDECAR_RESOURCES = JSON.stringify(resources);
+  process.argv = [process.execPath, "/tmp/sidecar-entry.js"];
+  process.env.OD_SIDECAR_SUPERVISED_CONTEXT = JSON.stringify({
+    generationPid: process.pid,
+    resources,
+    stamp: stampValue,
+  });
 }
 
 afterEach(() => {
   process.argv = [...originalArgv];
-  if (originalResources == null) delete process.env.OD_SIDECAR_RESOURCES;
-  else process.env.OD_SIDECAR_RESOURCES = originalResources;
   if (originalEndpoint == null) delete process.env.OD_SIDECAR_CLIENT_ENDPOINT;
   else process.env.OD_SIDECAR_CLIENT_ENDPOINT = originalEndpoint;
+  if (originalSupervisedContext == null) delete process.env.OD_SIDECAR_SUPERVISED_CONTEXT;
+  else process.env.OD_SIDECAR_SUPERVISED_CONTEXT = originalSupervisedContext;
 });
 
 describe("five-field argv identity", () => {
@@ -73,25 +73,32 @@ describe("five-field argv identity", () => {
   });
 
   it("reads the complete stamp internally from current argv", () => {
-    installCurrentProcess(stamp);
+    delete process.env.OD_SIDECAR_SUPERVISED_CONTEXT;
+    process.argv = [
+      process.execPath,
+      "/tmp/sidecar-entry.js",
+      ...SIDECAR_STAMP_FIELDS.map((field) => `${SIDECAR_STAMP_FLAGS[field]}=${stamp[field]}`),
+    ];
     expect(readCurrentSidecarStamp()).toEqual(stamp);
 
     process.argv = process.argv.filter((argument) => !argument.startsWith(`${SIDECAR_STAMP_FLAGS.channel}=`));
     expect(() => readCurrentSidecarStamp()).toThrow(/five-field sidecar argv stamp/);
   });
 
-  it("refuses to fake registration by mutating an unstamped process argv", () => {
+  it("refuses to register an unsupervised business process", () => {
+    delete process.env.OD_SIDECAR_SUPERVISED_CONTEXT;
     process.argv = [process.execPath, "/tmp/packaged-entry.js"];
     expect(() => registerSidecarProcess(stamp, {
       dataRoot: "/tmp/data",
       ownerPid: null,
       port: 0,
       runtimeRoot: "/tmp/runtime",
-    })).toThrow("current process is missing its sidecar argv stamp");
+    })).toThrow("current process is missing its supervised sidecar context");
     expect(process.argv).toEqual([process.execPath, "/tmp/packaged-entry.js"]);
   });
 
   it("bootstraps an unstamped root through the launch atomic", async () => {
+    delete process.env.OD_SIDECAR_SUPERVISED_CONTEXT;
     process.argv = [process.execPath, "/tmp/packaged-entry.js", "--headless"];
     const launch = vi.fn(async () => ({ pid: 4321 }));
     const resources = { dataRoot: "/tmp/data", ownerPid: null, port: 0, runtimeRoot: "/tmp/runtime" };
@@ -104,6 +111,19 @@ describe("five-field argv identity", () => {
       stamp,
     }));
     expect(waitUntilReady).toHaveBeenCalledWith(stamp, 4321, 90_000);
+  });
+
+  it("enters server lifecycle from supervisor context without relaunching", async () => {
+    installCurrentProcess(stamp);
+    const launch = vi.fn(async () => ({ pid: 4321 }));
+    const resources = { dataRoot: "/tmp/final-data", ownerPid: null, port: 4173, runtimeRoot: "/tmp/final-runtime" };
+
+    await expect(bootstrapSidecarProcess(stamp, resources, { launch })).resolves.toBe(false);
+
+    expect(launch).not.toHaveBeenCalled();
+    expect(JSON.parse(process.env.OD_SIDECAR_SUPERVISED_CONTEXT ?? "null")?.resources).toEqual(resources);
+    expect(readCurrentSidecarStamp()).toEqual(stamp);
+    expect(process.argv).toEqual([process.execPath, "/tmp/sidecar-entry.js"]);
   });
 
   it("rejects partial matching and derived identity fields", () => {
@@ -120,7 +140,7 @@ describe("sidecar generation process trees", () => {
       .join(" ");
     const processes = [
       { command: `node supervisor ${stampArgs(stamp)}`, pid: 10, ppid: 1 },
-      { command: `node target ${stampArgs(stamp)}`, pid: 11, ppid: 10 },
+      { command: "node target", pid: 11, ppid: 10 },
       { command: "next-server", pid: 12, ppid: 11 },
       { command: `node supervisor ${stampArgs(nestedStamp)}`, pid: 20, ppid: 11 },
       { command: `node target ${stampArgs(nestedStamp)}`, pid: 21, ppid: 20 },
@@ -647,18 +667,16 @@ describe("server-side atomic operations", () => {
         resources: { dataRoot: "/tmp/open-design-child", ownerPid: null, port: 0, runtimeRoot: "/tmp/open-design-child-runtime" },
         stamp: childStamp,
       });
-      let captured: { endpoint: string | null; resources: string | null } | null = null;
+      let captured: { argv: string[]; endpoint: string | null; resources: string | null } | null = null;
       for (let attempt = 0; attempt < 50 && captured == null; attempt += 1) {
         captured = await readFile(capturePath, "utf8").then((value) => JSON.parse(value)).catch(() => null);
         if (captured == null) await new Promise((resolveWait) => setTimeout(resolveWait, 20));
       }
       expect(captured?.endpoint).toBeNull();
-      expect(JSON.parse(captured?.resources ?? "null")).toEqual({
-        dataRoot: "/tmp/open-design-child",
-        ownerPid: null,
-        port: 0,
-        runtimeRoot: "/tmp/open-design-child-runtime",
-      });
+      expect(captured?.resources).toBeNull();
+      for (const flag of Object.values(SIDECAR_STAMP_FLAGS)) {
+        expect(captured?.argv.some((argument) => argument.startsWith(`${flag}=`))).toBe(false);
+      }
     } finally {
       await stopSidecar(childStamp, { killGraceMs: 2_000, termGraceMs: 0 }).catch(() => undefined);
       await rm(root, { force: true, recursive: true });
@@ -853,6 +871,95 @@ describe("server-side atomic operations", () => {
     }
   }, process.platform === "win32" ? 30_000 : 15_000);
 
+  it("stops an ownerless target after it rewrites its visible argv", async () => {
+    const fixture = fileURLToPath(new URL("./fixtures/renamed-child.ts", import.meta.url));
+    const root = await mkdtemp(join(tmpdir(), "open-design-owner-renamed-"));
+    const readyPath = join(root, "ready.json");
+    const owner = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+    if (owner.pid == null) throw new Error("owner fixture has no pid");
+    const ownerStamp = { ...stamp, app: "web", namespace: `owner-renamed-${process.pid}` };
+    const spawned = await spawnSidecar({
+      args: [fixture],
+      command: process.execPath,
+      env: { ...process.env, OD_TEST_SIDECAR_READY: readyPath },
+      resources: {
+        dataRoot: join(root, "data"),
+        ownerPid: owner.pid,
+        port: 0,
+        runtimeRoot: join(root, "runtime"),
+      },
+      stamp: ownerStamp,
+    });
+    let runtimePid: number | null = null;
+    try {
+      await vi.waitFor(async () => {
+        const ready = await readFile(readyPath, "utf8").then((value) => JSON.parse(value)).catch(() => null);
+        runtimePid = Number(ready?.runtimePid);
+        expect(ready?.generationPid).toBe(spawned.process.pid);
+        expect(runtimePid).toBeGreaterThan(0);
+        const runtime = (await captureProcessSnapshot()).find(({ pid }) => pid === runtimePid);
+        expect(runtime?.command).toContain("next-server");
+      }, { interval: 100, timeout: FIXTURE_READY_TIMEOUT_MS });
+      const renamedRuntimePid = runtimePid;
+      if (renamedRuntimePid == null) throw new Error("renamed target did not report its pid");
+
+      owner.kill("SIGKILL");
+
+      await expect(waitForProcessExit(spawned.process.pid, 9_000)).resolves.toBe(true);
+      await expect(waitForProcessExit(renamedRuntimePid, 2_000)).resolves.toBe(true);
+    } finally {
+      try { owner.kill("SIGKILL"); } catch {}
+      if (runtimePid != null) {
+        try { process.kill(runtimePid, "SIGKILL"); } catch {}
+      }
+      await spawned.stop({ killGraceMs: 2_000, termGraceMs: 0 }).catch(() => undefined);
+      await stopSidecar(ownerStamp, { killGraceMs: 2_000, termGraceMs: 0 }).catch(() => undefined);
+      await rm(root, { force: true, recursive: true });
+    }
+  }, process.platform === "win32" ? 30_000 : 15_000);
+
+  it("quick-fails a managed target when its supervisor disappears", async () => {
+    const fixture = fileURLToPath(new URL("./fixtures/managed-child.ts", import.meta.url));
+    const root = await mkdtemp(join(tmpdir(), "open-design-supervisor-death-"));
+    const supervisedStamp = { ...stamp, namespace: `supervisor-death-${process.pid}` };
+    const spawned = await spawnSidecar({
+      args: ["--import", "tsx", fixture],
+      command: process.execPath,
+      resources: {
+        dataRoot: join(root, "data"),
+        ownerPid: null,
+        port: 0,
+        runtimeRoot: join(root, "runtime"),
+      },
+      stamp: supervisedStamp,
+    });
+    let runtimePid: number | null = null;
+    try {
+      await vi.waitFor(async () => {
+        const status = await getSidecarStatus<{ pid: number; port: number }>(supervisedStamp);
+        expect(status.pid).toBe(spawned.process.pid);
+        expect(status.port).toBeGreaterThan(0);
+        runtimePid = (await captureProcessSnapshot())
+          .find(({ ppid }) => ppid === spawned.process.pid)?.pid ?? null;
+        expect(runtimePid).toBeGreaterThan(0);
+      }, { interval: 100, timeout: FIXTURE_READY_TIMEOUT_MS });
+      const managedRuntimePid = runtimePid;
+      if (managedRuntimePid == null) throw new Error("managed target was not discovered");
+
+      process.kill(spawned.process.pid, "SIGKILL");
+
+      await expect(waitForProcessExit(spawned.process.pid, 2_000)).resolves.toBe(true);
+      await expect(waitForProcessExit(managedRuntimePid, 4_000)).resolves.toBe(true);
+    } finally {
+      if (runtimePid != null) {
+        try { process.kill(runtimePid, "SIGKILL"); } catch {}
+      }
+      try { process.kill(spawned.process.pid, "SIGKILL"); } catch {}
+      await stopSidecar(supervisedStamp, { killGraceMs: 2_000, termGraceMs: 0 }).catch(() => undefined);
+      await rm(root, { force: true, recursive: true });
+    }
+  }, process.platform === "win32" ? 30_000 : 15_000);
+
   it("retires fenced descendants when an ownerless target exits on SIGTERM", async () => {
     const fixture = fileURLToPath(new URL("./fixtures/orphaning-sidecar.ts", import.meta.url));
     const root = await mkdtemp(join(tmpdir(), "open-design-owner-orphan-"));
@@ -948,31 +1055,27 @@ describe("server-side atomic operations", () => {
     };
     const old = await spawnSidecar({ args: [fixture], command: process.execPath, resources, stamp: replacementStamp });
     const oldPid = old.process.pid;
-    let replacement: { pid: number } | null = null;
+    let replacement: Awaited<ReturnType<typeof spawnSidecar>> | null = null;
     try {
       await vi.waitFor(async () => {
         expect((await findSidecarProcesses(replacementStamp)).map(({ pid }) => pid)).toContain(oldPid);
       }, { interval: 100, timeout: FIXTURE_READY_TIMEOUT_MS });
       const stopping = old.stop({ killGraceMs: 2_000, termGraceMs: 300 });
       await new Promise((resolveWait) => setTimeout(resolveWait, 100));
-      replacement = await launchSidecar({ args: [fixture], command: process.execPath, resources, stamp: replacementStamp });
+      replacement = await spawnSidecar({ args: [fixture], command: process.execPath, resources, stamp: replacementStamp });
       await vi.waitFor(async () => {
-        expect((await findSidecarProcesses(replacementStamp)).map(({ pid }) => pid)).toContain(replacement?.pid);
+        expect((await findSidecarProcesses(replacementStamp)).map(({ pid }) => pid)).toContain(replacement?.process.pid);
       }, { interval: 100, timeout: FIXTURE_READY_TIMEOUT_MS });
 
       const result = await stopping;
       expect(result.matchedPids).toContain(oldPid);
-      expect(result.matchedPids).not.toContain(replacement.pid);
-      expect(result.forcedPids).not.toContain(replacement.pid);
-      expect((await findSidecarProcesses(replacementStamp)).map(({ pid }) => pid)).toContain(replacement.pid);
+      expect(result.matchedPids).not.toContain(replacement.process.pid);
+      expect(result.forcedPids).not.toContain(replacement.process.pid);
+      expect((await findSidecarProcesses(replacementStamp)).map(({ pid }) => pid)).toContain(replacement.process.pid);
     } finally {
-      try { process.kill(oldPid, "SIGKILL"); } catch {}
-      if (replacement != null) {
-        try { process.kill(replacement.pid, "SIGKILL"); } catch {}
-      }
       await Promise.all([
-        waitForProcessExit(oldPid, 2_000),
-        replacement == null ? Promise.resolve(true) : waitForProcessExit(replacement.pid, 2_000),
+        old.stop({ killGraceMs: 2_000, termGraceMs: 0 }).catch(() => undefined),
+        replacement?.stop({ killGraceMs: 2_000, termGraceMs: 0 }).catch(() => undefined),
       ]);
     }
   }, 10_000);
@@ -1058,7 +1161,7 @@ describe("server-side atomic operations", () => {
       resources,
       stamp: renamedStamp,
     });
-    let replacement: { pid: number } | null = null;
+    let replacement: Awaited<ReturnType<typeof spawnSidecar>> | null = null;
 
     try {
       let ready!: { generationPid: number; runtimePid: number };
@@ -1070,30 +1173,28 @@ describe("server-side atomic operations", () => {
       await expect(findSidecarProcesses(renamedStamp)).resolves.toEqual([
         expect.objectContaining({ pid: spawned.process.pid }),
       ]);
-      replacement = await launchSidecar({
+      replacement = await spawnSidecar({
         args: [fileURLToPath(new URL("./fixtures/stamped-child.ts", import.meta.url))],
         command: process.execPath,
         resources,
         stamp: renamedStamp,
       });
       await vi.waitFor(async () => {
-        expect((await findSidecarProcesses(renamedStamp)).map(({ pid }) => pid)).toContain(replacement?.pid);
+        expect((await findSidecarProcesses(renamedStamp)).map(({ pid }) => pid)).toContain(replacement?.process.pid);
       }, { timeout: FIXTURE_READY_TIMEOUT_MS });
 
       const result = await spawned.stop({ killGraceMs: 2_000, termGraceMs: 0 });
 
       expect(result.alreadyStopped).toBe(false);
       expect(result.matchedPids).toContain(spawned.process.pid);
-      expect(result.matchedPids).not.toContain(replacement.pid);
+      expect(result.matchedPids).not.toContain(replacement.process.pid);
       await expect(waitForProcessExit(spawned.process.pid, 2_000)).resolves.toBe(true);
-      expect((await findSidecarProcesses(renamedStamp)).map(({ pid }) => pid)).toContain(replacement.pid);
+      expect((await findSidecarProcesses(renamedStamp)).map(({ pid }) => pid)).toContain(replacement.process.pid);
     } finally {
-      try { process.kill(spawned.process.pid, "SIGKILL"); } catch {}
-      if (replacement != null) {
-        try { process.kill(replacement.pid, "SIGKILL"); } catch {}
-      }
-      await waitForProcessExit(spawned.process.pid, 2_000);
-      if (replacement != null) await waitForProcessExit(replacement.pid, 2_000);
+      await Promise.all([
+        spawned.stop({ killGraceMs: 2_000, termGraceMs: 0 }).catch(() => undefined),
+        replacement?.stop({ killGraceMs: 2_000, termGraceMs: 0 }).catch(() => undefined),
+      ]);
       await rm(root, { force: true, recursive: true });
     }
   }, 20_000);

@@ -8,8 +8,6 @@ import path from 'node:path';
 import url from 'node:url';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import {
-  SIDECAR_STAMP_FIELDS,
-  SIDECAR_STAMP_FLAGS,
   SidecarFactory,
   type SidecarClient,
   type SidecarStamp,
@@ -201,8 +199,7 @@ describe('Phase 2C CLI wrappers', () => {
     setDesktopAuthSecret(secret);
 
     try {
-      const originalArgv = process.argv;
-      const originalResources = process.env.OD_SIDECAR_RESOURCES;
+      const originalSupervisedContext = process.env.OD_SIDECAR_SUPERVISED_CONTEXT;
       const stamp: SidecarStamp = {
         app: APP_KEYS.DAEMON,
         channel: 'local',
@@ -210,15 +207,16 @@ describe('Phase 2C CLI wrappers', () => {
         namespace: `cli-phase2c-${process.pid}-${Date.now()}`,
         source: 'daemon-test',
       };
-      process.argv = [
-        process.execPath,
-        ...SIDECAR_STAMP_FIELDS.map((field) => `${SIDECAR_STAMP_FLAGS[field]}=${stamp[field]}`),
-      ];
-      process.env.OD_SIDECAR_RESOURCES = JSON.stringify({
+      const resources = {
         dataRoot: makeFolder(),
         ownerPid: null,
         port: 0,
         runtimeRoot: makeFolder(),
+      };
+      process.env.OD_SIDECAR_SUPERVISED_CONTEXT = JSON.stringify({
+        generationPid: process.pid,
+        resources,
+        stamp,
       });
       const sidecar = SidecarFactory.create({
         handlers: {
@@ -234,9 +232,8 @@ describe('Phase 2C CLI wrappers', () => {
           async stop() {},
         },
       });
-      process.argv = originalArgv;
-      if (originalResources == null) delete process.env.OD_SIDECAR_RESOURCES;
-      else process.env.OD_SIDECAR_RESOURCES = originalResources;
+      if (originalSupervisedContext == null) delete process.env.OD_SIDECAR_SUPERVISED_CONTEXT;
+      else process.env.OD_SIDECAR_SUPERVISED_CONTEXT = originalSupervisedContext;
       await sidecar.start();
       sidecarClients.push(sidecar);
 

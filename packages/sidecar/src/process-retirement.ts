@@ -11,6 +11,7 @@ import { collectSidecarGenerationPids } from "./process-tree.js";
 import { SIDECAR_STAMP_CONTRACT, type SidecarStamp } from "./stamp.js";
 
 type FencedGenerationRef = Readonly<{ rootPid: number; stamp: SidecarStamp }>;
+type SupervisedTargetRef = Readonly<{ rootPid: number; stamp: SidecarStamp; supervisorPid: number }>;
 
 type FencedRetirementOptions = Readonly<{
   gracefulStopInitiated: boolean;
@@ -23,15 +24,40 @@ export async function retireFencedSidecarProcessTree(
   ref: FencedGenerationRef,
   options: FencedRetirementOptions,
 ): Promise<StopProcessesResult> {
-  const snapshots = options.knownSnapshots ?? await captureProcessSnapshot();
-  const rootOwnedAtEntry = snapshots.some((processInfo) =>
-    processInfo.pid === ref.rootPid &&
-    matchesStampedProcess(processInfo, ref.stamp, SIDECAR_STAMP_CONTRACT),
+  return await retireSidecarProcessTree(
+    ref,
+    options,
+    (processInfo) => processInfo.pid === ref.rootPid &&
+      matchesStampedProcess(processInfo, ref.stamp, SIDECAR_STAMP_CONTRACT),
+    (initialPids) => initialPids,
   );
+}
+
+/** Retire the target process tree directly owned by a live supervisor. */
+export async function retireSupervisedSidecarTargetTree(
+  ref: SupervisedTargetRef,
+  options: FencedRetirementOptions,
+): Promise<StopProcessesResult> {
+  return await retireSidecarProcessTree(
+    ref,
+    options,
+    (processInfo) => processInfo.pid === ref.rootPid && processInfo.ppid === ref.supervisorPid,
+    () => [ref.rootPid],
+  );
+}
+
+async function retireSidecarProcessTree(
+  ref: FencedGenerationRef,
+  options: FencedRetirementOptions,
+  ownsRoot: (processInfo: ProcessSnapshot) => boolean,
+  termTargets: (initialPids: number[]) => number[],
+): Promise<StopProcessesResult> {
+  const snapshots = options.knownSnapshots ?? await captureProcessSnapshot();
+  const rootOwnedAtEntry = snapshots.some(ownsRoot);
   if (!rootOwnedAtEntry) return alreadyStoppedResult();
 
   const initialPids = collectSidecarGenerationPids(snapshots, [ref.rootPid], ref.stamp);
-  if (!options.gracefulStopInitiated) signalProcesses(initialPids, "SIGTERM");
+  if (!options.gracefulStopInitiated) signalProcesses(termTargets(initialPids), "SIGTERM");
 
   const graceMs = normalizeGraceMs(options.stopOptions?.termGraceMs, 5_000);
   const deadline = Date.now() + graceMs;
@@ -43,14 +69,11 @@ export async function retireFencedSidecarProcessTree(
   }
   if (remaining.length === 0) return stoppedResult(initialPids);
 
-  // Refresh only the same stamped root. If it vanished while descendants
-  // survived, fall back to the entry snapshot instead of adopting another
-  // generation that now owns the same five-field stamp.
+  // Refresh only while the same root fence still holds. If it vanished while
+  // descendants survived, fall back to the entry snapshot instead of adopting
+  // processes now owned by another generation.
   const latestSnapshots = await captureProcessSnapshot();
-  const rootStillOwned = latestSnapshots.some((processInfo) =>
-    processInfo.pid === ref.rootPid &&
-    matchesStampedProcess(processInfo, ref.stamp, SIDECAR_STAMP_CONTRACT),
-  );
+  const rootStillOwned = latestSnapshots.some(ownsRoot);
   const forceTargets = rootStillOwned
     ? collectSidecarGenerationPids(latestSnapshots, [ref.rootPid], ref.stamp)
     : remainingInitialPids();

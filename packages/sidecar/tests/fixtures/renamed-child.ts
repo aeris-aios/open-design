@@ -3,8 +3,9 @@ import { writeFileSync } from "node:fs";
 process.title = "next-server";
 
 const readyPath = process.env.OD_TEST_SIDECAR_READY;
+const context = JSON.parse(process.env.OD_SIDECAR_SUPERVISED_CONTEXT ?? "null") as { generationPid?: unknown } | null;
 if (readyPath != null) writeFileSync(readyPath, JSON.stringify({
-  generationPid: Number(process.env.OD_SIDECAR_GENERATION_PID),
+  generationPid: Number(context?.generationPid),
   runtimePid: process.pid,
 }));
 

@@ -2,18 +2,22 @@ import { spawn } from "node:child_process";
 
 import {
   captureProcessSnapshot,
-  createProcessStampArgs,
-  matchesStampedProcess,
   stopProcesses,
 } from "@open-design/platform";
 
 import {
   readSidecarLaunchResources,
-  SIDECAR_GENERATION_PID_ENV,
+  sidecarProtocol,
   SIDECAR_SUPERVISOR_TARGET_ENV,
 } from "./client.js";
-import { retireFencedSidecarProcessTree } from "./process-retirement.js";
-import { readCurrentSidecarStamp, SIDECAR_STAMP_CONTRACT } from "./stamp.js";
+import { requestJsonIpc } from "./json-ipc.js";
+import { retireSupervisedSidecarTargetTree } from "./process-retirement.js";
+import {
+  readCurrentSidecarArgvStamp,
+  resolvePrivateIpcPath,
+  serializeSupervisedSidecarContext,
+  SIDECAR_SUPERVISED_CONTEXT_ENV,
+} from "./stamp.js";
 
 type SupervisorTarget = {
   args: string[];
@@ -36,23 +40,25 @@ function readTarget(): SupervisorTarget {
 }
 
 const target = readTarget();
-const stamp = readCurrentSidecarStamp();
-const childEnv: NodeJS.ProcessEnv = { ...process.env, [SIDECAR_GENERATION_PID_ENV]: String(process.pid) };
+const stamp = readCurrentSidecarArgvStamp();
+const resources = readSidecarLaunchResources();
+const childEnv: NodeJS.ProcessEnv = {
+  ...process.env,
+  [SIDECAR_SUPERVISED_CONTEXT_ENV]: serializeSupervisedSidecarContext(stamp, process.pid, resources),
+};
 delete childEnv[SIDECAR_SUPERVISOR_TARGET_ENV];
+delete childEnv[sidecarProtocol.resourcesEnv];
 if (target.electronRunAsNode == null) delete childEnv.ELECTRON_RUN_AS_NODE;
 else childEnv.ELECTRON_RUN_AS_NODE = target.electronRunAsNode;
 
-const child = spawn(target.command, [
-  ...target.args,
-  ...createProcessStampArgs(stamp, SIDECAR_STAMP_CONTRACT),
-], {
+const child = spawn(target.command, target.args, {
   cwd: process.cwd(),
   env: childEnv,
   stdio: "inherit",
   windowsHide: true,
 });
 
-const ownerPid = readSidecarLaunchResources().ownerPid;
+const ownerPid = resources.ownerPid;
 let ownerShutdownTask: Promise<void> | null = null;
 async function stopTargetAfterOwnerDeath(): Promise<void> {
   if (child.pid == null) return;
@@ -62,21 +68,41 @@ async function stopTargetAfterOwnerDeath(): Promise<void> {
     snapshots = await captureProcessSnapshot();
   } catch {
     // The exact child pid remains a safe fallback when process discovery fails.
+    const gracefulStopInitiated = await requestTargetStop();
+    if (!gracefulStopInitiated) {
+      try { child.kill("SIGTERM"); } catch {}
+    }
     const stopped = await stopProcesses([rootPid], { killGraceMs: 1_000, termGraceMs: 5_000 });
     reportOwnerlessSurvivors(stopped.remainingPids);
     return;
   }
-  const ownsRoot = snapshots.some((processInfo) =>
-    processInfo.pid === rootPid &&
-    matchesStampedProcess(processInfo, stamp, SIDECAR_STAMP_CONTRACT),
-  );
-  if (!ownsRoot) return;
-  const stopped = await retireFencedSidecarProcessTree({ rootPid, stamp }, {
-    gracefulStopInitiated: false,
+  // Fence the live child tree before asking it to stop. A fast graceful exit
+  // may reparent resistant descendants, but the entry snapshot still retains
+  // the exact processes this supervisor owned at owner-death time.
+  const gracefulStopInitiated = await requestTargetStop();
+  const stopped = await retireSupervisedSidecarTargetTree({
+    rootPid,
+    stamp,
+    supervisorPid: process.pid,
+  }, {
+    gracefulStopInitiated,
     knownSnapshots: snapshots,
     stopOptions: { killGraceMs: 1_000, termGraceMs: 5_000 },
   });
   reportOwnerlessSurvivors(stopped.remainingPids);
+}
+
+async function requestTargetStop(): Promise<boolean> {
+  try {
+    const response = await requestJsonIpc<{ accepted?: unknown }>(
+      resolvePrivateIpcPath(stamp),
+      { targetPids: [process.pid], type: sidecarProtocol.stop },
+      { timeoutMs: 750 },
+    );
+    return response.accepted === true;
+  } catch {
+    return false;
+  }
 }
 
 function reportOwnerlessSurvivors(remainingPids: number[]): void {

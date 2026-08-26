@@ -31,12 +31,13 @@ import {
 import { captureSidecarGenerationSnapshot } from "./process-tree.js";
 import {
   createSidecarLauncherArgs,
-  isCurrentSidecarLauncher,
   isSidecarLauncherCommand,
   normalizeSidecarStamp,
-  readCurrentSidecarStamp,
+  readSupervisedSidecarContext,
   removeSidecarLauncherArgs,
   resolvePrivateIpcPath,
+  serializeSupervisedSidecarContext,
+  SIDECAR_SUPERVISED_CONTEXT_ENV,
   SIDECAR_STAMP_CONTRACT,
   type SidecarStamp,
 } from "./stamp.js";
@@ -121,18 +122,16 @@ export function registerSidecarProcess(
   resources: Omit<SidecarResources, "pid">,
 ): SidecarStamp {
   const stamp = normalizeSidecarStamp(stampInput);
-  const carriesStamp = SIDECAR_STAMP_CONTRACT.stampFields.some((field) => {
-    const prefix = `${SIDECAR_STAMP_CONTRACT.stampFlags[field]}=`;
-    return process.argv.some((value) => value.startsWith(prefix));
-  });
-  const existing = carriesStamp ? readCurrentSidecarStamp() : null;
-  if (existing == null) {
-    throw new Error("current process is missing its sidecar argv stamp");
+  const context = readSupervisedSidecarContext();
+  if (context == null) throw new Error("current process is missing its supervised sidecar context");
+  if (JSON.stringify(context.stamp) !== JSON.stringify(stamp)) {
+    throw new Error("current process carries a different sidecar resource identity");
   }
-  if (JSON.stringify(existing) !== JSON.stringify(stamp)) {
-    throw new Error("current process carries a different sidecar argv stamp");
-  }
-  process.env[sidecarProtocol.resourcesEnv] = JSON.stringify(resources);
+  process.env[SIDECAR_SUPERVISED_CONTEXT_ENV] = serializeSupervisedSidecarContext(
+    stamp,
+    context.generationPid,
+    resources,
+  );
   return stamp;
 }
 
@@ -149,13 +148,9 @@ export async function bootstrapSidecarProcess(
   } = {},
 ): Promise<boolean> {
   const stamp = normalizeSidecarStamp(stampInput);
-  if (!isCurrentSidecarLauncher()) {
-    try {
-      registerSidecarProcess(stamp, resources);
-      return false;
-    } catch (error) {
-      if (!(error instanceof Error) || error.message !== "current process is missing its sidecar argv stamp") throw error;
-    }
+  if (readSupervisedSidecarContext() != null) {
+    registerSidecarProcess(stamp, resources);
+    return false;
   }
   const launched = await (options.launch ?? launchSidecar)({
     args: removeSidecarLauncherArgs(options.args ?? process.argv.slice(1)),
@@ -323,7 +318,7 @@ function sidecarSpawnRequest(request: SidecarLaunchRequest): SpawnProcessRequest
       ...preparedEnv,
       ELECTRON_RUN_AS_NODE: "1",
       [SIDECAR_SUPERVISOR_TARGET_ENV]: JSON.stringify({
-        args,
+        args: removeSidecarLauncherArgs(args),
         command,
         electronRunAsNode: preparedEnv.ELECTRON_RUN_AS_NODE ?? null,
       }),

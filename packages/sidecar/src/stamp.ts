@@ -29,6 +29,13 @@ export const SIDECAR_STAMP_FLAGS: Readonly<Record<SidecarStampField, string>> = 
 export const SIDECAR_LIFECYCLE_FLAG = "--od-sidecar-lifecycle";
 export const SIDECAR_LAUNCHER_LIFECYCLE = "launcher";
 const SIDECAR_LAUNCHER_ARG = `${SIDECAR_LIFECYCLE_FLAG}=${SIDECAR_LAUNCHER_LIFECYCLE}`;
+export const SIDECAR_SUPERVISED_CONTEXT_ENV = "OD_SIDECAR_SUPERVISED_CONTEXT";
+
+export type SupervisedSidecarContext = Readonly<{
+  generationPid: number;
+  resources: unknown;
+  stamp: SidecarStamp;
+}>;
 
 function normalizeStampToken(value: unknown, field: SidecarStampField): string {
   if (typeof value !== "string" || value.length === 0 || value.trim() !== value) {
@@ -63,10 +70,52 @@ export const SIDECAR_STAMP_CONTRACT: ProcessStampContract<SidecarStamp, SidecarS
   stampFlags: SIDECAR_STAMP_FLAGS,
 });
 
-export function readCurrentSidecarStamp(): SidecarStamp {
+export function readCurrentSidecarArgvStamp(): SidecarStamp {
   const stamp = readProcessStamp(process.argv.slice(1), SIDECAR_STAMP_CONTRACT);
   if (stamp == null) throw new Error("the five-field sidecar argv stamp is required");
   return stamp;
+}
+
+/** Read the resource identity supplied by either a launcher argv or its committed supervisor. */
+export function readCurrentSidecarStamp(): SidecarStamp {
+  return readSupervisedSidecarContext()?.stamp ?? readCurrentSidecarArgvStamp();
+}
+
+export function serializeSupervisedSidecarContext(
+  stampInput: SidecarStamp,
+  generationPid: number,
+  resources: unknown,
+): string {
+  if (!Number.isSafeInteger(generationPid) || generationPid <= 0) {
+    throw new Error("sidecar generation pid must be a positive safe integer");
+  }
+  return JSON.stringify({ generationPid, resources, stamp: normalizeSidecarStamp(stampInput) });
+}
+
+export function readSupervisedSidecarContext(
+  env: NodeJS.ProcessEnv = process.env,
+): SupervisedSidecarContext | null {
+  const serialized = env[SIDECAR_SUPERVISED_CONTEXT_ENV];
+  if (serialized == null) return null;
+  let value: unknown;
+  try {
+    value = JSON.parse(serialized);
+  } catch (error) {
+    throw new Error(`${SIDECAR_SUPERVISED_CONTEXT_ENV} must contain valid JSON`, { cause: error });
+  }
+  if (typeof value !== "object" || value == null || Array.isArray(value)) {
+    throw new Error(`${SIDECAR_SUPERVISED_CONTEXT_ENV} must contain a context object`);
+  }
+  const context = value as Record<string, unknown>;
+  const generationPid = Number(context.generationPid);
+  if (!Number.isSafeInteger(generationPid) || generationPid <= 0) {
+    throw new Error(`${SIDECAR_SUPERVISED_CONTEXT_ENV} contains an invalid generation pid`);
+  }
+  return Object.freeze({
+    generationPid,
+    resources: context.resources,
+    stamp: normalizeSidecarStamp(context.stamp),
+  });
 }
 
 export function isCurrentSidecarLauncher(): boolean {
