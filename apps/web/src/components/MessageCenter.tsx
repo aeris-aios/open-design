@@ -199,8 +199,16 @@ export function MessageCenter({
     // nothing re-syncs on a generation change to correct it.
     if (currentWorkspaceAccountGeneration() !== issuedAccountGeneration) return;
     const wasAccount = loggedInRef.current;
-    loggedInRef.current = account;
-    setLoggedIn(account);
+    // Publish only an ANSWER. `unavailable` is the daemon failing to ask, and
+    // writing `false` for it spent the very transition marker the branch below
+    // depends on: the outage set `loggedInRef` to false, so a genuine sign-out
+    // arriving afterwards saw `wasAccount === false`, never ran the clear, and
+    // let the signed-in overlay survive into the anonymous view. The last
+    // authoritative mode is what carries across an outage.
+    if (authMode !== 'unavailable') {
+      loggedInRef.current = account;
+      setLoggedIn(account);
+    }
     // Only a real sign-out discards the signed-in overlay. `account` has
     // already collapsed `unavailable` into `false`, and taking this branch on
     // a 503 threw away `pendingReadIdsRef` — the optimistic reads the server
@@ -254,8 +262,20 @@ export function MessageCenter({
     // has already written. For an anonymous reader those read ids exist
     // nowhere else, so the badges simply come back.
     if (account && ownsLatestWrite) clearAnonymousState(window.localStorage);
-    commitState(merged, overlayReadIds, { persistAnonymous: !account && ownsLatestWrite });
-    setPriorityMessage(account ? findGoPlanSunsetMessage(merged) : null);
+    // Two more readings of the same collapsed boolean, found by walking the
+    // rest of this function rather than waiting for them to be reported.
+    //
+    // Persisting on `unavailable` writes an overlay derived from the SIGNED-IN
+    // session into the anonymous cache, which is the leak the clear above is
+    // careful to avoid. And the announcement is picked out of a signed-in pull,
+    // so blanking it during an outage makes a required notice vanish and
+    // reappear — the regression fixed two rounds ago, by a different route.
+    // Both wait for an answer; neither guesses from a non-answer.
+    const authoritative = authMode !== 'unavailable';
+    commitState(merged, overlayReadIds, {
+      persistAnonymous: authMode === 'signed-out' && ownsLatestWrite,
+    });
+    if (authoritative) setPriorityMessage(account ? findGoPlanSunsetMessage(merged) : null);
     // `unavailable` is the daemon failing to ask, not an answer about the user,
     // and `readAmrAuthMode` is the only place that can still tell them apart —
     // by here it has already collapsed into `account === false`. Publishing a

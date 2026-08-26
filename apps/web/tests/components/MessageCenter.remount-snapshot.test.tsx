@@ -964,6 +964,66 @@ describe('MessageCenter remount snapshot', () => {
     expect(counts[counts.length - 1]).toBe(0);
   });
 
+  it('still clears the signed-in overlay when a sign-out follows an outage', async () => {
+    // The 503 assigned `loggedInRef = false` even though it answered nothing,
+    // spending the transition marker. A genuine sign-out arriving afterwards
+    // then saw `wasAccount === false`, skipped the clear, and the signed-in
+    // read ids survived — overlaid onto the public feed and persisted as
+    // anonymous reads, so a message the anonymous reader had never opened
+    // showed as read.
+    let mode: 'in' | 'down' | 'out' = 'in';
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/integrations/vela/status')) {
+        statusCalls += 1;
+        if (mode === 'down') {
+          return new Response(JSON.stringify({ error: 'amr-runtime-unavailable' }), {
+            status: 503,
+            headers: { 'content-type': 'application/json' },
+          });
+        }
+        return Response.json({ loggedIn: mode === 'in' });
+      }
+      if (url.includes('/read') && init?.method === 'POST') {
+        return Response.json({ read: true, markedCount: 1 });
+      }
+      if (url.includes('/message-center') && url.includes('/messages')) {
+        messageCalls += 1;
+        return Response.json({ messages: [row('shared-id', null)], nextCursor: null, unreadCount: 1 });
+      }
+      return Response.json({});
+    }));
+
+    const counts: number[] = [];
+    render(
+      <I18nProvider initial="zh-CN">
+        <MessageCenter onUnreadCountChange={(n) => counts.push(n)} />
+      </I18nProvider>,
+    );
+    await waitFor(() => expect(messageCalls).toBeGreaterThan(0));
+    fireEvent.click(screen.getByTestId('message-center-trigger'));
+    fireEvent.click(await screen.findByRole('button', { name: /shared-id/ }));
+    await waitFor(() => expect(counts[counts.length - 1]).toBe(0));
+
+    // An outage refresh lands. It answers nothing.
+    mode = 'down';
+    let before = messageCalls;
+    document.dispatchEvent(new Event('visibilitychange'));
+    await waitFor(() => expect(messageCalls).toBeGreaterThan(before));
+
+    // Then a genuine sign-out, with no generation advance.
+    mode = 'out';
+    before = messageCalls;
+    document.dispatchEvent(new Event('visibilitychange'));
+    await waitFor(() => expect(messageCalls).toBeGreaterThan(before));
+    await new Promise((r) => setTimeout(r, 20));
+
+    // The anonymous reader has read nothing.
+    expect(counts[counts.length - 1]).toBe(1);
+    expect(window.localStorage.getItem('open-design.message-center.anonymous-read-ids.v1') ?? '[]')
+      .not.toContain('shared-id');
+  });
+
   it('does not re-sync when it is remounted straight away', async () => {
     const first = await mountAndSettle();
     const afterFirst = { status: statusCalls, messages: messageCalls };
