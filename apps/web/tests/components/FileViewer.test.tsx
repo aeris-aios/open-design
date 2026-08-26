@@ -8440,12 +8440,29 @@ describe('FileViewer tweaks toolbar', () => {
     const file = htmlPreviewFile();
     const sessionId = 'scope-0001';
     const documentVersion = 'preview-v1';
-    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+    const savedSources: string[] = [];
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const url = typeof input === 'string'
         ? input
         : input instanceof Request
           ? input.url
           : String(input);
+      if (url.includes('/files/preview.html/versions')) {
+        return new Response(JSON.stringify({ versions: [] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      if (url === '/api/projects/project-1/files' && init?.method === 'POST') {
+        const body = JSON.parse(String(init.body)) as { content: string };
+        savedSources.push(body.content);
+        return new Response(JSON.stringify({
+          file: { ...file, mtime: file.mtime + savedSources.length },
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
       if (url.startsWith('/api/projects/project-1/raw/preview.html')) {
         return new Response(
           '<!doctype html><html><body><main data-od-id="hero">Hero</main></body></html>',
@@ -8677,6 +8694,38 @@ describe('FileViewer tweaks toolbar', () => {
       type: 'od-edit-mode',
       enabled: true,
     }, '*');
+
+    act(() => {
+      window.dispatchEvent(new MessageEvent('message', {
+        source: frame.contentWindow,
+        data: {
+          type: 'od-edit-select',
+          target: {
+            ...manualEditTarget('hero', 'Hero', 20),
+            kind: 'text',
+            tagName: 'main',
+            text: 'Hero',
+            fields: { text: 'Hero' },
+            isLayoutContainer: false,
+            outerHtml: '<main data-od-id="hero">Hero</main>',
+          },
+        },
+      }));
+    });
+    const textInput = await screen.findByLabelText('Text');
+    fireEvent.change(textInput, { target: { value: 'Edited Hero' } });
+    postMessage.mockClear();
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => {
+      expect(savedSources.at(-1)).toContain('Edited Hero');
+    });
+    expect(postMessage).toHaveBeenCalledWith({
+      type: 'od-edit-preview-text',
+      id: 'hero',
+      value: 'Edited Hero',
+    }, '*');
+    expect(screen.getByTestId('preview-runtime-frame-current')).toBe(frame);
+    expect(frame.getAttribute('src')).toBe(initialSrc);
 
     const mintCount = fetchMock.mock.calls.filter(([input]) => (
       String(input).includes('/api/projects/project-1/preview-url')
