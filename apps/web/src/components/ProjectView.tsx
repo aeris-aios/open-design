@@ -873,6 +873,64 @@ function hasGenericDisconnectFailureEvent(message: ChatMessage): boolean {
         event.detail === GENERIC_DAEMON_DISCONNECT_MESSAGE),
   );
 }
+
+/**
+ * 从重挂的流里回放出来的状态帧,能不能改这条消息的状态。
+ *
+ * **不变量:daemon 已经对这条 run 给出终态裁定之后,同一条 run 回放出来的「活着」
+ * 信号只是历史,不许把这一轮改回进行中。**
+ *
+ * 订阅之前客户端刚问过 `/api/runs/:id`。拿到终态之后仍然会去订阅(`recoverableGenericDisconnectFailed`
+ * 这类路径要靠重放补回正文与产物),而 daemon 重放的是这条 run 的**完整事件日志** ——
+ * 里面有它当初的 `start` 帧,`providers/daemon.ts` 收到 `start` 就发 `running`。
+ * 那一帧描述的是「这条 run 当时启动了」,不是「它现在活着」。
+ *
+ * 让它落地的后果(真机会话 64acc867 / 消息 b7b61e19,DB 与 API 都写着 failed):
+ *  · `isAssistantMessageStreaming` 看到 running 就提前返回 true,`AssistantMessage`
+ *    把整轮的 `turnRunStatus` 钉成 running → 壳头「进行中」,耗时跟着 `nowMs` 永远涨
+ *    (一条真实时长 20.7s 的 run 被画成 202 分钟);
+ *  · `currentConversationAwaitingActiveRunAttach`(有活跃 run、又没在流)为真 → 发送禁用,
+ *    而 `currentConversationControlStreaming` 为假 → 连停止按钮都没有。用户没有出路。
+ *
+ * run 的日志里没有 `end` 帧时(daemon 被重启打断,`terminalTrigger: "daemon_restart"`)
+ * 这就是死结:再没有任何一帧能把它改回终态,刷新也解不开。
+ *
+ * 只挡**非终态**的帧。终态帧照常落地;daemon 的裁定本身不是终态(run 真的在跑)时
+ * 整条判据关闭;流已经转到**另一条** run(strategy task 推进)时同样放行 ——
+ * 那条 run 的死活与这份裁定无关。
+ */
+/**
+ * 这一轮**还开着**吗 —— 发送闸要等的那种「开着」。
+ *
+ * **不变量:一行不能同时说「我还在跑」和「我在 T 结束了」。** `endedAt` 只在落终态那一刻
+ * 盖章(见各处 `isTerminalRunStatus(...) ? prev.endedAt ?? Date.now() : prev.endedAt`),
+ * 所以 `running` / `queued` 配上一个已有的 `endedAt` 是自相矛盾 —— 那是状态被写坏了,
+ * 不是真有一条 run 在等。
+ *
+ * 这是**独立于**壳头渲染的一道兜底。`currentConversationAwaitingActiveRunAttach`
+ * (有活跃 run 但没在流)会禁掉发送,而那一档同时又不出停止按钮:一旦某行卡在
+ * 矛盾状态,整个会话对用户就是死的,刷新也解不开(真机消息 b7b61e19)。
+ * 状态怎么被写坏是另一条链上的事(见 `replayedRunStatusMayLand`);这里只保证
+ * **不管怎么坏,用户始终有出路**。
+ *
+ * 反过来两种真·进行中都照旧锁闸:真在跑的行不带 `endedAt`(终态才盖),
+ * 重载后等重挂的那一行同样不带 —— 两种都还锁着。
+ */
+function assistantRunIsStillOpen(message: ChatMessage): boolean {
+  if (!isActiveRunStatus(message.runStatus)) return false;
+  return message.endedAt == null;
+}
+
+function replayedRunStatusMayLand(
+  frameStatus: ChatMessage['runStatus'],
+  terminalVerdict: ChatMessage['runStatus'] | null,
+  frameBelongsToVerdictRun: boolean,
+): boolean {
+  if (!terminalVerdict) return true;
+  if (!frameBelongsToVerdictRun) return true;
+  return isTerminalRunStatus(frameStatus);
+}
+
 const MIN_NORMAL_SPLIT_WIDTH =
   MIN_CHAT_PANEL_WIDTH + SPLIT_RESIZE_HANDLE_WIDTH + MIN_WORKSPACE_PANEL_WIDTH;
 type DesignSystemReviewEntry = NonNullable<ProjectMetadata['designSystemReview']>[string];
@@ -2875,7 +2933,7 @@ export function ProjectView({
     [messages, currentProject.metadata],
   );
   const currentConversationHasActiveRun = useMemo(
-    () => messages.some((m) => m.role === 'assistant' && isActiveRunStatus(m.runStatus)),
+    () => messages.some((m) => m.role === 'assistant' && assistantRunIsStillOpen(m)),
     [messages],
   );
   const memoryExtractionRunActive = currentConversationHasActiveRun || streaming;
@@ -5888,6 +5946,11 @@ export function ProjectView({
         claimReattachRun(runId);
         claimReattachRun(reattachRunId);
         let activeReattachRunId = reattachRunId;
+        /*
+         * daemon 刚给出的裁定 —— 见 `replayedRunStatusMayLand`。终态时它就是这条 run 的
+         * 权威结论,之后从同一条流里回放出来的 `start`(→ `running`)只是历史帧。
+         */
+        const reattachTerminalVerdict = isTerminalRunStatus(status.status) ? status.status : null;
         if (taskRunAdvanced) {
           updateMessageById(
             message.id,
@@ -6088,6 +6151,10 @@ export function ProjectView({
                 ...prev,
                 runId: nextRunId,
                 runStatus: 'running',
+                // 换了一条新的 run,这一轮就**重新开着**了 —— 上一条 run 落终态时盖的
+                // 那个 `endedAt` 是它自己的收尾,留着会让这一行同时说「在跑」和
+                // 「已经结束」,而 `assistantRunIsStillOpen` 正是靠这对矛盾判状态写坏。
+                endedAt: undefined,
                 lastRunEventId: undefined,
                 strategyTaskPrefixLength: replayedContent.length,
                 strategyTaskPrefixEventCount: replayedEvents.length,
@@ -6631,6 +6698,20 @@ export function ProjectView({
           },
           onRunStatus: (runStatus) => {
             textBuffer.flush();
+            /*
+             * 回放出来的「活着」不许压过 daemon 的终态裁定 —— 判据与理由见
+             * `replayedRunStatusMayLand`。挡下的帧连 `settled` 信号都不发:
+             * 什么都没有落定,重连那一行不该被一帧历史扰动。
+             */
+            if (
+              !replayedRunStatusMayLand(
+                runStatus,
+                reattachTerminalVerdict,
+                activeReattachRunId === reattachRunId,
+              )
+            ) {
+              return;
+            }
             // 见发送路径同名回调:落终态就把重连那一行让出去。
             pushReconnectSignal({ kind: 'settled', runId, status: runStatus });
             updateMessageById(
