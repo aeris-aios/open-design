@@ -100,7 +100,10 @@ export interface TodoSegment {
   /** content 即身份:跨轮召回、清单更新都靠它做交集判定(D17) */
   content: string;
   status: TodoStatus;
-  /** 来自更早的轮次 —— 只控制划线,不参与 expandable(D25) */
+  /**
+   * 来自更早的轮次、且那一轮**已经开工或已经关掉** —— 只控制划线,不参与 expandable(D25)。
+   * 上一轮只是声明、一次都没开始过的(`pending`)**不算**:那是本轮头一回真要干的活。
+   */
   recalled: boolean;
   /** 被重新规划作废:沿用完成态 + 划线(D14 / D16) */
   abandoned: boolean;
@@ -120,7 +123,7 @@ export function isExpandable(segment: TodoSegment): boolean {
 
 /**
  * 划线 = 「**这一条不是本轮新开的活**」。三种情况彼此独立:
- *   ① 来自更早的轮次(`recalled`)
+ *   ① 来自更早的轮次、且**那一轮真动过手**(`recalled`,见 `recalledContents`)
  *   ② 被重新规划作废(`abandoned`)
  *   ③ 本轮开出来但一次都没干过(已关闭且名下无内容,D35)
  *

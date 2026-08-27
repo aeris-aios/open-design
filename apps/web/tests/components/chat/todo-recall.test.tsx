@@ -2,9 +2,21 @@
 /**
  * Todo 召回通路 —— 客户端这一半。
  *
- * 决定权在 **agent**,客户端只做「认出这条之前出现过」:
- *  · agent 把上一轮没做完的那几条**重新发了** → 本轮这几条标成召回(划线);
+ * 决定权在 **agent**,客户端只做「认出这条之前**干过**」:
+ *  · agent 把上一轮动过手、没做完的那几条**重新发了** → 本轮这几条标成召回(划线);
  *  · agent **没重发**(用户问了别的)→ 这一轮一条都不显示,不是空壳。
+ *
+ * ⚠️ 2026-08-27 裁决改过一次判据(产品负责人真机截图,会话 `7e97c7e9-…`):
+ * 本文件原来把「上一轮只是**声明过**、一次都没开始(`pending`)」也算召回,
+ * 下面两条用例的 `previousTodos` / 第一轮清单当初写的就是 `pending`。
+ * 真机后果是一整份**刚开跑**的五步计划五条全划线、第一条还同时是「进行中」——
+ * 「正在做」和「这是旧账」自相矛盾,而且本轮真干的活被划线全盖住、一点进度都看不出来。
+ * 新判据只认「上一轮**真动过手**」(`completed` / `in_progress` / `stopped`),
+ * 见 `build-turn-blocks.ts` 的 `recalledContents`;
+ * 规格 `chat-panel-next.md:274-283` 那张表里「还没跑的 → 划线 ✗」说的就是这一格。
+ * 两条用例因此把状态从 `pending` 抬到 `in_progress` —— **要证的东西没变**
+ * (「跨轮召回会划线」「ChatPane 真的把 previousTodos 递下去了」),
+ * 变的只是「怎样才算上一轮留下的欠账」。
  *
  * 外加 agent 不照做时的**用户出口**:〔继续剩余任务〕。它不依赖任何 agent 能力,
  * 21 家不发清单的 runtime 一样能用。
@@ -51,10 +63,29 @@ describe('本轮清单里认出「上一轮那条」', () => {
       { kind: 'tool_result', toolUseId: 't1', content: 'ok', isError: false, completedAt: 200 },
     ] as unknown as PersistedAgentEvent[]);
     const { container } = render(
-      show(message, { previousTodos: [{ content: '补 FAQ', status: 'pending' }] }),
+      // 上一轮**开了工**没做完 —— 这才是欠账(判据见文件头的 2026-08-27 裁决)
+      show(message, { previousTodos: [{ content: '补 FAQ', status: 'in_progress' }] }),
     );
     const struck = [...container.querySelectorAll('summary span[class*="struck"]')];
     expect(struck.map((el) => el.textContent)).toContain('补 FAQ');
+  });
+
+  /*
+   * 2026-08-27 裁决的正面用例:上一轮**只把话说出口**就结束了(五条全 `pending`),
+   * 本轮 agent 重新建出同样的条目 —— 那是本轮头一回真要干,不划线。
+   * 少了这一条,判据一改回去没人拦得住。
+   */
+  it('上一轮只声明、一次都没开始 → 本轮重新开出来不划线', () => {
+    const message = msg([
+      todoWrite([{ content: '补 FAQ', status: 'in_progress' }]),
+      { kind: 'tool_use', id: 't1', name: 'Read', input: { file_path: 'faq.html' }, startedAt: 0 },
+      { kind: 'tool_result', toolUseId: 't1', content: 'ok', isError: false, completedAt: 200 },
+    ] as unknown as PersistedAgentEvent[]);
+    const { container } = render(
+      show(message, { previousTodos: [{ content: '补 FAQ', status: 'pending' }] }),
+    );
+    const struck = [...container.querySelectorAll('summary span[class*="struck"]')];
+    expect(struck.map((el) => el.textContent)).not.toContain('补 FAQ');
   });
 
   /*
@@ -143,7 +174,8 @@ describe('ChatPane 真的把 previousTodos 递下去了', () => {
   it('上一轮留下的那条,本轮被 agent 重发时在真实消息树里划上线', () => {
     const messages: ChatMessage[] = [
       { id: 'u1', role: 'user', content: '开工', createdAt: 1 } as ChatMessage,
-      msg([todoWrite([{ content: '补 FAQ', status: 'pending' }])], { id: 'a1' }),
+      // 第一轮**动过手**没做完 —— 只有这样才够得上「欠账」(见文件头的 2026-08-27 裁决)
+      msg([todoWrite([{ content: '补 FAQ', status: 'in_progress' }])], { id: 'a1' }),
       { id: 'u2', role: 'user', content: '接着干', createdAt: 3 } as ChatMessage,
       msg([
         todoWrite([{ content: '补 FAQ', status: 'in_progress' }], 'tw-2'),
@@ -154,9 +186,9 @@ describe('ChatPane 真的把 previousTodos 递下去了', () => {
     const { container } = render(chatPaneEl(messages));
     /*
      * **必须限定在第二轮那条消息里**。整个容器里找划线是找得到的 ——
-     * 第一轮那条 pending、名下没内容,本来就该划线(D35),拿它当证据等于没证。
+     * 拿第一轮那条当证据等于没证:它划不划线跟「跨轮递没递下去」无关。
      * 这一条要证的是第二轮那条(名下有工具行、本轮真的在做)也划了线,
-     * 而那只可能来自跨轮召回。
+     * 而那只可能来自跨轮召回 —— 也就是 ChatPane 真的把 previousTodos 递到了 a2。
      */
     const secondTurn = container.querySelector('#assistant-message-a2');
     expect(secondTurn).not.toBeNull();
