@@ -1439,7 +1439,12 @@ describe('AssistantMessage question forms', () => {
       .toContain('One quick check:');
   });
 
-  it('renders a prose-bodied open tag as text instead of a loading frame', () => {
+  // NOTE(sync/main): origin/main asserted the tail synchronously. This branch
+  // streams prose through the per-character reveal (`useCharReveal`), so a
+  // `streaming` render only paints the whole tail once the reveal budget has
+  // elapsed. The assertions are main's, unchanged — only the clock is advanced
+  // first, the same way this branch's own reveal specs do it.
+  it('renders a prose-bodied open tag as text instead of a loading frame', async () => {
     // Production repro: a strategy turn that needed no clarification narrated
     // its decision into an open <question-form> tag. The tail can never parse
     // as a form body, so the skeleton must not appear and no character after
@@ -1459,9 +1464,11 @@ describe('AssistantMessage question forms', () => {
     );
 
     expect(screen.queryByTestId('question-form-loading')).toBeNull();
-    expect(
-      screen.getByText(/无需提出——所有决策都可通过场景推断安全默认。/),
-    ).toBeTruthy();
+    await waitFor(() =>
+      expect(
+        screen.getByText(/无需提出——所有决策都可通过场景推断安全默认。/),
+      ).toBeTruthy(),
+    );
   });
 });
 

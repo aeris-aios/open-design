@@ -1091,7 +1091,19 @@ describe('ChatPane streaming state', () => {
     expect(screen.queryByTestId('msg-session-mode-chip')).toBeNull();
   });
 
-  it('keeps labelling Ask and Plan on a strategy-owned turn', () => {
+  /*
+   * NOTE(sync/main): origin/main (#7016) landed this as "Design is the default
+   * so it carries no chip, but the opt-outs Ask / Plan still get one". This
+   * branch's ruling (2026-08-26, user on a real build: 「把这个东西干掉」) is one
+   * step further — the mode chip is not rendered on the run-context row at ALL,
+   * for any mode. So main's half of the behaviour is void here and the chip
+   * assertion is inverted.
+   *
+   * The other half of main's point is untouched and still guarded below: a
+   * strategy-owned turn shows no applied-context chrome either, because the
+   * OD Next package is daemon plumbing rather than something the user picked.
+   */
+  it('keeps a strategy-owned Ask turn free of run-context chrome', () => {
     const messages: ChatMessage[] = [
       {
         id: 'user-1',
@@ -1122,7 +1134,7 @@ describe('ChatPane streaming state', () => {
       />,
     );
 
-    expect(screen.getByTestId('msg-session-mode-chip').textContent).toContain('Ask');
+    expect(screen.queryByTestId('msg-session-mode-chip')).toBeNull();
     expect(screen.queryByTestId('msg-applied-context')).toBeNull();
   });
 
