@@ -1232,7 +1232,6 @@ function AssistantMessageImpl({
                 assistantMessageId={message.id}
                 isLastAssistant={!!isLast}
                 streaming={streaming}
-                showStreamCursor={streaming && i === lastTextBlockIndex}
                 nextUserContent={nextUserContent}
                 suppressDirectionForms={suppressDirectionForms}
                 onSubmitQuestionForm={onSubmitQuestionForm}
@@ -2912,7 +2911,6 @@ function ProseBlock({
   assistantMessageId,
   isLastAssistant,
   streaming,
-  showStreamCursor,
   nextUserContent,
   suppressDirectionForms,
   onSubmitQuestionForm,
@@ -2931,7 +2929,6 @@ function ProseBlock({
   assistantMessageId: string;
   isLastAssistant: boolean;
   streaming: boolean;
-  showStreamCursor?: boolean;
   nextUserContent?: string;
   suppressDirectionForms: boolean;
   projectId?: string | null;
@@ -3040,7 +3037,6 @@ function ProseBlock({
     <div
       ref={proseRef}
       className="prose-block"
-      data-stream-cursor={showStreamCursor && !live ? "true" : undefined}
     >
       {renderable.map((seg) => {
         if (seg.kind === "reminder") {
@@ -3867,7 +3863,6 @@ function StreamingCodeCard({
         <pre className="live-code-pre" ref={preRef}>
           <code>
             {code}
-            <span className="live-code-caret" aria-hidden />
           </code>
         </pre>
       ) : null}

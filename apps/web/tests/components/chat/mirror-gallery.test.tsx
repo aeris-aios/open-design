@@ -638,10 +638,11 @@ const SUMMARY_SHORT = '商品列表页和设置页都做完了,商品卡已经�
 const SUMMARY_FULL = '商品列表页和设置页都做完了,商品卡已经抽成共享组件,'
   + '两页共用同一套间距与 **12px** 圆角。右边可以直接点着走。';
 
-/** 正文块的壳:产品里这一层是 `ProseBlocks` 的根节点(`AssistantMessage.tsx`),
- *  流式时挂 `data-stream-cursor`,由 `code.css:998` 给最后一个块元素加一枚闪烁光标。 */
-const prose = (text: string, streaming = false) => (
-  <div className="prose-block" {...(streaming ? { 'data-stream-cursor': 'true' } : {})}>
+/** 正文块的壳:产品里这一层是 `ProseBlocks` 的根节点(`AssistantMessage.tsx`)。
+ *  `streaming` 这个入参留着是因为下面的格子按它分「生成中 / 已完成」两态,
+ *  但**它不再改变标记** —— 流式光标 2026-08-27 整个删掉了,见下面那一格的注记。 */
+const prose = (text: string, _streaming = false) => (
+  <div className="prose-block">
     {renderMarkdown(text)}
   </div>
 );
@@ -887,7 +888,7 @@ const OUTRO: Cell[] = [
     notes: [
       '挂的是产品里那条正文渲染链路的纯函数 `renderMarkdown`(`ProseBlocks` 未导出,但它内部调的就是这一个)',
       '**逐字化开在这一页上看不到**:`chat/useCharReveal.ts` 是在**真实 DOM** 上按节点切字、逐个入场(W9),SSR 出来的标记里没有 `.rv` 这一层。**没有**为了让它出现去改组件 —— 要看它得起真实页面',
-      '⚠️ **这一格能看见一处差异**:稿子 21:02 版把流式光标(`.caret`)整个删了,产品仍挂 `data-stream-cursor` 的闪烁 `::after`(`code.css:998`)。页面丢掉了 `@keyframes`,所以这里是那枚光标不闪的样子',
+      '**这处差异 2026-08-27 已经关掉**:稿子 21:02 版把流式光标(`.caret`)整个删了,产品当时仍挂着 `data-stream-cursor` 的闪烁 `::after`;用户指着表单加载态那一格拍板「把这个光标干掉,什么地方都不准出现」,于是两枚光标(正文的 `::after` 和实时代码的 `.live-code-caret`)连同 `@keyframes` 一起删了。钉在 `tests/components/chat/stream-cursor-removed.test.tsx`',
       // 注:这里**故意不写 daemon 的目录字面量** —— `scripts/guard.ts` 的
       // 「daemon core boundary」会把「web 测试里同时出现 node:fs 与那条路径」判成越界消费。
       '「总结」这个身份本身依赖 D43 的 `<done/>` 分界,而 daemon 侧的 prompt 目录里没有任何 agent 会发这个标记 —— 28 / 29 两格今天在产品里**渲染上零区分**,差的不是画法',

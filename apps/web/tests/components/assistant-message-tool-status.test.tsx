@@ -468,8 +468,16 @@ describe('AssistantMessage 执行记录', () => {
       />,
     );
 
-    const prose = container.querySelector('.prose-block[data-stream-cursor="true"]');
-    expect(prose?.textContent).toContain('The answer is still streaming.');
+    /*
+     * 原来这里用 `.prose-block[data-stream-cursor="true"]` 定位正文。那个属性
+     * 2026-08-27 随流式光标一起删掉了(用户:「把这个光标干掉,什么地方都不准
+     * 出现」),所以改成按内容找 —— 这条用例问的本来就是「done 之后的正文出没
+     * 出壳」,和光标无关。光标不再出现这件事由
+     * `tests/components/chat/stream-cursor-removed.test.tsx` 单独钉着。
+     */
+    const prose = [...container.querySelectorAll('.prose-block')]
+      .find((n) => (n.textContent ?? '').includes('The answer is still streaming.'));
+    expect(prose).toBeTruthy();
     /*
      * 这里曾经断言「两段都在壳外」,依据是 2026-08-26 早些时候那条
      * 「还没有 todo 时正文一律在壳外」—— **用户当天晚些时候把它推翻了**
