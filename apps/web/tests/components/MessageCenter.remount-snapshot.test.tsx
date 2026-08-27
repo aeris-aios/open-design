@@ -1677,6 +1677,80 @@ describe('MessageCenter remount snapshot', () => {
     expect(pending[pending.length - 1] ?? false).toBe(false);
   });
 
+  it('does not commit a pull that was answered for a session which has since ended', async () => {
+    // The sibling spec above releases the held pull after the boundary effect
+    // has run. That effect issues a fresh sync, whose request id supersedes the
+    // held run\'s, so the held run bails on identity and nothing it fetched can
+    // reach the host. That is the ordering the earlier version of this spec
+    // exercised, and it is covered without any new code.
+    //
+    // The effect only issues that sync when there is nothing to join. On the
+    // FIRST pull of the process there is no published snapshot yet, so
+    // `noteAuthoritativeAuthMode` has nothing to compare against and leaves
+    // `inFlightSync` alone; the effect then JOINS the held signed-in run
+    // instead of replacing it. Its request id, its workspace generation and its
+    // captured account are all still current when it lands, so it commits the
+    // previous account\'s rows and its targeted announcement into a host that
+    // has already been told the session ended. Refusing its snapshot afterwards
+    // cannot take those host-local writes back.
+    //
+    // Reachable as: the app opens, the message centre\'s first pull is on the
+    // wire, and status polling observes a revoked or expired session.
+    const parked: Array<() => void> = [];
+    let sessionValid = true;
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/integrations/vela/status')) {
+        statusCalls += 1;
+        return Response.json({ loggedIn: sessionValid });
+      }
+      if (url.includes('/message-center') && url.includes('/messages')) {
+        messageCalls += 1;
+        const answeredFor = sessionValid;
+        await new Promise<void>((resolve) => { parked.push(resolve); });
+        if (!answeredFor) return Response.json({ messages: [], nextCursor: null, unreadCount: 0 });
+        return Response.json({
+          messages: [{
+            ...row('PRIOR-ACCOUNT-row', null),
+            audienceType: 'targeted',
+            messageKey: 'go-plan-sunset-2026-08',
+          }],
+          nextCursor: null,
+          unreadCount: 1,
+        });
+      }
+      return Response.json({});
+    }));
+
+    const pending: boolean[] = [];
+    render(
+      <I18nProvider initial="zh-CN">
+        <MessageCenter
+          priorityAnnouncementActive
+          onPriorityAnnouncementPendingChange={(v) => pending.push(v)}
+        />
+      </I18nProvider>,
+    );
+    // The very first pull, held on the wire with no snapshot behind it.
+    await waitFor(() => expect(parked.length).toBe(1));
+
+    // Everything from here is what the host may show once the session is over.
+    const afterBoundary = pending.length;
+    sessionValid = false;
+    noteAuthoritativeAuthMode(false);
+    // Let the boundary effect run. With nothing to adopt and a run to join, it
+    // joins — the held run stays the current one.
+    await new Promise((r) => setTimeout(r, 30));
+
+    parked[0]!();
+    await new Promise((r) => setTimeout(r, 40));
+
+    expect(pending.slice(afterBoundary)).not.toContain(true);
+    fireEvent.click(screen.getByTestId('message-center-trigger'));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByRole('button', { name: /PRIOR-ACCOUNT-row/ })).toBeNull();
+  });
+
   it('does not re-sync when it is remounted straight away', async () => {
     const first = await mountAndSettle();
     const afterFirst = { status: statusCalls, messages: messageCalls };

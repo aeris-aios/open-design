@@ -303,6 +303,16 @@ export function MessageCenter({
     // so blanking it during an outage makes a required notice vanish and
     // reappear — the regression fixed two rounds ago, by a different route.
     // Both wait for an answer; neither guesses from a non-answer.
+    // The boundary effect clears this host, but it only supersedes THIS run
+    // when it has to issue a fresh sync. With a run already on the wire it
+    // joins instead, so a pull answered for a session that has since ended
+    // arrives with its request id, its generation and its captured account all
+    // still current — and commits. Refusing its snapshot afterwards cannot take
+    // host-local writes back. Reachable on the process's first pull, where
+    // there is no published snapshot for the invalidation to compare against
+    // and `inFlightSync` therefore survives.
+    const authoritativeNow = currentAuthoritativeLoggedIn();
+    if (authoritativeNow !== null && authoritativeNow !== account) return;
     const authoritative = authMode !== 'unavailable';
     commitState(merged, overlayReadIds, {
       persistAnonymous: authMode === 'signed-out' && ownsLatestWrite,
