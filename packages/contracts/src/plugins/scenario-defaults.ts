@@ -52,7 +52,8 @@ export type DefaultScenarioPluginId =
   | 'example-hyperframes'
   | 'example-simple-deck'
   | 'example-web-clone'
-  | 'example-web-prototype';
+  | 'example-web-prototype'
+  | 'example-webgl-experience';
 
 export const DEFAULT_UNSELECTED_SCENARIO_PLUGIN_ID =
   'od-default' satisfies DefaultScenarioPluginId;
@@ -155,6 +156,12 @@ export function defaultScenarioPluginIdForProjectMetadata(
 ): DefaultScenarioPluginId | null {
   if (metadata?.intent === 'live-artifact') return 'example-live-artifact';
   if (metadata?.intent === 'web-clone') return 'example-web-clone';
+  // The powered-preview GPU card is a first-level output type on the create
+  // rail and binds `example-webgl-experience`, so that plugin is this
+  // metadata's automatic default the same way `example-web-clone` is
+  // web-clone's. Leaving it out resolved WebGL projects to the generic
+  // prototype seed and made a card-created project look like a user pin.
+  if (metadata?.intent === 'webgl-experience') return 'example-webgl-experience';
   if (metadata?.intent === 'hyperframes') return 'example-hyperframes';
   if (metadata?.intent === 'marketing') return 'example-web-prototype';
   return defaultScenarioPluginIdForKind(metadata?.kind);
