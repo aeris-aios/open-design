@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useRef, useState, type RefObject } from 'react';
+import { useCallback, useLayoutEffect, useRef, useState, type MutableRefObject, type RefObject } from 'react';
 
 export type AnchoredPlacement = 'above' | 'below';
 
@@ -122,12 +122,25 @@ const INITIAL: AnchoredPopover = {
  * `position:absolute; z-index:2` —— 它**自己就是一个层叠上下文**,浮层留在
  * 里面时,不管写多大的 z-index,都只在这个 z=2 的盒子内部排序。
  *
- * ## 幂等:一切都从「没有修正时的位置」算起
+ * ## 幂等:已生效的修正必须**量回来**,不能凭记忆
  *
- * 修正量是加在浮层身上的,于是下一次量到的盒子**已经带着上一次的修正**。直接
- * 拿它再算一次,会得出「现在不越界了 → 修正归零 → 又越界了」的来回翻。所以
- * `measure` 先把已生效的 `inlineShift` 减掉,还原成「没修正时它会在哪儿」,
- * 再据此算这一轮的修正。同一份输入永远得到同一份输出。
+ * 修正量是加在浮层身上的,于是下一次量到的盒子**已经带着上一次的修正**。要还原
+ * 成「没修正时它会在哪儿」,就得知道现在身上有多少修正。
+ *
+ * 第一版把它记在一个 ref 里(「我上次告诉 DOM 偏移多少」)。**那是错的** ——
+ * 记忆和 DOM 会分家,而且是两种分法,2026-08-27 真机上两种都撞见了:
+ *
+ *  · **同一帧里连着量两次、中间没有重排**:第二次量到的还是没修正的盒子,却
+ *    按「已经修了 N」去还原,凭空多减一个 N —— 修正量翻倍。React 18 的
+ *    `StrictMode`(Next.js dev 默认开着)正是这么跑的:effect 挂载 → 卸载 →
+ *    再挂载。真实浏览器实测:普通 shift=108.36,StrictMode shift=216.72。
+ *  · **某一轮量不到面板**(portal 重挂的那一帧):`inlineShift` 保持 0 并被
+ *    写进状态,浮层弹回锚点原位;而之后没有任何事件再触发重算,它就停在错的
+ *    位置上。真机量到的 `style.left` 正好等于 `rect.left`,就是这一半。
+ *
+ * 所以现在**从 DOM 上读回来**(`readAppliedShift`,由调用方提供 —— 只有它知道
+ * 自己把修正放在了哪个盒子的哪个属性上)。读多少次都是同一个值,和调用次数、
+ * 挂载次数、有没有重排统统无关。
  *
  * ## 为什么是 useLayoutEffect
  *
@@ -142,6 +155,12 @@ export function useAnchoredPopover(
   open: boolean,
   anchorRef: RefObject<HTMLElement | null>,
   panelRef: RefObject<HTMLElement | null> | null,
+  /**
+   * 「浮层身上**现在**有多少横向修正」—— 每次量之前现读,不记账(见上「幂等」)。
+   * 由调用方提供是因为只有它知道修正落在哪儿:搬走那份在包裹盒的 `left` 上,
+   * 原地那份在菜单自己的 `transform` 上。
+   */
+  readAppliedShift: MutableRefObject<() => number>,
   options: { estimatedHeight: number; gap?: number } = { estimatedHeight: 0 },
 ): AnchoredPopover {
   const { estimatedHeight, gap = 6 } = options;
@@ -149,8 +168,6 @@ export function useAnchoredPopover(
   // 内联箭头每次渲染都是新的;放进 ref 后监听器只在开合时绑一次。
   const optionsRef = useRef({ estimatedHeight, gap });
   optionsRef.current = { estimatedHeight, gap };
-  /** 已经生效的横向修正 —— 下一轮量之前要先把它减回去(见上「幂等」)。 */
-  const appliedShiftRef = useRef(0);
 
   const measure = useCallback(() => {
     const anchor = anchorRef.current;
@@ -179,14 +196,19 @@ export function useAnchoredPopover(
     const placement: AnchoredPlacement =
       spaceBelow < height && spaceAbove > spaceBelow ? 'above' : 'below';
 
-    let inlineShift = 0;
+    /*
+     * 量不到面板时**保持现状**,不是归零 —— 归零会让浮层弹回锚点原位,而且
+     * 之后没有任何事件再触发重算,它就停在那儿了(真机那一半)。
+     */
+    const applied = readAppliedShift.current();
+    let inlineShift = applied;
     let maxInlineSize: number | null = null;
     let maxBlockSize: number | null = null;
 
     if (panelRect && panelRect.width > 0) {
       // 还原成「没有修正时它会在哪儿」——否则修正会和自己打架(见 docblock)。
-      const naturalLeft = panelRect.left - appliedShiftRef.current;
-      const naturalRight = panelRect.right - appliedShiftRef.current;
+      const naturalLeft = panelRect.left - applied;
+      const naturalRight = panelRect.right - applied;
 
       /*
        * 先限尺寸,再平移 —— 顺序不能反。Floating UI 的 `size` 也排在 `shift`
@@ -203,6 +225,7 @@ export function useAnchoredPopover(
       const overStart = clip.left + INLINE_PAD - naturalLeft;
       const overEnd = naturalRight - (clip.right - INLINE_PAD);
       // 两边都超(框比菜单还窄)时先保左缘:被切掉的开头比结尾更难读。
+      inlineShift = 0;
       if (overStart > 0) inlineShift = overStart;
       else if (overEnd > 0) inlineShift = -overEnd;
 
@@ -227,7 +250,6 @@ export function useAnchoredPopover(
       }
     }
 
-    appliedShiftRef.current = inlineShift;
     setState((prev) =>
       prev.placement === placement &&
       prev.inlineShift === inlineShift &&
@@ -243,10 +265,7 @@ export function useAnchoredPopover(
   }, []);
 
   useLayoutEffect(() => {
-    if (!open) {
-      appliedShiftRef.current = 0;
-      return;
-    }
+    if (!open) return;
     measure();
     // 面板挂上之后真实高度才有 —— 再量一次,把第一帧的估值换掉。
     const raf = requestAnimationFrame(measure);

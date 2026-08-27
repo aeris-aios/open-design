@@ -79,6 +79,34 @@ export function artifactAnchorId(kind: 'publish' | 'export', name: string): stri
   return `${kind}:${name}`;
 }
 
+/**
+ * 从计算样式里把 `translateX` 读出来 —— 原地那条路的修正就落在这儿。
+ *
+ * 浏览器把 `transform` 归一成 `matrix(a,b,c,d,tx,ty)`(有 3D 分量时是
+ * `matrix3d`,平移在第 13 个);jsdom 不归一,原样回吐 `translateX(67px)`。
+ * 三种形态都认,因为测试跑在 jsdom、真机跑在 Blink。
+ */
+function readTranslateX(el: HTMLElement | null): number {
+  if (!el) return 0;
+  let t = '';
+  try {
+    t = window.getComputedStyle(el).transform || '';
+  } catch {
+    t = '';
+  }
+  if (!t || t === 'none') {
+    // jsdom 有时连 computed 都不给,退回内联值
+    t = el.style.transform || '';
+  }
+  const m3 = /matrix3d\(([^)]+)\)/.exec(t);
+  if (m3) return Number.parseFloat(m3[1]!.split(',')[12] ?? '0') || 0;
+  const m = /matrix\(([^)]+)\)/.exec(t);
+  if (m) return Number.parseFloat(m[1]!.split(',')[4] ?? '0') || 0;
+  const tx = /translateX\((-?[\d.]+)px\)/.exec(t);
+  if (tx) return Number.parseFloat(tx[1]!) || 0;
+  return 0;
+}
+
 function findAnchor(anchorId: string | null): HTMLElement | null {
   if (!anchorId) return null;
   return document.querySelector<HTMLElement>(
@@ -139,6 +167,32 @@ export function AnchoredMenuShell({
     menuRef.current = el;
     if (!anchorId) anchorRef.current = el?.parentElement ?? null;
   }, [anchorId]);
+  /** 搬走那份的包裹盒 —— 修正落在它的 `left` 上,要读回来就得认得它。 */
+  const wrapperRef = useRef<HTMLDivElement | null>(null);
+  const attachWrapper = useCallback((el: HTMLDivElement | null) => {
+    wrapperRef.current = el;
+    if (portalRef) portalRef.current = el;
+  }, [portalRef]);
+  /*
+   * 「浮层身上现在有多少修正」—— 现读,不记账。两条路放的地方不一样:
+   *  · 搬走那份:包裹盒的 `left` 被写成 `锚点 left + 修正`,所以拿它现在的
+   *    **内联 left** 减去锚点现在的 left,就是它身上真实生效的修正。
+   *    读内联样式而不是 `getBoundingClientRect()`:前者是「盒子现在被摆在哪儿」
+   *    的真值,而且同一帧里连量两次也不会变 —— 没有重排,它就还没动。
+   *    (后者在 jsdom 里恒为 0,量不出来。)
+   *  · 原地那份:菜单自己的 `transform: translateX()`,从计算样式里读回来。
+   * 每次渲染重新赋值即可 —— 它进的是 ref,不参与任何 effect 的依赖。
+   */
+  const readAppliedShift = useRef<() => number>(() => 0);
+  readAppliedShift.current = () => {
+    if (!anchorId) return readTranslateX(menuRef.current);
+    const wrap = wrapperRef.current;
+    const anchorEl = anchorRef.current;
+    if (!wrap || !anchorEl) return 0;
+    const placed = Number.parseFloat(wrap.style.left);
+    if (!Number.isFinite(placed)) return 0;
+    return placed - anchorEl.getBoundingClientRect().left;
+  };
   if (anchorId) anchorRef.current = anchor;
   // 包裹盒盖在按钮上,所以它的尺寸就是按钮的尺寸;菜单相对它排。
   const rect = anchor?.getBoundingClientRect?.();
@@ -147,6 +201,7 @@ export function AnchoredMenuShell({
     open,
     anchorRef,
     menuRef,
+    readAppliedShift,
     {
       // 分享面板最高,导出面板矮一些;只用来判上/下,不必精确。
       estimatedHeight: 320,
@@ -225,7 +280,7 @@ export function AnchoredMenuShell({
 
   return createPortal(
     <div
-      ref={portalRef}
+      ref={attachWrapper}
       className={`${wrapperClassName} ${styles.anchored}`}
       style={{
         position: 'fixed',
