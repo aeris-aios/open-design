@@ -767,6 +767,34 @@ const AGENT_AGNOSTIC_DETAIL_FAILURE_UI: Record<string, RunFailureUi> = {
     'chat.runError.title.agentCrashed',
     'chat.runError.agentCrashedMessage',
   ),
+  // S10 · the hosted agent service failed at the protocol level and did not
+  // come back. `fatal_rpc_error` is what the daemon writes when the ACP/JSON-RPC
+  // channel to the agent reported a FATAL and the child closed
+  // (`server.ts` markRpcCloseReason → `process_exit / fatal_rpc_error`); the
+  // named members of that family — suspended account, insufficient balance,
+  // rolling model window, stale resumed session — are all extracted ahead of
+  // this row, so what is left is "the service backing this agent broke and did
+  // not say anything we can act on".
+  //
+  // Why S10 (「服务暂时不可用」) and not S19 (「智能体意外退出了」): S19's copy is
+  // "it didn't say why", and this failure is the case where it DID say — at the
+  // protocol level — that the service side gave up. The observed instance is
+  // AMR's `session/new`: vela's opencode session creation is slow by nature
+  // (median 26.7s, p100 ~32s) and its long tail returns Go's
+  // `context deadline exceeded`, which is upstream slowness, not a local crash.
+  //
+  // S10's 时机 is "自动重试都失败后", and that is exactly when this row is read:
+  // `fatal_rpc_error` is in the daemon's safe same-run retry set
+  // (`run-retry-policy.ts`), so by the time a card renders the run has already
+  // burned its automatic retry — which makes S10's "已自动重试过" literally true.
+  //
+  // No switch card: 推荐 Open Design 智能体 is reserved for「本地 agent 没登录」
+  // and「供应商额度用完」(design §3), and the agent that just failed here
+  // usually IS the hosted one.
+  fatal_rpc_error: retryWithGuidance(
+    'chat.runError.title.upstreamUnavailable',
+    'chat.runError.upstreamUnavailableMessage',
+  ),
   // S18 · risk control suspended the account (catalogue R-064: "card — contact
   // support, no Retry"). Resolved here, ahead of the AMR branch, because the
   // suspension is the ACCOUNT's and the AMR catch-all below would otherwise

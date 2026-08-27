@@ -5053,6 +5053,18 @@ function isRecoveredAssistantRunError(
       event.detail?.trim() === target,
   );
   if (!ownsPersistedError) return false;
+  // 这一轮**自己**跑通了 —— 那么它中途报的那句就不是终态,是被自愈掉的一次尝试。
+  //
+  // daemon 对可自愈的失败会**在同一个 runId 里**重开一次子进程
+  // (`run-retry-policy.ts` 的 `same_run_transient`:AMR 建会话超时就在这个集合里)。
+  // 第一次尝试的 error 帧照样发出来,SSE 也可能就断在那一帧上;客户端那时还不知道
+  // 后面会重试成功,于是把原文落到了面板级的 `error`。等重试跑完,消息被改回
+  // `succeeded`,可那条 `error` 从来没人撤 —— 一张「任务失败」的卡就挂在一次
+  // 成功的运行下面,卡面上还摊着本机端口和项目路径。
+  //
+  // `runStatus === 'succeeded'` 是 daemon 对这一个 run 的终态裁定(SSE `end` 或
+  // `/api/runs/:id` 显式声明的那个),所以它一票否决同一轮里更早的那句报错。
+  if (source.runStatus === 'succeeded') return true;
   return messages.slice(sourceIndex + 1).some(
     (message) => message.role === 'assistant' && message.runStatus === 'succeeded',
   );
