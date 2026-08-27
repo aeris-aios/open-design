@@ -80,6 +80,7 @@ import {
   type VisualStyleContext,
 } from "../runtime/visual-style-catalog";
 import { splitStreamingArtifact, stripArtifact, stripRecoveredHtmlFallbackForDisplay } from "../artifacts/strip";
+import { stripInternalControlMarkers } from "../artifacts/internal-markers";
 import { BRAND_BROWSER_TAB_ID } from "../runtime/brand-browser-bridge";
 import {
   getPluginFolderCandidates,
@@ -95,8 +96,8 @@ import { useT } from "../i18n";
 import { deriveFileOps, type FileOpEntry } from "../runtime/file-ops";
 import { dedupeToolUsesById } from "../runtime/tool-events";
 import {
+  continuableUnfinishedTodos,
   isTodoWriteToolName,
-  unfinishedTodosFromEvents,
   type TodoItem,
 } from "../runtime/todos";
 import type { Dict } from "../i18n/types";
@@ -632,6 +633,20 @@ function AssistantMessageImpl({
   nextStepVariant = 'default',
 }: Props) {
   const t = useT();
+  // A blocked strategy task is a sticky terminal verdict: the daemon rejects
+  // every further continuation with 409 STRATEGY_TASK_STATE_MISMATCH, so the
+  // turn's question forms must stop accepting submissions and explain why.
+  // Prefer the gate's persisted agent-visible text; fall back to the generic
+  // localized notice.
+  const strategyBlockedNotice =
+    message.strategyTaskBlocked === true
+      ? message.strategyTaskBlockedText?.trim() || t("questions.strategyBlockedNotice")
+      : null;
+  // NOTE(sync/main): origin/main also declares a `thinkingLinkClick` memo here
+  // and hands it to its own `ThinkingBlock`. This branch moved thinking into the
+  // execution shell (`components/chat/ExecutionShell.tsx`), which builds its own
+  // link handler, so that memo has no consumer left and is deliberately dropped
+  // rather than carried as an unused binding.
   const events =
     (message.events?.length ?? 0) > 0
       ? message.events!
@@ -997,7 +1012,12 @@ function AssistantMessageImpl({
           }),
     [message.content, nextStepVariant, projectMetadata, streaming],
   );
-  const unfinishedTodos = streaming ? [] : unfinishedTodosFromEvents(events);
+  // A settled `completed` strategy verdict outranks a stale TodoWrite snapshot:
+  // the deliverable was verified on disk, so the footer must not report the
+  // turn as stopped with unfinished work (and must not withhold next steps).
+  const unfinishedTodos = streaming
+    ? []
+    : continuableUnfinishedTodos({ events, strategyTaskDelivered: message.strategyTaskDelivered });
   const hasTodoSnapshot = events.some(
     (event) => event.kind === "tool_use" && isTodoWriteToolName(event.name),
   );
@@ -1241,7 +1261,10 @@ function AssistantMessageImpl({
                 nextUserContent={nextUserContent}
                 suppressDirectionForms={suppressDirectionForms}
                 onSubmitQuestionForm={onSubmitQuestionForm}
-                questionFormSubmitDisabled={questionFormSubmitDisabled}
+                questionFormSubmitDisabled={
+                  questionFormSubmitDisabled || strategyBlockedNotice !== null
+                }
+                strategyBlockedNotice={strategyBlockedNotice}
                 visualStyleContext={visualStyleContextForProjectKind(projectKind)}
                 projectId={projectId}
                 conversationId={conversationId}
@@ -2921,6 +2944,7 @@ function ProseBlock({
   suppressDirectionForms,
   onSubmitQuestionForm,
   questionFormSubmitDisabled,
+  strategyBlockedNotice = null,
   visualStyleContext,
   projectId,
   conversationId,
@@ -2944,6 +2968,8 @@ function ProseBlock({
   projectResolvedDir?: string | null;
   onSubmitQuestionForm?: QuestionFormSubmitHandler;
   questionFormSubmitDisabled: boolean;
+  /** Localized blocked-task notice; non-null terminates form interaction. */
+  strategyBlockedNotice?: string | null;
   visualStyleContext?: VisualStyleContext;
   onRequestOpenFile?: (name: string) => void;
   onBrandBrowserAssistConfirm?: BrandBrowserAssistConfirm;
@@ -2951,19 +2977,29 @@ function ProseBlock({
   const t = useT();
   const cleaned = useMemo(() => {
     /*
-     * 评审剧场语法先剥一道。
+     * 三道**协议噪音**先剥干净,再交给按标记找边界的 `stripArtifact`。
+     * 三者互不重叠,合在一条链上,谁都不能少:
      *
-     * daemon 那道(`panel-grammar-strip.ts`)只管**新流**;用户手上已经有一堆
-     * 落了库的旧对话,里面原样写着 `<CRITIQUE_RUN>` / `<PANELIST role="Critic" score="9.0">`。
-     * 旧数据不能因为「以后不会再有了」就一直烂在那儿 —— 所以渲染时再剥一次。
+     * 1. `stripInternalControlMarkers`(origin/main):daemon 的内部控制标记
+     *    (`<od-title>` / `open-design-plan-contract` / `open-design-runtime-state`)。
+     *    这些本该被 daemon 侧的流式剥离器吃掉,但已经落库的旧消息修不回来。
+     * 2. `stripCritiqueGrammar`(本分支):评审剧场语法。daemon 那道
+     *    (`panel-grammar-strip.ts`)只管**新流**;用户手上已经有一堆落了库的旧对话,
+     *    里面原样写着 `<CRITIQUE_RUN>` / `<PANELIST role="Critic" score="9.0">`。
+     * 3. `stripArtifactFocusMarkers`(本分支):`<od-focus>` 展示意图标记。
      *
-     * 位置在最前面:后面 `stripArtifact` 之类都按标记找边界,先把不是标记的
+     * 位置都在最前面:后面 `stripArtifact` 之类都按标记找边界,先把不是标记的
      * 噪音清掉,它们的扫描才不会被岔开。
      * 语法出处在 `@open-design/contracts`,两边共用一份,不会分叉。
      */
-    const stripped = stripArtifact(stripArtifactFocusMarkers(stripCritiqueGrammar(text)));
-    return hideRecoveredHtmlFallback ? stripRecoveredHtmlFallbackForDisplay(stripped, text) : stripped;
-  }, [hideRecoveredHtmlFallback, text]);
+    const withoutMarkers = stripArtifactFocusMarkers(
+      stripCritiqueGrammar(stripInternalControlMarkers(text, { streaming })),
+    );
+    const stripped = stripArtifact(withoutMarkers);
+    return hideRecoveredHtmlFallback
+      ? stripRecoveredHtmlFallbackForDisplay(stripped, withoutMarkers)
+      : stripped;
+  }, [hideRecoveredHtmlFallback, streaming, text]);
   // While the latest turn is still streaming a not-yet-closed question-form,
   // drop the partial `<question-form>{…` markup from the prose so the chat
   // doesn't flash raw JSON; an inline loading frame takes its place. A not-yet-closed
@@ -3091,6 +3127,7 @@ function ProseBlock({
             interactive={isLastAssistant}
             onSubmit={onSubmitQuestionForm}
             submitDisabled={questionFormSubmitDisabled}
+            strategyBlockedNotice={strategyBlockedNotice}
             visualStyleContext={visualStyleContext}
           />
         );
@@ -3123,6 +3160,7 @@ function FormBlock({
   interactive,
   onSubmit,
   submitDisabled,
+  strategyBlockedNotice = null,
   visualStyleContext,
 }: {
   form: QuestionForm;
@@ -3133,6 +3171,8 @@ function FormBlock({
   interactive: boolean;
   onSubmit?: QuestionFormSubmitHandler;
   submitDisabled: boolean;
+  /** Localized blocked-task notice rendered under the disabled form. */
+  strategyBlockedNotice?: string | null;
   visualStyleContext?: VisualStyleContext;
 }) {
   const t = useT();
@@ -3518,6 +3558,15 @@ function FormBlock({
         visualStyleContext={visualStyleContext}
         autoContinueAfterTimeout
       />
+      {strategyBlockedNotice ? (
+        <div
+          className="qf-blocked-notice"
+          role="status"
+          data-testid="question-form-blocked-notice"
+        >
+          {strategyBlockedNotice}
+        </div>
+      ) : null}
       {uploadError ? (
         <div className="qf-upload-error" role="alert">
           {uploadError}

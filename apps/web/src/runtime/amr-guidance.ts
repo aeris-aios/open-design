@@ -5,6 +5,7 @@
 // without a circular dependency.
 import {
   isModelWindowLimitFailure,
+  readMembershipConcurrencyResetAt,
   readModelWindowResetAt,
 } from '@open-design/contracts';
 
@@ -22,31 +23,22 @@ export const AMR_CONSOLE_URL =
   'https://open-design.ai/amr/dashboard?source=open_design';
 export const DEFAULT_AMR_RECHARGE_URL = AMR_CONSOLE_URL;
 export const AMR_RECHARGE_URL = DEFAULT_AMR_RECHARGE_URL;
+export const OPEN_DESIGN_PRICING_URL = 'https://open-design.ai/pricing/';
 
 // Path + attribution the console is always reached through, so a runtime
 // origin only has to carry the host.
 const AMR_CONSOLE_PATH = '/dashboard?source=open_design';
 
 /**
- * The console's `billing=<intent>` value that means "open the upgrade surface
- * that matches THIS workspace".
- *
- * B's dashboard resolves it against the workspace's own subscription state
- * rather than trusting the caller: a personal owner gets the personal plan
- * modal (the same one the console's 「升级订阅」 hero button opens), a team
- * that never subscribed gets first-checkout, and a subscribed team gets
- * change-plan. That is why this client links one intent for every state
- * instead of guessing a per-state parameter — a wrong guess used to open
- * nothing at all (recvpSQKna0LwR).
- */
-export const AMR_CONSOLE_UPGRADE_INTENT = 'plan';
-
-/**
  * The console's `billing=<intent>` value that means "open the auto-recharge
  * (auto top-up) settings dialog for THIS workspace".
  *
- * Same handoff shape as {@link AMR_CONSOLE_UPGRADE_INTENT}: the client states
- * an intent and B decides which surface satisfies it. It exists because the
+ * NOTE(sync/main): the sibling `AMR_CONSOLE_UPGRADE_INTENT = 'plan'` was
+ * REMOVED by origin/main (#7122 / #7167 / #5459): generic plan comparison no
+ * longer deep-links into the Cloud console, it goes to public Pricing. This
+ * intent survives because it names a DIFFERENT destination — the console's own
+ * auto-recharge settings — which Pricing does not own. The client states an
+ * intent and B decides which surface satisfies it. It exists because the
  * 2026-08-26 balance ruling gives a Max owner no dialog of our own — clicking
  * Upgrade must land them directly on 触发阈值 / 充值金额 / 每月上限, since a Max
  * subscriber has no higher plan to sell and topping up IS the fix.
@@ -121,13 +113,11 @@ export function amrRechargeUrlForProfile(profile: string | null | undefined): st
 function amrWorkspaceUrl(
   profile: string | null | undefined,
   workspaceId: string | null | undefined,
-  intent?: 'plans',
 ): string | null {
   const normalizedWorkspaceId = workspaceId?.trim();
   if (!normalizedWorkspaceId) return null;
   const url = new URL(amrConsoleUrlForProfile(profile));
   url.searchParams.set('workspaceId', normalizedWorkspaceId);
-  if (intent === 'plans') url.searchParams.set('billing', AMR_CONSOLE_UPGRADE_INTENT);
   return url.toString();
 }
 
@@ -139,16 +129,17 @@ export function amrConsoleUrlForWorkspace(
 }
 
 export function amrPlansUrlForWorkspace(
-  profile: string | null | undefined,
+  _profile: string | null | undefined,
   workspaceId: string | null | undefined,
 ): string | null {
-  return amrWorkspaceUrl(profile, workspaceId, 'plans');
+  return workspaceId?.trim() ? OPEN_DESIGN_PRICING_URL : null;
 }
 
-// Console dashboard deep-linked to open the subscription/plans modal, used by
-// the "Upgrade" affordances next to the plan tier.
-export function amrPlansUrlForProfile(profile: string | null | undefined): string {
-  return amrConsoleUrlWithBillingIntent(profile, AMR_CONSOLE_UPGRADE_INTENT);
+// Public comparison surface used by every generic Upgrade / View plans entry.
+// A selected Pricing card still carries plan + interval back to Vela for
+// direct checkout; generic discovery never opens the Cloud plan modal.
+export function amrPlansUrlForProfile(_profile: string | null | undefined): string {
+  return OPEN_DESIGN_PRICING_URL;
 }
 
 /**
@@ -192,7 +183,7 @@ const PROMOTE_AMR_CODES = new Set<string>([
 //   - retry:                       re-run with the current agent.
 //   - authorize:                   AMR sign-in/authorize flow, then auto-retry on success.
 //   - recharge:                    open the AMR console (manual retry afterwards).
-//   - upgrade:                     open the AMR plan modal (manual retry afterwards).
+//   - upgrade:                     open public Pricing (manual retry afterwards).
 //   - launch-terminal-auth:        Antigravity-specific. agy's `-p`
 //                                  print mode cannot complete Google
 //                                  Sign-In on its own (no input field
@@ -254,6 +245,8 @@ export type RunFailureMessageKey =
   | 'chat.runError.rateLimitedMessage'
   | 'chat.runError.modelWindowLimitMessage'
   | 'chat.runError.modelWindowLimitMessageNoTime'
+  | 'chat.runError.membershipConcurrencyLimitMessage'
+  | 'chat.runError.membershipConcurrencyLimitMessageNoTime'
   | 'chat.runError.upstreamUnavailableMessage'
   | 'chat.runError.toolLoopMessage'
   | 'chat.runError.outputInvalidMessage'
@@ -269,6 +262,8 @@ export type RunFailureMessageKey =
   | 'chat.runError.agentCrashedMessage'
   | 'chat.runError.accountSuspendedMessage'
   | 'chat.runError.fallbackMessage'
+  | 'chat.runError.cliSessionRefusedMessage'
+  | 'chat.runError.strategyTaskStateMismatchMessage'
   | null;
 
 /**
@@ -295,6 +290,7 @@ export type RunFailureTitleKey =
   | 'chat.runError.title.signInRequired'
   | 'chat.runError.title.rateLimited'
   | 'chat.runError.title.modelWindowLimit'
+  | 'chat.runError.title.membershipConcurrencyLimit'
   | 'chat.amrBalanceGate.title'
   | 'chat.runError.title.cliMissing'
   | 'chat.runError.title.promptTooLarge'
@@ -312,6 +308,8 @@ export type RunFailureTitleKey =
   | 'chat.runError.title.cpuUnsupported'
   | 'chat.runError.title.agentCrashed'
   | 'chat.runError.title.accountSuspended'
+  | 'chat.runError.title.cliSessionRefused'
+  | 'chat.runError.title.strategyTaskHalted'
   | 'chat.runError.title.generic';
 
 export interface RunFailureUi {
@@ -668,6 +666,15 @@ const AGENT_AGNOSTIC_FAILURE_UI: Record<string, RunFailureUi> = {
     ),
     suppressCard: true,
   },
+  // A strategy-task continuation (clarification answer) arrived after the
+  // daemon's OD Next protocol gate already settled the task — typically a
+  // sticky `blocked` verdict. This is a task-lifecycle rejection, not an
+  // engine failure: name the halted task and point at retrying the request
+  // or starting a new one instead of showing the generic "task failed" card.
+  STRATEGY_TASK_STATE_MISMATCH: retryWithGuidance(
+    'chat.runError.title.strategyTaskHalted',
+    'chat.runError.strategyTaskStateMismatchMessage',
+  ),
 };
 
 // Ladder rung 3: this local path cannot work at all — the provider's quota is
@@ -837,6 +844,7 @@ const AGENT_AGNOSTIC_DETAIL_FAILURE_UI: Record<string, RunFailureUi> = {
 };
 
 // Resolve the failure UI for a failed run:
+//   - ACP CLI refused the session → named type + change-the-CLI guidance
 //   - agent-agnostic root cause (cli missing, prompt too large, model
 //     unavailable, tool loop, bad output, bad runtime def) → named type + fix
 //   - agent-agnostic failure_detail (timeout, empty output, stale resumed
@@ -870,6 +878,27 @@ function resolveRunFailureUiIgnoringSelfPromotion(
   agentId: string | null | undefined,
   rawMessage?: string | null,
 ): RunFailureUi {
+  // An ACP agent CLI that answered `initialize` and then refused to open a
+  // session. Resolved before every other branch, and before the static
+  // agent-agnostic table, because this code carries a prescription of its own
+  // (change the CLI build, then retry) that the generic mappings would erase.
+  // The daemon deliberately sends only the code plus the runtime identity as
+  // data — a sentence composed there could never be translated (see
+  // runtimes/acp-handshake-failure.ts).
+  //
+  // The copy names the installed build without quoting a version number. The
+  // daemon does have a detected version, but reading the one THIS run started
+  // with costs a pre-spawn probe on every launch, so naming it is deliberately
+  // left to a follow-up rather than paid for on the failure path here.
+  if (code === 'AGENT_CLI_SESSION_REFUSED') {
+    return {
+      primaryAction: 'retry',
+      titleKey: 'chat.runError.title.cliSessionRefused',
+      messageKey: 'chat.runError.cliSessionRefusedMessage',
+      secondaryRetry: false,
+      showSwitchCard: false,
+    };
+  }
   // Agent-agnostic codes resolve first so an AMR/Antigravity run that hits one
   // of them still gets the specific guidance instead of the generic fallback.
   const agnostic = typeof code === 'string' ? AGENT_AGNOSTIC_FAILURE_UI[code] : undefined;
@@ -895,6 +924,23 @@ function resolveRunFailureUiIgnoringSelfPromotion(
         : 'chat.runError.modelWindowLimitMessageNoTime',
       retryAt ? { messageVars: { retryAt } } : {},
     );
+  }
+  // Membership concurrency is a temporary policy gate carried inside an ACP
+  // fatal envelope. Keep the Retry button manual, name the wait explicitly,
+  // and preserve the upstream reset instant when one is present.
+  if (detail === 'membership_concurrency_limit') {
+    const parsed = readMembershipConcurrencyResetAt(rawMessage);
+    const retryAt = parsed && Number.isFinite(Date.parse(parsed)) ? parsed : null;
+    return {
+      primaryAction: 'retry',
+      titleKey: 'chat.runError.title.membershipConcurrencyLimit',
+      messageKey: retryAt
+        ? 'chat.runError.membershipConcurrencyLimitMessage'
+        : 'chat.runError.membershipConcurrencyLimitMessageNoTime',
+      ...(retryAt ? { messageVars: { retryAt } } : {}),
+      secondaryRetry: false,
+      showSwitchCard: false,
+    };
   }
   // Engine-neutral failure_detail (timeout, empty output, stale resumed session,
   // missing Git Bash) resolves before the agent branches so it applies to every
