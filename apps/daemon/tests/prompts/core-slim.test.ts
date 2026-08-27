@@ -18,14 +18,36 @@ const repoRoot = path.resolve(__dirname, '../../../..');
 /**
  * Guards for the SP v2.0 slim core charter.
  *
- * 1. Protocol markers — a fixed set of strings are parsed by the web client
+ * 1. Byte budget — the complete rendered charter has an explicit ceiling.
+ * 2. Protocol markers — a fixed set of strings are parsed by the web client
  *    or matched by later prompt rules. Frozen API; must survive copyedits.
- * 2. Ownership — content deliberately moved OUT of the charter (task-type
+ * 3. Ownership — content deliberately moved OUT of the charter (task-type
  *    router form, platform contracts) must stay out, and keep living where
  *    it moved to.
- * 3. Product-quality invariants — real-world imagery, visual integrity, and
+ * 4. Product-quality invariants — real-world imagery, visual integrity, and
  *    delivery rules must remain operational across execution profiles.
  */
+
+// The charter is prepended to every slim run, so its size is a per-turn
+// token cost, not a one-off. The ceiling exists to make growth a deliberate
+// decision: raise it in the same PR that adds the content, and say why.
+//
+// 25_600 → 29_696: the real-first imagery contract (sourcing order, intrinsic
+// geometry, provenance check) is load-bearing product behavior that could not
+// be delegated to the web-prototype skill, because it must hold for every
+// skill and for skill-less runs.
+const SLIM_CORE_BYTE_BUDGET = 29_696;
+
+describe('renderSlimCoreCharter — byte budget', () => {
+  it('stays under the byte budget in both execution profiles', () => {
+    for (const profile of ['filesystem', 'text_artifact'] as const) {
+      const bytes = Buffer.byteLength(renderSlimCoreCharter(profile), 'utf8');
+      expect(bytes, `${profile} charter must stay under ${SLIM_CORE_BYTE_BUDGET}B`).toBeLessThanOrEqual(
+        SLIM_CORE_BYTE_BUDGET,
+      );
+    }
+  });
+});
 
 describe('renderSlimCoreCharter — SP v2.0 structure', () => {
   const fullCharter = `${renderSlimCoreCharter('filesystem')}\n\n${SLIM_V2_ROLE_BOUNDARY_GUARD}`;
@@ -77,6 +99,14 @@ describe('renderSlimCoreCharter — frozen protocol markers', () => {
   it('enforces real-first imagery sourcing, provenance, and local delivery', () => {
     for (const marker of [
       'factual-integrity invariant applies across every skill and design-system scope',
+      // The invariant only wins a conflict if the carve-out sits inside
+      // priority item 2 itself; as a trailing paragraph it reads as charter
+      // prose at priority 4 and a skill can override it.
+      'Neither scope, however, may replace a named real-world referent',
+      // Conduct's copyright rule must compose with the requirement to fetch
+      // real brand marks, covers, and artwork, or the model resolves the
+      // collision by silently substituting a look-alike.
+      'is not covered by this rule; never substitute a look-alike',
       'Acquire imagery before layout',
       'you must search for or fetch the correct real image',
       'Never use image generation, drawings, generic stock, look-alikes, or fictional substitutes',
