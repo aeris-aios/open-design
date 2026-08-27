@@ -276,7 +276,7 @@ describe('first visible output over a recorded empty-thinking turn', () => {
    * `text_delta` that actually put characters on screen at 46.8s.
    */
   it('stamps the first pixel at the first character-bearing delta', () => {
-    const run = {};
+    const run: { analyticsTelemetry?: Record<string, unknown> | null } = {};
     const lifecycle = createRunLifecycleTracer(run);
     const frames = [
       ...Array.from({ length: 26 }, (_, i) => ({

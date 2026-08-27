@@ -485,6 +485,7 @@ import {
   codexResolvedSandboxMode,
 } from './runtimes/defs/codex.js';
 import { attachCodexAppServerSession } from './agent-protocol/codex-app-server/session.js';
+import {
   ensureDetectedRuntimeVersions,
   getDetectedRuntimeVersions,
   ensureDetectedRuntimeCapabilities,

@@ -59,6 +59,9 @@ test('title marker never leaks into visible text, even when no title was request
   assert.equal(stripper.strip('<od-title>Foo</od-title>Answer'), 'Answer');
   assert.equal(stripper.flush(), '');
   // 没请求标题就不该往上报,但正文必须干净
+  assert.deepEqual(titles, []);
+});
+
 // A Run that never asked for a title still has to consume the marker: the
 // directive lives in the agent's own session history, so a resumed CLI can
 // repeat it on a later turn. server.ts therefore keeps `enabled` on for every

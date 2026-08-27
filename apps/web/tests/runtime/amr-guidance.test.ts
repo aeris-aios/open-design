@@ -351,6 +351,8 @@ describe('resolveRunFailureUi', () => {
       });
       expect(ui.primaryAction).not.toBe('retry');
     }
+  });
+
   // An ACP agent that answered `initialize` and then refused `session/new`
   // (Kimi Code 0.37.x / 0.38.0). The daemon names it with a code and ships the
   // runtime identity as data; the sentence the user reads is this map's job.

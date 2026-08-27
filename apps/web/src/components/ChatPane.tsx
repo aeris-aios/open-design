@@ -5378,7 +5378,7 @@ const UserMessage = memo(UserMessageImpl);
   onRequestDesignSystemDetails,
   t,
   appliedContextItems,
-  showSessionModeChip,
+  showSessionModeChip = false,
   highlighted,
   onResend,
 }: {
@@ -5392,7 +5392,17 @@ const UserMessage = memo(UserMessageImpl);
   onRequestDesignSystemDetails?: (system: DesignSystemSummary) => void;
   t: TranslateFn;
   appliedContextItems: AppliedContextItem[];
-  showSessionModeChip: boolean;
+  /**
+   * Whether the send-time session mode is worth surfacing on this message.
+   *
+   * origin/main introduced it as a required prop feeding both the mode chip
+   * and `hasRunContext`. This branch dropped the chip itself (product ruling,
+   * see the render site), so the only consumer left is `hasRunContext` — and an
+   * omitted value must mean "do not open the context row for the mode alone".
+   * Optional with a `false` default so the chat unit tests can mount a user
+   * message without restating a flag that no longer draws anything.
+   */
+  showSessionModeChip?: boolean;
   highlighted?: boolean;
 }) {
   const { workspaceContext } = useProjectCollabContext();
