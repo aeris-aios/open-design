@@ -1930,11 +1930,22 @@ function AppInner() {
   // unmounted before their poll settled.
   useEffect(() => {
     let cancelled = false;
+    // The initial run, the login-status event, focus and visibility all call
+    // this, so several requests can be on the wire at once and they answer in
+    // whatever order the daemon manages. Only the LATEST one issued may speak
+    // for the session: an older signed-in answer landing after a newer
+    // signed-out one used to re-publish `signed-in` as authoritative, which
+    // re-authorises the very message-centre pull that the sign-out was supposed
+    // to refuse.
+    let latestIssued = 0;
     const sync = async (
       options: { refresh?: boolean } = {},
       restartOnSignIn = false,
     ) => {
+      const issued = latestIssued + 1;
+      latestIssued = issued;
       const status = await fetchVelaLoginStatus(options);
+      if (issued !== latestIssued) return;
       if (!cancelled && status) {
         applyAmrLoginStatus(status, {
           forceModelRefresh: options.refresh === true,

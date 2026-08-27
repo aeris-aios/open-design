@@ -18,6 +18,11 @@ import {
 } from '../../src/providers/registry';
 import { fetchAmrModels, fetchVelaLoginStatus } from '../../src/providers/daemon';
 import { listProjects, listTemplates } from '../../src/state/projects';
+import { AMR_LOGIN_STATUS_EVENT } from '../../src/components/amrLoginPolling';
+import {
+  currentAuthoritativeLoggedIn,
+  resetMessageCenterSnapshot,
+} from '../../src/components/message-center-snapshot';
 
 // Settings is now a full-page route (`/settings`): App.openSettings navigates
 // instead of toggling a modal flag, so the router mock must feed navigate()
@@ -294,6 +299,80 @@ describe('App AMR polling', () => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
     vi.clearAllMocks();
+  });
+
+  it('keeps the authoritative auth mode signed out when an older signed-in status resolves last', async () => {
+    // The status effect starts overlapping `fetchVelaLoginStatus()` calls — the
+    // initial run, the login-status event, focus and visibility all call the
+    // same `sync` — and until now only unmount could stop a response from being
+    // applied. So an older signed-in response could land after a newer
+    // signed-out one and re-publish `signed-in` as authoritative.
+    //
+    // That matters because the message centre now treats this value as the
+    // truth about the session: a pull answered before the sign-out is rejected
+    // by comparing against it, and flipping it back re-authorises exactly the
+    // pull that was meant to be refused. The producer has to be ordered for the
+    // consumer's guard to mean anything.
+    resetMessageCenterSnapshot();
+    // `clearAllMocks` does not drain a `mockResolvedValueOnce` queue, so a spec
+    // that leaves entries behind shifts the next one's catalog. This spec has
+    // no interest in the model poll: give it one stable answer instead.
+    mockedFetchAmrModels.mockReset();
+    mockedFetchAmrModels.mockResolvedValue({
+      source: 'remote',
+      refreshing: false,
+      models: [{ id: 'remote-a', label: 'remote-a' }],
+    });
+    const signedIn = {
+      loggedIn: true,
+      loginInFlight: false,
+      profile: 'local',
+      user: { id: 'user-1', email: 'user-1@example.com' },
+      configPath: '/tmp/amr-config.json',
+    };
+    const signedOut = { loggedIn: false, loginInFlight: false, profile: 'local' };
+
+    let releaseStale: (() => void) | null = null;
+    let call = 0;
+    mockedFetchVelaLoginStatus.mockImplementation(async () => {
+      call += 1;
+      if (call === 2) {
+        // Issued before the sign-out is observed; answered after it.
+        await new Promise<void>((resolve) => { releaseStale = resolve; });
+        return signedIn as never;
+      }
+      if (call >= 3) return signedOut as never;
+      return signedIn as never;
+    });
+
+    render(<App />);
+    // Let the app settle so the remaining calls come from ONE effect instance —
+    // `daemonLive` flipping re-runs it, and its `cancelled` flag would drop the
+    // held response for reasons that have nothing to do with ordering.
+    await waitFor(() => expect(currentAuthoritativeLoggedIn()).toBe(true));
+    await act(async () => { await new Promise((r) => setTimeout(r, 30)); });
+
+    // A status request goes out and is held on the wire.
+    await act(async () => {
+      window.dispatchEvent(new Event(AMR_LOGIN_STATUS_EVENT));
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    expect(releaseStale).not.toBeNull();
+
+    // A newer one goes out and answers signed-out.
+    await act(async () => {
+      window.dispatchEvent(new Event(AMR_LOGIN_STATUS_EVENT));
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    await waitFor(() => expect(currentAuthoritativeLoggedIn()).toBe(false));
+
+    // The older request finally answers signed-in.
+    await act(async () => {
+      releaseStale!();
+      await new Promise((r) => setTimeout(r, 20));
+    });
+
+    expect(currentAuthoritativeLoggedIn()).toBe(false);
   });
 
   it('keeps polling AMR models until the remote catalog replaces the preset list', async () => {
