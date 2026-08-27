@@ -98,14 +98,17 @@ export function AnchoredMenuShell({
   anchorRef.current = anchor;
   // 包裹盒盖在按钮上,所以它的尺寸就是按钮的尺寸;菜单相对它排。
   const rect = anchor?.getBoundingClientRect?.();
-  const { placement } = useAnchoredPopover(Boolean(anchor), anchorRef, { current: null }, {
+  // 菜单本体的引用:横向修正要量它**真实的盒子**,因为它的横向位置来自既有 CSS
+  // (`.chrome-share-menu .share-menu-popover { right: 0 }`),不是这里算出来的。
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const { placement, inlineShift } = useAnchoredPopover(Boolean(anchor), anchorRef, menuRef, {
     // 分享面板最高,导出面板矮一些;只用来判上/下,不必精确。
     estimatedHeight: 320,
-    estimatedWidth: 280,
   });
 
   const menu = (
     <div
+      ref={anchorId ? menuRef : undefined}
       className={className}
       role="menu"
       {...(anchorId ? { 'data-placement': placement } : {})}
@@ -126,7 +129,12 @@ export function AnchoredMenuShell({
       style={{
         position: 'fixed',
         top: rect.top,
-        left: rect.left,
+        /*
+         * 横向修正加在**包裹盒**上,不加在菜单上:包裹盒不可见也不吃事件,挪动它
+         * 等于整体平移,而菜单自己的 `right: 0` 一个字不用改 —— 既有 CSS 继续
+         * 干它本来的活。加在菜单上则要动 `transform`,会跟它自己的动画打架。
+         */
+        left: rect.left + inlineShift,
         width: rect.width,
         height: rect.height,
       }}
