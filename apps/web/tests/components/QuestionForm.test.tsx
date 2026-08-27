@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { QuestionFormView, parseSubmittedAnswers } from '../../src/components/QuestionForm';
 import type { QuestionForm } from '../../src/artifacts/question-form';
 import { visualStyleCardsForContext } from '../../src/runtime/visual-style-catalog';
+import { VISUAL_STYLE_BATCH_SIZE } from '../../src/runtime/visual-style-deck';
 
 const form: QuestionForm = {
   id: 'discovery',
@@ -1066,13 +1067,19 @@ describe('QuestionFormView', () => {
         (el) => el.getAttribute('title'),
       );
     /*
-     * 一沓装的是**整份目录**,不再分页(2026-08-26 裁决,见上面同族那条注释)。
-     * 「+21」那颗按钮随分页一起退场 —— 它本来就是稿子里没有的东西:
-     * 稿子只画 4 张是模拟数据,我们照搬成「一页 4 张」才逼出了这颗计数按钮。
+     * 一沓装的是【这一批的 6 张】(2026-08-27 产品口径:「换一批时,顺序从 22 个里
+     * 每次挑 6 个出来」)。这一条**推翻**了 2026-08-26 那次「整份目录进一沓」的裁决 ——
+     * 推翻的理由是取消不了选择:整份目录进一沓时,「换一批」把整个数组转过去,
+     * 选中的那张会转到看不见的位置,而叠放态只有最前面那张能点。
+     * 逐条见 `tests/components/QuestionForm.deck-batch.test.tsx`。
+     *
+     * 「+21」那颗按钮仍然不在:它是**分页时代**的溢出面,和这里的一批 6 张无关 ——
+     * 稿子里根本没有这颗按钮,是我们照搬「一页 4 张」才逼出来的。
      */
     const total = visualStyleCardsForContext('deck').length;
+    expect(total).toBeGreaterThan(VISUAL_STYLE_BATCH_SIZE);
     const firstPage = visibleLabels();
-    expect(firstPage).toHaveLength(total);
+    expect(firstPage).toHaveLength(VISUAL_STYLE_BATCH_SIZE);
     expect(screen.queryByTestId('qf-input')).toBeNull();
     expect(screen.queryByText('+21')).toBeNull();
 
@@ -1083,25 +1090,30 @@ describe('QuestionFormView', () => {
       questionId: 'tone',
       styleContext: 'deck',
     });
-    // 「换一批」把这一沓**整体转过去**(不再是「换到下一页」):张数不变,顺序变了
-    expect(visibleLabels()).toHaveLength(total);
+    // 「换一批」换的是这 6 张:张数不变,人全换了
+    expect(visibleLabels()).toHaveLength(VISUAL_STYLE_BATCH_SIZE);
     expect(visibleLabels()).not.toEqual(firstPage);
 
     /*
-     * 「View all」那颗按钮已随分页一起退场 —— 整份目录本来就在这一沓里,
-     * 「看全部」改由右上角的网格切换承担(交付稿 #21 / #22 的 `.vbar > .vswitch`,
-     * `aria-label="铺成网格"`)。B53 就收敛在这里:稿子里根本没有画廊弹窗,
-     * 所以那一段整个退场,见下面那条 `[B53]`。
+     * 「View all」那颗按钮已随分页一起退场;右上角那枚网格切换
+     * (交付稿 #21 / #22 的 `.vbar > .vswitch`,`aria-label="铺成网格"`)负责铺开。
+     * 它铺的是【这次的 6 个】,不是整份目录 —— 2026-08-27 产品口径:
+     * 「点击右上角展开成列表按钮时,只展开这次的 6 个」。
+     * 要看目录里别的,就再点一次「换一批」。
+     * B53 收敛在这里:稿子里根本没有画廊弹窗,所以那一段整个退场,见下面那条 `[B53]`。
      */
+    const inFan = visibleLabels();
     fireEvent.click(container.querySelector('[data-action="toggle-view"]')!);
     expect(container.querySelector('.qf-visual-picker')?.getAttribute('data-view')).toBe('grid');
-    expect(container.querySelectorAll('.qf-visual-stack .qf-visual-card')).toHaveLength(total);
-    expect(
-      container.querySelector(
-        'img[src="https://repo-assets.open-design.ai/style-catalog/v1/deck-editorial-narrative-v1.webp"]',
-      ),
-    ).toBeTruthy();
-    expect(container.querySelector('[title="Bento modular"]')).toBeTruthy();
+    expect(container.querySelectorAll('.qf-visual-stack .qf-visual-card'))
+      .toHaveLength(VISUAL_STYLE_BATCH_SIZE);
+    // 「6 张」不够 —— 必须是【这次的】那 6 张,顺序也一致
+    expect(visibleLabels()).toEqual(inFan);
+    // 每一张都是目录里真实的一张,且都带真预览图
+    const catalogTitles = visualStyleCardsForContext('deck').map((c) => c.title);
+    expect(visibleLabels().every((label) => catalogTitles.includes(label!))).toBe(true);
+    expect(container.querySelectorAll('img.qf-visual-preview-image'))
+      .toHaveLength(VISUAL_STYLE_BATCH_SIZE);
     fireEvent.click(container.querySelector('[data-action="toggle-view"]')!);
 
   });
@@ -1161,11 +1173,15 @@ describe('QuestionFormView', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(screen.queryAllByRole('tab')).toHaveLength(0);
 
-    // 「看全部」= 右上角那枚网格切换。整份目录直接在内联网格里挑。
+    /* 铺开 = 右上角那枚网格切换,**内联**,不弹窗 —— 这才是 B53 要守的东西。
+       铺开的是这次的 6 张(2026-08-27 产品口径),不是整份目录:
+       目录里别的通过「换一批」够得着,见 `QuestionForm.deck-batch.test.tsx`。 */
     fireEvent.click(container.querySelector('[data-action="toggle-view"]')!);
-    const total = visualStyleCardsForContext('deck').length;
-    expect(container.querySelectorAll('.qf-visual-stack .qf-visual-card')).toHaveLength(total);
+    expect(visualStyleCardsForContext('deck').length).toBeGreaterThan(VISUAL_STYLE_BATCH_SIZE);
+    expect(container.querySelectorAll('.qf-visual-stack .qf-visual-card'))
+      .toHaveLength(VISUAL_STYLE_BATCH_SIZE);
 
+    // 「Premium pitch」是目录第 5 张,落在首批那 6 张里
     fireEvent.click(card('Premium pitch'));
     /* 精确对象,不是 objectContaining —— `source` 的 `'gallery'` 那一档随弹窗一起退场,
        多出一个键这里就会红。 */
@@ -1213,13 +1229,14 @@ describe('QuestionFormView', () => {
       root.querySelector('.qf-visual-stack .qf-visual-card')?.getAttribute('title');
 
     /*
-     * 一沓里装的是**整份目录**,不是四张(2026-08-26 用户裁决:「+22 别出现了,
-     * 左右切换的卡片列表直接渲染 22 个不就行了」)。稿子只画 4 张是**模拟数据**,
-     * 不是规格 —— 设计同学给的是形态,数量要按真实目录规模自己想。
-     * 原来按 4 张一页分页,于是底栏多出一颗稿子没有的「+22」,而左右箭头翻的
-     * 还只是这一页里的 4 张。
+     * 一沓里装的是【这一批的 6 张】(2026-08-27 产品口径:「换一批时,顺序从 22 个里
+     * 每次挑 6 个出来」),不是稿子那四张,也不是 2026-08-26 那版的整份目录 ——
+     * 整份目录进一沓时「换一批」会把选中的那张转到看不见的位置,而叠放态只有
+     * 最前面那张能点,于是那道题再也取消不了选择。逐条见
+     * `tests/components/QuestionForm.deck-batch.test.tsx`。
+     * 稿子只画 4 张是**模拟数据**,不是规格;「+22」是分页时代的产物,一并不在。
      */
-    it('stacks the whole catalog and rotates it with the arrows', () => {
+    it('stacks the current batch and rotates it with the arrows', () => {
       const { container } = render(
         <QuestionFormView
           form={stackForm}
@@ -1231,8 +1248,9 @@ describe('QuestionFormView', () => {
 
       const picker = container.querySelector<HTMLElement>('.qf-visual-picker')!;
       expect(picker.getAttribute('data-view')).toBe('fan');
+      expect(visualStyleCardsForContext('deck').length).toBeGreaterThan(VISUAL_STYLE_BATCH_SIZE);
       expect(container.querySelectorAll('.qf-visual-stack .qf-visual-card'))
-        .toHaveLength(visualStyleCardsForContext('deck').length);
+        .toHaveLength(VISUAL_STYLE_BATCH_SIZE);
 
       // 压在下面那几张不参与 Tab 序 —— 它们在视觉上还没露出来。
       // 卡片按稿子改成了 `<button class="vopt">`(D52),tabIndex 现在挂在卡片自己身上。

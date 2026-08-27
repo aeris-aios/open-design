@@ -1406,10 +1406,18 @@
 }
 /* 这一沓的高度：.qf-visual-stack 用它撑开，左右箭头用它对齐垂直中线，
    两处必须是同一个数，所以提到共同的祖先上。
-   152 / -12 / -8 三个数与稿子一致，四张的旋转角落在下面的 nth-child 上。 */
+   -12 / -8 两个数与稿子一致，四张的旋转角落在下面的 nth-child 上。
+   ------------------------------------------------------------
+   【卡横过来了】(2026-08-27 产品:「卡片可能要改成更适合展示完整图片的尺寸,
+   竖着的展示不全」)。稿子的 152×212 是**竖卡**,而目录素材全是 4:3 横图
+   (96 张逐张读 WebP 头,一张不差 1600×1200)—— 竖卡配 object-fit: cover,
+   左右各切掉 46.4%,一半的构图根本没进画面。
+   画幅统一到素材的 4/3 之后,单张宽度提到 200px:卡矮了一大截(198×148.5),
+   横向的量补回来,整沓仍然只占 194px 高 —— 比原来的 244px 还矮,
+   稿子那句「不该是这一屏最大的一块」照旧成立。 */
 .qf-visual-picker[data-view='fan'] {
-  --qf-fan-h: 244px;
-  --qf-fan-w: 152px;
+  --qf-fan-h: 194px;
+  --qf-fan-w: 200px;
   --qf-fan-dx: -12px;
   --qf-fan-dy: -8px;
 }
@@ -1463,8 +1471,14 @@
   grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
   gap: 8px;
 }
+/* 格子按【图本身的画幅】,不切图 —— 铺开就是为了挨个比构图,把构图切了
+   等于把要比的东西拿走了(稿子原话)。
+   稿子写的 `422 / 560` 是它那份**占位素材**的像素,并且当场交代了下一步:
+   「真素材换进来只要仍是同一画幅,改这一行即可」。真素材已经换进来了 ——
+   目录里 96 张预览图逐张读 WebP 头,**全是 1600×1200**(deck 25 / prototype 26 /
+   document 11 / image 22 / video 12),仍是同一画幅。所以这里做的就是稿子交代的那一步。 */
 .qf-visual-picker[data-view='grid'] .qf-visual-preview {
-  aspect-ratio: 422 / 560;
+  aspect-ratio: 4 / 3;
 }
 /* ---- 叠放：几何取自稿子里那套 image-stack，四个数原样搬 ----
      x = i × -12px，y = i × -8px，rotate = 0 / -5 / -8 / -11 度，支点在底边中点。
@@ -1477,12 +1491,20 @@
 }
 .qf-visual-picker[data-view='fan'] .qf-visual-card {
   position: absolute;
-  /* 顶上留出 24px（= 3 × 8），最后一张往上挪完也不会被切掉。
-     左右靠 margin 居中而不是 transform —— transform 那一格归拖拽用。 */
-  top: 24px;
+  /* 顶上留出 41px：第四张往上挪 3 × 8 = 24px，再绕底边中点转 -11°，
+     宽卡的那个远角还会再翘起 17px（200×148.5 的卡实算 40.3px）。
+     稿子的 24px 是按它那张 152×212 竖卡算的「3 × 8」——卡横过来之后
+     翘角变高,照抄 24px 会把最后一张的角切进上面那条视图切换里。
+     左右靠 margin 居中而不是 transform —— transform 那一格归拖拽用。
+     ------------------------------------------------------------
+     居中的是【整沓的外接框】,不是最前面那张:后面三张转出去的角是实打实占
+     地方的,眼睛量的是整块的边界。四张连角横跨 263px(不是 200),超出前排卡的
+     63px 全在左边,所以整体往右补一半(63 / 2 ≈ 32)才能让两侧留白相等。
+     稿子那版是 +38,因为它的竖卡转出去的角更靠左(横跨 227,超出 75)。 */
+  top: 41px;
   left: 50%;
   width: var(--qf-fan-w);
-  margin-left: calc(var(--qf-fan-w) / -2 + 38px);
+  margin-left: calc(var(--qf-fan-w) / -2 + 32px);
   transform-origin: bottom center;
   /* 触屏上这一沓是拖着翻的，别让页面先把手势抢走 */
   touch-action: none;
@@ -1491,17 +1513,32 @@
     border-color var(--duration-faster) var(--ease-out),
     background-color var(--duration-faster) var(--ease-out);
 }
-/* 5:7 是上游的画幅。只在叠放时改，铺开仍然按素材的画幅。 */
+/* 【两档都按素材的画幅】。原来叠放态是 5/7 —— 稿子从上游 image-stack 抄来的
+   卡片形状,它自己也承认「叠着的时候切了还说得过去(那是一沓卡片的形状)」。
+   产品 2026-08-27 覆盖了这一条:要的是**看得全**,不是卡片好看
+   (「竖着的展示不全」)。素材是 4:3 横图,所以叠放态也跟着横过来,
+   两档统一到 4/3,一刀不切。 */
 .qf-visual-picker[data-view='fan'] .qf-visual-preview {
-  aspect-ratio: 5 / 7;
+  aspect-ratio: 4 / 3;
 }
-/* 最前面那张是能上手的：光标先说这件事，不用等人试。 */
+/* 最前面那张是能上手的：光标先说这件事，不用等人试。
+   ------------------------------------------------------------
+   【选满之后这张也点不动了,那就别再摆出能上手的样子】——「最多选 2 项」的上限
+   一到,没被选中的卡拿到 `.qf-visual-card-disabled`,而最前面那张同样可能是其中之一。
+   稿子对点不到的卡给的规矩是**别给反馈**:「它们此刻不可点,给反馈等于骗一下手」。
+   grab 光标是一句「能上手」的承诺,此刻兑现不了,所以把禁用态排除出去,
+   让 `.qf-visual-card-disabled` 的 not-allowed 接上 —— 那条只有 (0,2,0),
+   不排除的话根本压不过这里的 (0,4,0)。 */
+.qf-visual-picker[data-view='fan']
+  .qf-visual-card:nth-child(1):not(.qf-visual-card-disabled) {
+  cursor: grab;
+}
 .qf-visual-picker[data-view='fan'] .qf-visual-card:nth-child(1) {
   z-index: 4;
   transform: none;
-  cursor: grab;
 }
-.qf-visual-picker[data-view='fan'] .qf-visual-card:nth-child(1):active {
+.qf-visual-picker[data-view='fan']
+  .qf-visual-card:nth-child(1):not(.qf-visual-card-disabled):active {
   cursor: grabbing;
 }
 .qf-visual-picker[data-view='fan'] .qf-visual-card:nth-child(2) {
@@ -1516,8 +1553,9 @@
   z-index: 1;
   transform: translate(calc(var(--qf-fan-dx) * 3), calc(var(--qf-fan-dy) * 3)) rotate(-11deg);
 }
-/* 多选时被选中的卡会被顶到队首，可见集合可能超过四张；叠放态只叠四张，
-   多出来的收起来（收起而不是留着，是因为它们会精确压在第一张底下）。 */
+/* 一批是 6 张(见 `runtime/visual-style-deck.ts`),而稿子的叠放几何只排四层。
+   第 5、6 张收起来 —— 收起而不是留着,是因为它们会精确压在第一张底下。
+   翻一下(箭头 / 拖拽)它们就轮上来;要一次看全 6 张就点右上角铺成网格。 */
 .qf-visual-picker[data-view='fan'] .qf-visual-card:nth-child(n + 5) {
   display: none;
 }
@@ -1528,7 +1566,23 @@
 .qf-visual-picker[data-view='fan'] .qf-visual-card:not(:nth-child(1)) .qf-visual-card-check {
   display: none;
 }
-.qf-visual-picker[data-view='fan'] .qf-visual-card:nth-child(1):hover {
+/* 【选满之后,点不到的那张不画勾选圈】。
+   ------------------------------------------------------------
+   稿子对压在后面那几张的规矩是:「勾选圈只在最前面那张给:后面几张的右上角本来就
+   压在别人底下,**画一个点不到的控件是骗人**」。到了「最多选 2 项」的上限之后,
+   最前面那张同样点不到 —— 同一条规矩,同一个做法:把那个圈收掉。
+   这就是「选满了」在扇形里的**全部**表达:圈没了、hover 不放大了、光标不再是 grab。
+   三样一起消失,读出来就是「这张现在不归你点」——【一个像素都不用淡】。
+   (刷淡那条路 2026-08-27 已被用户截图否掉:叠着的卡半透明会把背后那张连同面板底
+   一起透出来,整沓糊成一片。见 `tests/components/chat/visual-option-stack-opacity.test.ts`。)
+   选中的那两张不受影响:它们是此刻唯一还能点的卡,点一下就取消 —— 勾必须留着。 */
+.qf-visual-picker[data-view='fan'] .qf-visual-card-disabled .qf-visual-card-check {
+  display: none;
+}
+/* hover 只放大最前面那张,而且只在它**真的能点**的时候 ——
+   稿子:「它们此刻不可点,给反馈等于骗一下手」。 */
+.qf-visual-picker[data-view='fan']
+  .qf-visual-card:nth-child(1):not(.qf-visual-card-disabled):hover {
   z-index: 5;
   transform: scale(1.05);
 }
@@ -1536,13 +1590,17 @@
   .qf-visual-picker[data-view='fan'] .qf-visual-card {
     transition: none;
   }
-  .qf-visual-picker[data-view='fan'] .qf-visual-card:nth-child(1):hover {
+  .qf-visual-picker[data-view='fan']
+    .qf-visual-card:nth-child(1):not(.qf-visual-card-disabled):hover {
     transform: none;
   }
 }
-/* 稿子 `[data-view="fan"] .vpv { aspect-ratio: 5/7 }` —— 扇形那一档是竖卡,不是方卡 */
+/* 稿子这条是 `[data-view="fan"] .vpv { aspect-ratio: 5/7 }`(竖卡,不是方卡)。
+   卡横过来之后跟着上面那条一起走 4/3 —— 这一层是卡面的外框,里面那层
+   `.qf-visual-preview` 是图本身,两层的画幅必须是同一个数,
+   差一档就会在卡里留出一条灰边(`.qf-visual-card-preview` 的 --bg-subtle 底)。 */
 .qf-visual-picker[data-view='fan'] .qf-visual-card-preview {
-  aspect-ratio: 5 / 7;
+  aspect-ratio: 4 / 3;
 }
 /* 左右两枚翻页箭头压在这一沓的垂直中线上；整条不吃指针事件，
    只有两枚按钮自己吃，免得它挡住中间那张卡的点击和拖拽。 */

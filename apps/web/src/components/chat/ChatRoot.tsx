@@ -31,6 +31,19 @@ export function ChatRoot({ children, className }: { children?: ReactNode; classN
  *
  * `data-chat-root` 和变量类名绑在一起返回,是为了让「有接缝」这件事只有一个出口 ——
  * 回归测试(`tests/components/chat/theme-seam.test.tsx`)就是按这个属性找接缝的。
+ *
+ * ⚠️ **调用方自己的类名必须走参数,不能写在展开后面。**
+ *
+ *   ✅ `<div {...chatSeam('chat-composer-fixed-layer')}>`
+ *   ❌ `<div {...chatSeam()} className="chat-composer-fixed-layer">`
+ *
+ * 第二种写法里,后面那个 `className` 把变量类名整个盖掉,而 `data-chat-root` 是
+ * **另一个属性**,毫发无损 —— 于是元素上「看起来有接缝」,`--chat-*` 却全部解析成
+ * 空字符串(无头 Chrome 实测:`--chat-border` / `--chat-stroke` / `--chat-bg` 全是 `''`,
+ * `border: var(--chat-stroke) solid var(--chat-border)` 塌成 `0px none`)。
+ * 和本文件开头说的一样,这件事**不报错**。按属性找接缝的测试也照样绿 ——
+ * 属性确实在。挡住这一类的是 `tests/components/chat/chat-seam-resolves.test.tsx`:
+ * 它问的是「这个元素身上那个类,在 CSS 里到底声不声明 `--chat-*`」。
  */
 export function chatSeam(className?: string): { className: string; 'data-chat-root': '' } {
   // CSS Module 的类名映射在类型上是可选的(`Record<string, string | undefined>`),

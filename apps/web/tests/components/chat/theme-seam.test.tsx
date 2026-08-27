@@ -2,7 +2,10 @@
 /**
  * 主题接缝必须真的挂在 chat 树上。
  *
- * 为什么单独测:`--chat-*` 全部定义在 `ChatRoot.module.css` 的 `.root` 上,而组件 CSS
+ * 为什么单独测:`--chat-*` 全部定义在 `ChatRoot.module.css` 的 `.vars, .root` 上
+ * (**是一条规则的两支选择器,两支都拿到全部声明** —— 那两行竖着读像「`.vars` 是空的、
+ * 变量都在 `.root` 里」,已经有人这么读错过一次;无头 Chrome 实测 `.vars` 上
+ * `--chat-border` = `#dbdbdb`、`--chat-stroke` = `1px`),而组件 CSS
  * 只写 `var(--chat-…)`。少了这层包裹,变量落空 —— 而落空**不报错**:
  * 壳头那句「进行中」用的是 `background-clip: text` + `color: transparent`,
  * 渐变里只要有一个变量解析不出来,整条 `background` 失效,字就变成透明的,
@@ -11,6 +14,12 @@
  *
  * 这个洞是连拍真实运行时才看见的(docs/design/chat-mirror/shots-film),
  * 单测全绿、类型全绿,唯独页面上少了三个字。
+ *
+ * ⚠️ **本文件只问「属性在不在」,这不足以证明变量真的解析得出来。**
+ * 属性和变量类名是分开的两样东西:`<div {...chatSeam()} className="x">` 会盖掉类名
+ * 而留下属性,元素于是「有接缝」却一个变量都解析不出来。那一类由
+ * `chat-seam-resolves.test.tsx` 负责 —— 它从 Module 源码里解析出哪些类真的声明了
+ * `--chat-*`,再要求每个 `[data-chat-root]` 身上都带着其中之一。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render } from '@testing-library/react';
