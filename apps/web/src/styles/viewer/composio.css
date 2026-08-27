@@ -1731,8 +1731,29 @@
   border-color: color-mix(in srgb, var(--brand) 82%, var(--border-strong));
   background: color-mix(in srgb, var(--brand-soft) 88%, var(--bg-panel));
 }
-.qf-visual-card-disabled {
+/* 到了「最多选 N 项」的上限之后，没被选中的卡拿到这个类。
+   ------------------------------------------------------------
+   【叠放态一律不许淡】。这一沓是四张互相压着的卡：半透明的卡会把它背后那张
+   连同面板底一起透出来，四张叠在一起就糊成一片 —— 用户 2026-08-27 截到的
+   「为啥这个卡片好多是透明的」就是这么来的（用左右箭头翻两下，最前面那张也是
+   disabled，于是整沓全变半透明）。
+   稿子里 `.vopt` 没有任何一档是淡的：无头 Chrome 实测那一沓四层的 `opacity`
+   全是 `1`、底色全是 `rgb(255, 255, 255)`。后面几张之所以「只露出一道边」，
+   靠的是被前面那张【实实在在挡住】，不是靠透明度。稿子对点不到的那几张给的
+   规矩恰恰相反 —— 是别给反馈：「它们此刻不可点，给反馈等于骗一下手」。
+
+   所以叠放态只改光标，卡面按稿子还原。还得把底色和边框**抢回来**：全局
+   `button:disabled`（`styles/primitives.css`）是 `button:disabled`，特异性
+   (0,1,1)，压过只写了一个类的 `.qf-visual-card`(0,1,0)，会把卡刷成
+   `--bg-subtle` 的灰片。这里写成两个类 (0,2,0) 才压得回去。 */
+.qf-visual-card.qf-visual-card-disabled {
   cursor: not-allowed;
+  background: var(--bg);
+  border-color: var(--border);
+}
+/* 铺开成网格时四张【不重叠】，淡化只是把一张平摊的卡压暗，不会透出别的东西 ——
+   和固定选项那一路的 `.qf-chip-disabled` 同一个做法，保留。 */
+.qf-visual-picker[data-view='grid'] .qf-visual-card-disabled {
   opacity: 0.52;
 }
 .qf-visual-more {
@@ -1751,27 +1772,12 @@
   overflow: hidden;
   background: var(--visual-bg);
 }
-/* 图底那层由下往上化开的兜底：方向名落在这层底上，不落在图上。真素材里有暗调
-   的（夜色、林子），深字压深图会糊。底色取 --bg 而不是写死白色 —— 浅色里它是
-   白的、暗色里它是近黑的，而字在两套里本来就是跟 --bg 相反的那一端。
-   只盖住名字那一条（52px），图的主体一点没动；pointer-events 关掉，免得它挡
-   住整张卡的点击。挂在预览的 ::after 上而不是给名字加背景：名字的宽度跟着
-   文字走，给它上底会变成一块方补丁，而这层底要的是横贯整张图。 */
-.qf-visual-preview::after {
-  position: absolute;
-  z-index: 1;
-  height: 52px;
-  background: linear-gradient(
-    to top,
-    var(--bg) 0%,
-    color-mix(in srgb, var(--bg) 62%, transparent) 45%,
-    transparent 100%
-  );
-  content: '';
-  inset-block-end: 0;
-  inset-inline: 0;
-  pointer-events: none;
-}
+/* 【压名字的兜底渐变不在这一层】。稿子里那层是 `.vpv::after` —— 对应我们的
+   `.qf-visual-card-preview::after`（见上面），而 `.qf-visual-preview` 是嵌在
+   它里面的预览面本身（稿子叫 `.mini`，那上面没有 ::after）。
+   这里原来又铺了一条一模一样的 52px `to top, var(--bg)` 渐变，两层叠在一起把
+   每张卡下沿朝 --bg 洗了两遍，方向名于是压在一张发虚的图上。删掉这一层，
+   兜底只留外面那一层。 */
 /* 没有预览图时的占位面：一块纯灰压住图片该占的范围，不画内容 —— 这是占位不是
    效果图。四张会长得一样，「能不能比出风格差异」要等真图；能判断的是版式、
    勾选和「帮我决定」的出口。素材到位后换掉这一层即可。 */
