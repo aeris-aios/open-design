@@ -1,4 +1,5 @@
 import { QuoteBar } from './chat/QuoteBar';
+import { shouldShowJumpToLatest } from '../runtime/chat/jump-to-latest';
 import { appendQuote, type ChatQuote } from '../runtime/chat/quote-selection';
 import {
   Fragment,
@@ -2040,7 +2041,7 @@ export function ChatPane({
           const distance = distanceFromBottomAfterAligningTop(el, formEl);
           formEl.scrollIntoView({ block: 'start', behavior: 'smooth' });
           pinnedToBottomRef.current = distance < 80;
-          setScrolledFromBottom(distance > 120);
+          setScrolledFromBottom((prev) => shouldShowJumpToLatest({ distance, clientHeight: el.clientHeight, shown: prev }));
           return;
         }
         // Already handled by the auto-scroll effect — don't bottom-scroll.
@@ -2133,7 +2134,7 @@ export function ChatPane({
           const distance = distanceFromBottomAfterAligningTop(el, formEl);
           formEl.scrollIntoView({ block: 'start', behavior: 'smooth' });
           pinnedToBottomRef.current = distance < 80;
-          setScrolledFromBottom(distance > 120);
+          setScrolledFromBottom((prev) => shouldShowJumpToLatest({ distance, clientHeight: el.clientHeight, shown: prev }));
           return;
         }
         // Form tag in content but the DOM element isn't ready yet (partial
@@ -2202,7 +2203,7 @@ export function ChatPane({
         // scrolledFromBottom remained false until they scrolled.
         const distance =
           target.scrollHeight - target.scrollTop - target.clientHeight;
-        setScrolledFromBottom(distance > 120);
+        setScrolledFromBottom((prev) => shouldShowJumpToLatest({ distance, clientHeight: target.clientHeight, shown: prev }));
         pinnedToBottomRef.current = distance < 80;
       });
     }
@@ -2241,8 +2242,14 @@ export function ChatPane({
       // of scroll events (e.g. programmatic scrollTop + ResizeObserver
       // follow-up during streaming) does not schedule a re-render per tick
       // and trip React's "Maximum update depth exceeded" guard.
-      const next = distance > 120;
-      setScrolledFromBottom((prev) => (prev === next ? prev : next));
+      setScrolledFromBottom((prev) => {
+        const next = shouldShowJumpToLatest({
+          distance,
+          clientHeight: target.clientHeight,
+          shown: prev,
+        });
+        return prev === next ? prev : next;
+      });
       pinnedToBottomRef.current = distance < 80;
     }
     syncScrollable(el);

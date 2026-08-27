@@ -152,10 +152,17 @@ describe('jump-to-latest button after landing on a question form (recvqajMdAnfmd
     expect(btn.getAttribute('tabindex')).toBe('-1');
   });
 
-  it('still shows when aligning the form to the top genuinely leaves content below the fold', async () => {
-    // scrollTop well short of the natural max: 200px of real content remains
-    // below the form once it is aligned to the top.
-    geom = { scrollHeight: 1000, clientHeight: 400, scrollTop: 400 };
+  it('still shows when aligning the form to the top leaves a lot of content below', async () => {
+    /*
+     * 门槛跟着视口高度走了(`runtime/chat/jump-to-latest.ts`):用户 2026-08-27 说
+     * 「这个总是有事没事就出现…只有在很上面时才出现不行吗」,原来写死的 120px
+     * 半屏不到就弹。
+     *
+     * 这一条原来的夹具是「表单顶到头之后**还剩 200px**」—— 在 400px 高的面板里
+     * 那正是他嫌太急的那一档,现在按设计不出。把夹具抬到真正「很上面」的量级,
+     * 这一条守的仍是同一件事:表单顶到头之后底下**确实还有一大截**时,要有入口。
+     */
+    geom = { scrollHeight: 1600, clientHeight: 400, scrollTop: 400 };
     render(chatPaneEl(questionFormMessages()));
     await flushFrames();
 

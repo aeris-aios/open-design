@@ -44,3 +44,47 @@ describe('壳的空态', () => {
     expect(blocks.filter((b) => b.kind === 'prose')).toHaveLength(1);
   });
 });
+
+describe('B47 · 取消掉的空壳也不留', () => {
+  /**
+   * 用户 2026-08-27 指认:一轮被取消、壳里什么都没有,屏幕上却还挂着一句
+   * 「进行中」,底下紧跟着「已取消」——「之前不是说如果 done 之前,没有任何
+   * 工具调用或 thinking 或普通文案,就不出现这个了吗?」
+   *
+   * B47 当时把 `failed` 和 `canceled` 一起留了下来,理由是「壳头是这一轮唯一
+   * 说得出出事了的地方」。那句话**只对 failed 成立** —— 失败那档壳头写的是
+   * 「运行失败」,确实是这一轮唯一说得出原因的地方。取消那档壳头写的是
+   * 「进行中」(手动停止不是第四态,秒数停住、状态词不变),既没有信息,
+   * 又和底下那行「已取消」自相矛盾。
+   */
+  it('drops an empty shell on a canceled turn', () => {
+    const blocks = buildTurnBlocks({
+      events: [{ kind: 'status', label: 'start' }] as never,
+      runStatus: 'canceled',
+    });
+    expect(
+      blocks.filter((b) => b.kind === 'shell'),
+      '取消 + 壳里空的 → 那句「进行中」不该还在',
+    ).toHaveLength(0);
+  });
+
+  it('still keeps an empty shell on a failed turn', () => {
+    // 反向:失败那档壳头写的是「运行失败」,是这一轮唯一说得出「出事了」的地方
+    const blocks = buildTurnBlocks({
+      events: [{ kind: 'status', label: 'start' }] as never,
+      runStatus: 'failed',
+    });
+    expect(blocks.filter((b) => b.kind === 'shell')).toHaveLength(1);
+  });
+
+  it('still keeps a canceled shell that actually has content', () => {
+    const blocks = buildTurnBlocks({
+      events: [
+        { kind: 'tool_use', id: 'item_1', name: 'Read', input: { file_path: '/a.ts' } },
+        { kind: 'tool_result', toolUseId: 'item_1', content: 'ok', isError: false },
+      ] as never,
+      runStatus: 'canceled',
+    });
+    expect(blocks.filter((b) => b.kind === 'shell')).toHaveLength(1);
+  });
+});

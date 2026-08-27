@@ -1146,7 +1146,19 @@ function AssistantMessageImpl({
             // Other failed turns — older history, or once a follow-up makes
             // this no longer the last assistant message — keep their pill so
             // the error detail still survives reload / history review.
-            if (b.label === "error" && message.id === errorCardOwnerId) return null;
+            /*
+             * `error` 这一档**一律不出**。稿子里没有这种状态行,用户 2026-08-27
+             * 指认过两次:「为什么还会有这种错误样式?? 你的错误卡片呢??」
+             * 「设计稿里哪有这种状态行」。
+             *
+             * 它原来只在「这条消息正好拥有报错卡」时才藏,于是**任何历史失败轮次**
+             * 都还把上游英文原文顶着一个红框戳在回答中间。出事了该由谁说:
+             *  · 当前那一轮 → 报错卡(标题 + 人话 + 恢复动作);
+             *  · 历史轮次   → 壳头那句「运行失败」;
+             *  · 上游原文   → 卡上的「查看详情」,不裸奔。
+             * `warning` / `initializing` 早就按同一个道理去掉了,这是漏网的那一档。
+             */
+            if (b.label === "error") return null;
             // The pre-output "initializing" status is surfaced by the footer's
             // shimmering "Preparing…" label instead of its own pill.
             if (b.label === "initializing") return null;

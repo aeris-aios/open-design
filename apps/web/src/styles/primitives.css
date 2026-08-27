@@ -23,8 +23,20 @@ button {
     transform var(--duration-faster, 100ms) var(--curve-easy-ease, ease),
     box-shadow var(--duration-ultra-fast, 50ms) var(--curve-easy-ease, ease);
 }
-button:hover:not(:disabled) { background: var(--bg-subtle); border-color: var(--border-strong); }
-button:active:not(:disabled) { transform: translateY(1px); }
+/*
+ * 这三条是**默认值**,不是判决 —— 所以特异性归零(`:where()`)。
+ *
+ * 原来写成裸选择器 `button:hover:not(:disabled)`,特异性 (0,2,1),压过了组件自己的
+ * 单类 hover(比如 CSS Module 的 `.play:hover`,(0,2,0))。后果是一颗深色实心的
+ * 播放键 hover 时被刷成近白的 `--bg-subtle`,组件写的 `opacity: .86` 完全不算数。
+ * 用户 2026-08-27 指认:「hover 不是应该变成稍微亮一点点的颜色吗…而不是一整个
+ * 按钮全变成白色」,并且说「很多按钮都是」—— 确实,仓里已有十几处在跟它打层叠仗。
+ *
+ * `:where()` 之后:没写 hover 的裸 button 仍然拿到这层反馈,而任何组件只要写了
+ * 自己的 hover 就直接生效,不必再靠加祖先选择器去拼特异性。
+ */
+:where(button:hover:not(:disabled)) { background: var(--bg-subtle); border-color: var(--border-strong); }
+:where(button:active:not(:disabled)) { transform: translateY(1px); }
 button:focus-visible { outline: var(--stroke-thin, 1px) solid var(--blue); outline-offset: 2px; }
 
 button.primary {

@@ -75,6 +75,8 @@ export function FileOpsSummary({
 }: Props) {
   const t = useT();
   const [expanded, setExpanded] = useState(false);
+  // 音频胶囊要自己拼文件 URL(它不走 `ArtifactCard`,拿不到那里的上下文)
+  const { workspaceContext } = useProjectCollabContext();
 
   if (entries.length === 0) return null;
 
@@ -99,8 +101,20 @@ export function FileOpsSummary({
       })
     : [];
   const cardNames = new Set(cardItems.map((item) => item.name));
-  const rowEntries = cardNames.size
-    ? entries.filter((entry) => !cardNames.has(entry.path))
+  /*
+   * 音频**不套卡壳**,自己就是一条横胶囊(设计稿组件 24)。用户 2026-08-27 当场
+   * 指认过套壳的样子:「音频产物外面不要套大卡片了啊,只有一个音频的横的这个就行了呀」。
+   * 所以它既不进 `cardItems`(那是缩略图那一族),也不留在下面的文本行里 ——
+   * 一个文件只该出现一次。
+   */
+  const audioEntries = projectId
+    ? entries.filter(
+        (entry) => !entry.ops.includes('delete') && artifactKind(entry.path) === 'audio',
+      )
+    : [];
+  const audioNames = new Set(audioEntries.map((entry) => entry.path));
+  const rowEntries = cardNames.size || audioNames.size
+    ? entries.filter((entry) => !cardNames.has(entry.path) && !audioNames.has(entry.path))
     : entries;
 
   const cards = projectId && cardItems.length > 0 ? (
@@ -112,12 +126,29 @@ export function FileOpsSummary({
       onExport={onExport}
     />
   ) : null;
+  const audioRows = projectId && audioEntries.length > 0 ? (
+    <div className="file-ops-audio" data-testid="file-ops-audio">
+      {audioEntries.map((entry) => (
+        <AudioArtifact
+          key={entry.path}
+          src={projectFileUrl(projectId, entry.path, workspaceContext)}
+          name={entry.path}
+          {...(onExport ? { onDownload: () => onExport(entry.path) } : {})}
+        />
+      ))}
+    </div>
+  ) : null;
 
   // 全都进了卡片、没有剩下的行:仍然要挂 `file-ops-summary` 这个身份。
   // 它标的是「这一轮的产物面板」,不是「文本列表那种画法」——
   // 丢掉它,「一条消息只出一个产物面板」那条不变量就没人守得住了(P0 recvqaerXd82bE)。
   if (rowEntries.length === 0) {
-    return cards ? <div className="file-ops-cards-only" data-testid="file-ops-summary">{cards}</div> : null;
+    return cards || audioRows ? (
+      <div className="file-ops-cards-only" data-testid="file-ops-summary">
+        {cards}
+        {audioRows}
+      </div>
+    ) : null;
   }
 
   // Keep the first four results immediately legible. Once a run touches more
@@ -161,10 +192,11 @@ export function FileOpsSummary({
 
   if (rowEntries.length === 1) {
     const onlyEntry = rowEntries[0];
-    if (!onlyEntry) return cards;
+    if (!onlyEntry) return cards || audioRows ? (<>{cards}{audioRows}</>) : null;
     return (
       <>
         {cards}
+        {audioRows}
         <div
           className="file-ops"
           data-testid="file-ops-summary"
@@ -184,6 +216,7 @@ export function FileOpsSummary({
   return (
     <>
     {cards}
+    {audioRows}
     <div
       className="file-ops"
       data-testid="file-ops-summary"
@@ -305,7 +338,7 @@ function FileOpRow({
  * (用户 2026-08-26 真机指认「变成上面卡片形式才对」)。
  * 用同一张卡的骨架,缩略图位换成「图标 + 文件名」的封面。
  */
-export type ArtifactCardKind = Extract<ArtifactKind, 'html' | 'image' | 'video' | 'audio'> | 'doc';
+export type ArtifactCardKind = Extract<ArtifactKind, 'html' | 'image' | 'video'> | 'doc';
 
 export interface ArtifactCardItem {
   /** Project-relative name; also the key passed to open / publish / export. */
@@ -328,14 +361,13 @@ function docCardIcon(name: string): IconName {
 export function artifactCardKind(path: string): ArtifactCardKind | null {
   const kind = artifactKind(path);
   /*
-   * 音频也算 —— 它有自己的卡面(设计稿组件 24 那条胶囊,`AudioArtifact`)。
-   * 这里原来把它挡在外面,于是那个组件建好了却永远出不来。它**不需要契约给数据**:
-   * 时长等 `loadedmetadata`,波形没有真采样就按时长生成一条稳定的伪采样 ——
-   * 两条都写在组件自己的 docblock 里。
+   * 音频**不进这条**。它确实有自己的画法(设计稿组件 24 那条胶囊),但那是一条
+   * 独立的横条,不是缩略图 —— 套进产物卡的壳里就会得到一个 252px 高的空方框、
+   * 底下大片留白,卡壳自带的〔导出〕浮层还会压住右端的总时长(2026-08-27 用户
+   * 当场指认:「音频产物外面不要套大卡片了啊,只有一个音频的横的这个就行了呀」)。
+   * 音频走 `audioEntries` 那一支,直接画胶囊。
    */
-  return kind === 'html' || kind === 'image' || kind === 'video' || kind === 'audio'
-    ? kind
-    : null;
+  return kind === 'html' || kind === 'image' || kind === 'video' ? kind : null;
 }
 
 /**
@@ -446,10 +478,6 @@ function ArtifactCard({
             <Icon name={docCardIcon(item.name)} size={22} />
             <span className="artifact-card-doc-name" title={item.name}>{item.name}</span>
           </span>
-        ) : item.kind === 'audio' ? (
-          /* 设计稿组件 24:一条胶囊(图标 + 已播 + 波形 + 总时长 + 播放 / 下载),
-             不是缩略图 —— 音频没有可看的一帧 */
-          <AudioArtifact src={src} name={item.name} />
         ) : item.kind === 'video' ? (
           <video
             className="artifact-card-media"

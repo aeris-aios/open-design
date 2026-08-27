@@ -31,6 +31,20 @@ const MODULE_CSS = strip(
 const PRIMITIVES_CSS = strip(readFileSync(resolve(HERE, '../../../src/styles/primitives.css'), 'utf-8'));
 const COMPONENT_TSX = readFileSync(resolve(HERE, '../../../src/components/NextStepActions.tsx'), 'utf-8');
 
+/**
+ * 全局那条按钮 hover 现在包在 `:where()` 里,特异性为 0 —— 它退回成**默认值**,
+ * 谁都能覆盖(见 `tests/styles/button-hover-default.test.ts` 的原委)。
+ * 所以这一族原来那个「必须严格大于全局」的判据没有对象了;真正要守的变成两条:
+ *   · 全局那条确实还是零特异性(不许有人把它改回裸选择器);
+ *   · 我们自己那条确实把底色刷成稿子要的 `--bg-panel`。
+ */
+function expectGlobalHoverIsZeroSpecificity() {
+  const zeroed = PRIMITIVES.some(
+    (r) => /^:where\(button:hover/.test(r.sel) && /background:/.test(r.body),
+  );
+  expect(zeroed, '全局 button:hover 又变回会赢的裸选择器了').toBe(true);
+}
+
 type Rule = { sel: string; body: string };
 
 function rules(css: string): Rule[] {
@@ -79,36 +93,21 @@ const PRIMITIVES = rules(PRIMITIVES_CSS);
 
 describe('下一步引导 · 层叠', () => {
   it('hover 底色必须压过全局 button:hover', () => {
-    const globalHover = findRule(
-      PRIMITIVES,
-      (r) => r.sel === 'button:hover:not(:disabled)' && /background:/.test(r.body),
-      'primitives.css 的 button:hover:not(:disabled)',
-    );
-    const ourHover = findRule(
+    expectGlobalHoverIsZeroSpecificity();
+    findRule(
       MODULE,
       (r) => /toolboxRow:hover$/.test(r.sel) && /background:\s*var\(--bg-panel\)/.test(r.body),
       '把行底刷成 --bg-panel 的那条 hover 规则',
     );
-
-    // 平手会退回源码顺序判 —— 那就不是「规则说了算」而是「谁打包在后面说了算」。必须严格大于。
-    expect(
-      gt(specificity(ourHover.sel), specificity(globalHover.sel)),
-      `我们的 ${ourHover.sel} = ${specificity(ourHover.sel)} 没压过全局 ${globalHover.sel} = ${specificity(globalHover.sel)}`,
-    ).toBe(true);
   });
 
   it('「更多」那一行的 hover 同样要压过全局 button:hover', () => {
-    const globalHover = findRule(
-      PRIMITIVES,
-      (r) => r.sel === 'button:hover:not(:disabled)' && /background:/.test(r.body),
-      'primitives.css 的 button:hover:not(:disabled)',
-    );
-    const moreHover = findRule(
+    expectGlobalHoverIsZeroSpecificity();
+    findRule(
       MODULE,
       (r) => /moreRow:hover$/.test(r.sel) && /background:\s*var\(--bg-panel\)/.test(r.body),
       '「更多」行的 hover 规则',
     );
-    expect(gt(specificity(moreHover.sel), specificity(globalHover.sel))).toBe(true);
   });
 
   it('禁用行的 hover 不掉底 —— 它要压过刚被抬高的那条', () => {
@@ -192,20 +191,12 @@ describe('下一步引导 · 稿子的计算值', () => {
  */
 describe('下一步引导 · 三条建议', () => {
   it('hover 底色必须压过全局 button:hover', () => {
-    const globalHover = findRule(
-      PRIMITIVES,
-      (r) => r.sel === 'button:hover:not(:disabled)' && /background:/.test(r.body),
-      'primitives.css 的 button:hover:not(:disabled)',
-    );
-    const ourHover = findRule(
+    expectGlobalHoverIsZeroSpecificity();
+    findRule(
       MODULE,
       (r) => /suggestionRow:hover$/.test(r.sel) && /background:\s*var\(--bg-panel\)/.test(r.body),
       '把建议行刷成 --bg-panel 的那条 hover 规则',
     );
-    expect(
-      gt(specificity(ourHover.sel), specificity(globalHover.sel)),
-      `我们的 ${ourHover.sel} = ${specificity(ourHover.sel)} 没压过全局 ${globalHover.sel} = ${specificity(globalHover.sel)}`,
-    ).toBe(true);
   });
 
   /** 稿子 `.nexts button { padding: 9px 11px; gap: 8px; font-size: var(--t-mini) }` */

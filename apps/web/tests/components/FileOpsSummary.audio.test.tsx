@@ -28,16 +28,17 @@ const entry = (path: string): FileOpEntry =>
   ({ path, ops: ['write'], status: 'done' } as unknown as FileOpEntry);
 
 describe('W2 · 音频产出进得了产物卡', () => {
-  it('admits the audio suffixes', () => {
-    expect(artifactCardKind('theme.mp3')).toBe('audio');
-    expect(artifactCardKind('voice.wav')).toBe('audio');
-    expect(artifactCardKind('note.m4a')).toBe('audio');
-    // 反向:别把不认识的后缀也放进来。`artifactCardKind` 这条窄门对 md 返回 null
-    // ——「本轮产出」那块更宽的门(`producedArtifactCardKind`)才把它兜成 doc。
-    expect(artifactCardKind('readme.md')).toBeNull();
+  it('keeps audio out of the thumbnail-card family', () => {
+    /*
+     * 用户 2026-08-27 当场指认:「音频产物外面不要套大卡片了啊,只有一个音频的
+     * 横的这个就行了呀」。套进产物卡壳里会得到一个 252px 高的空方框,卡壳自带的
+     * 〔导出〕浮层还会压住右端的总时长 —— 所以音频**不是**一种卡面。
+     */
+    expect(artifactCardKind('theme.mp3')).toBeNull();
+    expect(artifactCardKind('voice.wav')).toBeNull();
   });
 
-  it('renders the audio capsule rather than a blank thumbnail', () => {
+  it('renders a bare capsule with no card shell around it', () => {
     const { container } = render(
       <FileOpsSummary
         entries={[entry('theme.mp3')]}
@@ -45,12 +46,15 @@ describe('W2 · 音频产出进得了产物卡', () => {
         onRequestOpenFile={vi.fn()}
       />,
     );
-    const card = container.querySelector('[data-testid="artifact-card-theme.mp3"]');
-    expect(card, '音频压根没进产物卡').toBeTruthy();
-    expect(card?.getAttribute('data-kind')).toBe('audio');
+    const audio = container.querySelector('[data-testid="file-ops-audio"]');
+    expect(audio, '音频压根没画出来').toBeTruthy();
+    expect(audio?.querySelector('audio'), '没有用组件 24 那条胶囊画').toBeTruthy();
+    // 关键:**不许**有产物卡的壳
     expect(
-      card?.querySelector('audio'),
-      '进来了却没用组件 24 那条胶囊画 —— 卡面会是一块空的',
-    ).toBeTruthy();
+      container.querySelector('[data-artifact-card]'),
+      '又把它套回大卡片里了',
+    ).toBeNull();
+    // 也不许同时又在下面的文本行里出现一次
+    expect(container.textContent?.match(/theme\.mp3/g)?.length ?? 0).toBeLessThanOrEqual(1);
   });
 });
