@@ -142,9 +142,10 @@ import { listenForConnectorsChanged } from './connectors-events';
 import { fetchConnectorCatalogSnapshot } from './connectors-state';
 import { PlaceholderCarousel } from './home-hero/PlaceholderCarousel';
 import type { PlaceholderScenario } from './home-hero/placeholderScenarios';
-import type { ChatQuote } from '../runtime/chat/quote-selection';
+import { quotePromptPrefix, splitQuotedPrompt, type ChatQuote } from '../runtime/chat/quote-selection';
 import {
   loadComposerDraftExtras,
+  sanitizeQuotes,
   saveComposerDraftExtras,
   type ComposerDraftContext,
 } from '../runtime/chat/composer-draft';
@@ -429,9 +430,19 @@ export type ComposerStandalonePanel = 'plugins' | 'toolbox' | null;
 export interface ChatComposerHandle {
   setDraft: (text: string, options?: ChatComposerDraftOptions) => void;
   restoreDraft: (draft: {
+    /**
+     * 队列里存的正文 —— 里面**可能已经折着**一段 `> 原文` 的引文前缀。
+     * 传 `quotes` 进来,restoreDraft 会把那段拆掉;不传就原样进输入框。
+     */
     text: string;
     attachments?: ChatAttachment[];
     commentAttachments?: ChatCommentAttachment[];
+    /**
+     * 这一条排队时带着的引用。给了它,芯片才会变回芯片(并从正文里拆掉)——
+     * 正文里那份是散文,拆不出结构。省略等同于「这一条没有引用」,
+     * 于是宿主当前的芯片会被清空,而不是漏给下一发。
+     */
+    quotes?: ChatQuote[];
     /**
      * The queued turn's meta. When present, restoreDraft rebuilds the staged
      * plugin / connector / skill / MCP context (and re-shows their chips) so
@@ -498,6 +509,18 @@ export interface ChatSendMeta {
   entryFrom?: ChatAnalyticsEntryFrom;
   /** One-shot run mode override for seeded follow-ups before parent state catches up. */
   sessionMode?: ChatSessionMode;
+  /**
+   * 这一发带上的引用,**结构形态**。
+   *
+   * 正文里已经有一份折进去的 `> 原文`(见 `submit()`),但那是给 agent 读的散文,
+   * 拆不回芯片。排队的那一条要是只剩散文,用户点「编辑」取回来就只能是散文 ——
+   * 这正是它存在的理由。
+   *
+   * 纯 UI 字段:daemon 的请求体是白名单(`providers/daemon.ts` 里逐个字段列出来的),
+   * 所以它到不了后端;但它**会**跟着队列进 localStorage,所以写进来之前必须过
+   * `sanitizeQuotes` 的上限。
+   */
+  quotes?: ChatQuote[];
 }
 
 /**
@@ -1375,8 +1398,22 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
           editorRef.current?.focus();
           seededRef.current = true;
         },
-        restoreDraft: ({ text, attachments = [], commentAttachments = [], meta }) => {
-          setDraft(text);
+        restoreDraft: ({ text, attachments = [], commentAttachments = [], quotes: restoredQuotes = [], meta }) => {
+          /*
+           * 引用是发送时**折进正文**的(`submit()` 里那个 `> 原文` 前缀),所以
+           * 取回来要做两件事,缺一不可:把芯片还给宿主,并把正文里那段引文拆掉。
+           * 只做前一件,引文会在屏幕上出现两遍(芯片一遍、正文一遍);
+           * 只做后一件,就是今天这个 bug 反过来——正文被啃掉一截还没有芯片。
+           *
+           * 拆不干净就不拆(`splitQuotedPrompt` 只在前缀完全对得上时动手),
+           * 老队列里没有 `meta.quotes` 的那些于是原样退回今天的行为。
+           */
+          const body = splitQuotedPrompt(text, restoredQuotes);
+          setDraft(body);
+          // 引用的 state 住在宿主那儿,只能还回去 —— 和刷新恢复走的是同一条路。
+          // 无条件调用:取回一条**没有**引用的队列项时,必须把上一条留下的芯片清掉,
+          // 否则它们会被折进下一发的正文里。
+          onRestoreQuotes?.(restoredQuotes);
           const orderedAttachments = normalizeChatAttachmentOrders(attachments);
           setStaged(orderedAttachments);
           nextAttachmentOrderRef.current = nextChatAttachmentOrder(orderedAttachments);
@@ -1406,7 +1443,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
           setUploadError(null);
           setMention(null);
           setSlash(null);
-          editorRef.current?.setText(text);
+          editorRef.current?.setText(body);
           editorRef.current?.focus();
           seededRef.current = true;
         },
@@ -1601,10 +1638,15 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
       const pendingSessionMode = pendingSessionModeRef.current;
       pendingEntryFromRef.current = null;
       pendingSessionModeRef.current = null;
+      // 引用同时走两条路:折进正文给 agent 读,和**原样**挂在 meta 上给队列存。
+      // 后者是「点编辑取回来还是芯片」的唯一依据 —— 正文那份拆不出结构。
+      // 过一道 sanitize 是因为队列会原样落进 localStorage,那一层不设防。
+      const outgoingQuotes = sanitizeQuotes(quotes ?? []);
       const effectiveMetaShape: ChatSendMeta = {
         ...(meta ?? {}),
         ...(pendingEntryFrom && !meta?.entryFrom ? { entryFrom: pendingEntryFrom } : {}),
         ...(pendingSessionMode && !meta?.sessionMode ? { sessionMode: pendingSessionMode } : {}),
+        ...(outgoingQuotes.length > 0 ? { quotes: outgoingQuotes } : {}),
       };
       const effectiveMeta =
         Object.keys(effectiveMetaShape).length > 0 ? effectiveMetaShape : undefined;
@@ -2967,10 +3009,9 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
        * 用 markdown 的引用块,agent 一眼能分清「这是我上一轮说的话」和「这是新指令」;
        * 发出去之后清空芯片 —— 它是这一条消息的上下文,不是长期状态。
        */
-      const quoted = (quotes ?? []).map((q) => `> ${q.text}`).join('\n');
-      const prompt = quoted
-        ? `${quoted}\n\n${draft.trim()}`.trim()
-        : draft.trim();
+      // 前缀由 `quotePromptPrefix` 独家定义 —— 取回编辑时的 `splitQuotedPrompt`
+      // 拆的就是它。两边共用一个函数,才不会一边改了另一边没跟上。
+      const prompt = `${quotePromptPrefix(quotes ?? [])}${draft.trim()}`.trim();
       if (sendDisabled) return;
       // Intercept `/pet …` and `/mcp` before sending so the slash command
       // never hits the agent — these are local UX hooks, not model prompts.
