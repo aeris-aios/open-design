@@ -124,6 +124,39 @@ describe('project preview containment routes', () => {
     expect(second).toBe(first);
   });
 
+  // Renewal keeps a scope alive; it must not change what the document SAYS.
+  // The bridge script serializes the expiry, so letting an explicit renewal
+  // move that value makes the next read of the same artifact return different
+  // bytes -- one more srcDoc assignment, one more iframe reload. The client
+  // renews on a timer while a preview is open, so this is the steady-state
+  // path, not an edge case.
+  it('keeps the bridged document identical across an explicit renewal', async () => {
+    const projectId = await createProject();
+    await writeProjectFile(projectId, 'index.html', '<html><head></head><body>hi</body></html>');
+
+    const read = async () => {
+      const res = await fetch(
+        `${baseUrl}/api/projects/${projectId}/raw/index.html?odPreviewBridge=scroll`,
+      );
+      expect(res.ok).toBe(true);
+      return await res.text();
+    };
+
+    const first = await read();
+    const scope = /\/preview\/([^/]+)\//.exec(
+      /<base\b[^>]*href="([^"]+)"/i.exec(first)?.[1] ?? '',
+    )?.[1];
+    expect(scope).toBeTruthy();
+
+    const renewed = await fetch(
+      `${baseUrl}/api/projects/${projectId}/preview/${scope}/renew`,
+      { method: 'POST', headers: { 'x-od-preview-scope-renewal': '1' } },
+    );
+    expect(renewed.ok).toBe(true);
+
+    expect(await read()).toBe(first);
+  });
+
   // A scope minted for a one-shot job must never be handed to a live preview.
   // Screenshot/PDF export mints a scope for the render and `revoke`s it in its
   // `finally`; if a preview were allowed to adopt that scope, the export's

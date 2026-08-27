@@ -2377,11 +2377,18 @@ function createProjectPreviewScopeRegistry() {
   function create(projectId, workspace, options, reusable) {
     pruneExpired();
     const scope = randomUUID();
+    const expiresAt = Date.now() + (options.ttlMs ?? PROJECT_PREVIEW_SCOPE_TTL_MS);
     scopes.set(scope, {
       projectId: String(projectId),
       workspace,
       reusable,
-      expiresAt: Date.now() + (options.ttlMs ?? PROJECT_PREVIEW_SCOPE_TTL_MS),
+      expiresAt,
+      // The expiry this scope's DOCUMENTS report, frozen at creation.
+      // `expiresAt` floats as the client renews; anything embedded in a served
+      // body must not, or the same artifact comes back with different bytes and
+      // the iframe reloads. The host only needs this as the seed for its first
+      // renewal — every renewal after that is driven by the renew response.
+      documentExpiresAt: expiresAt,
     });
     return scope;
   }
@@ -2432,6 +2439,22 @@ function createProjectPreviewScopeRegistry() {
     },
     revoke(scope) {
       scopes.delete(String(scope || ''));
+    },
+    /**
+     * The expiry to embed in a served document. Stable for the scope's whole
+     * life, unlike `expiresAt`, which renewal moves. JSON responses should
+     * keep using `expiresAt`; only bodies whose bytes must not change use this.
+     */
+    documentExpiresAt(projectId, scope) {
+      const key = String(scope || '');
+      const entry = scopes.get(key);
+      if (!entry) return undefined;
+      if (entry.expiresAt <= Date.now()) {
+        scopes.delete(key);
+        return undefined;
+      }
+      if (entry.projectId !== String(projectId)) return undefined;
+      return entry.documentExpiresAt ?? entry.expiresAt;
     },
     expiresAt(projectId, scope) {
       const key = String(scope || '');

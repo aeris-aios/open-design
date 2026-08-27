@@ -117,6 +117,13 @@ export interface ProjectPreviewScopeDeps {
   ) => string;
   revoke: (scope: string) => void;
   expiresAt: (projectId: string, scope: string) => number | undefined;
+  /**
+   * The expiry to embed in a served document — frozen for the scope's whole
+   * life, unlike `expiresAt`, which `renew` moves. Use this for any body whose
+   * bytes must stay identical across refetches; JSON responses keep using
+   * `expiresAt`.
+   */
+  documentExpiresAt: (projectId: string, scope: string) => number | undefined;
   renew: (
     projectId: string,
     scope: string,
