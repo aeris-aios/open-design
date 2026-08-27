@@ -1739,6 +1739,17 @@ function isTerminalRunStatus(
   return status === "succeeded" || status === "failed" || status === "canceled";
 }
 
+/**
+ * 这一轮是**用户自己按停的**。
+ * ------------------------------------------------------------
+ * 停下来的一轮没有「答得好不好」可评 —— 它不是答得差,是压根没答完,
+ * 而赞 / 踩问的正是前者。稿子 15-6 因此只留 复制 / Fork 两枚。
+ * 跑挂了的那一轮不在此列:那是**结果**,评得动,而且正是最该被点踩的一档。
+ */
+function userStoppedTheTurn(message: ChatMessage): boolean {
+  return message.runStatus === "canceled";
+}
+
 function isFeedbackEligible({
   streaming,
   message,
@@ -1754,6 +1765,7 @@ function isFeedbackEligible({
     streaming ||
     hasEmptyResponse ||
     hasUnfinishedTodos ||
+    userStoppedTheTurn(message) ||
     message.resultDeliveryState === "no_result" ||
     message.resultDeliveryState === "delivery_failed"
   ) return false;

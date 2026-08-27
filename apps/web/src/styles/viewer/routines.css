@@ -1805,20 +1805,20 @@
 }
 /* 「hover 才显形」那几条已删 —— 稿子的 `.fb` 常驻,理由见 composio.css 里同名规则。
    这一层原来靠 `.app` 拔到 (0,2,0) 且排在最后,是产品里真正生效的那份;
-   只删 composio 那份不够,两处必须一起删。 */
-.app .assistant-footer .dot {
-  width: 5px;
-  height: 5px;
-  background: var(--text-faint);
-}
+   只删 composio 那份不够,两处必须一起删。
+   ------------------------------------------------------------
+   记号和状态词那两条**也删了**,它们的每一条声明都与 composio.css 里同名规则
+   **逐字相同** —— 看着无害,实际上是一枚定时炸弹:`.app` 把它们拔到 (0,3,0),
+   正好和 theater.css 里按状态分档的那几条打平
+   (`.assistant-footer[data-canceled="true"] .assistant-label` 同为 (0,3,0)),
+   而 `index.css` 把 routines 排在 theater **后面** —— 平手按源码顺序判,
+   旧皮肤这份赢。于是稿子 15-6 要的 `--text-muted`(#5c5c5c)永远到不了屏幕上,
+   中断的一轮在真 Chrome 上量到的是 `--text-faint`(#bdbdbd),浅得像禁用态。
+   规则文本上一个字都看不出来,只有把两边渲染出来量计算样式才露馅。
+   **这一层不许再放按状态分档的声明**:它赢的不是道理,是顺序。 */
 .app .assistant-footer .dot[data-active="true"] {
   background: var(--green);
   box-shadow: none;
-}
-.app .assistant-footer .assistant-label {
-  font-weight: 500;
-  font-size: 12px;
-  color: var(--text-faint);
 }
 .app .assistant-footer .assistant-stats {
   font-size: 12px;

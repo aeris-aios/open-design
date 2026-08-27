@@ -3693,7 +3693,7 @@ export const zhTW: Dict = {
   "assistant.role": "助手",
   "assistant.workingLabel": "執行中",
   "assistant.doneLabel": "已完成",
-  "assistant.canceledLabel": "已取消",
+  "assistant.canceledLabel": "已手動停止",
   "assistant.copyMarkdown": "複製回覆 Markdown",
   "assistant.forkConversation": "從這裡分叉",
   "assistant.forkingConversation": "正在分叉…",

@@ -3683,7 +3683,7 @@ export const zhCN: Dict = {
   "assistant.role": "助手",
   "assistant.workingLabel": "执行中",
   "assistant.doneLabel": "已完成",
-  "assistant.canceledLabel": "已取消",
+  "assistant.canceledLabel": "已手动停止",
   "assistant.copyMarkdown": "复制回复 Markdown",
   "assistant.forkConversation": "从这里分叉",
   "assistant.forkingConversation": "正在分叉…",

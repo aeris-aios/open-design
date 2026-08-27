@@ -310,10 +310,10 @@ describe('AssistantMessage 执行记录', () => {
     // 设计稿的执行记录只有三态,手动停止不是第四态:秒数停住、状态词仍是「进行中」
     expect(recordHead(container)).toContain('Working');
     expect(recordHead(container)).not.toContain('Done');
-    expect(container.querySelector('[data-testid="assistant-label"]')?.textContent).toBe('Canceled');
+    expect(container.querySelector('[data-testid="assistant-label"]')?.textContent).toBe('Stopped manually');
   });
 
-  it('执行记录里没内容的一轮被停掉:状态行说「已取消」而不是「已完成」', () => {
+  it('执行记录里没内容的一轮被停掉:状态行说「已手动停止」而不是「已完成」', () => {
     const { container } = render(
       <AssistantMessage
         projectKind="prototype"
@@ -330,7 +330,7 @@ describe('AssistantMessage 执行记录', () => {
       />,
     );
 
-    expect(container.querySelector('[data-testid="assistant-label"]')?.textContent).toBe('Canceled');
+    expect(container.querySelector('[data-testid="assistant-label"]')?.textContent).toBe('Stopped manually');
   });
 
   it.each(['no_result', 'delivery_failed'] as const)(
