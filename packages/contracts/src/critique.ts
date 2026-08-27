@@ -413,8 +413,22 @@ export interface CritiqueArtifactRef {
  * (已经落库的旧对话,daemon 那道来不及了)。两边分头写早晚会分叉。
  */
 
-/** 成对出现、要**脱壳留字**的标记 —— 里面那句话是人写给人看的 */
-export const CRITIQUE_INLINE_TAGS = ['PANELIST', 'MUSTFIX', 'RESOLVED', 'SHIP'] as const;
+/**
+ * 成对出现、要**脱壳留字**的标记 —— 里面那句话是人写给人看的。
+ *
+ * 标签名以**真实语法**为准,不凭印象写:prompt 在
+ * `apps/daemon/src/prompts/panel.ts`,解析器在
+ * `apps/daemon/src/critique/parsers/v1.ts`(`MUST_FIX_RE`),fixtures 在
+ * `apps/daemon/src/critique/__fixtures__/`。三处一致才算数。
+ *
+ * 这里曾经写成 `MUSTFIX`(漏了下划线)。那个拼法在真实数据里一次都没出现过,
+ * 于是它挡不住任何东西:同一段话里的 `<PANELIST>` 被剥掉了,
+ * `<MUST_FIX id="…">…</MUST_FIX>` 却整条留在正文里给用户看见。
+ * 更难认的是它长什么样 —— markdown 把 `MUST_FIX` 里那对下划线当成强调标记,
+ * 屏幕上显示的是**斜体的 `MUSTFIX`**,下划线已经被吃掉,
+ * 照着屏幕回头找代码只会找到这个错的拼法,正好自圆其说。
+ */
+export const CRITIQUE_INLINE_TAGS = ['PANELIST', 'MUST_FIX', 'RESOLVED', 'SHIP'] as const;
 /** 整条都是协议的标记 */
 export const CRITIQUE_BLOCK_TAGS = ['CRITIQUE_RUN', 'ROUND', 'ROUND_END'] as const;
 export const CRITIQUE_GRAMMAR_TAGS: readonly string[] = [
