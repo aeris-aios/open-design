@@ -13094,14 +13094,13 @@ export async function startServer({
         );
         acpSession.abort();
       }
-      // A silent first-token hang is one of the safe transient failure shapes
-      // this run is allowed to recover: classifyRunFailure maps the stall text
-      // to a retryable `timeout` at `first_token_wait`, and decideSafeRunRetry
-      // permits the same-run retry when no output/tools/artifacts were seen.
-      // Route through the shared finalizer (after surfacing stallPayload) so
-      // the watchdog path gets the same run_retry_attempted/run_retry_finished
-      // telemetry as child close/error — not a bare terminal failure.
-      const retried = finishWithRetryDecision('failed', 1, null);
+      // The absolute first-output deadline is terminal: retrying the same
+      // request starts a second physical attempt with the same long wait and
+      // hides the deadline that the user needs to act on. Sliding inactivity
+      // failures keep the established retry policy.
+      const retried = finishWithRetryDecision('failed', 1, null, {
+        allowRetry: reason !== 'first_output',
+      });
       if (retried) {
         watchdogRetryRestarted = true;
       }
@@ -13200,6 +13199,10 @@ export async function startServer({
       if (toolTokenGrant) {
         toolTokenRegistry.refreshToken(toolTokenGrant.token, { ttlMs: toolTokenTtlMs });
       }
+      // An enabled first-output deadline is absolute. Until an actual
+      // output/artifact ends that phase, heartbeats and transport bytes may
+      // refresh diagnostics but must not arm a competing sliding watchdog.
+      if (firstOutputTimeoutMs > 0 && !firstOutputSeen) return;
       const delay = activeInactivityTimeoutMs();
       if (delay <= 0) return;
       clearInactivityWatchdog();
@@ -13234,8 +13237,8 @@ export async function startServer({
     if (toolTokenGrant?.runId) {
       activeChatAgentEventSinks.set(toolTokenGrant.runId, (payload) => {
         lastAgentEventPhase = summarizeAgentEventForInactivity(payload);
-        noteAgentActivity();
         noteFirstOutputEvent(payload);
+        noteAgentActivity();
         send('agent', payload);
       });
       activeChatRunHandles.set(toolTokenGrant.runId, { noteArtifactRegistered });
@@ -14500,6 +14503,9 @@ export async function startServer({
         onCliReady: () => noteCliReadyAt(),
         onSessionInit: () => noteSessionInitDoneAt(),
         onPromptComplete: () => clearFirstOutputWatchdog(),
+        ...(firstOutputTimeoutMs > 0
+          ? { onPromptDispatched: () => armFirstOutputWatchdog() }
+          : {}),
         onTerminal: (kind) => beginAcpAttemptTermination(
           `acp_${kind}`,
           { gracefulWaitMs: kind === 'completed' ? 500 : 0 },
@@ -14513,12 +14519,7 @@ export async function startServer({
           }
           if (event === 'agent') {
             lastAgentEventPhase = summarizeAgentEventForInactivity(data);
-            if (
-              data?.type === 'status' &&
-              data.label === 'waiting_for_first_output'
-            ) {
-              armFirstOutputWatchdog();
-            } else if (data?.type !== 'text_delta') {
+            if (data?.type !== 'text_delta') {
               // Raw ACP text may be entirely consumed by title-marker or role
               // filtering. Only the guarded non-empty emission below counts
               // as substantive first output.

@@ -29,6 +29,7 @@ import { SHIPPED_AGENT_DEFS } from '../../src/runtimes/registry.js';
 const ENV_KEY = 'OD_CHAT_RUN_INACTIVITY_TIMEOUT_MS';
 const FIRST_OUTPUT_ENV_KEY = 'OD_CHAT_RUN_FIRST_OUTPUT_TIMEOUT_MS';
 const TEN_MINUTES_MS = 10 * 60 * 1000;
+const FIFTEEN_MINUTES_MS = 15 * 60 * 1000;
 const THIRTY_MINUTES_MS = 30 * 60 * 1000;
 const TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000;
 
@@ -223,19 +224,12 @@ describe('amrAgentDef.inactivityTimeoutMs', () => {
     expect(amrAgentDef.inactivityTimeoutMs).toBe(THIRTY_MINUTES_MS);
   });
 
-  // 《Open Design 报错体验设计方案》§3 统一规则: 「10 分钟（Cloud 30 分钟）没输出
-  // 才报超时」. AMR/`amr_cloud` IS the document's "Cloud" runtime, so its
-  // first-output budget is the Cloud budget — the same 30 minutes the outer
-  // inactivity watchdog and the ACP stage watchdog already use.
-  //
-  // The old 120s budget killed the child and burned a same-run retry while the
-  // provider was still composing its first token: 14 days of production data
-  // carry 968 runs whose first output arrived AFTER 10 minutes and which then
-  // succeeded (687 devices, longest 21.8h), and first-token latency tracks
-  // context size almost perfectly (p90 = 277s past 600k tokens). At 120s the
-  // watchdog was declaring healthy runs dead.
-  it('ships the Cloud 30-minute first-output budget, not a two-minute one', () => {
-    expect(amrAgentDef.firstOutputTimeoutMs).toBe(THIRTY_MINUTES_MS);
+  // AMR has a distinct 15-minute absolute first-output budget. Its sliding
+  // inactivity watchdog remains 30 minutes, so a deadline expiry is reported
+  // as the terminal first-output outcome instead of starting the same request
+  // again under another long wait.
+  it('ships the AMR 15-minute first-output budget, not a two-minute one', () => {
+    expect(amrAgentDef.firstOutputTimeoutMs).toBe(FIFTEEN_MINUTES_MS);
   });
 
   it('no longer kills a silent-but-alive AMR turn anywhere near the old 120s mark', () => {

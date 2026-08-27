@@ -675,16 +675,13 @@ export const amrAgentDef = {
   // so it still bounds the wait when vela's transport/status heartbeats keep
   // the sliding watchdogs fed forever without a token ever arriving.
   //
-  // The budget is the Cloud budget from 《Open Design 报错体验设计方案》 §3
-  // 统一规则 —「10 分钟（Cloud 30 分钟）没输出才报超时」— because AMR
-  // (`amr_cloud`) IS that document's Cloud runtime. It therefore matches the
-  // sliding inactivity watchdog and the ACP stage watchdog above: one wait,
-  // one ceiling, whichever shape the silence takes.
+  // AMR (`amr_cloud`) has a distinct 15-minute absolute first-output budget
+  // while the sliding inactivity watchdog remains 30 minutes.
   //
   // It used to be two minutes, which declared healthy runs dead: first-token
   // latency tracks context size (p90 = 277s past 600k tokens), and across 14
   // days 968 runs emitted their first output more than ten minutes in and
-  // then SUCCEEDED. Cutting those off killed the child, burned a same-run
-  // retry, and showed a failure for a turn that was still working.
-  firstOutputTimeoutMs: 30 * 60 * 1000,
+  // then SUCCEEDED. A deadline expiry is terminal rather than spending a
+  // second physical attempt on the same long wait.
+  firstOutputTimeoutMs: 15 * 60 * 1000,
 } satisfies RuntimeAgentDef;

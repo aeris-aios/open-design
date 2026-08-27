@@ -36,9 +36,9 @@ import { startServer } from '../src/server.js';
  *
  * The budget itself is injected through `OD_CHAT_RUN_FIRST_OUTPUT_TIMEOUT_MS`
  * (the operator escape hatch `resolveChatRunFirstOutputTimeoutMs` already
- * honors). The shipped 30-minute value is asserted where it costs nothing —
+ * honors). The shipped 15-minute value is asserted where it costs nothing —
  * `tests/runtimes/chat-run-inactivity-timeout.test.ts` — because no test may
- * sleep for half an hour to observe it.
+ * sleep for fifteen minutes to observe it.
  */
 
 type StartedServer = {
@@ -109,7 +109,7 @@ describe('AMR first-output budget — full server cycle', () => {
       const { runId, headers, startedAt } = await startAmrRun(started.url);
 
       // 「不到超时不报错」 — silence alone, before the budget, is not a failure.
-      // On the shipped 30-minute budget this is what a user's first ten quiet
+      // On the shipped 15-minute budget this is what a user's first ten quiet
       // minutes look like; here it is the same wiring on a compressed clock.
       await sleep(Math.max(0, startedAt + BEFORE_BUDGET_SAMPLE_MS - Date.now()));
       const midFlight = await readRun(started.url, runId, headers);
@@ -145,6 +145,25 @@ describe('AMR first-output budget — full server cycle', () => {
         });
     },
   );
+
+  it(
+    'lets the caller-owned first-output deadline win when it equals the ACP stage timeout',
+    { timeout: 60_000 },
+    async () => {
+      binDir = await mkdtemp(path.join(os.tmpdir(), 'od-amr-equal-watchdog-'));
+      const fakeVela = await writeAlwaysStallingVela(binDir, 'vela-equal-watchdog');
+      configureAmrEnv(String(FIRST_OUTPUT_BUDGET_MS), String(FIRST_OUTPUT_BUDGET_MS));
+
+      started = (await startServer({ port: 0, returnServer: true })) as StartedServer;
+      await putConfig(started.url, fakeVela);
+      const { runId, headers } = await startAmrRun(started.url);
+      const run = await waitForRun(started.url, runId, headers);
+
+      expect(run.status).toBe('failed');
+      expect(run.terminalTrigger).toBe('first_output_deadline');
+      expect(run.error).toContain('without emitting a first output');
+    },
+  );
 });
 
 /**
@@ -172,7 +191,10 @@ async function writeAlwaysStallingVela(dir: string, name: string): Promise<strin
   return bin;
 }
 
-function configureAmrEnv(firstOutputTimeoutMs: string): void {
+function configureAmrEnv(
+  firstOutputTimeoutMs: string,
+  acpStageTimeoutMs = OUT_OF_REACH_MS,
+): void {
   delete process.env.POSTHOG_KEY;
   delete process.env.POSTHOG_HOST;
   delete process.env.LANGFUSE_PUBLIC_KEY;
@@ -183,7 +205,7 @@ function configureAmrEnv(firstOutputTimeoutMs: string): void {
   process.env.VELA_LINK_URL = 'https://amr-link.open-design.ai/v1';
   process.env.OD_CHAT_RUN_FIRST_OUTPUT_TIMEOUT_MS = firstOutputTimeoutMs;
   process.env.OD_CHAT_RUN_INACTIVITY_TIMEOUT_MS = OUT_OF_REACH_MS;
-  process.env.OD_ACP_STAGE_TIMEOUT_MS = OUT_OF_REACH_MS;
+  process.env.OD_ACP_STAGE_TIMEOUT_MS = acpStageTimeoutMs;
 }
 
 function snapshotEnv(): Record<string, string | undefined> {
