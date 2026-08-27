@@ -705,12 +705,13 @@ function AssistantMessageImpl({
   const produced = message.producedFiles ?? [];
   const displayedProduced = useMemo(
     () => {
-      const linkedFiles = recoverLinkedProjectFilesFromContent(
-        message.content,
+      const linkedFiles = recoverLinkedProjectFilesFromContent({
+        content: message.content,
         projectFiles,
         projectId,
         message,
-      );
+        turnTouchedFiles: turnTouchedAnyFile(produced, fileOps),
+      });
       const baseFiles =
         produced.length > 0
           ? produced
@@ -1507,12 +1508,40 @@ function normalizeTouchedPath(path: string): string {
   return path.replace(/\\/g, "/").replace(/^\.\//, "");
 }
 
-function recoverLinkedProjectFilesFromContent(
-  content: string,
-  projectFiles: ProjectFile[],
-  projectId?: string | null,
-  message?: ChatMessage,
-): ProjectFile[] {
+/**
+ * 这一轮**碰过文件**吗 —— 决定正文里的一句话能不能把一个文件「找」回来当产出。
+ *
+ * 两条硬证据:daemon 给这一轮结算出的产出清单(`producedFiles`),和本轮记下的
+ * 写 / 改工具调用。两条都空,这一轮就是一次没动过文件;此时回答里的
+ * 「我已经为你创建了 `x.html`」只是在**复述历史**,不是本轮增量。
+ * 真机撞到过:用户只发了一句「你好」,agent 顺口复述了上一轮的成果,
+ * 那份 38 分钟前写的文件就被摆成了一张整块的产物预览卡。
+ *
+ * 文件自己的落盘时间是另一条独立证据,走 `isFileMtimeInsideRun`,不受这里约束 ——
+ * 真在本轮落的盘,哪怕这两条都空(工具调用没记上、产出清单也没算进去)也照样认。
+ */
+function turnTouchedAnyFile(
+  produced: readonly ProjectFile[],
+  fileOps: readonly FileOpEntry[],
+): boolean {
+  if (produced.length > 0) return true;
+  return fileOps.some((entry) => entry.ops.includes("write") || entry.ops.includes("edit"));
+}
+
+function recoverLinkedProjectFilesFromContent({
+  content,
+  projectFiles,
+  projectId,
+  message,
+  turnTouchedFiles,
+}: {
+  content: string;
+  projectFiles: ProjectFile[];
+  projectId?: string | null;
+  message?: ChatMessage;
+  /** 见 `turnTouchedAnyFile` —— 为 false 时正文里的措辞不再算作产出证据 */
+  turnTouchedFiles: boolean;
+}): ProjectFile[] {
   if (!content || projectFiles.length === 0) return [];
   const projectFileNames = new Set<string>();
   const byPath = new Map<string, ProjectFile>();
@@ -1546,7 +1575,7 @@ function recoverLinkedProjectFilesFromContent(
     if (!filePath) continue;
     const file = byPath.get(normalizeTouchedPath(filePath));
     if (!file) continue;
-    if (!shouldRecoverReferencedFile(content, href, file, message)) continue;
+    if (!shouldRecoverReferencedFile(content, href, file, message, turnTouchedFiles)) continue;
     recovered.set(file.path || file.name, file);
   }
   return Array.from(recovered.values());
@@ -1591,13 +1620,26 @@ function extractKnownProjectFileRefs(
   return refs;
 }
 
+/**
+ * 这个被正文提到的文件,算不算**这一轮的产出**。
+ *
+ * 两条证据,任一成立即可,但都必须来自**这一轮**:
+ *  · 它的落盘时间落在本轮跑的窗口里 —— 这一轮真写了它;
+ *  · 这一轮**碰过文件**(见 `turnTouchedAnyFile`),而正文用产出的口气点了它的名 ——
+ *    留给「写是写了,但工具调用没记上、产出清单也没算进去」的那一档兜底。
+ *
+ * 措辞本身**不是**证据。一轮什么文件都没动的回答里,「我已经为你创建了 `x.html`」
+ * 说的是上一轮的事,凭它摆出产物卡就是把历史当成了本轮增量。
+ */
 function shouldRecoverReferencedFile(
   content: string,
   rawRef: string,
   file: ProjectFile,
-  message?: ChatMessage,
+  message: ChatMessage | undefined,
+  turnTouchedFiles: boolean,
 ): boolean {
   if (isFileMtimeInsideRun(file, message)) return true;
+  if (!turnTouchedFiles) return false;
   return contentHasOutputHintForFile(content, rawRef, file);
 }
 
