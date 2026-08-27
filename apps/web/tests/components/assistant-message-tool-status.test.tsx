@@ -487,7 +487,13 @@ describe('AssistantMessage 执行记录', () => {
     expect(bodyText(container)).toContain('Let me check the guard first.');
   });
 
-  it('壳跟着 run 走:thinking → 进行中 → 结束收起', () => {
+  /*
+   * 壳头**永远不说「思考中」**(用户裁决 2026-08-27:「一上来应该是原本的进行中卡片」)。
+   * 思考这件事由壳里那一格自己表达 —— 它有球、有扫光、有「思考中」三个字。
+   * 这条测试原来断言的是壳头会先显示 Thinking 再切 Working,那是重构前的形态,
+   * 已被上面这条裁决推翻;改写而不是删掉,是为了留住「壳头在思考阶段说什么」这个问题的答案。
+   */
+  it('壳跟着 run 走:思考态壳头就是「进行中」,思考中三个字在壳里那一格', () => {
     const renderMessage = (
       events: AgentEvent[],
       options: { streaming: boolean; runStatus: ChatMessage['runStatus']; endedAt?: number },
@@ -516,13 +522,22 @@ describe('AssistantMessage 执行记录', () => {
       [thinking],
       { streaming: true, runStatus: 'running' },
     ));
-    expect(recordHead(container)).toContain('Thinking');
+    // 壳头:思考阶段就已经是「进行中」,不再有单独的 Thinking 一档
+    expect(recordHead(container)).toContain('Working');
+    expect(recordHead(container)).not.toContain('Thinking');
+    /*
+     * 正向对照 —— 少了这一条,上面那句 `not.toContain` 在「思考那一格整个没渲染」
+     * 时也会绿,等于什么都没测。「思考中」必须确实出现在壳**里**。
+     */
+    expect(bodyText(container)).toContain('Thinking');
     expect(record(container).open).toBe(true);
 
-    // 动手了就不再是「思考中」(W11:靠事件不靠文字)
+    // 动手了那一格就不再是「思考中」,变成可展开的「Thoughts」(W11:靠事件不靠文字)
     rerender(renderMessage([thinking, read], { streaming: true, runStatus: 'running' }));
     expect(recordHead(container)).toContain('Working');
     expect(recordHead(container)).not.toContain('Thinking');
+    expect(bodyText(container)).not.toContain('Thinking');
+    expect(bodyText(container)).toContain('Thoughts');
 
     rerender(renderMessage(
       [thinking, read, { kind: 'text', text: 'Here is the conclusion.' }],
