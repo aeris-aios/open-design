@@ -641,6 +641,17 @@ function AssistantMessageImpl({
    * 秒数就冻在那儿不动,页面上看着像卡死;而设计稿里这颗秒表是一直在走的。
    */
   const nowMs = useTickingNow(streaming);
+  /**
+   * 最后一条事件**是什么时候到的**。S12 的静默计时要它(见 `BuildTurnInput.lastEventAtMs`)。
+   *
+   * 用事件条数做钥匙:条数一变就说明刚有东西落下来,时刻取那一刻。
+   * 不能去读事件自带的时刻 —— claude 的 thinking / tool_input 增量一条都不带,
+   * 真机 119 条里只有 12 条有,而恰恰是「一路在吐 thinking」那一段最需要这个判据。
+   *
+   * 历史消息重新打开时条数不会再变,这个值就停在挂载那一刻;S12 只在运行中看它,
+   * 所以影响面只有「重开一个还在跑的轮次」那一种,秒表从重开算起,不会误报「等太久」。
+   */
+  const lastEventAtMs = useMemo(() => Date.now(), [displayEvents.length]);
   const nextTurn = useMemo(() => {
     const turn = buildTurnBlocks({
       events: displayEvents,
@@ -654,6 +665,7 @@ function AssistantMessageImpl({
       // 带时刻的事件,没有这一对起止,壳头就只有一句光秃秃的「已完成」。
       ...(message.createdAt != null ? { startedAtMs: message.createdAt } : {}),
       ...(message.endedAt != null ? { endedAtMs: message.endedAt } : {}),
+      ...(streaming ? { lastEventAtMs } : {}),
     });
     return {
       shells: turn.filter((b): b is ExecutionShellData => b.kind === 'shell'),
@@ -662,7 +674,7 @@ function AssistantMessageImpl({
     };
     // `message.endedAt` 从 undefined 变成时刻**就在轮次终止那一刻** —— 不进依赖的话
     // 兜底耗时会停在「还没有终点」的那一版,壳头刚收起时秒数是空的。
-  }, [displayEvents, turnRunStatus, nowMs, previousTodos, message.endedAt]);
+  }, [displayEvents, turnRunStatus, nowMs, previousTodos, message.endedAt, streaming, lastEventAtMs]);
   /**
    * 执行记录里**真的有东西**。
    *

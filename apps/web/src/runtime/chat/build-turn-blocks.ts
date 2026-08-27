@@ -851,7 +851,16 @@ export function buildTurnBlocks(input: BuildTurnInput): TurnBlock[] {
   function shellQuiet(running: boolean, shell?: ExecutionShell): number | null {
     if (!running || input.nowMs == null) return null;
     const span = shell ? shellSpan.get(shell) : undefined;
-    const last = (span ? span.to : lastEndedAt) ?? firstStartedAt ?? input.startedAtMs ?? null;
+    const stamped = (span ? span.to : lastEndedAt) ?? firstStartedAt ?? input.startedAtMs ?? null;
+    /*
+     * 事件自带的时刻只覆盖一小部分:真机 run 里 119 条事件只有 12 条带时刻,
+     * 其余是 claude 的 thinking / tool_input 增量,一条都不带。只看它们的话,
+     * 模型一路吐字而界面报「上游响应慢」—— 那个秒数还正好等于整轮耗时,
+     * 因为起点退回了轮次开头。所以再认一个**到达时刻**:哪条更晚用哪条。
+     */
+    const last = input.lastEventAtMs != null && (stamped == null || input.lastEventAtMs > stamped)
+      ? input.lastEventAtMs
+      : stamped;
     if (last == null) return null;
     const ms = input.nowMs - last;
     return ms > 0 ? ms : null;
