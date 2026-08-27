@@ -25,7 +25,7 @@
  * 四个窗口里的真实最大静默分别只有 2.3s / 2.2s / 73.6s / 2.1s。
  *
  * 为什么现有那条到达时刻(`lastEventAtMs`,以 `displayEvents.length` 为钥匙)救不了:
- *  · `tool_input_delta` 在 `providers/daemon.ts` 就被岔进 `onToolInputDelta`,
+ *  · `tool_input_delta` 在 `providers/daemon.ts` 记完心跳就被丢掉,
  *    **根本不会变成 `AgentEvent`**,更不会进 `message.events` —— 而它正是这个
  *    窗口里 124/126 的帧;
  *  · claude 的 `thinking_delta` 一律是空串(这条 run 里 414/414 条 `delta: ""`),
@@ -207,8 +207,9 @@ describe('S12 · 上游一直在吐帧时不许说它慢', () => {
         throw new Error(`unexpected fetch ${url}`);
       }),
     );
-    // 真实传输层。handlers 照 ProjectView 的接法给 —— 注意 `onToolInputDelta`
-    // 那一格 ProjectView **没有接**,这里也不接,不然就不是真机路径了。
+    // 真实传输层。handlers 照 ProjectView 的接法给 —— 就这四格。
+    // `tool_input_delta` 没有任何 handler 槽位可接(那个死槽位已删,见
+    // `tool-input-delta-dead-wiring.test.tsx`),它只在传输层记一笔心跳。
     void reattachDaemonRun({
       runId: RUN_ID,
       signal: abort.signal,

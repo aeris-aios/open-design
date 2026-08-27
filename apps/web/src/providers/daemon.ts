@@ -293,14 +293,6 @@ export interface DaemonStreamHandlers extends StreamHandlers {
   /** Authoritative artifact count from the daemon's terminal run record. */
   onArtifactCount?: (count: number) => void;
   /**
-   * Live-only incremental tool-input fragment (Claude `input_json_delta`).
-   * Kept off `AgentEvent`/`PersistedAgentEvent` because it is ephemeral and
-   * never persisted — consumers accumulate by tool-use `id` for real-time
-   * display and discard once the full `tool_use` event arrives. `name` is the
-   * tool name so the UI can gate the live preview to code-writing tools.
-   */
-  onToolInputDelta?: (id: string, name: string, delta: string) => void;
-  /**
    * SSE 重连的进度。UI(设计稿组件 22)靠它画「正在重新连接 N/5」那一行。
    *
    * 只在**掉线期间**发,恢复就发一条 `cleared` 让调用方把那一行撤掉
@@ -1572,12 +1564,29 @@ async function consumeDaemonRun({
            * S12 的静默计时就认这一刻 —— **上游给过我们东西**的唯一如实证据。
            *
            * 必须记在这里,不能记在事件落进 `message.events` 之后:那之后
-           * `tool_input_delta` 已经被岔走、空 thinking 已经被挡掉、连续文字
+           * `tool_input_delta` 已经被丢掉、空 thinking 已经被挡掉、连续文字
            * 已经被合并,真机 161.6 秒的窗口里数组一次都不会变。理由与真机
            * 数据见 `runtime/chat/upstream-activity.ts`。
            *
            * 也必须在 `parsed.kind !== 'event'` 这一刀**之后**:keepalive 注释帧
            * 是我们自己的心跳,证不出上游还在干活,拿它归零就等于把 S12 关掉。
+           *
+           * ── 这张表的主力是 `tool_input_delta` ─────────────────────────────
+           *
+           * 真机 run `7ed15c2f` 里它是 1346 条 agent 帧中的 **699 条**,那个 161.6 秒
+           * 窗口里更是 126 条占 124 条。它**只在这里被用一次**(记一笔到达时刻),
+           * 之后走到下面 `translateAgentEvent` 没有它的分支、返回 `null` 被丢掉 ——
+           * 载荷是半截入参 JSON,本来也 parse 不了。
+           *
+           * **别拿它去画界面。** 它是模型在写**下一个**工具调用的入参,此刻上一个工具
+           * 早已返回(同一份 run 里 10 个 30 秒以上的空档,每一个都是
+           * `tool_result → tool_use`;而真正的工具执行 43 次里最长 0.4 秒)。
+           * 设计稿组件 9 / 10 逐字写死:「没有「执行中」这一档……"它在干活"由正在跑的
+           * 那一步的转圈说,**一处就够**」—— 在途反馈就是壳头那颗球 + 扫光的「进行中」
+           * + 每秒在走的秒数。落进规格是 D3(`specs/current/chat-panel-next.md:413`)
+           * 与 B8(`:754`)。这条帧曾经被岔进一个专供流式代码卡(`LiveCodeBox`,按 N4 已下线)
+           * 的回调槽位,卡片撤掉后全仓再没有调用方接过它 —— 那个死槽位已删。
+           * 钉子见 `tests/components/chat/tool-input-delta-dead-wiring.test.tsx`。
            */
           markUpstreamActivity(runId);
           if (parsed.id) {
@@ -1601,16 +1610,6 @@ async function consumeDaemonRun({
           }
 
           if (event.event === 'agent') {
-            if (event.data.type === 'tool_input_delta') {
-              if (
-                typeof event.data.id === 'string' &&
-                typeof event.data.name === 'string' &&
-                typeof event.data.delta === 'string'
-              ) {
-                handlers.onToolInputDelta?.(event.data.id, event.data.name, event.data.delta);
-              }
-              continue;
-            }
             const translated = translateAgentEvent(event.data);
             if (!translated) continue;
             if (translated.kind === 'text') {

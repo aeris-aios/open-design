@@ -165,11 +165,23 @@ export type DaemonAgentPayload =
    * Live-only incremental tool-input fragment, emitted while the model is still
    * streaming a tool call's JSON arguments (Claude `input_json_delta`). `delta`
    * is a raw, possibly mid-token JSON fragment — not parseable on its own.
-   * Consumers accumulate by `id` (the content-block id, equal to the eventual
-   * `tool_use.id`) for real-time display and discard once the full `tool_use`
-   * arrives. `name` is the tool name (known at content-block start) so the UI
-   * can gate the live preview to code-writing tools. NOT persisted — see
-   * `daemonAgentPayloadToPersistedAgentEvent`.
+   * NOT persisted — see `daemonAgentPayloadToPersistedAgentEvent`.
+   *
+   * **This event exists for its arrival time, not its payload.** The web client
+   * counts it as upstream-liveness evidence for the S12 silence probe
+   * (`markUpstreamActivity` in `apps/web/src/providers/daemon.ts`) and then
+   * drops it: it never becomes an `AgentEvent` and is never rendered. It is the
+   * probe's main heartbeat — in the recorded run `7ed15c2f` it is 699 of 1346
+   * agent frames, and 124 of the 126 frames in one 161.6s window. Stop emitting
+   * it and the probe starts falsely reporting silence while the model streams.
+   *
+   * **Do not render it.** It marks the model *composing the next* tool call,
+   * not a tool executing — by the time it flows the previous tool has already
+   * returned. The chat design forbids an in-flight tool row outright (D3 / B8 in
+   * `specs/current/chat-panel-next.md`); in-flight feedback is the execution
+   * shell's orb plus its ticking elapsed timer, and the design is explicit that
+   * one such affordance is enough. `id` (the content-block id, equal to the
+   * eventual `tool_use.id`) and `name` are carried for correlation only.
    */
   | { type: 'tool_input_delta'; id: string; name: string; delta: string }
   | { type: 'tool_result'; toolUseId: string; content: string; isError?: boolean; completedAt?: number }
