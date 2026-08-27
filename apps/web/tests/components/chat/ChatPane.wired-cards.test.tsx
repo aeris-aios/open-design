@@ -162,7 +162,12 @@ describe('ChatPane — 报错卡的常驻动作', () => {
     );
     expect(labels[0]).toBe('chat-error-contact-support');
     expect(labels[1]).toBe('chat-error-export-logs');
-    expect(labels[labels.length - 1]).toContain('promptTemplates.retry');
+    /* 重试原来是裸 `<button>`、没有 testid,所以这里回落到读它的文本
+       (`promptTemplates.retry`)。2026-08-27 它改成和旁边两颗同一个共享
+       `Button` 原语(用户:「这个按钮圆角明显跟别的不一样」——它自带 4px 圆角,
+       两颗次级是 999px),顺手补了 testid。**三颗现在都按 testid 认**,
+       比原来混着文本认更稳:换文案不会再牵动这条顺序断言。 */
+    expect(labels[labels.length - 1]).toBe('chat-error-retry');
   });
 
   it('点〔联系支持〕开出联系支持弹窗,里面是飞书社群 + Discord 两行', () => {

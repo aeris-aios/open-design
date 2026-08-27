@@ -255,7 +255,12 @@ describe('另一条渲染路:没有写 / 改工具记录时的产物卡', () => 
 
   it('不发标记 —— 卡片和今天一样多', () => {
     renderTurn(turn({ events: noToolEvents }));
-    expect(document.querySelector('[data-testid="file-ops-summary"]')).toBeNull();
+    /* 这里原来断言 `file-ops-summary` **不存在** —— 那是「没有工具行时走
+       `ProducedFiles`」那套结构下的写法。产物卡片对齐那一轮把两条路汇进了同一个
+       `FileOpsSummary`(`ProducedFiles` 已删),所以面板现在**应该在**。
+       两条路仍然互斥、仍然各收窄一次,变的只是终点。
+       真正要钉的那条是下面的卡数:不发标记时和今天一样多。 */
+    expect(document.querySelector('[data-testid="file-ops-summary"]')).toBeTruthy();
     expect(document.querySelectorAll('[data-artifact-card]').length).toBe(ALL_PRODUCED.length);
   });
 

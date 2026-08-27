@@ -183,6 +183,10 @@ describe('ChatPane resume-on-failure', () => {
     expect(screen.queryByRole('button', { name: 'chat.resumeRunCta' })).toBeNull();
     const retryButton = screen.getByRole('button', { name: 'promptTemplates.retry' });
     expect(retryButton).toBeTruthy();
-    expect(retryButton.classList.contains('chat-error-action')).toBe(true);
+    /* 原来断言的是 `chat-error-action` —— 那是它当裸 `<button>` 时的手写类名。
+       2026-08-27 这颗改成走共享 `Button`(用户:「这个按钮圆角明显跟别的不一样」;
+       量到它 4px 圆角、旁边两颗 999px)。这里改成认 testid:要钉的是「回落到重试」
+       这条行为,不是它当年用哪个类名。 */
+    expect(retryButton.getAttribute('data-testid')).toBe('chat-error-retry');
   });
 });
