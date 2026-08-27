@@ -2416,7 +2416,13 @@ function createProjectPreviewScopeRegistry() {
           ? `${entry.workspace.workspaceId}\u0000${entry.workspace.workspaceMemberId}`
           : '';
         if (entryWorkspace !== wantedWorkspace) continue;
-        entry.expiresAt = Date.now() + (options.ttlMs ?? PROJECT_PREVIEW_SCOPE_TTL_MS);
+        // Deliberately does NOT renew `expiresAt`. The expiry is serialized
+        // into the bridge script of the document this scope is about to be
+        // injected into, so bumping it here changes the served bytes on every
+        // read -- which reloads the iframe just as surely as a fresh scope id
+        // would, defeating the whole point of reusing one. Lifetime extension
+        // has its own path: the client renews explicitly
+        // (`x-od-preview-scope-renewal`), and that response is not a document.
         return scope;
       }
       return create(projectId, workspace, options, true);

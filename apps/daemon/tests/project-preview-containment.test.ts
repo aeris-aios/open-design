@@ -108,14 +108,19 @@ describe('project preview containment routes', () => {
         `${baseUrl}/api/projects/${projectId}/raw/index.html?odPreviewBridge=scroll`,
       );
       expect(res.ok).toBe(true);
-      const html = await res.text();
-      return /<base\b[^>]*href="([^"]+)"/i.exec(html)?.[1] ?? null;
+      return await res.text();
     };
 
     const first = await read();
     const second = await read();
 
-    expect(first).toBeTruthy();
+    // Compare the WHOLE document, not just the `<base href>`. What React
+    // assigns to `srcDoc` is this entire string, so any byte that moves per
+    // request reloads the iframe just as surely as a fresh scope id would --
+    // the bridge script serializes the scope's expiry, so renewing that expiry
+    // on a read is enough to defeat a stable scope id. Asserting only on the
+    // base href cannot see that.
+    expect(first).toContain('<base');
     expect(second).toBe(first);
   });
 
