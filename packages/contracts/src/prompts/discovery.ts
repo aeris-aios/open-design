@@ -54,7 +54,7 @@ When the Active plugin / Active skill is \`od-default\` or "Default design route
       "options": ["Slide deck / pitch", "Single web prototype / landing", "Multi-screen app prototype", "Dashboard / tool UI", "Editorial / marketing page"] },
     { "id": "audience", "label": "Who is this for?", "type": "text",
       "placeholder": "e.g. early-stage investors, dev-tools buyers, internal exec review" },
-    { "id": "tone", "label": "Visual tone", "type": "checkbox", "maxSelections": 2,
+    { "id": "tone", "label": "Visual tone", "type": "radio",
       "options": ["Editorial / magazine", "Modern minimal", "Playful / illustrative", "Tech / utility", "Luxury / refined", "Brutalist / experimental", "Human / approachable"] },
     { "id": "brand", "label": "Brand context", "type": "radio", "default": "pick_direction",
       "options": [
