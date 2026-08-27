@@ -152,7 +152,11 @@ describe('AMR first-output budget — full server cycle', () => {
     async () => {
       binDir = await mkdtemp(path.join(os.tmpdir(), 'od-amr-equal-watchdog-'));
       const fakeVela = await writeAlwaysStallingVela(binDir, 'vela-equal-watchdog');
-      configureAmrEnv(String(FIRST_OUTPUT_BUDGET_MS), String(FIRST_OUTPUT_BUDGET_MS));
+      configureAmrEnv(
+        String(FIRST_OUTPUT_BUDGET_MS),
+        String(FIRST_OUTPUT_BUDGET_MS),
+        String(FIRST_OUTPUT_BUDGET_MS),
+      );
 
       started = (await startServer({ port: 0, returnServer: true })) as StartedServer;
       await putConfig(started.url, fakeVela);
@@ -194,6 +198,7 @@ async function writeAlwaysStallingVela(dir: string, name: string): Promise<strin
 function configureAmrEnv(
   firstOutputTimeoutMs: string,
   acpStageTimeoutMs = OUT_OF_REACH_MS,
+  inactivityTimeoutMs = OUT_OF_REACH_MS,
 ): void {
   delete process.env.POSTHOG_KEY;
   delete process.env.POSTHOG_HOST;
@@ -204,7 +209,7 @@ function configureAmrEnv(
   process.env.VELA_RUNTIME_KEY = `fake-runtime-key-${randomUUID()}`;
   process.env.VELA_LINK_URL = 'https://amr-link.open-design.ai/v1';
   process.env.OD_CHAT_RUN_FIRST_OUTPUT_TIMEOUT_MS = firstOutputTimeoutMs;
-  process.env.OD_CHAT_RUN_INACTIVITY_TIMEOUT_MS = OUT_OF_REACH_MS;
+  process.env.OD_CHAT_RUN_INACTIVITY_TIMEOUT_MS = inactivityTimeoutMs;
   process.env.OD_ACP_STAGE_TIMEOUT_MS = acpStageTimeoutMs;
 }
 

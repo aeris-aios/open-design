@@ -242,7 +242,7 @@ describe('same-run retry runtime', () => {
     expect(events.filter((event) => event.event === 'run_retry_attempted')).toHaveLength(0);
   });
 
-  it('retries when title-only ACP text is followed by heartbeat-only stalling', async () => {
+  it('does not retry when title-only ACP text is followed by heartbeat-only stalling', async () => {
     binDir = await mkdtemp(path.join(os.tmpdir(), 'od-run-retry-amr-title-only-bin-'));
     const fakeVela = await writeTitleOnlyVela(binDir, 'vela-title-only-stall', true);
     configureAmrFirstOutputEnv();
@@ -258,10 +258,11 @@ describe('same-run retry runtime', () => {
     const run = await createAndWaitForRun(started.url, 'amr', {
       titleGeneration: { enabled: true },
     });
-    expect(run.status).toBe('succeeded');
+    expect(run.status).toBe('failed');
+    expect(run.terminalTrigger).toBe('first_output_deadline');
     const events = await readRunEvents(run.eventsLogPath);
-    expect(events.filter((event) => event.event === 'start')).toHaveLength(2);
-    expect(events.filter((event) => event.event === 'run_retry_attempted')).toHaveLength(1);
+    expect(events.filter((event) => event.event === 'start')).toHaveLength(1);
+    expect(events.filter((event) => event.event === 'run_retry_attempted')).toHaveLength(0);
   });
 
   it('does not retry after a title-only clean ACP result with no usage', async () => {

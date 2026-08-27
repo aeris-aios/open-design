@@ -667,8 +667,8 @@ export const amrAgentDef = {
   // was selected. Explicit UI selections, including `default`, win.
   defaultModelEnvVar: 'VELA_DEFAULT_MODEL',
   // Vela/OpenCode can spend extended stretches silent while the upstream
-  // provider is still working. Keep the outer chat watchdog aligned with the
-  // 30-minute ACP stage timeout so the daemon does not fail the run first.
+  // provider is still working. This sliding post-output watchdog stays at 30
+  // minutes; the distinct absolute first-output deadline below owns prompt wait.
   inactivityTimeoutMs: 30 * 60 * 1000,
   // Absolute budget from `session/prompt` to the first substantive output.
   // Unlike `inactivityTimeoutMs` above this one is NOT re-armed by activity,
