@@ -32,9 +32,15 @@ export type FakeAcpHandshakeRuntime = {
   invocationLog: string;
 };
 
+export type FakeAcpHandshakeRuntimeOptions = {
+  root?: string;
+};
+
 /** Install the intentionally failing ACP fixture owned by the E2E harness. */
-export async function createFakeAcpHandshakeRuntime(): Promise<FakeAcpHandshakeRuntime> {
-  const root = path.join(
+export async function createFakeAcpHandshakeRuntime(
+  options: FakeAcpHandshakeRuntimeOptions = {},
+): Promise<FakeAcpHandshakeRuntime> {
+  const root = options.root ?? path.join(
     tmpdir(),
     `open-design-fake-acp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
   );

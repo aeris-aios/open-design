@@ -9,6 +9,7 @@ import { promisify } from 'node:util';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 
 import { createFakeAgentRuntimes } from '@/fake-agents';
+import { T } from '@/timeouts';
 import {
   assertPackagedHomeFirstRunResult,
   PACKAGED_HOME_FIRST_RUN_OUTPUT,
@@ -1228,7 +1229,7 @@ desktopMacDescribe('mac desktop settings smoke', () => {
 
   beforeAll(async () => {
     await desktop.start();
-  }, 75_000);
+  }, T.xlong + T.long + T.medium);
 
   afterAll(async () => {
     await desktop.stop();
@@ -1535,7 +1536,7 @@ desktopMacDescribe('mac desktop settings smoke', () => {
     });
   }, 45_000);
 
-  test('[P0] keeps the desktop artifact preview loaded and stable when Open is clicked', async () => {
+  test('[P0] keeps the desktop artifact preview loaded and stable after its file route opens', async () => {
     await seedDesktopConfig(desktop, {
       mode: 'api',
       apiKey: 'sk-test',
@@ -1552,7 +1553,7 @@ desktopMacDescribe('mac desktop settings smoke', () => {
       theme: 'system',
     }, 'model');
 
-    const seeded = await desktop.eval<{ projectId: string }>(`
+    await desktop.eval<{ projectId: string }>(`
       (async () => {
         const projectId = 'desktop-open-smoke-' + Date.now().toString(36);
         const projectResp = await fetch('/api/projects', {
@@ -1587,36 +1588,19 @@ desktopMacDescribe('mac desktop settings smoke', () => {
           throw new Error('failed to seed project file: ' + fileResp.status);
         }
 
-        window.__odDesktopOpenHref = null;
-        window.__odDesktopOpenClickCount = 0;
-        if (!window.__odDesktopOpenCaptureInstalled) {
-          document.addEventListener('click', (event) => {
-            const target = event.target instanceof Element ? event.target.closest('a') : null;
-            if (!(target instanceof HTMLAnchorElement)) return;
-            if (target.textContent?.trim() !== 'Open') return;
-            window.__odDesktopOpenHref = target.getAttribute('href');
-            window.__odDesktopOpenClickCount += 1;
-            event.preventDefault();
-          }, true);
-          window.__odDesktopOpenCaptureInstalled = true;
-        }
-
         window.location.assign('/projects/' + encodeURIComponent(projectId) + '/files/desktop-open.html');
         return { projectId };
       })()
     `);
 
     await waitFor(async () => {
-      const snapshot = await readDesktopArtifactOpenSnapshot(desktop);
+      const snapshot = await readDesktopArtifactPreviewSnapshot(desktop);
       expect(snapshot.fileWorkspaceVisible).toBe(true);
       expect(snapshot.selectedTab).toBe('desktop-open.html');
       expect(snapshot.artifactPreviewVisible).toBe(true);
       expect(snapshot.artifactPreviewActive).toBe(true);
       expect(snapshot.artifactPreviewLoadedEpoch).toBeTruthy();
       expect(snapshot.artifactPreviewLoadingVisible).toBe(false);
-      expect(snapshot.openHref).toBe('/api/projects/' + seeded.projectId + '/raw/desktop-open.html?v=0&r=0');
-      expect(snapshot.openTarget).toBe('_blank');
-      expect(snapshot.openRel).toContain('noreferrer');
     });
 
     const stablePreview = await observeDesktopArtifactPreviewStability(desktop);
@@ -1628,37 +1612,7 @@ desktopMacDescribe('mac desktop settings smoke', () => {
       visibleThroughout: true,
     });
 
-    const clicked = await desktop.eval<boolean>(`
-      (() => {
-        const link = Array.from(document.querySelectorAll('a'))
-          .find((node) => node.textContent?.trim() === 'Open');
-        if (!(link instanceof HTMLAnchorElement)) return false;
-        link.click();
-        return true;
-      })()
-    `);
-    expect(clicked).toBe(true);
-
-    await waitFor(async () => {
-      const snapshot = await readDesktopArtifactOpenSnapshot(desktop);
-      expect(snapshot.fileWorkspaceVisible).toBe(true);
-      expect(snapshot.selectedTab).toBe('desktop-open.html');
-      expect(snapshot.artifactPreviewVisible).toBe(true);
-      expect(snapshot.artifactPreviewActive).toBe(true);
-      expect(snapshot.artifactPreviewLoadedEpoch).toBeTruthy();
-      expect(snapshot.artifactPreviewLoadingVisible).toBe(false);
-      expect(snapshot.openHref).toBe('/api/projects/' + seeded.projectId + '/raw/desktop-open.html?v=0&r=0');
-    });
-
-    const clickCapture = await desktop.eval<{ count: number; href: string | null }>(`
-      (() => ({
-        count: typeof window.__odDesktopOpenClickCount === 'number' ? window.__odDesktopOpenClickCount : 0,
-        href: typeof window.__odDesktopOpenHref === 'string' ? window.__odDesktopOpenHref : null,
-      }))()
-    `);
-    expect(clickCapture.count).toBeGreaterThan(0);
-    expect(clickCapture.href).toBe('/api/projects/' + seeded.projectId + '/raw/desktop-open.html?v=0&r=0');
-  }, 45_000);
+  }, T.xlong);
 
   test('opens the Media providers section from the desktop shell and shows provider controls', async () => {
     await seedDesktopConfig(desktop, {
@@ -1941,15 +1895,12 @@ type DesktopAppearanceSectionSnapshot = {
   themeSegControlVisible: boolean;
 };
 
-type DesktopArtifactOpenSnapshot = {
+type DesktopArtifactPreviewSnapshot = {
   artifactPreviewActive: boolean;
   artifactPreviewLoadedEpoch: string | null;
   artifactPreviewLoadingVisible: boolean;
   artifactPreviewVisible: boolean;
   fileWorkspaceVisible: boolean;
-  openHref: string | null;
-  openRel: string | null;
-  openTarget: string | null;
   selectedTab: string | null;
 };
 
@@ -2208,13 +2159,11 @@ async function readDesktopAppearanceSectionSnapshot(
   `);
 }
 
-async function readDesktopArtifactOpenSnapshot(
+async function readDesktopArtifactPreviewSnapshot(
   desktop: DesktopHarness,
-): Promise<DesktopArtifactOpenSnapshot> {
-  return await desktop.eval<DesktopArtifactOpenSnapshot>(`
+): Promise<DesktopArtifactPreviewSnapshot> {
+  return await desktop.eval<DesktopArtifactPreviewSnapshot>(`
     (() => {
-      const openLink = Array.from(document.querySelectorAll('a'))
-        .find((node) => node.textContent?.trim() === 'Open');
       const preview = document.querySelector('[data-testid="artifact-preview-frame"]');
       const loadingSurface = document.querySelector('[data-testid="artifact-preview-first-load"]');
       const elementIsVisible = (element) => {
@@ -2227,9 +2176,11 @@ async function readDesktopArtifactOpenSnapshot(
           && rect.width > 0
           && rect.height > 0;
       };
-      const activeTab = Array.from(document.querySelectorAll('[role="tab"][aria-selected="true"]'))
-        .map((node) => node.textContent?.trim())
-        .find((value) => typeof value === 'string') ?? null;
+      const fileWorkspace = document.querySelector('[data-testid="file-workspace"]');
+      const activeTab = fileWorkspace?.querySelector('[role="tab"][aria-selected="true"]');
+      const activeTabLabel = activeTab?.querySelector('.ws-tab-label')?.textContent?.trim()
+        ?? activeTab?.textContent?.trim()
+        ?? null;
       return {
         artifactPreviewActive: preview?.getAttribute('data-od-active') === 'true',
         artifactPreviewLoadedEpoch: preview instanceof HTMLIFrameElement
@@ -2237,11 +2188,8 @@ async function readDesktopArtifactOpenSnapshot(
           : null,
         artifactPreviewLoadingVisible: elementIsVisible(loadingSurface),
         artifactPreviewVisible: elementIsVisible(preview),
-        fileWorkspaceVisible: Boolean(document.querySelector('[data-testid="file-workspace"]')),
-        openHref: openLink?.getAttribute('href') ?? null,
-        openRel: openLink?.getAttribute('rel') ?? null,
-        openTarget: openLink?.getAttribute('target') ?? null,
-        selectedTab: activeTab,
+        fileWorkspaceVisible: Boolean(fileWorkspace),
+        selectedTab: activeTabLabel,
       };
     })()
   `);

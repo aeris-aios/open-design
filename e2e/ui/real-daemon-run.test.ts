@@ -1,5 +1,6 @@
 import { expect, test } from '@/playwright/suite';
 import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { openNewProjectModal as openNewProjectModalFromProjects } from '@/playwright/rail';
 import { runErrorCard } from '@/playwright/chat';
 import { openAllProjectFiles } from '@/playwright/workspace';
@@ -58,10 +59,14 @@ function artifactPreviewFrame(page: Page) {
 // the CI shard matrix — a serial group is atomic within one shard and this
 // file's chain alone would floor the UI wall time.
 
-test.beforeAll(async () => {
+test.beforeAll(async ({ toolsDev }) => {
   [fakeRuntimes, fakeAcpHandshakeRuntime] = await Promise.all([
-    createFakeAgentRuntimes(),
-    createFakeAcpHandshakeRuntime(),
+    createFakeAgentRuntimes({
+      root: join(toolsDev.root, 'scratch', 'fake-agent-runtimes'),
+    }),
+    createFakeAcpHandshakeRuntime({
+      root: join(toolsDev.root, 'scratch', 'fake-acp-handshake-runtime'),
+    }),
   ]);
 });
 
