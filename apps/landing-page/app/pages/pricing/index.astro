@@ -34,6 +34,7 @@ import EnterpriseLeadForm from '../../_components/enterprise-lead-form.astro';
 import {
   getFaqs,
   getFaqTitle,
+  getMoreFaqLabel,
   getEnterprise,
 } from '../../_lib/pricing-extras-content';
 import { localeFromPath, localizedHref } from '../../i18n';
@@ -41,6 +42,7 @@ import { DEEPSEEK_V4_PRO_CAMPAIGN } from '../../_lib/deepseek-v4-pro-campaign';
 
 const locale = localeFromPath(Astro.url.pathname);
 const href = (path: string) => localizedHref(path, locale);
+const refundPolicyHref = locale === 'zh' ? href('/refund-policy/') : '/refund-policy/';
 const content = getPricingContent(locale);
 const planActionLabels = getPricingPlanActionLabels(locale);
 const teamContent = getTeamPricingContent(locale);
@@ -60,6 +62,7 @@ const footnoteHtml = fillTemplate(L.footnote, {
 
 const faqs = getFaqs(locale);
 const faqTitle = getFaqTitle(locale);
+const moreFaqLabel = getMoreFaqLabel(locale);
 const enterprise = getEnterprise(locale);
 const LF = enterprise.leadForm;
 
@@ -445,10 +448,16 @@ const jsonLd = [
         {faqs.map((faq) => (
           <details class="pr-faq-item">
             <summary class="pr-faq-q">{faq.q}</summary>
-            <div class="pr-faq-a">{faq.a}</div>
+            <div class="pr-faq-a">
+              <span>{faq.a}</span>
+              {faq.refundPolicyCta && (
+                <a class="pr-faq-policy" href={refundPolicyHref}>{faq.refundPolicyCta}</a>
+              )}
+            </div>
           </details>
         ))}
       </div>
+      <a class="pr-faq-more" href={href('/faq/')}>{moreFaqLabel}</a>
     </section>
   </article>
 
@@ -1937,6 +1946,35 @@ const jsonLd = [
     font-size: 0.88rem;
     line-height: 1.65;
     color: var(--ink-soft, #555);
+  }
+  .pr-faq-policy {
+    display: block;
+    width: fit-content;
+    margin-top: 10px;
+    color: var(--ink, #262626);
+    font-weight: 700;
+    text-decoration: underline;
+    text-underline-offset: 4px;
+  }
+  .pr-faq-policy:focus-visible {
+    border-radius: 3px;
+    outline: 2px solid var(--ink);
+    outline-offset: 4px;
+  }
+  .pr-faq-more {
+    display: table;
+    margin: 22px auto 0;
+    color: var(--ink-soft, #555);
+    font-size: 0.88rem;
+    font-weight: 600;
+    text-underline-offset: 4px;
+    transition: color 160ms;
+  }
+  .pr-faq-more:hover { color: var(--ink); }
+  .pr-faq-more:focus-visible {
+    border-radius: 3px;
+    outline: 2px solid var(--ink);
+    outline-offset: 4px;
   }
 
   /* ---- Team-plan lead-capture modal ---- */

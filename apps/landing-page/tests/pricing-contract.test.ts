@@ -621,6 +621,51 @@ describe("pricing contract", () => {
     assert.doesNotMatch(page, /限时抢购/);
   });
 
+  it("links the pricing FAQ to the localized standalone FAQ page", async () => {
+    const [page, pricingExtras] = await Promise.all([
+      readFile(PRICING_PAGE_PATH, "utf8"),
+      import("../app/_lib/pricing-extras-content.ts"),
+    ]);
+    const getMoreFaqLabel = (
+      pricingExtras as Record<string, unknown>
+    ).getMoreFaqLabel;
+
+    assert.equal(typeof getMoreFaqLabel, "function");
+    assert.equal(
+      (getMoreFaqLabel as (locale: string) => string)("zh"),
+      "查看更多常见问题",
+    );
+    assert.match(
+      page,
+      /<a class="pr-faq-more" href=\{href\('\/faq\/'\)\}>\{moreFaqLabel\}<\/a>/,
+    );
+  });
+
+  it("links the refund answer to the localized refund policy without the old no-refund copy", async () => {
+    const [page, pricingExtras] = await Promise.all([
+      readFile(PRICING_PAGE_PATH, "utf8"),
+      import("../app/_lib/pricing-extras-content.ts"),
+    ]);
+    const getFaqs = (pricingExtras as Record<string, unknown>).getFaqs as (
+      locale: string,
+    ) => Array<{ q: string; a: string; refundPolicyCta?: string }>;
+    const zhRefund = getFaqs("zh").find((faq) => faq.q.includes("退款"));
+    const enRefund = getFaqs("en").find((faq) => /refund/i.test(faq.q));
+
+    assert.ok(zhRefund);
+    assert.match(zhRefund.a, /付款成功后 7 个自然日内/);
+    assert.match(zhRefund.a, /付费权益.*未使用/);
+    assert.equal(zhRefund.refundPolicyCta, "查看完整退款政策");
+    assert.ok(enRefund);
+    assert.match(enRefund.a, /7 calendar days/i);
+    assert.doesNotMatch(`${zhRefund.a} ${enRefund.a}`, /暂不支持退款|currently non-refundable/i);
+    assert.doesNotMatch(getFaqs("zh").map((faq) => faq.a).join(" "), /年付.*不支持退款/);
+    assert.match(
+      page,
+      /<a class="pr-faq-policy" href=\{refundPolicyHref\}>\{faq\.refundPolicyCta\}<\/a>/,
+    );
+  });
+
   it("does not expose a campaign review preview backdoor", async () => {
     const page = await readFile(PRICING_PAGE_PATH, "utf8");
 
