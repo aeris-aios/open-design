@@ -4,7 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { GoPlanSunsetDialog } from '../../src/components/GoPlanSunsetDialog';
-import { I18nProvider } from '../../src/i18n';
+import { I18nProvider, type Locale } from '../../src/i18n';
 
 const track = vi.hoisted(() => vi.fn());
 
@@ -19,9 +19,12 @@ afterEach(() => {
   window.localStorage.clear();
 });
 
-function renderDialog(onDismiss = vi.fn(async () => undefined)) {
+function renderDialog(
+  onDismiss = vi.fn(async () => undefined),
+  locale: Locale = 'zh-CN',
+) {
   const result = render(
-    <I18nProvider initial="zh-CN">
+    <I18nProvider initial={locale}>
       <GoPlanSunsetDialog
         active
         currentPlanId="go"
@@ -87,6 +90,33 @@ describe('GoPlanSunsetDialog', () => {
       area: 'go_plan_sunset_modal',
       element: 'close',
     }), undefined);
+  });
+
+  it.each([
+    {
+      locale: 'en' as const,
+      title: 'Notice: Go subscriptions are being discontinued',
+      decision: 'Stop selling new Go subscriptions, effective immediately',
+      acknowledge: 'Got it',
+    },
+    {
+      locale: 'zh-CN' as const,
+      title: '关于停售 Go 订阅的公告',
+      decision: '即日起停售 Go 新订阅',
+      acknowledge: '我知道了',
+    },
+    {
+      locale: 'ja' as const,
+      title: 'Go サブスクリプション販売終了のお知らせ',
+      decision: 'Go の新規サブスクリプション販売を本日より停止します',
+      acknowledge: '確認しました',
+    },
+  ])('localizes the preset announcement in $locale', ({ locale, title, decision, acknowledge }) => {
+    renderDialog(vi.fn(async () => undefined), locale);
+
+    expect(screen.getByRole('heading', { name: title })).toBeTruthy();
+    expect(screen.getByText(decision)).toBeTruthy();
+    expect(screen.getByRole('button', { name: acknowledge })).toBeTruthy();
   });
 
   it('tracks Pricing attribution without consuming the announcement', () => {
