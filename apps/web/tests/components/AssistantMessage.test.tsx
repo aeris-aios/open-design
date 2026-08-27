@@ -479,13 +479,22 @@ describe('AssistantMessage status badge updates (Bug A)', () => {
   // model and the conversation header were already correct. The fix
   // updates the existing block's detail to the latest value so the badge
   // tracks the most recent model the daemon reported.
+  /*
+   * 这两条验的是**同标签状态行的去重与取值**:同一个 label 来了多次,徽标要显示
+   * **最新**那个 detail,而重复的同值只留一枚。
+   *
+   * 原来拿 `label: 'model'` 当载体 —— 那是 AMR(ACP)独有的运行时标记,
+   * 2026-08-27 用户裁决把它整个不画了(见 `AssistantMessage.amr-model-status.test.tsx`),
+   * 于是这两条跟着变红。**红的是载体,不是被测行为** —— 去重和取最新这条规则照旧,
+   * 所以换成 `done` 这个会照常渲染的标签,规则本身一个字没改。
+   */
   it('renders the most recent detail when multiple status events share a label', () => {
     render(
       <AssistantMessage
         message={baseMessage({
           events: [
-            { kind: 'status', label: 'model', detail: 'swe-1-6-fast' } as ChatMessage['events'][number],
-            { kind: 'status', label: 'model', detail: 'claude-opus-4-7-max' } as ChatMessage['events'][number],
+            { kind: 'status', label: 'done', detail: 'swe-1-6-fast' } as ChatMessage['events'][number],
+            { kind: 'status', label: 'done', detail: 'claude-opus-4-7-max' } as ChatMessage['events'][number],
             { kind: 'text', text: 'Done.' } as ChatMessage['events'][number],
           ],
         })}
@@ -508,8 +517,8 @@ describe('AssistantMessage status badge updates (Bug A)', () => {
       <AssistantMessage
         message={baseMessage({
           events: [
-            { kind: 'status', label: 'model', detail: 'claude-opus-4-7-max' } as ChatMessage['events'][number],
-            { kind: 'status', label: 'model', detail: 'claude-opus-4-7-max' } as ChatMessage['events'][number],
+            { kind: 'status', label: 'done', detail: 'claude-opus-4-7-max' } as ChatMessage['events'][number],
+            { kind: 'status', label: 'done', detail: 'claude-opus-4-7-max' } as ChatMessage['events'][number],
             { kind: 'text', text: 'Done.' } as ChatMessage['events'][number],
           ],
         })}
