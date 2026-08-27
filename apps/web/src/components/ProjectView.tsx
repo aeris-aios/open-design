@@ -899,28 +899,6 @@ function hasGenericDisconnectFailureEvent(message: ChatMessage): boolean {
  * 整条判据关闭;流已经转到**另一条** run(strategy task 推进)时同样放行 ——
  * 那条 run 的死活与这份裁定无关。
  */
-/**
- * 这一轮**还开着**吗 —— 发送闸要等的那种「开着」。
- *
- * **不变量:一行不能同时说「我还在跑」和「我在 T 结束了」。** `endedAt` 只在落终态那一刻
- * 盖章(见各处 `isTerminalRunStatus(...) ? prev.endedAt ?? Date.now() : prev.endedAt`),
- * 所以 `running` / `queued` 配上一个已有的 `endedAt` 是自相矛盾 —— 那是状态被写坏了,
- * 不是真有一条 run 在等。
- *
- * 这是**独立于**壳头渲染的一道兜底。`currentConversationAwaitingActiveRunAttach`
- * (有活跃 run 但没在流)会禁掉发送,而那一档同时又不出停止按钮:一旦某行卡在
- * 矛盾状态,整个会话对用户就是死的,刷新也解不开(真机消息 b7b61e19)。
- * 状态怎么被写坏是另一条链上的事(见 `replayedRunStatusMayLand`);这里只保证
- * **不管怎么坏,用户始终有出路**。
- *
- * 反过来两种真·进行中都照旧锁闸:真在跑的行不带 `endedAt`(终态才盖),
- * 重载后等重挂的那一行同样不带 —— 两种都还锁着。
- */
-function assistantRunIsStillOpen(message: ChatMessage): boolean {
-  if (!isActiveRunStatus(message.runStatus)) return false;
-  return message.endedAt == null;
-}
-
 function replayedRunStatusMayLand(
   frameStatus: ChatMessage['runStatus'],
   terminalVerdict: ChatMessage['runStatus'] | null,
@@ -2933,7 +2911,7 @@ export function ProjectView({
     [messages, currentProject.metadata],
   );
   const currentConversationHasActiveRun = useMemo(
-    () => messages.some((m) => m.role === 'assistant' && assistantRunIsStillOpen(m)),
+    () => messages.some((m) => m.role === 'assistant' && isActiveRunStatus(m.runStatus)),
     [messages],
   );
   const memoryExtractionRunActive = currentConversationHasActiveRun || streaming;
@@ -6151,10 +6129,6 @@ export function ProjectView({
                 ...prev,
                 runId: nextRunId,
                 runStatus: 'running',
-                // 换了一条新的 run,这一轮就**重新开着**了 —— 上一条 run 落终态时盖的
-                // 那个 `endedAt` 是它自己的收尾,留着会让这一行同时说「在跑」和
-                // 「已经结束」,而 `assistantRunIsStillOpen` 正是靠这对矛盾判状态写坏。
-                endedAt: undefined,
                 lastRunEventId: undefined,
                 strategyTaskPrefixLength: replayedContent.length,
                 strategyTaskPrefixEventCount: replayedEvents.length,

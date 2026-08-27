@@ -305,37 +305,6 @@ describe('重挂一条 daemon 已判终态的 run', () => {
     });
   });
 
-  /*
-   * 兜底,和上面那条根因**互相独立**:就算状态还是被写成了 running,
-   * 只要它同时带着 `endedAt`,发送闸就不许再锁住用户。
-   * 这里直接从落库状态出发(不经过重挂),模拟「坏状态已经进到列表里」。
-   */
-  it('自相矛盾的行(running + endedAt)不许锁住发送', async () => {
-    listMessages.mockResolvedValue([
-      { ...failedMessage(), runStatus: 'running' } as ChatMessage,
-    ]);
-
-    // daemon 不在线 —— 重挂那条 effect 直接 return,于是这里量到的完全是
-    // `currentConversationAwaitingActiveRunAttach` 这道闸自己的判断。
-    renderProjectView({ daemonLive: false });
-    await waitFor(() => expect(paneMessage()).toBeDefined());
-    await waitFor(() => {
-      expect(paneHarness.sendDisabled, '带 endedAt 的 running 行不该锁住发送').toBe(false);
-    });
-  });
-
-  it('真在等重挂的行(running,没有 endedAt)照旧锁住发送', async () => {
-    const live = { ...failedMessage(), runStatus: 'running' } as ChatMessage;
-    delete (live as { endedAt?: number }).endedAt;
-    listMessages.mockResolvedValue([live]);
-
-    renderProjectView({ daemonLive: false });
-    await waitFor(() => expect(paneMessage()).toBeDefined());
-    await waitFor(() => {
-      expect(paneHarness.sendDisabled, '真有 run 在等重挂时必须锁住').toBe(true);
-    });
-  });
-
   it('重挂中途 daemon 起了新的 run —— 新 run 的 `running` 照样落地', async () => {
     fetchChatRunStatus.mockResolvedValue(daemonRunStatus('failed'));
     reattachDaemonRun.mockImplementation(
