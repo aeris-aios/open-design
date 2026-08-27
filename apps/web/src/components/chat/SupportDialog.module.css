@@ -7,7 +7,15 @@
 .overlay {
   position: fixed;
   inset: 0;
-  z-index: 40;
+  /*
+   * 模态档。40 压不住任何东西 —— 真机 `elementFromPoint` 探到:
+   * 右上角 `.entry-top-right-cluster` 是 **150**、输入框
+   * `.chat-composer-fixed-layer` 是 **45**,于是蒙层像漏了两个洞,
+   * 输入框和右上角照常亮着(用户 2026-08-27 两次报到)。
+   * 取 1500 是和聊天区另一个真模态 `.staged-preview-modal` 同档,
+   * 不自立一个刚好够用的数字 —— 那种数字会在下一个人抬高某层 chrome 时再坏一次。
+   */
+  z-index: 1500;
   display: grid;
   place-items: center;
   padding: 18px;
