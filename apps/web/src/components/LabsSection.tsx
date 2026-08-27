@@ -104,6 +104,9 @@ function LabsTooltip({ label, body, scope }: { label: string; body: string; scop
  */
 const OPT_OUT_PROMPT_TTL_MS = 120_000;
 
+/** How long the saved confirmation stays up before the pill returns to idle. */
+const SAVED_PILL_TTL_MS = 3_000;
+
 /** Free-text cap. Long enough for a real sentence, short of an essay. */
 const CUSTOM_REASON_MAX = 200;
 
@@ -210,7 +213,7 @@ export interface LabsSectionProps {
    * rather than through the dialog's debounced autosave, so it reports its own
    * outcome on the same surface every other Settings edit uses.
    */
-  onAutosaveStatus?: (status: 'saving' | 'saved' | 'error') => void;
+  onAutosaveStatus?: (status: 'saving' | 'saved' | 'error' | 'idle') => void;
 }
 
 export function LabsSection({ onAutosaveStatus }: LabsSectionProps) {
@@ -233,6 +236,30 @@ export function LabsSection({ onAutosaveStatus }: LabsSectionProps) {
   // write from a stale baseline. The ref flips synchronously and is what the
   // guard actually reads.
   const writeInFlightRef = useRef(false);
+  // The dialog's autosave pill is a shared surface with no timer of its own —
+  // whoever sets it owns clearing it. Without this the confirmation sat there
+  // for the rest of the session, following the user into every other section.
+  const savedPillTimerRef = useRef<number | null>(null);
+  const autosaveRef = useRef(onAutosaveStatus);
+  autosaveRef.current = onAutosaveStatus;
+
+  const reportSaved = useCallback(() => {
+    autosaveRef.current?.('saved');
+    if (savedPillTimerRef.current != null) window.clearTimeout(savedPillTimerRef.current);
+    savedPillTimerRef.current = window.setTimeout(() => {
+      savedPillTimerRef.current = null;
+      autosaveRef.current?.('idle');
+    }, SAVED_PILL_TTL_MS);
+  }, []);
+
+  useEffect(() => () => {
+    // Leaving the section takes the confirmation with it; it describes an edit
+    // the user can no longer see.
+    if (savedPillTimerRef.current == null) return;
+    window.clearTimeout(savedPillTimerRef.current);
+    savedPillTimerRef.current = null;
+    autosaveRef.current?.('idle');
+  }, []);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -308,7 +335,14 @@ export function LabsSection({ onAutosaveStatus }: LabsSectionProps) {
           to: next ? 'on' : 'off',
           source: 'settings',
         });
-        if (!next) {
+        if (next) {
+          // Turning it back on retracts the question. Left open, a fumbled
+          // off/on/off would report two opt-outs against a single reason row
+          // and leave the panel asking about a switch that is now on. Settling
+          // here keeps the invariant every count depends on: one reported
+          // opt-out, one reason row.
+          answerOptOut({ reason: ['skipped'] });
+        } else {
           // The opt-out itself is already reported above; the reason arrives
           // as a second event once the user answers. Counting opt-outs from
           // the first and reasons from the second keeps the opt-out count
@@ -316,7 +350,7 @@ export function LabsSection({ onAutosaveStatus }: LabsSectionProps) {
           reasonPendingRef.current = true;
           setAskingReason(true);
         }
-        onAutosaveStatus?.('saved');
+        reportSaved();
       } catch {
         if (token !== writeTokenRef.current || !mountedRef.current) return;
         setState((current) => (current ? { ...current, on: previous } : current));
@@ -328,7 +362,7 @@ export function LabsSection({ onAutosaveStatus }: LabsSectionProps) {
         }
       }
     })();
-  }, [analytics.track, onAutosaveStatus, state]);
+  }, [analytics.track, answerOptOut, onAutosaveStatus, reportSaved, state]);
 
   const lockNoticeKey = state?.lock === 'latched'
     ? 'labs.latchedNotice'

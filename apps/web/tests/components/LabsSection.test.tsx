@@ -65,7 +65,7 @@ function stubFetch(options: Stub = {}) {
   return { writes, fetchMock };
 }
 
-function renderSection(onAutosaveStatus?: (s: 'saving' | 'saved' | 'error') => void) {
+function renderSection(onAutosaveStatus?: (s: 'saving' | 'saved' | 'error' | 'idle') => void) {
   return render(
     <I18nProvider initial="en">
       <LabsSection onAutosaveStatus={onAutosaveStatus} />
@@ -346,6 +346,26 @@ describe('LabsSection', () => {
       }
     });
 
+    it('retracts the question when the user turns the switch back on', async () => {
+      // A fumbled off/on used to leave the panel asking about a switch that was
+      // already back on, and reported two opt-outs against a single reason row
+      // once the stale question finally settled.
+      await optOut();
+
+      fireEvent.click(switchEl());
+
+      await waitFor(() => expect(switchEl().getAttribute('aria-checked')).toBe('true'));
+      await waitFor(() =>
+        expect(screen.queryByText('Switched back to the previous approach. What did not work?')).toBeNull());
+
+      const offs = track.mock.calls.filter((c) => (c[1] as { to?: string }).to === 'off');
+      const ons = track.mock.calls.filter((c) => (c[1] as { to?: string }).to === 'on');
+      // One reported opt-out, one reason row for it, one opt-in.
+      expect(offs).toHaveLength(2);
+      expect(offs.filter((c) => (c[1] as { reason?: unknown }).reason)).toHaveLength(1);
+      expect(ons).toHaveLength(1);
+    });
+
     it('records a skip when the user leaves the page with the question open', async () => {
       // Otherwise every abandoned question is a silent gap, and the share of
       // people who declined to answer reads lower than it is.
@@ -366,6 +386,43 @@ describe('LabsSection', () => {
       await waitFor(() => expect(reasonEvents()).toHaveLength(1));
       expect(reasonEvents()[0]?.[1]).toMatchObject({ reason: ['too_slow'] });
     });
+  });
+
+  it('clears the saved confirmation instead of leaving it up', async () => {
+    // The dialog's autosave pill is shared and has no timer of its own, so the
+    // confirmation used to sit there for the rest of the session and follow the
+    // user into every other settings section.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      stubFetch();
+      const onAutosaveStatus = vi.fn();
+      renderSection(onAutosaveStatus);
+      await waitFor(() => expect(switchEl().getAttribute('aria-disabled')).toBe('false'));
+
+      fireEvent.click(switchEl());
+      await waitFor(() => expect(onAutosaveStatus).toHaveBeenCalledWith('saved'));
+      expect(onAutosaveStatus).not.toHaveBeenCalledWith('idle');
+
+      await vi.advanceTimersByTimeAsync(3_000);
+
+      await waitFor(() => expect(onAutosaveStatus).toHaveBeenCalledWith('idle'));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('takes the saved confirmation down when the section is left early', async () => {
+    stubFetch();
+    const onAutosaveStatus = vi.fn();
+    renderSection(onAutosaveStatus);
+    await waitFor(() => expect(switchEl().getAttribute('aria-disabled')).toBe('false'));
+
+    fireEvent.click(switchEl());
+    await waitFor(() => expect(onAutosaveStatus).toHaveBeenCalledWith('saved'));
+
+    cleanup();
+
+    expect(onAutosaveStatus).toHaveBeenCalledWith('idle');
   });
 
   it('locks the switch and explains when an environment variable owns the mode', async () => {

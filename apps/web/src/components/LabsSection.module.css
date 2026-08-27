@@ -313,9 +313,14 @@
   transition: opacity 200ms var(--ease-out);
 }
 
+/* Readable while disabled. The mock draws white-on-grey here, which lands at
+   about 1.9:1 against this palette's `--border-strong` — the label reads as a
+   blank button rather than a disabled one. Mute the surface instead of the
+   text so the word stays legible. */
 .optOutSubmit:disabled {
   cursor: not-allowed;
-  background: var(--border-strong);
+  background: var(--bg-subtle);
+  color: var(--text-muted);
   opacity: 1;
 }
 
