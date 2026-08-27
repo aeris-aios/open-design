@@ -1,4 +1,6 @@
+import { spawnSync } from 'node:child_process';
 import { DEFAULT_MODEL_OPTION, clampCodexReasoning } from './shared.js';
+import { resolveAgentLaunch } from '../launch.js';
 import type { RuntimeModelOption } from '../types.js';
 import type { RuntimeAgentDef } from '../types.js';
 
@@ -378,3 +380,228 @@ export const codexAgentDef = {
     streamFormat: 'json-event-stream',
     eventParser: 'codex',
 } satisfies RuntimeAgentDef;
+
+/* ------------------------------------------------------------------ *
+ * app-server transport (opt-in, runtime-switched)
+ * ------------------------------------------------------------------ */
+
+/**
+ * `streamFormat` value that routes a codex run through the JSON-RPC
+ * `codex app-server` transport instead of `exec --json`.
+ *
+ * The two transports coexist. `exec --json` remains the default and is
+ * untouched; nothing in this file changes what an unswitched codex run does.
+ * The reason to have a second transport at all is that `exec --json` cannot
+ * stream: `codex-rs/exec/src/event_processor_with_json_output.rs` has
+ * suppressed `AgentMessageDelta` / `AgentReasoningDelta` since `rust-v0.8.0`,
+ * so a several-minute codex turn shows nothing until an item completes. The
+ * app-server transport carries the same items PLUS the token deltas.
+ */
+export const CODEX_APP_SERVER_STREAM_FORMAT = 'codex-app-server';
+
+/**
+ * Lowest codex release whose app-server actually emits the notifications this
+ * transport depends on.
+ *
+ * The floor is set by `item/agentMessage/delta`. The method NAME appears in the
+ * protocol a release earlier than the code that emits it
+ * (`app-server/src/bespoke_event_handling.rs` only began mapping
+ * `AgentMessageContentDelta` onto it in `rust-v0.59.0`, PR #6559), which is why
+ * this is a version floor rather than a "does the protocol mention it" probe:
+ * a declared-but-unwired method looks supported and silently streams nothing.
+ */
+export const CODEX_APP_SERVER_MIN_VERSION = '0.59.0';
+
+export type CodexTransport = 'exec-json' | 'app-server';
+export type CodexTransportPreference = CodexTransport | 'auto';
+
+/** Operator switch. Unset means the shipping `exec --json` behaviour. */
+export const CODEX_TRANSPORT_ENV_VAR = 'OD_CODEX_TRANSPORT';
+
+/**
+ * Read the operator's transport preference.
+ *
+ * Three values, and an unrecognised one is treated as unset rather than as an
+ * error: an environment typo must not take codex offline.
+ *
+ *   (unset) / `exec-json`  the shipping transport
+ *   `auto`                 app-server when the installed codex is new enough
+ *   `app-server`           force, no version gate (operator override)
+ */
+export function codexTransportPreference(
+  env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env,
+): CodexTransportPreference {
+  const raw = typeof env[CODEX_TRANSPORT_ENV_VAR] === 'string'
+    ? String(env[CODEX_TRANSPORT_ENV_VAR]).trim().toLowerCase()
+    : '';
+  if (raw === 'app-server') return 'app-server';
+  if (raw === 'auto') return 'auto';
+  return 'exec-json';
+}
+
+/**
+ * Decide whether a detected codex version is at or above the app-server floor.
+ *
+ * Fails closed: a version string this parser cannot read (a nightly tag, an
+ * empty probe result, a CLI that changed its `--version` format) reports false,
+ * so `auto` stays on `exec --json` instead of gambling on a silent stream.
+ */
+export function codexAppServerSupportsVersion(version: string | null | undefined): boolean {
+  const match = /(\d+)\.(\d+)\.(\d+)/u.exec(String(version ?? ''));
+  if (!match) return false;
+  const floor = /(\d+)\.(\d+)\.(\d+)/u.exec(CODEX_APP_SERVER_MIN_VERSION);
+  if (!floor) return false;
+  for (let i = 1; i <= 3; i += 1) {
+    const found = Number(match[i]);
+    const required = Number(floor[i]);
+    if (found > required) return true;
+    if (found < required) return false;
+  }
+  return true;
+}
+
+/** Resolve the transport for one run from the switch plus the version probe. */
+export function resolveCodexTransport(opts: {
+  env: NodeJS.ProcessEnv | Record<string, string | undefined>;
+  version: string | null;
+}): CodexTransport {
+  const preference = codexTransportPreference(opts.env);
+  if (preference === 'app-server') return 'app-server';
+  if (preference === 'exec-json') return 'exec-json';
+  return codexAppServerSupportsVersion(opts.version) ? 'app-server' : 'exec-json';
+}
+
+/**
+ * Effective sandbox mode for a codex run, shared by both transports so the
+ * app-server thread can never be more permissive than the `exec` invocation it
+ * replaces. `workspace-write` and `danger-full-access` are the same two
+ * `SandboxMode` values codex's own `--sandbox` flag accepts, and codex builds
+ * the identical policy from either entry point.
+ */
+export function codexResolvedSandboxMode(): 'workspace-write' | 'danger-full-access' {
+  return codexNeedsDangerFullAccessSandbox() ? 'danger-full-access' : 'workspace-write';
+}
+
+/**
+ * argv for `codex app-server`.
+ *
+ * Almost everything the `exec` path puts on argv moves onto the wire: the
+ * prompt, model, reasoning effort, service tier, reasoning summary, cwd, and
+ * sandbox mode are all typed `thread/start` / `turn/start` parameters. What
+ * stays on argv is what has no RPC equivalent:
+ *
+ *  - the OpenDesign shell-environment policy, byte-identical to the exec path,
+ *    because it governs the environment codex hands to its own shell tool;
+ *  - `sandbox_workspace_write.network_access`, the same `-c` override the exec
+ *    path already uses;
+ *  - `sandbox_workspace_write.writable_roots`, the config-level equivalent of
+ *    `exec --add-dir`. Verified against codex's own source rather than assumed:
+ *    `Config::load` merges `additional_writable_roots` (the `--add-dir` flag)
+ *    and `sandbox_workspace_write.writable_roots` into the SAME
+ *    `workspace_roots` list, and `SandboxPolicy::get_writable_roots_with_cwd`
+ *    then appends cwd, `/tmp`, and `$TMPDIR` on top of whatever is configured.
+ *    Both entry points are therefore additive over the same defaults — this
+ *    grants no access `--add-dir` would not have granted.
+ *  - `--disable plugins`, the same per-run plugin isolation flag.
+ */
+function buildCodexAppServerArgs(
+  extraAllowedDirs: string[] = [],
+  runtimeContext: { disablePlugins?: boolean } = {},
+): string[] {
+  const args = ['app-server'];
+  if (
+    runtimeContext.disablePlugins === true
+    || process.env.OD_CODEX_DISABLE_PLUGINS === '1'
+  ) {
+    args.push('--disable', 'plugins');
+  }
+  args.push(...codexOpenDesignShellEnvironmentArgs());
+  if (codexResolvedSandboxMode() === 'workspace-write') {
+    args.push('-c', 'sandbox_workspace_write.network_access=true');
+    const dirs = (extraAllowedDirs || []).filter(
+      (d) => typeof d === 'string' && d.length > 0,
+    );
+    if (dirs.length > 0) {
+      args.push('-c', `sandbox_workspace_write.writable_roots=${JSON.stringify(dirs)}`);
+    }
+  }
+  return args;
+}
+
+/**
+ * Return the runtime definition to use for one run under `transport`.
+ *
+ * Under `exec-json` this returns the SAME OBJECT the registry exports. That is
+ * the rollback guarantee in its strongest available form: with the switch off
+ * there is no derived def, no copied field, and nothing downstream — the spawn
+ * branch, the `start` SSE payload, the execution-profile lookup, the resume
+ * bookkeeping — can observe that this code exists.
+ */
+export function withCodexTransport(
+  def: RuntimeAgentDef,
+  transport: CodexTransport,
+): RuntimeAgentDef {
+  if (def.id !== 'codex' || transport !== 'app-server') return def;
+  return {
+    ...def,
+    streamFormat: CODEX_APP_SERVER_STREAM_FORMAT,
+    // The prompt is a `turn/start` parameter; stdin carries JSON-RPC frames.
+    promptViaStdin: false,
+    buildArgs: (_prompt, _imagePaths, extraAllowedDirs = [], _options = {}, runtimeContext = {}) =>
+      buildCodexAppServerArgs(extraAllowedDirs, runtimeContext),
+  };
+}
+
+/**
+ * Memoized `codex --version`, keyed by resolved binary path.
+ *
+ * Only consulted in `auto` mode, so a default (`exec --json`) run and a forced
+ * `app-server` run both cost zero extra spawns. The result is cached for the
+ * daemon's lifetime: a codex upgrade mid-session keeps whichever transport the
+ * daemon started with until the next restart, which is the same granularity
+ * the switch itself has.
+ */
+let codexVersionProbeCache: { path: string; version: string | null } | null = null;
+
+export function probeCodexVersion(launchPath: string): string | null {
+  if (codexVersionProbeCache?.path === launchPath) return codexVersionProbeCache.version;
+  let version: string | null = null;
+  try {
+    const result = spawnSync(launchPath, ['--version'], {
+      encoding: 'utf8',
+      timeout: 5000,
+      windowsHide: true,
+    });
+    const raw = `${result.stdout ?? ''}\n${result.stderr ?? ''}`.trim();
+    version = raw ? (raw.split(/\r?\n/u)[0] ?? null) : null;
+  } catch {
+    version = null;
+  }
+  codexVersionProbeCache = { path: launchPath, version };
+  return version;
+}
+
+/** Test-only: forget the memoized probe so a suite can vary the version. */
+export function resetCodexVersionProbeCache(): void {
+  codexVersionProbeCache = null;
+}
+
+/**
+ * Resolve the runtime definition a chat run should use for `agentId`.
+ *
+ * This is the single choke point where the codex transport switch is applied.
+ * For every non-codex agent, and for codex with the switch off, the argument is
+ * returned unchanged — same object, same behaviour.
+ */
+export function applyCodexTransportOverride(
+  def: RuntimeAgentDef | null,
+  env: NodeJS.ProcessEnv = process.env,
+): RuntimeAgentDef | null {
+  if (!def || def.id !== 'codex') return def;
+  const preference = codexTransportPreference(env);
+  if (preference === 'exec-json') return def;
+  const version = preference === 'auto'
+    ? probeCodexVersion(resolveAgentLaunch(def).launchPath ?? def.bin)
+    : null;
+  return withCodexTransport(def, resolveCodexTransport({ env, version }));
+}

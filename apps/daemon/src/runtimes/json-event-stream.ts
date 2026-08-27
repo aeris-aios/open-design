@@ -1184,9 +1184,8 @@ function handleCodexEvent(obj: unknown, onEvent: StreamEventHandler, state: Pars
   return false;
 }
 
-export function createJsonEventStreamHandler(kind: ParserKind, onEvent: StreamEventHandler) {
-  let buffer = '';
-  const state: ParserState = {
+function createParserState(): ParserState {
+  return {
     cursorTextSoFar: '',
     cursorTurnStart: 0,
     openCodeToolUses: new Set<string>(),
@@ -1202,6 +1201,32 @@ export function createJsonEventStreamHandler(kind: ParserKind, onEvent: StreamEv
     artifactOpenCandidate: '',
     pendingArtifactText: '',
   };
+}
+
+/**
+ * Feed already-parsed codex stream frames (the `exec --json` object shapes)
+ * through the same branch `createJsonEventStreamHandler('codex', …)` uses.
+ *
+ * This exists so the app-server transport can reuse the shipping item ->
+ * tool_use/tool_result/thinking mapping verbatim instead of maintaining a
+ * second copy that would drift. The app-server bridge translates its camelCase
+ * JSON-RPC notifications into these frames and routes them here; anything the
+ * codex branch does not recognise reports `false` so the caller can decide
+ * whether to ignore it or surface it.
+ */
+export function createCodexFrameHandler(onEvent: StreamEventHandler) {
+  const state = createParserState();
+  return {
+    /** Returns true when the codex branch consumed the frame. */
+    handleFrame(frame: JsonObject): boolean {
+      return handleCodexEvent(frame, onEvent, state);
+    },
+  };
+}
+
+export function createJsonEventStreamHandler(kind: ParserKind, onEvent: StreamEventHandler) {
+  let buffer = '';
+  const state: ParserState = createParserState();
 
   function handleLine(line: string): void {
     let obj: unknown;
