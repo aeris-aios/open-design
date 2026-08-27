@@ -742,6 +742,102 @@ function emitCodexReasoningItem(
   return true;
 }
 
+/**
+ * Codex never names the tool it patched a file with: the only trace a write
+ * leaves in the stream is a `file_change` ITEM. Recorded shape, verbatim:
+ *
+ *   {"type":"item.started","item":{"id":"item_3","type":"file_change",
+ *     "changes":[{"path":"…/page.html","kind":"add"}],"status":"in_progress"}}
+ *
+ * No content, no diff, no line counts — a path and a kind, nothing else.
+ * Until this branch existed both lifecycle events fell through to `raw`, so a
+ * codex turn that created or edited a file showed NO row in the execution
+ * record while the same turn under Claude showed one.
+ *
+ * One item can carry SEVERAL changes (writing an artifact plus its brand spec
+ * is one item with two paths), so every change becomes its own call under a
+ * derived id `<item id>#<index>`. The chat row model is one file per row, and
+ * the web dedupes `tool_use` by id — a shared id would collapse the batch
+ * into a single row and hide the rest.
+ *
+ * The emitted pair is the canonical Write/Edit shape (`file_path` in the
+ * input) that `apps/web/src/runtime/chat/tool-kind.ts` already resolves to
+ * 「新建」/「改写」 plus a file button, so nothing downstream needs a new event
+ * kind. `diffStat` finds no content to count and returns null — that is
+ * correct: codex reports no line counts, and the row shows elapsed time
+ * rather than a fabricated `+N −M`.
+ *
+ * `kind` values other than `add`/`update` (codex also patches by deleting)
+ * stay `raw` on purpose. The record has no delete verb, and labelling a
+ * deletion 「新建」 or 「改写」 would be a lie; a raw line remains the visible
+ * signal that a shape is still unhandled.
+ */
+const CODEX_FILE_CHANGE_TOOL_BY_KIND: Record<string, string> = {
+  add: 'Write',
+  update: 'Edit',
+};
+
+interface CodexFileChange {
+  /** Per-change tool id derived from the item id, unique within the run. */
+  id: string;
+  /** Canonical tool name the web already knows how to render. */
+  name: string;
+  path: string;
+}
+
+/**
+ * Read a codex `file_change` item into one call per changed file, or null when
+ * the item is not a fully recognized `file_change` (wrong item type, no id, no
+ * changes, or ANY change whose kind we cannot name honestly). Returning null
+ * for a partially unknown item is deliberate: emitting the recognized half
+ * would silently drop the rest, whereas a null keeps the whole line visible as
+ * `raw`.
+ */
+function codexFileChanges(item: JsonObject): CodexFileChange[] | null {
+  if (item.type !== 'file_change') return null;
+  const itemId = typeof item.id === 'string' ? item.id : '';
+  if (!itemId) return null;
+  if (!Array.isArray(item.changes) || item.changes.length === 0) return null;
+  const changes: unknown[] = item.changes;
+  const out: CodexFileChange[] = [];
+  for (let index = 0; index < changes.length; index += 1) {
+    const change = changes[index];
+    if (!isRecord(change)) return null;
+    const filePath = typeof change.path === 'string' ? change.path : '';
+    const name =
+      typeof change.kind === 'string' ? CODEX_FILE_CHANGE_TOOL_BY_KIND[change.kind] : undefined;
+    if (!filePath || !name) return null;
+    out.push({ id: `${itemId}#${index}`, name, path: filePath });
+  }
+  return out;
+}
+
+/**
+ * Emit the `tool_use` half of each file change, once per derived id.
+ *
+ * Called from `item.started` so the row gets a real duration: `tool-timing.ts`
+ * stamps `startedAt` at the single event exit, and a `tool_use` that arrives
+ * together with its `tool_result` reads as "unknown", not "instant". The
+ * `codexToolUses` guard makes the later `item.completed` a no-op, and equally
+ * makes `item.completed` self-sufficient when the started event never arrived.
+ */
+function emitCodexFileChangeToolUses(
+  changes: readonly CodexFileChange[],
+  onEvent: StreamEventHandler,
+  state: ParserState,
+): void {
+  for (const change of changes) {
+    if (state.codexToolUses.has(change.id)) continue;
+    state.codexToolUses.add(change.id);
+    onEvent({
+      type: 'tool_use',
+      id: change.id,
+      name: change.name,
+      input: { file_path: change.path },
+    });
+  }
+}
+
 function handleCodexEvent(obj: unknown, onEvent: StreamEventHandler, state: ParserState): boolean {
   if (!isRecord(obj)) return false;
 
@@ -821,6 +917,13 @@ function handleCodexEvent(obj: unknown, onEvent: StreamEventHandler, state: Pars
       }
       return true;
     }
+    const startedFileChanges = codexFileChanges(item);
+    if (startedFileChanges) {
+      state.codexPreviousEventWasAgentMessage = false;
+      state.codexLastAgentMessageEndedWithNewline = false;
+      emitCodexFileChangeToolUses(startedFileChanges, onEvent, state);
+      return true;
+    }
   }
 
   if (obj.type === 'item.updated' && isRecord(obj.item)) {
@@ -874,6 +977,19 @@ function handleCodexEvent(obj: unknown, onEvent: StreamEventHandler, state: Pars
       if (connectorToolError && !state.codexErrorEmitted) {
         state.codexErrorEmitted = true;
         onEvent({ type: 'error', message: connectorToolError });
+      }
+      return true;
+    }
+    const completedFileChanges = codexFileChanges(item);
+    if (completedFileChanges) {
+      state.codexPreviousEventWasAgentMessage = false;
+      state.codexLastAgentMessageEndedWithNewline = false;
+      emitCodexFileChangeToolUses(completedFileChanges, onEvent, state);
+      // Codex reports no per-file output for a patch, so the result carries no
+      // content; `status: 'failed'` is the only failure signal on the item.
+      const isError = item.status === 'failed';
+      for (const change of completedFileChanges) {
+        onEvent({ type: 'tool_result', toolUseId: change.id, content: '', isError });
       }
       return true;
     }
