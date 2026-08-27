@@ -9256,6 +9256,13 @@ function HtmlViewer({
    * (产品 2026-08-27)—— 菜单本身是同一块,只是换个地方渲染。
    */
   const [menuAnchorId, setMenuAnchorId] = useState<string | null>(null);
+  /*
+   * 稳定身份 —— 这个回调会进 `AnchoredMenuShell` 里那条 effect 的依赖数组。
+   * 传内联箭头的话它每次渲染都是新的,effect 于是每帧重跑;菜单已隐藏期间
+   * 每帧都会再调一次关闭。行为上无害(幂等),但白烧一遍,而且把「翻真时发
+   * 一次」变成「只要还真就一直发」,读起来会误导。
+   */
+  const closeDeployMenu = useCallback(() => setDeployMenuOpen(false), []);
   // portal 出去的那一份要单独算「点在里面」,否则外点关闭会把它自己关掉
   const anchoredMenuRef = useRef<HTMLDivElement | null>(null);
   const [chromeActionsHost, setChromeActionsHost] = useState<HTMLElement | null>(
@@ -15985,6 +15992,16 @@ function HtmlViewer({
                     wrapperClassName="share-menu chrome-share-menu chrome-share-menu--unified"
                     className="share-menu-popover chrome-unified-popover"
                     portalRef={anchoredMenuRef}
+                    /*
+                     * 锚点滚出可视区(或整条消息被虚拟化掉)就把菜单收起来 ——
+                     * 产品 2026-08-27:「在界面中如果原 button 不可见, 就自动
+                     * 收起来 下拉框吧?」壳那一层已经先做了可逆的视觉隐藏,
+                     * 这里是**真的关掉**:菜单里有发布/部署这类会改状态的动作,
+                     * 留着一块看不见但仍可被键盘走到的面板不合适。
+                     * 仓库里同样的取舍已有两处先例(`InlineModelSwitcher`、
+                     * `ModelSelectSearchable` 都是锚点离开边界即 `setOpen(false)`)。
+                     */
+                    onAnchorHidden={closeDeployMenu}
                   >
                     {unifiedActionTab === 'share' && rawCanShare ? (
                       <div className="chrome-unified-panel chrome-unified-panel--share">
