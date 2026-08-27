@@ -1254,6 +1254,7 @@ const jsonLd = [
       new URLSearchParams(window.location.search),
       persistedAttribution,
     );
+    window.__odPricingBridgeAttribution = attribution ?? undefined;
     if (compatibilityRoot && sourceSurface) {
       const apiOrigin = compatibilityRoot.getAttribute('data-billing-api-origin') || '';
       const sessionId = typeof globalThis.crypto?.randomUUID === 'function'

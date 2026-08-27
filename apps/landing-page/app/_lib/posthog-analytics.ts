@@ -43,14 +43,26 @@ function buildTrackerScript(pageName: string, downloadAttributionUrl: string): s
     // id/source and add a separate conversion source, allowing Vela's final
     // payment event to report both entry and checkout placement.
     window.__odRecordCampaignEntry = function (sourceDetail, campaignId) {
+      // Pricing validates Vela's persisted first touch before publishing this
+      // global. Prefer it to the URL because Dashboard -> Pricing intentionally
+      // creates a clean URL after absorbing the original od_* handoff.
+      var trustedFirstTouch = window.__odPricingBridgeAttribution || null;
       var inbound = null;
       try { inbound = new URLSearchParams(window.location.search || ''); } catch (e) {}
-      var inboundEntryId = inbound && inbound.get('od_entry_id');
-      var inboundEntrySource = inbound && inbound.get('od_entry_source');
-      var inboundEntryAt = inbound && inbound.get('od_entry_at');
+      var inboundEntryId = (trustedFirstTouch && trustedFirstTouch.entryId) || (inbound && inbound.get('od_entry_id'));
+      var inboundEntrySource = (trustedFirstTouch && trustedFirstTouch.sourceDetail) || (inbound && inbound.get('od_entry_source'));
+      var inboundEntryAt = (trustedFirstTouch && trustedFirstTouch.entryOccurredAt) || (inbound && inbound.get('od_entry_at'));
       // Consent-gated device id survives desktop → Pricing → Cloud. Only the
-      // inbound query is a source of truth here; callers never mint a device id.
-      var inboundDeviceId = inbound && inbound.get('od_device_id');
+      // validated first touch or inbound query can supply it; callers never mint it.
+      var inboundDeviceId = (trustedFirstTouch && trustedFirstTouch.odDeviceId) || (inbound && inbound.get('od_device_id'));
+      // Existing time-boxed Pricing campaigns remain explicit per click. The
+      // Go sunset campaign is different: it is an already validated first-touch
+      // campaign and must survive the clean Dashboard -> Pricing navigation.
+      var trustedGoCampaignId = trustedFirstTouch &&
+        trustedFirstTouch.sourceDetail === 'go_plan_sunset_modal' &&
+        trustedFirstTouch.campaignId === 'go_plan_sunset_202608'
+        ? trustedFirstTouch.campaignId
+        : undefined;
       var random = '';
       try {
         random = window.crypto && typeof window.crypto.randomUUID === 'function'
@@ -63,9 +75,9 @@ function buildTrackerScript(pageName: string, downloadAttributionUrl: string): s
         source_detail: inboundEntrySource || String(sourceDetail || 'unknown'),
         entry_occurred_at: inboundEntryAt || new Date().toISOString(),
         conversion_source: String(sourceDetail || 'unknown'),
-        // Explicit only: do not inherit a stale inbound od_campaign_id. Pricing
-        // passes undefined once the window closes so post-window CTAs stay clean.
-        campaign_id: campaignId || undefined,
+        // Do not inherit arbitrary/stale URL campaign ids. Only the validated
+        // Go first touch or the click's active Pricing campaign is accepted.
+        campaign_id: trustedGoCampaignId || campaignId || undefined,
         device_id: inboundDeviceId || undefined,
       };
     };

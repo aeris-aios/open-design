@@ -637,6 +637,13 @@ describe('authenticated Pricing compatibility browser wiring', { concurrency: fa
     });
 
     await pricing.evaluate(() => {
+      window.__odAttributedUrl = (_href, attribution) => {
+        localStorage.setItem(
+          'test.goCheckoutAttribution',
+          JSON.stringify(attribution ?? null),
+        );
+        return '#checkout-attribution-captured';
+      };
       document.addEventListener('click', (event) => {
         if ((event.target as Element | null)?.closest('[data-tier="plus"]')) {
           event.preventDefault();
@@ -647,6 +654,19 @@ describe('authenticated Pricing compatibility browser wiring', { concurrency: fa
     await waitForRequests(requests, 2);
     assert.equal(requests[1]?.events[0]?.kind, 'pricing_click');
     assert.deepEqual(requests[1]?.attribution, requests[0]?.attribution);
+    assert.deepEqual(
+      await pricing.evaluate(() => JSON.parse(
+        localStorage.getItem('test.goCheckoutAttribution') ?? 'null',
+      )),
+      {
+        entry_id: 'od-amr-go-sunset-browser',
+        source_product: 'open_design',
+        source_detail: 'go_plan_sunset_modal',
+        entry_occurred_at: entryOccurredAt,
+        conversion_source: 'landing_pricing_personal_plan',
+        campaign_id: 'go_plan_sunset_202608',
+      },
+    );
   });
 
   it('fails closed for direct, untrusted-route, and signed-out traffic', async (t) => {

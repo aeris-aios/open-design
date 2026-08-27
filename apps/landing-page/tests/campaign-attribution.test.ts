@@ -8,6 +8,9 @@ const tracker = readFileSync(
 );
 
 test('campaign attribution preserves first touch and records the checkout touch separately', () => {
+  assert.match(tracker, /window\.__odPricingBridgeAttribution/);
+  assert.match(tracker, /trustedFirstTouch\.entryId/);
+  assert.match(tracker, /trustedFirstTouch\.sourceDetail/);
   assert.match(tracker, /inbound\.get\('od_entry_id'\)/);
   assert.match(tracker, /inbound\.get\('od_entry_source'\)/);
   assert.match(tracker, /entry_id:\s*inboundEntryId\s*\|\|/);
@@ -15,6 +18,13 @@ test('campaign attribution preserves first touch and records the checkout touch 
   assert.match(tracker, /conversion_source:\s*String\(sourceDetail/);
   assert.match(tracker, /od_conversion_source/);
   assert.match(tracker, /od_campaign_id/);
+});
+
+test('Go sunset keeps its validated first-touch campaign through Pricing checkout', () => {
+  assert.match(tracker, /trustedFirstTouch\.sourceDetail\s*===\s*'go_plan_sunset_modal'/);
+  assert.match(tracker, /trustedFirstTouch\.campaignId\s*===\s*'go_plan_sunset_202608'/);
+  assert.match(tracker, /campaign_id:\s*trustedGoCampaignId\s*\|\|\s*campaignId\s*\|\|\s*undefined/);
+  assert.match(tracker, /conversion_source:\s*String\(sourceDetail/);
 });
 
 test('campaign attribution carries the consented device id across Pricing → Cloud', () => {
@@ -29,7 +39,10 @@ test('campaign membership is explicit on each click, not inherited from a stale 
   // A desktop-badge URL can outlive the campaign window. Pricing then passes
   // campaignId only while campaignEligible; the helper must not fall back to
   // inbound od_campaign_id and re-attach the closed campaign to the payment.
-  assert.match(tracker, /campaign_id:\s*campaignId\s*\|\|\s*undefined/);
+  assert.match(
+    tracker,
+    /campaign_id:\s*trustedGoCampaignId\s*\|\|\s*campaignId\s*\|\|\s*undefined/,
+  );
   assert.doesNotMatch(
     tracker,
     /campaign_id:\s*campaignId\s*\|\|\s*\(inbound\s*&&\s*inbound\.get\('od_campaign_id'\)\)/,
