@@ -37,6 +37,15 @@ export const claudeAgentDef = {
       '--include-partial-messages': 'partialMessages',
       '--add-dir': 'addDir',
     },
+    // `--thinking-display` is a real option but it is hidden from both
+    // `claude --help` and `claude -p --help`, so the capabilityFlags scan
+    // above cannot detect it. Probe it by value-rejection instead.
+    hiddenCapabilityFlags: {
+      probeArgsPrefix: ['-p'],
+      flags: {
+        '--thinking-display': 'thinkingDisplay',
+      },
+    },
     // `claude` has no list-models subcommand. Prefer local mmd/MMS routes
     // when present so proxy-backed Claude-compatible models appear in the
     // picker, then keep the built-in aliases as fallback hints.
@@ -62,6 +71,17 @@ export const claudeAgentDef = {
       // "unknown option" and exit 1, killing the chat. Gate on the probe.
       if (caps.partialMessages) {
         args.push('--include-partial-messages');
+      }
+      // Extended-thinking text is withheld unless the request carries a
+      // thinking `display` mode. Claude Code only resolves one for an
+      // interactive TUI (via the `showThinkingSummaries` setting) or when
+      // `--thinking-display` is passed explicitly; a headless
+      // `-p --output-format stream-json` session resolves it to `undefined`,
+      // keeps the `redact-thinking` beta on the API request, and every
+      // `thinking_delta` arrives with `thinking: ""`. Asking for `summarized`
+      // is what makes the model's reasoning observable at all.
+      if (caps.thinkingDisplay) {
+        args.push('--thinking-display', 'summarized');
       }
       if (options.model && options.model !== 'default') {
         args.push('--model', options.model);
