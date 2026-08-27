@@ -445,7 +445,15 @@ export function buildTurnBlocks(input: BuildTurnInput): TurnBlock[] {
     // 免得「本轮第一条事件」被一条纯协议帧顶掉(D10 的开壳时机由真实事件决定)
     // `next_steps` 同理:它是回合末尾的引导,不是回合的内容,更不该把开壳时机
     // 提前到「这一轮已经有东西了」之前。
-    if (event.kind === 'usage' || event.kind === 'done_key' || event.kind === 'next_steps') continue;
+    // `artifact_focus` 同理:它说的是「这一轮显示什么」,本身不是这一轮的内容。
+    // 它还会在**回合中途**到达(文件一有内容就开预览),所以更不能让它把开壳
+    // 时机提前到真正有东西之前。
+    if (
+      event.kind === 'usage'
+      || event.kind === 'done_key'
+      || event.kind === 'next_steps'
+      || event.kind === 'artifact_focus'
+    ) continue;
 
     ensureShell();
 

@@ -1896,6 +1896,24 @@ function translateAgentEvent(data: DaemonAgentPayload): AgentEvent | null {
     if (suggestions.length === 0) return null;
     return { kind: 'next_steps', suggestions };
   }
+  // This turn's display intent, already key-checked and path-resolved by the
+  // daemon. The client never sees the `<od-focus …/>` marker itself, and never
+  // resolves a path of its own — `open` is a project-relative path the daemon
+  // already proved lands inside the project root.
+  if (t === 'artifact_focus') {
+    const open = typeof data.open === 'string' && data.open ? data.open : undefined;
+    const show = Array.isArray(data.show)
+      ? (data.show as unknown[]).filter(
+          (p): p is string => typeof p === 'string' && p.trim().length > 0,
+        )
+      : undefined;
+    if (!open && (!show || show.length === 0)) return null;
+    return {
+      kind: 'artifact_focus',
+      ...(open ? { open } : {}),
+      ...(show && show.length > 0 ? { show } : {}),
+    };
+  }
   if (t === 'conversation_title' && typeof data.title === 'string') {
     return { kind: 'conversation_title', title: data.title };
   }

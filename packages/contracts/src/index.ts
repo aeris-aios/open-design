@@ -22,6 +22,7 @@ export * from './api/collab.js';
 export * from './api/project-sync.js';
 export * from './api/team-resources.js';
 export * from './api/connectionTest.js';
+export * from './api/artifact-focus-marker.js';
 export * from './api/done-marker.js';
 export * from './api/export.js';
 export * from './api/files.js';

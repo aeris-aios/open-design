@@ -961,6 +961,10 @@ function hasVisibleBrandAssistantEvent(event: NonNullable<ChatMessage['events']>
     // The follow-up suggestions are an affordance under the answer, not
     // content of the answer — a turn that produced only these is still empty.
     case 'next_steps':
+    // Same for the display intent: `<od-focus …/>` says which artifacts to
+    // show and which file to open. It is a directive ABOUT the turn's output,
+    // never output itself, so a turn carrying only this is still empty.
+    case 'artifact_focus':
       return false;
   }
 }

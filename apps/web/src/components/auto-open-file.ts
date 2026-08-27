@@ -225,6 +225,91 @@ export function selectAutoOpenTurnArtifact(
   return selectAutoOpenProducedArtifact(candidates, options);
 }
 
+export interface AgentFocusOpenInput {
+  // Project-relative path the agent declared via `<od-focus open="…">`, already
+  // key-checked, root-resolved, and proven non-empty by the daemon. `null` when
+  // this turn declared nothing — which must leave the host's own choice alone.
+  readonly declaredPath: string | null | undefined;
+  // The project's current file list, used only to map the declared path onto a
+  // real project file NAME. A path with no matching file is declined: the
+  // daemon proved the file exists on disk, but the workspace opens tabs by
+  // name, and a name we cannot resolve would spawn a placeholder tab.
+  readonly projectFiles: ReadonlyArray<CandidateFile>;
+  // File names that already existed when this turn started. The product ruling
+  // is that the agent may only auto-open files it CREATED this turn, so a
+  // declared path that was already there is declined — the agent is pointing at
+  // something the user may already have open and reasoned about.
+  readonly preTurnFileNames: ReadonlySet<string> | null | undefined;
+  // True once the user has taken the preview over themselves during this turn.
+  // See `decideAgentFocusOpen` for why that wins.
+  readonly userTookOverPreview: boolean;
+  // Same module-file guard `decideAutoOpenAfterWrite` applies: a .jsx/.tsx
+  // loaded by a sibling HTML entry has no standalone preview.
+  readonly moduleFileNames?: ReadonlySet<string>;
+}
+
+/**
+ * Decide whether the agent's declared `open` path should take the preview.
+ *
+ * Four gates, in order of how much they cost to get wrong:
+ *
+ *  1. **No declaration, no change.** Returns "don't open" so the caller's
+ *     existing inference runs untouched. "The agent said nothing" must never
+ *     collapse the preview to nothing — that is the fallback the product owner
+ *     ruled on explicitly, and it is also every conversation recorded before
+ *     this marker existed.
+ *
+ *  2. **The user wins.** If the user has opened a file themselves during this
+ *     turn, the agent does not get to yank it away. The asymmetry is the whole
+ *     argument: being wrong in this direction costs one click (the file is
+ *     still a chip away in the produced-files panel), while being wrong in the
+ *     other direction throws away someone's place in a document they were
+ *     mid-read on, with no undo and no explanation. Auto-open features earn
+ *     their "focus theft" reputation precisely here.
+ *
+ *  3. **Created this turn.** A path that existed before the turn started is
+ *     declined even when the agent names it. The agent is allowed to say which
+ *     of ITS OWN outputs matters, not to navigate the workspace at will.
+ *
+ *  4. **Resolvable and previewable.** The name must exist in the file list and
+ *     must not be a module of a multi-file HTML entry.
+ *
+ * Everything the daemon already proved — path is inside the project root, file
+ * is non-empty — is deliberately NOT re-checked here. Re-deriving a security
+ * property on the client would be the wrong side of the trust boundary and
+ * would invite the two copies to disagree.
+ */
+export function decideAgentFocusOpen(
+  input: AgentFocusOpenInput,
+): { shouldOpen: boolean; fileName: string | null } {
+  const declined = { shouldOpen: false, fileName: null } as const;
+  const declaredPath = input.declaredPath;
+  if (typeof declaredPath !== 'string' || !declaredPath) return declined;
+  if (input.userTookOverPreview) return declined;
+
+  const wanted = declaredPath.replace(/\\/g, '/').replace(/^\.\//, '');
+  const wantedBase = basenameOf(wanted);
+  const matches = input.projectFiles.filter((file) => {
+    if (file.type === 'dir') return false;
+    const rel = (file.path ?? file.name)?.replace(/\\/g, '/');
+    if (!rel) return false;
+    return rel === wanted || (wanted.indexOf('/') === -1 && basenameOf(rel) === wantedBase);
+  });
+  // Ambiguity is declined rather than guessed, exactly as in
+  // decideAutoOpenAfterWrite: opening the wrong file is worse than opening none.
+  if (matches.length !== 1) return declined;
+  const file = matches[0]!;
+
+  const preTurn = input.preTurnFileNames;
+  // Without a pre-turn snapshot we cannot prove the file is new. Decline rather
+  // than assume: a legacy/recovered path that has no snapshot is exactly the
+  // case where "the agent named an old file" is most likely.
+  if (!preTurn || preTurn.has(file.name)) return declined;
+
+  if ((input.moduleFileNames ?? NO_MODULES).has(file.name)) return declined;
+  return { shouldOpen: true, fileName: file.name };
+}
+
 // Pick which of a turn's produced files to auto-open in the viewer. Among
 // previewable files, a higher-priority kind always beats a lower one; ties
 // break to the most recently written file (newest mtime). Returns null when
