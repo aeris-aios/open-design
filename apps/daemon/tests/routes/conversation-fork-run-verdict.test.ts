@@ -26,7 +26,10 @@ type SeedMessage = {
   runStatus?: string;
   lastRunEventId?: string;
   startedAt?: number;
-  endedAt?: number;
+  // Explicit `undefined` is a MEANINGFUL override here: a still-running turn
+  // must clear the default `endedAt` through the spread below, so under
+  // `exactOptionalPropertyTypes` the type has to admit it.
+  endedAt?: number | undefined;
   events?: unknown[];
 };
 

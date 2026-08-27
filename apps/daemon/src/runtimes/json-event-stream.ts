@@ -1,3 +1,8 @@
+import {
+  createOpenCodeRootTaskEvidenceCollector,
+  type OpenCodeTaskTerminalCandidate,
+} from './opencode-child-evidence.js';
+
 type JsonObject = Record<string, unknown>;
 type StreamEvent = Record<string, unknown>;
 type StreamEventHandler = (event: StreamEvent) => void;
@@ -1224,9 +1229,25 @@ export function createCodexFrameHandler(onEvent: StreamEventHandler) {
   };
 }
 
-export function createJsonEventStreamHandler(kind: ParserKind, onEvent: StreamEventHandler) {
+export interface JsonEventStreamHandlerOptions {
+  openCodeChildEvidence?: {
+    rootSessionId?: string;
+    cliVersion: string;
+    onCandidate: (candidate: OpenCodeTaskTerminalCandidate) => void;
+    now?: () => number;
+  };
+}
+
+export function createJsonEventStreamHandler(
+  kind: ParserKind,
+  onEvent: StreamEventHandler,
+  options: JsonEventStreamHandlerOptions = {},
+) {
   let buffer = '';
   const state: ParserState = createParserState();
+  const openCodeChildEvidence = kind === 'opencode' && options.openCodeChildEvidence
+    ? createOpenCodeRootTaskEvidenceCollector(options.openCodeChildEvidence)
+    : null;
 
   function handleLine(line: string): void {
     let obj: unknown;
@@ -1236,6 +1257,8 @@ export function createJsonEventStreamHandler(kind: ParserKind, onEvent: StreamEv
       onEvent({ type: 'raw', line });
       return;
     }
+
+    openCodeChildEvidence?.observe(obj);
 
     if (kind === 'opencode' && handleOpenCodeEvent(obj, onEvent, state)) return;
     if (kind === 'gemini' && handleGeminiEvent(obj, onEvent, state)) return;
@@ -1264,5 +1287,17 @@ export function createJsonEventStreamHandler(kind: ParserKind, onEvent: StreamEv
     flushPendingArtifactText(state, onEvent);
   }
 
-  return { feed, flush };
+  function childEvidenceCoverage(streamComplete: boolean) {
+    return openCodeChildEvidence?.coverage(streamComplete);
+  }
+
+  // The terminal candidates are the only carrier of the child id, its parent
+  // binding, and the native Task time window. The close handler needs them
+  // after the stream is gone in order to request each child's sanitized
+  // export, so they are read back here rather than re-derived.
+  function childEvidenceCandidates(): readonly OpenCodeTaskTerminalCandidate[] {
+    return openCodeChildEvidence?.candidates() ?? [];
+  }
+
+  return { feed, flush, childEvidenceCoverage, childEvidenceCandidates };
 }

@@ -510,7 +510,14 @@ describe('余额不足:身份 × 订阅的四种分支', () => {
 
     fireEvent.click(screen.getByTestId('upgrade-card-click'));
     expect(mockedWindowOpen).toHaveBeenCalledTimes(1);
-    expect(String(mockedWindowOpen.mock.calls[0]?.[0])).toContain('billing=plan');
+    // 「Pricing」在合并 origin/main 之后换了指代:通用的升级/比价入口不再深链
+    // 到 Cloud 控制台的套餐弹窗(`billing=plan`),而是公开的 Pricing 页
+    // (#7122 / #7167 / #5459)。这一条钉的仍是「卡和弹窗去同一个地方」,
+    // 只是那个地方现在是 open-design.ai/pricing。
+    // 反向对照:确认它真的不再是控制台深链。
+    const upgradeUrl = String(mockedWindowOpen.mock.calls[0]?.[0]);
+    expect(upgradeUrl).toContain('open-design.ai/pricing');
+    expect(upgradeUrl).not.toContain('billing=plan');
   });
 
   it('非 Max · 非 owner:卡 + 找所有者充值弹窗,不外跳', async () => {
