@@ -91,3 +91,32 @@ describe('滚不动就别出现', () => {
     expect(shouldShowJumpToLatest({ distance: 900, clientHeight: H, shown: false })).toBe(true);
   });
 });
+
+/*
+ * 「正在跟着最新输出跑」这一条压在门槛之前。
+ *
+ * 它和上面那条不变量守的不是同一件事:那条问「还能不能滚」,这条问「我在不在最新上」。
+ * 需要它是因为浮标以前是**散装赋值**出来的 —— 发消息时点亮一次、展开折叠块时点亮一次,
+ * 都没问过底下有没有东西。现在浮标只是跟随意图的影子:跟着跑就没有「回到最新」可言。
+ */
+describe('跟着跑的时候没有「回到最新」这回事', () => {
+  const H = 800;
+
+  it('正在跟随:哪怕距离还挂着一个大数,也不给入口', () => {
+    expect(shouldShowJumpToLatest({
+      distance: 2000, clientHeight: H, scrollHeight: 6000, shown: true, following: true,
+    })).toBe(false);
+  });
+
+  it('同样的几何、只是没在跟随 —— 就该给(否则上一条是把功能删了)', () => {
+    expect(shouldShowJumpToLatest({
+      distance: 2000, clientHeight: H, scrollHeight: 6000, shown: true, following: false,
+    })).toBe(true);
+  });
+
+  it('不传 following 时按老规矩走,不因为缺参数就静默收掉', () => {
+    expect(shouldShowJumpToLatest({
+      distance: 2000, clientHeight: H, scrollHeight: 6000, shown: false,
+    })).toBe(true);
+  });
+});
