@@ -6,6 +6,7 @@ import type { ExecutionShell as ExecutionShellData } from "../runtime/chat/contr
 import { upstreamActivityAt } from "../runtime/chat/upstream-activity";
 import { FileOpsSummary } from "./FileOpsSummary";
 import type { ArtifactExportFormat } from "../runtime/chat/artifact-export";
+import type { ArtifactPublishTarget } from "../runtime/chat/artifact-publish";
 import {
   renderMarkdown,
   type MarkdownLinkClickHandler,
@@ -416,7 +417,15 @@ interface Props {
   // "Next step" affordance handlers, surfaced under the latest settled
   // assistant message. Omitting them hides the affordance entirely (e.g. in
   // tests that don't wire chat send).
-  onArtifactShare?: (fileName: string) => void;
+  /**
+   * 发布这份产物。
+   *
+   * `target` **只有产物卡的发布浮层会传** —— 卡上已经选完「发到哪儿」了,
+   * 不该再把人送去预览区的分享面板选第二遍(那块面板还开在视口右上角,离卡
+   * 两千像素)。不带 `target` 的调用(「下一步引导」那行〔分享〕)沿用原语义:
+   * 打开文件并展开分享菜单。
+   */
+  onArtifactShare?: (fileName: string, target?: ArtifactPublishTarget) => void;
   // Featured design-toolbox follow-up rows on the "next step" card. Seeding the
   // composer with an action / opening the toolbox both route through the
   // composer; see ChatPane's composer ref wiring.

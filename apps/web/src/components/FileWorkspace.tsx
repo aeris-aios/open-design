@@ -10,6 +10,7 @@ import {
   type ReactNode,
 } from 'react';
 import type { ArtifactExportFormat } from '../runtime/chat/artifact-export';
+import type { ArtifactPublishTarget } from '../runtime/chat/artifact-publish';
 import { Button } from '@open-design/components';
 import { createPortal } from 'react-dom';
 import type { DesignSystemEditClickProps, TrackingArtifactKind, TrackingProjectKind } from '@open-design/contracts/analytics';
@@ -237,7 +238,7 @@ interface Props {
   pinnedBrowserTabId?: string | null;
   // Open the named file AND surface its Share/Export menu. Drives the chat-side
   // "Share" next-step action without a dedicated share backend.
-  shareRequest?: { name: string; nonce: number } | null;
+  shareRequest?: { name: string; nonce: number; target?: ArtifactPublishTarget } | null;
   // Open the named file AND surface its Download/Export menu. Drives the
   // chat-side "Download" next-step action.
   downloadRequest?: { name: string; nonce: number; format?: ArtifactExportFormat } | null;
@@ -3318,7 +3319,12 @@ export function FileWorkspace({
     return byFile;
   }, [previewComments]);
   const activeFileShareRequest = useMemo(
-    () => (shareRequest ? { name: shareRequest.name, request: { nonce: shareRequest.nonce } } : null),
+    () => (shareRequest
+      ? {
+          name: shareRequest.name,
+          request: { nonce: shareRequest.nonce, target: shareRequest.target },
+        }
+      : null),
     [shareRequest],
   );
   const activeFileDownloadRequest = useMemo(

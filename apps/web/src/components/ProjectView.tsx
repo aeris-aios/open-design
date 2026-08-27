@@ -13,6 +13,7 @@ import {
   type SetStateAction,
 } from 'react';
 import type { ArtifactExportFormat } from '../runtime/chat/artifact-export';
+import type { ArtifactPublishTarget } from '../runtime/chat/artifact-publish';
 import { AnimatePresence } from 'motion/react';
 import { createHtmlArtifactManifest, inferLegacyManifest } from '../artifacts/manifest';
 import { resolveHtmlPointerArtifactTarget } from '../artifacts/pointer';
@@ -2608,7 +2609,9 @@ export function ProjectView({
   // Like `openRequest`, but additionally asks the preview workspace to open the
   // file's Share/Export menu. Drives the "Share" next-step action: it reuses the
   // existing export/deploy surface rather than introducing a new share backend.
-  const [shareRequest, setShareRequest] = useState<{ name: string; nonce: number } | null>(null);
+  const [shareRequest, setShareRequest] = useState<
+    { name: string; nonce: number; target?: ArtifactPublishTarget } | null
+  >(null);
   // Parallel to shareRequest, but opens the workspace's Download/Export menu.
   const [downloadRequest, setDownloadRequest] = useState<
     { name: string; nonce: number; format?: ArtifactExportFormat } | null
@@ -10332,9 +10335,9 @@ export function ProjectView({
   // workspace's existing Share/Export menu. The featured design-toolbox rows are
   // driven by ChatPane's composer ref, so ProjectView no longer wires them here.
   const handleArtifactShare = useCallback(
-    (fileName: string) => {
+    (fileName: string, target?: ArtifactPublishTarget) => {
       requestOpenFile(fileName);
-      setShareRequest({ name: fileName, nonce: Date.now() });
+      setShareRequest({ name: fileName, nonce: Date.now(), ...(target ? { target } : {}) });
     },
     [requestOpenFile],
   );

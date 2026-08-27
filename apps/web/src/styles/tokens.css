@@ -71,6 +71,30 @@
   --shadow-md: 0 6px 24px rgba(28, 27, 26, 0.07), 0 2px 6px rgba(28, 27, 26, 0.04);
   --shadow-lg: 0 24px 60px rgba(28, 27, 26, 0.16), 0 8px 16px rgba(28, 27, 26, 0.07);
 
+  /* Floating-layer ladder — the two tiers that already exist in
+     `primitives.css`, named so a new floating surface can be placed by
+     MEANING instead of by picking a number that happens to clear whatever it
+     collided with today.
+
+       --z-hint  a transient hint about something else on screen. Nobody
+                 opened it, `pointer-events: none`, it goes away on its own.
+                 `.od-tooltip-layer` is the only member.
+       --z-menu  a surface the user deliberately opened from a trigger and
+                 must be able to read and click. `.od-select-menu` has been
+                 here since it was written, and the artifact card's
+                 publish / export popovers join it.
+
+     menu ABOVE hint is the point, not an accident: a hint that paints over
+     the menu you just opened is never what you wanted — reported 2026-08-27
+     with a tooltip covering the lower half of the export menu.
+
+     These two do NOT describe the whole app. Roughly forty other z-index
+     literals (chrome 150, viewer popovers 220, dialogs 1500…) are still
+     ad-hoc; naming them is a separate job. Do not invent a third token here
+     without deciding what tier it means. */
+  --z-hint: 4000;
+  --z-menu: 9000;
+
   /* Corner-radius scale — the only radii UI should reach for (Shape
      Consistency Lock). xs for inline code / micro-chips, sm for controls,
      base for cards/menus, md for medium containers, lg for large surfaces,

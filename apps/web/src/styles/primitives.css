@@ -140,7 +140,8 @@ button:disabled {
   position: fixed;
   top: 0;
   left: 0;
-  z-index: 4000;
+  /* hint tier — see the ladder in tokens.css */
+  z-index: var(--z-hint);
   max-width: min(260px, calc(100vw - 16px));
   padding: 5px 8px;
   border: 1px solid var(--material-separator);
@@ -274,7 +275,8 @@ textarea { resize: vertical; font-family: inherit; }
   white-space: nowrap;
 }
 .od-select-menu {
-  z-index: 9000;
+  /* menu tier — deliberately above the hint tier */
+  z-index: var(--z-menu);
   padding: 4px;
   overflow-y: auto;
   overflow-x: hidden;

@@ -23,6 +23,7 @@ import {
   type ReactNode,
 } from 'react';
 import type { ArtifactExportFormat } from '../runtime/chat/artifact-export';
+import type { ArtifactPublishTarget } from '../runtime/chat/artifact-publish';
 import { createPortal } from 'react-dom';
 import { hasOdCard } from '@open-design/contracts';
 import { useAnalytics } from '../analytics/provider';
@@ -667,7 +668,8 @@ interface Props {
   // "Next step" affordance handlers forwarded to the last assistant message.
   // The featured design-toolbox rows are driven directly off the composer ref
   // owned here, so they need no handler from ProjectView (unlike onArtifactShare).
-  onArtifactShare?: (fileName: string) => void;
+  /** `target` 由产物卡的发布浮层带上;不带就是「打开文件 + 展开分享菜单」。 */
+  onArtifactShare?: (fileName: string, target?: ArtifactPublishTarget) => void;
   /** `format` 由产物卡的格式浮层带上;不带就是「打开文件 + 展开导出菜单」。 */
   onArtifactDownload?: (fileName: string, format?: ArtifactExportFormat) => void;
   onForkFromMessage?: (assistantMessage: ChatMessage) => void;
@@ -3751,7 +3753,7 @@ interface AssistantCallbacks {
     | ((message: ChatMessage, change: ChatMessageFeedbackChange) => void)
     | undefined;
   onBrandBrowserAssistConfirm: BrandBrowserAssistConfirm | undefined;
-  onArtifactShare: ((fileName: string) => void) | undefined;
+  onArtifactShare: ((fileName: string, target?: ArtifactPublishTarget) => void) | undefined;
   onForkFromMessage: ((message: ChatMessage) => void) | undefined;
   onShareToOpenDesign: ((assistantMessageId: string) => void) | undefined;
   onNextStepAiOptimize: (() => void) | undefined;
@@ -4128,7 +4130,8 @@ function ChatRows({
   nextUserContentByAssistantId: Map<string, string>;
   assistantCallbacksRef: MutableRefObject<AssistantCallbacks>;
   onBrandBrowserAssistConfirm?: BrandBrowserAssistConfirm;
-  onArtifactShare?: (fileName: string) => void;
+  /** `target` 由产物卡的发布浮层带上;不带就是「打开文件 + 展开分享菜单」。 */
+  onArtifactShare?: (fileName: string, target?: ArtifactPublishTarget) => void;
   onToolboxAction?: (id: DesignToolboxActionId) => void;
   onNextStepPromptAction?: (
     prompt: string,
@@ -4344,7 +4347,7 @@ function ChatRows({
         }
         onArtifactShare={
           onArtifactShare
-            ? (fileName) => assistantCallbacksRef.current.onArtifactShare?.(fileName)
+            ? (fileName, target) => assistantCallbacksRef.current.onArtifactShare?.(fileName, target)
             : undefined
         }
         onToolboxAction={onToolboxAction}
