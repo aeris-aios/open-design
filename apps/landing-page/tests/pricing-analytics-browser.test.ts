@@ -497,6 +497,158 @@ describe('authenticated Pricing compatibility browser wiring', { concurrency: fa
     );
   });
 
+  it('preserves the real Go popup first touch through Vela Dashboard into Pricing', async (t) => {
+    const context = await browser.newContext({ locale: 'zh-CN' });
+    const launcher = await context.newPage();
+    const requests: BridgeRequest[] = [];
+    const entryOccurredAt = new Date().toISOString();
+    const goDashboardUrl = new URL('/amr/dashboard', baseUrl);
+    goDashboardUrl.search = new URLSearchParams({
+      source: 'open_design',
+      billing: 'plan',
+      od_origin: 'open_design',
+      od_entry_id: 'od-amr-go-sunset-browser',
+      od_entry_source: 'go_plan_sunset_modal',
+      od_entry_at: entryOccurredAt,
+      od_campaign_id: 'go_plan_sunset_202608',
+      od_conversion_source: 'go_plan_sunset_modal',
+    }).toString();
+    const pricingHref =
+      '/zh/pricing/?od_locale=zh&cloud_console_base=' +
+      encodeURIComponent('https://open-design.ai/cloud/');
+
+    t.after(() => context.close());
+    await context.route('https://amr-api.open-design.ai/**', async (route) => {
+      const request = route.request();
+      const pathname = new URL(request.url()).pathname;
+      const headers = {
+        'Access-Control-Allow-Origin': baseUrl,
+        'Access-Control-Allow-Credentials': 'true',
+        'Content-Type': 'application/json',
+      };
+      if (pathname === '/api/auth/get-session') {
+        await route.fulfill({
+          status: 200,
+          headers,
+          body: JSON.stringify({ user: { id: 'go-user-1' } }),
+        });
+        return;
+      }
+      if (pathname === '/api/v1/billing/summary') {
+        await route.fulfill({
+          status: 200,
+          headers,
+          body: JSON.stringify({
+            membershipTier: 'go',
+            billingInterval: 'monthly',
+            personalSubscriptionCheckoutAllowed: true,
+            firstMonthIntroEligible: false,
+            subscriptionCancelAtPeriodEnd: false,
+            availableActions: ['billing_portal'],
+          }),
+        });
+        return;
+      }
+      if (pathname === '/api/v1/analytics/pricing-events') {
+        requests.push(request.postDataJSON() as BridgeRequest);
+        await route.fulfill({ status: 204, headers, body: '' });
+        return;
+      }
+      await route.abort();
+    });
+    await context.route(`${baseUrl}/go-sunset`, async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'text/html',
+        body: `<!doctype html><button id="view-subscriptions">View subscriptions</button><script>
+          document.querySelector('#view-subscriptions').addEventListener('click', () => {
+            window.open(${JSON.stringify(goDashboardUrl.toString())}, '_blank', 'noopener,noreferrer');
+          });
+        </script>`,
+      });
+    });
+    await context.route((url) => (
+      url.origin === baseUrl && url.pathname === '/amr/dashboard'
+    ), async (route) => {
+      const source = new URL(route.request().url());
+      await route.fulfill({
+        status: 200,
+        contentType: 'text/html',
+        body: `<!doctype html><script>
+          localStorage.setItem('test.goPopupReferrer', document.referrer);
+          location.replace(${JSON.stringify(`${baseUrl}/cloud/dashboard?${source.searchParams.toString()}`)});
+        </script>`,
+      });
+    });
+    await context.route((url) => (
+      url.origin === baseUrl && url.pathname === '/cloud/dashboard'
+    ), async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'text/html',
+        body: `<!doctype html><button id="continue-to-pricing">Continue to Pricing</button><script>
+          localStorage.setItem('test.goDashboardReferrer', document.referrer);
+          const params = new URLSearchParams(location.search);
+          localStorage.setItem('amr.openDesignAttribution.v1', JSON.stringify({
+            sourceProduct: params.get('od_origin'),
+            entryId: params.get('od_entry_id'),
+            sourceDetail: params.get('od_entry_source'),
+            entryOccurredAt: params.get('od_entry_at'),
+            campaignId: params.get('od_campaign_id'),
+            conversionSource: params.get('od_conversion_source'),
+          }));
+          document.querySelector('#continue-to-pricing').addEventListener('click', () => {
+            location.assign(${JSON.stringify(pricingHref)});
+          });
+        </script>`,
+      });
+    });
+
+    await launcher.goto(`${baseUrl}/go-sunset`);
+    const popupPromise = launcher.waitForEvent('popup');
+    await launcher.locator('#view-subscriptions').click();
+    const pricing = await popupPromise;
+    await pricing.waitForURL((url) => url.pathname === '/cloud/dashboard');
+    await pricing.locator('#continue-to-pricing').click();
+    await pricing.waitForURL((url) => url.pathname.endsWith('/pricing/'));
+
+    assert.equal(
+      await pricing.evaluate(() => localStorage.getItem('test.goPopupReferrer')),
+      '',
+      'noopener,noreferrer must suppress the Open Design referrer into Dashboard',
+    );
+    assert.equal(new URL(pricing.url()).searchParams.has('source'), false);
+    assert.equal(new URL(pricing.url()).searchParams.has('od_entry_id'), false);
+    assert.match(await pricing.evaluate(() => document.referrer), /\/cloud\/dashboard\?/u);
+    await pricing.waitForFunction(() =>
+      document.querySelector('[data-pricing-root]')?.getAttribute(
+        'data-personal-pricing-context-resolved',
+      ) === 'true',
+    );
+    await waitForRequests(requests, 1);
+    assert.equal(requests[0]?.sourceSurface, 'dashboard');
+    assert.deepEqual(requests[0]?.attribution, {
+      sourceProduct: 'open_design',
+      entryId: 'od-amr-go-sunset-browser',
+      sourceDetail: 'go_plan_sunset_modal',
+      entryOccurredAt,
+      campaignId: 'go_plan_sunset_202608',
+      conversionSource: 'go_plan_sunset_modal',
+    });
+
+    await pricing.evaluate(() => {
+      document.addEventListener('click', (event) => {
+        if ((event.target as Element | null)?.closest('[data-tier="plus"]')) {
+          event.preventDefault();
+        }
+      }, { capture: true });
+    });
+    await pricing.locator('[data-pricing-cta][data-tier="plus"]').click();
+    await waitForRequests(requests, 2);
+    assert.equal(requests[1]?.events[0]?.kind, 'pricing_click');
+    assert.deepEqual(requests[1]?.attribution, requests[0]?.attribution);
+  });
+
   it('fails closed for direct, untrusted-route, and signed-out traffic', async (t) => {
     for (const fixture of [
       { sourcePath: null, signedIn: true },

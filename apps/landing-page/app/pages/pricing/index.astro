@@ -1228,6 +1228,7 @@ const jsonLd = [
       createPricingCompatibilityAnalytics,
     } from '../../_lib/pricing-compat-analytics';
     import {
+      PRICING_BRIDGE_ATTRIBUTION_STORAGE_KEY,
       resolvePricingBridgeAttribution,
       resolvePricingBridgeSource,
     } from '../../_lib/pricing-analytics-bridge';
@@ -1241,8 +1242,17 @@ const jsonLd = [
       search: new URLSearchParams(window.location.search),
       referrer: document.referrer,
     });
+    let persistedAttribution: string | null = null;
+    try {
+      persistedAttribution = window.localStorage.getItem(
+        PRICING_BRIDGE_ATTRIBUTION_STORAGE_KEY,
+      );
+    } catch {
+      // Storage access is best effort and must not block Pricing.
+    }
     const attribution = resolvePricingBridgeAttribution(
       new URLSearchParams(window.location.search),
+      persistedAttribution,
     );
     if (compatibilityRoot && sourceSurface) {
       const apiOrigin = compatibilityRoot.getAttribute('data-billing-api-origin') || '';

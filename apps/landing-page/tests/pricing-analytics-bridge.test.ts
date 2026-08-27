@@ -149,6 +149,68 @@ test('attribution resolver preserves a complete trusted Vela handoff', () => {
   );
 });
 
+test('attribution resolver restores the complete Go first touch persisted by Vela Dashboard', () => {
+  assert.deepEqual(
+    resolvePricingBridgeAttribution(
+      new URLSearchParams({
+        od_locale: 'zh',
+        cloud_console_base: 'https://open-design.ai/cloud/',
+      }),
+      JSON.stringify({
+        sourceProduct: 'open_design',
+        entryId: 'od-amr-go-sunset-1',
+        sourceDetail: 'go_plan_sunset_modal',
+        entryOccurredAt: '2026-08-25T12:00:00.000Z',
+        campaignId: 'go_plan_sunset_202608',
+        conversionSource: 'go_plan_sunset_modal',
+        email: 'must-not-leave@example.com',
+      }),
+      new Date('2026-08-26T12:00:00.000Z'),
+    ),
+    {
+      sourceProduct: 'open_design',
+      entryId: 'od-amr-go-sunset-1',
+      sourceDetail: 'go_plan_sunset_modal',
+      entryOccurredAt: '2026-08-25T12:00:00.000Z',
+      campaignId: 'go_plan_sunset_202608',
+      conversionSource: 'go_plan_sunset_modal',
+    },
+  );
+});
+
+test('attribution resolver rejects partial, malicious, and expired Vela storage', () => {
+  const now = new Date('2026-08-26T12:00:00.000Z');
+  const base = {
+    sourceProduct: 'open_design',
+    entryId: 'od-amr-go-sunset-1',
+    sourceDetail: 'go_plan_sunset_modal',
+    entryOccurredAt: '2026-08-25T12:00:00.000Z',
+    campaignId: 'go_plan_sunset_202608',
+    conversionSource: 'go_plan_sunset_modal',
+  };
+
+  for (const persistedState of [
+    '{not-json',
+    JSON.stringify({ ...base, entryId: undefined }),
+    JSON.stringify({ ...base, sourceProduct: 'attacker' }),
+    JSON.stringify({ ...base, sourceDetail: 'workspace_dashboard' }),
+    JSON.stringify({
+      ...base,
+      entryOccurredAt: '2026-08-18T11:59:59.999Z',
+    }),
+  ]) {
+    assert.equal(
+      resolvePricingBridgeAttribution(
+        new URLSearchParams(),
+        persistedState,
+        now,
+      ),
+      null,
+      persistedState,
+    );
+  }
+});
+
 test('transport posts only the reduced authenticated bridge body', async () => {
   let capturedUrl = '';
   let capturedInit: RequestInit | undefined;

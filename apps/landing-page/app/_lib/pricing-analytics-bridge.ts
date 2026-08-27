@@ -19,6 +19,9 @@ export type PricingBridgeAttribution = {
   odDeviceId?: string;
 };
 
+export const PRICING_BRIDGE_ATTRIBUTION_STORAGE_KEY =
+  'amr.openDesignAttribution.v1';
+
 export type PlanExposureInput = {
   planId: PlanTier;
   billingInterval: BillingInterval;
@@ -170,6 +173,7 @@ export function resolvePricingBridgeSource(input: {
 const idMaxLength = 128;
 const maxEventsPerRequest = 8;
 const transportTimeoutMs = 3_000;
+const pricingAttributionTtlMs = 7 * 24 * 60 * 60 * 1_000;
 const usdAmountPattern = /^(?:0|[1-9][0-9]{0,8})\.[0-9]{2}$/u;
 // Mirrors Zod 3.25 `z.string().datetime()` used by Vela: real calendar date,
 // UTC Z suffix, optional seconds, and arbitrary fractional-second precision.
@@ -253,40 +257,52 @@ function optionalBoundedParam(
 /** Preserve a complete first-touch tuple; partial or untrusted state is ignored. */
 export function resolvePricingBridgeAttribution(
   search: URLSearchParams,
+  persistedState?: string | null,
+  now: Date = new Date(),
 ): PricingBridgeAttribution | null {
-  if (search.get('od_origin') !== 'open_design') return null;
-  const entryId = optionalBoundedParam(search, 'od_entry_id');
-  const sourceDetail = optionalBoundedParam(search, 'od_entry_source');
-  const entryOccurredAt = search.get('od_entry_at');
-  if (
-    !entryId ||
-    !sourceDetail ||
-    !pricingAttributionSourceDetails.has(sourceDetail) ||
-    !entryOccurredAt ||
-    !velaDateTimePattern.test(entryOccurredAt)
-  ) {
-    return null;
+  if (search.get('od_origin') === 'open_design') {
+    const entryId = optionalBoundedParam(search, 'od_entry_id');
+    const sourceDetail = optionalBoundedParam(search, 'od_entry_source');
+    const entryOccurredAt = search.get('od_entry_at');
+    if (
+      entryId &&
+      sourceDetail &&
+      pricingAttributionSourceDetails.has(sourceDetail) &&
+      entryOccurredAt &&
+      velaDateTimePattern.test(entryOccurredAt)
+    ) {
+      const campaignId = optionalBoundedParam(search, 'od_campaign_id');
+      const rawConversionSource = optionalBoundedParam(
+        search,
+        'od_conversion_source',
+      );
+      const conversionSource = rawConversionSource &&
+        pricingAttributionConversionSources.has(rawConversionSource)
+        ? rawConversionSource
+        : undefined;
+      const odDeviceId = optionalBoundedParam(search, 'od_device_id');
+      return {
+        sourceProduct: 'open_design',
+        entryId,
+        sourceDetail,
+        entryOccurredAt,
+        ...(campaignId ? { campaignId } : {}),
+        ...(conversionSource ? { conversionSource } : {}),
+        ...(odDeviceId ? { odDeviceId } : {}),
+      };
+    }
   }
 
-  const campaignId = optionalBoundedParam(search, 'od_campaign_id');
-  const rawConversionSource = optionalBoundedParam(
-    search,
-    'od_conversion_source',
-  );
-  const conversionSource = rawConversionSource &&
-    pricingAttributionConversionSources.has(rawConversionSource)
-    ? rawConversionSource
-    : undefined;
-  const odDeviceId = optionalBoundedParam(search, 'od_device_id');
-  return {
-    sourceProduct: 'open_design',
-    entryId,
-    sourceDetail,
-    entryOccurredAt,
-    ...(campaignId ? { campaignId } : {}),
-    ...(conversionSource ? { conversionSource } : {}),
-    ...(odDeviceId ? { odDeviceId } : {}),
-  };
+  if (!persistedState) return null;
+  try {
+    const attribution = sanitizedAttribution(JSON.parse(persistedState));
+    if (!attribution) return null;
+    const occurredAt = Date.parse(attribution.entryOccurredAt);
+    if (now.getTime() - occurredAt > pricingAttributionTtlMs) return null;
+    return attribution;
+  } catch {
+    return null;
+  }
 }
 
 function sanitizedAttribution(
@@ -320,7 +336,17 @@ function sanitizedAttribution(
   if (input.odDeviceId !== undefined && !isBoundedId(input.odDeviceId)) {
     return null;
   }
-  return input as PricingBridgeAttribution;
+  return {
+    sourceProduct: 'open_design',
+    entryId: input.entryId,
+    sourceDetail: input.sourceDetail,
+    entryOccurredAt: input.entryOccurredAt,
+    ...(input.campaignId ? { campaignId: input.campaignId } : {}),
+    ...(input.conversionSource
+      ? { conversionSource: input.conversionSource }
+      : {}),
+    ...(input.odDeviceId ? { odDeviceId: input.odDeviceId } : {}),
+  };
 }
 
 function isPlanTier(value: unknown): value is PlanTier {
