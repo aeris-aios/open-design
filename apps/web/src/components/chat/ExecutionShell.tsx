@@ -15,6 +15,7 @@
  */
 import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react';
 import { useT } from '../../i18n';
+import { Icon } from '../Icon';
 import type { ExecutionShell as ShellData, ImageRow as ImageRowData, ShellItem, TodoSegment } from '../../runtime/chat/contract';
 import { isExpandable, isStruck } from '../../runtime/chat/contract';
 import { formatElapsed, formatShellElapsed } from '../../runtime/chat/format';
@@ -60,13 +61,26 @@ export function ExecutionShell({ shell, onOpenFile, fileScope, onRetryImage }: E
   const running = shell.status === 'running' && !shell.stopped;
   const elapsed = formatShellElapsed(shell.elapsedMs);
   /**
-   * 「思考中」时正文走流式形态:限高 + 自己一行行往上走(D46)。
-   * 一有工具行或结论落下来,壳头就回到「进行中」,这里也跟着变回普通文本流 ——
-   * 所以判据挂在 `shell.thinking` 上,不另设开关。
+   * 模型此刻在想 —— **只用来挑出哪一格是「还在写的那一格」**,不再改变壳的形态。
+   *
+   * ⚠️ 这里曾经是 `const streaming = running && shell.thinking`,而那个值同时干三件事、
+   * 三件都作用在**整张壳**上:壳 body 换成 96px 限高窗、整只 body 挂自动滚动、
+   * 壳内条目一律不分组。于是壳里原有的工具行、清单、正文全被塞进那只窗里滚走。
+   * 用户 2026-08-27 指认:「这个思考中的怎么把原本的进行中卡片给顶掉了卧槽..」
+   * 「绝不能 thinking 的时候直接把进行中或原本的东西给替换了啊!!」
+   *
+   * 现在的落法:思考是壳里的**一个条目**,和工具行平级(`ThoughtsRow`),
+   * 限高滚动窗挂在那一格自己身上。壳 body 永远是 `.stack`。
    */
-  const streaming = running && shell.thinking;
-  const bodyRef = useRef<HTMLDivElement>(null);
-  useThinkingStream(bodyRef, streaming);
+  const thinkingNow = running && shell.thinking;
+  /**
+   * 推理落在哪一摞里:清单开着的时候进那条 in_progress 的 todo(`build-turn-blocks`
+   * 的 `sink()`),没有清单就落在壳自己身上。「还在写的那一格」只可能在这一摞的结尾,
+   * 所以 `live` 只发给它,别的地方一律按跑完处理。
+   */
+  const activeTodo = shell.items.some(
+    (item) => item.kind === 'todo' && item.segment.status === 'in_progress',
+  );
 
   /**
    * 折叠态跟着 **run 的生命周期**走(D18):跑着的时候摊开,结束就收起来。
@@ -122,17 +136,23 @@ export function ExecutionShell({ shell, onOpenFile, fileScope, onRetryImage }: E
        * 删掉 `shellQuiet` / `quietMs` / `SLOW_UPSTREAM_AFTER_MS` 中任何一个都会当场红。
        * 传输层那一截另有 `tests/components/chat/s12-upstream-alive.test.tsx` 钉着。
        */
-      const label = shell.thinking ? t('chat.record.thinking') : t('chat.record.running');
+      /*
+       * ── 「思考中」下沉(2026-08-27 用户裁决)────────────────────────────
+       *
+       * 壳头**只说这一轮在跑**,不再替模型说它在想什么。原来这里会在 `shell.thinking`
+       * 时把状态词换成「思考中」、把球换成 `composing`;用户原话
+       * 「绝不能 thinking 的时候直接把**进行中**或原本的东西给替换了」——「进行中」
+       * 指的就是壳头这三个字。
+       *
+       * 动画和文案没有丢,是**搬家**了:它们现在挂在壳内那一格思考上
+       * (`ThoughtsRow` 的 `live` 形态,球 + 扫光 + 三个点一件不少)。
+       * 两处都画就成了同一句话说两遍,所以这里不再读 `shell.thinking`。
+       */
       return (
         <>
-          {/* 不给标签:紧跟着的就是「进行中 / 思考中」那行字,读屏念一遍就够 */}
-          <Orb state={shell.thinking ? 'composing' : 'connecting'} box={24} className={styles.orb} />
-          <span className={`${styles.shimmer} ${styles.head}`}>
-            {label}
-            {shell.thinking ? (
-              <span className={styles.dots} aria-hidden><i /><i /><i /></span>
-            ) : null}
-          </span>
+          {/* 不给标签:紧跟着的就是「进行中」那行字,读屏念一遍就够 */}
+          <Orb state="connecting" box={24} className={styles.orb} />
+          <span className={`${styles.shimmer} ${styles.head}`}>{t('chat.record.running')}</span>
         </>
       );
     }
@@ -140,10 +160,10 @@ export function ExecutionShell({ shell, onOpenFile, fileScope, onRetryImage }: E
   })();
 
   /**
-   * 跑完之后把连续的推理收成「思考过程」那一格(用户裁决,见 `groupThinking` 的注释)。
-   * 还在思考时原样返回 —— 那一段归上面那个 96px 的流式窗管。
+   * 连续的推理收成「思考过程」那一格(用户裁决,见 `groupThinking` 的注释)。
+   * 壳里有进行中的 todo 时,还在写的那一格在**那条 todo 里**,不在这一层。
    */
-  const items = groupThinking(shell.items, Boolean(streaming));
+  const items = groupThinking(shell.items, thinkingNow && !activeTodo);
   /**
    * 这张壳有没有清单 —— 夹心正文对不对齐那条竖线全看它(用户裁决 2026-08-27)。
    * 有清单时顶层正文是清单上面的开场白,不在链上,贴左;没清单时正文和工具行交替
@@ -160,11 +180,11 @@ export function ExecutionShell({ shell, onOpenFile, fileScope, onRetryImage }: E
       open={open}
       onToggle={onToggle}
       expandable={items.length > 0}
-      stream={streaming}
-      bodyRef={bodyRef}
       className={hasTodo ? styles.hasTodo : undefined}
     >
-      {items.length ? items.map((item, i) => renderItem(item, i, { t, onOpenFile, fileScope, onRetryImage })) : null}
+      {items.length
+        ? items.map((item, i) => renderItem(item, i, { t, onOpenFile, fileScope, onRetryImage, thinkingNow }))
+        : null}
     </Foldable>
   );
 }
@@ -174,11 +194,25 @@ interface RenderCtx {
   onOpenFile?: (path: string) => void;
   fileScope?: RecordFileScope;
   onRetryImage?: (row: ImageRowData, index: number) => void;
+  /** 模型此刻在想 —— 传给 todo 抽屉,让它认出自己那一摞里的 `live` 格 */
+  thinkingNow: boolean;
 }
 
 function renderItem(item: GroupedShellItem, index: number, ctx: RenderCtx): ReactElement | null {
   if (item.kind === 'thoughts') {
-    return <ThoughtsRow key={`thoughts-${index}`} texts={item.texts} t={ctx.t} />;
+    /*
+     * key 里带上形态:`live` 翻成 false 的那一刻要**换一只 details**,
+     * 不然 `Foldable` 内部记着的展开态会跟过来,思考一结束就原地摊开
+     * ——「怎么一结束全部释放出来了」正是这个。
+     */
+    return (
+      <ThoughtsRow
+        key={`thoughts-${item.live ? 'live' : 'done'}-${index}`}
+        texts={item.texts}
+        live={item.live === true}
+        t={ctx.t}
+      />
+    );
   }
   if (item.kind === 'tool') {
     return <ToolRow key={`tool-${item.id}-${index}`} row={item} onOpenFile={ctx.onOpenFile} fileScope={ctx.fileScope} />;
@@ -196,17 +230,68 @@ function renderItem(item: GroupedShellItem, index: number, ctx: RenderCtx): Reac
 }
 
 /**
- * 「思考过程」:跑完之后收起来的那几段推理,点开才读得到细节。
+ * 思考那一格。**两种形态、同一只 `Foldable`** —— 这是「左边缘不能跳」的实现方式:
+ * 同一种 DOM(壳 body 里的 `details.fold`,和可展开的命令工具行一模一样),
+ * 于是 `record.module.css` 那套缩进规则对三者一视同仁,不必再写一套。
  *
- * 默认收起 —— 这一格存在的**全部理由**就是别让推理在思考结束的瞬间原地铺开。
- * 用 `Foldable` 的默认(非 flat)形态,和普通工具行同一副壳,与用户原话
- * 「变成普通工具调用的状态」一致。不挂耗时:推理的时长在壳头的总耗时里,
- * 这一格再报一次等于把同一段时间说两遍。
+ *   live  还在想:球 + 扫光的「思考中」+ 三个点(从壳头原样搬下来的那一套),
+ *         正文走 96px 限高窗、自己一行行往上走(D46' —— 窗子挂在这一格,不是壳 body)
+ *   done  想完了:brain 图标 + 「思考过程」一行,默认收起,点开才读细节
+ *
+ * 用户原话:「思考中的时候, 最好是能有现在那个动画加思考中的文案, 然后下面文字也是要
+ * 滚动的, 思考完就收起变成 toolrow」「我说的思考完之后, 不是这个绿的, 就变成普通的
+ * 这个搜索一样的东西, 只不过可以下拉展开…你可以给这个加一个 brain 的 icon」。
+ *
+ * ⚠️ 绿勾(`StatusMark status="ok"`)是**故意去掉**的,别顺手加回来:
+ * 推理不是「一条做完了的活」,它没有成败可标。
+ *
+ * 不挂耗时:推理的时长在壳头的总耗时里,这一格再报一次等于把同一段时间说两遍。
  */
-function ThoughtsRow({ texts, t }: { texts: string[]; t: RenderCtx['t'] }): ReactElement {
+function ThoughtsRow({ texts, live, t }: {
+  texts: string[];
+  live: boolean;
+  t: RenderCtx['t'];
+}): ReactElement {
+  const bodyRef = useRef<HTMLDivElement>(null);
+  useThinkingStream(bodyRef, live);
+
+  /*
+   * 两态的行首都占**同一只 15px 图标槽**(`.icon`)。这是「左边缘不会跳」的另一半:
+   * 光把整格缩进补齐还不够 —— 球自带 `margin-inline: -3px`(`.orb[data-orb-box='24']`),
+   * 直接摆在 summary 里会比 brain 图标再左 3px,思考一结束整行横跳一下。
+   * 塞进 `place-items: center` 的槽里之后,后面的字只看槽宽,两态一致。
+   * (在 Chrome 里量过:补之前 思考中 x=-3 / 思考过程 x=0,补之后都是 22。)
+   */
+  const summary = live
+    ? (
+      <>
+        {/* 不给标签:紧跟着的就是「思考中」那行字 */}
+        <span className={styles.icon}><Orb state="composing" box={20} className={styles.orb} /></span>
+        <span className={`${styles.shimmer} ${styles.head}`}>
+          {t('chat.record.thinking')}
+          <span className={styles.dots} aria-hidden><i /><i /><i /></span>
+        </span>
+      </>
+    )
+    : (
+      <>
+        <span className={styles.icon}><Icon name="brain" /></span>
+        <span className={styles.name}>{t('chat.record.thoughts')}</span>
+      </>
+    );
+
   return (
-    <Foldable summary={<><StatusMark status="ok" /><span>{t('chat.record.thoughts')}</span></>}>
-      {texts.map((text, i) => <SayText key={i} text={text} />)}
+    <Foldable
+      summary={summary}
+      className={styles.thoughts}
+      defaultOpen={live}
+      stream={live}
+      bodyRef={bodyRef}
+      /* 一段都没有就不出箭头也不出 body。claude 的 thinking 全是空串(真实数据:
+         本机 14 条 claude 共 1786 帧、非空 0 帧),此时这一行只报「在想」,
+         给一只空的 96px 窗是在骗人。 */
+    >
+      {texts.length ? texts.map((text, i) => <SayText key={i} text={text} />) : null}
     </Foldable>
   );
 }
@@ -240,6 +325,17 @@ function TodoRow({ segment, ctx }: { segment: TodoSegment; ctx: RenderCtx }): Re
   const expandable = isExpandable(segment);
   const struck = isStruck(segment);
   const elapsed = segment.status === 'in_progress' ? null : formatElapsed(segment.elapsedMs);
+  /**
+   * 抽屉里的推理也要收(用户问题二的真因)。
+   *
+   * 这里曾经直接 `segment.items.map(renderItem)` —— **没有分组**。壳的顶层收得好好的,
+   * 一旦本轮有清单,推理就落进当前那条 todo(`build-turn-blocks` 的 `sink()`),
+   * 于是一个字都收不起来。真实录制 `.od/runs/0161ef44`(agent=amr):
+   * 42,397 字推理里有 38,064 字铺在这条 in_progress 抽屉里 —— 就是用户截图那几屏。
+   *
+   * 「还在写的那一格」只可能在**进行中**那条 todo 的结尾。
+   */
+  const items = groupThinking(segment.items, ctx.thinkingNow && segment.status === 'in_progress');
 
   return (
     <Foldable
@@ -253,7 +349,7 @@ function TodoRow({ segment, ctx }: { segment: TodoSegment; ctx: RenderCtx }): Re
       expandable={expandable}
       defaultOpen={segment.status === 'in_progress'}
     >
-      {expandable ? segment.items.map((item, i) => renderItem(item, i, ctx)) : null}
+      {expandable ? items.map((item, i) => renderItem(item, i, ctx)) : null}
     </Foldable>
   );
 }
