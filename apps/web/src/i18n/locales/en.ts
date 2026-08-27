@@ -5312,7 +5312,7 @@ export const en: Dict = {
   'labs.navHint': "Try capabilities before they ship.",
   'labs.pageDesc': "Get early access to capabilities that have not shipped yet. They are usually better than what you have today, and turning one off restores the current behaviour right away.",
   'labs.harnessName': "Design Harness",
-  'labs.harnessHint': "Applies to your next generation · Existing work is untouched",
+  'labs.harnessHint': "Your next generation will use OpenDesign's latest strategy, with noticeably more polished results (beta)",
   'labs.harnessTooltip': "Switches to the agent harness Open Design built for design work. Output is noticeably better in layout, structure, and completeness.",
   'labs.harnessScope': "Covers prototypes, slides, marketing assets, and Hyperframes today. Some agents are not supported yet.",
   'labs.envOverrideNotice': "An environment variable is controlling this setting, so it cannot be changed here.",

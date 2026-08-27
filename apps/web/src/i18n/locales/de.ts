@@ -5298,7 +5298,7 @@ export const de: Dict = {
   'labs.navHint': "Funktionen testen, bevor sie erscheinen.",
   'labs.pageDesc': "Teste Funktionen, die noch nicht offiziell verfügbar sind. Sie sind meist besser als das aktuelle Verhalten, und ein Ausschalten stellt den bisherigen Stand sofort wieder her.",
   'labs.harnessName': "Design Harness",
-  'labs.harnessHint': "Gilt ab der nächsten Generierung · Bestehende Ergebnisse bleiben unverändert",
+  'labs.harnessHint': "Aktiviert nutzt die nächste Generierung die neueste Strategie von OpenDesign — merklich feinere Ergebnisse (Beta)",
   'labs.harnessTooltip': "Wechselt zu dem Agent-Harness, das Open Design für Designarbeit gebaut hat. Layout, Struktur und Vollständigkeit der Ergebnisse werden spürbar besser.",
   'labs.harnessScope': "Deckt derzeit Prototypen, Folien, Marketing-Assets und Hyperframes ab. Einige Agents werden noch nicht unterstützt.",
   'labs.envOverrideNotice': "Eine Umgebungsvariable steuert diese Einstellung, sie kann hier nicht geändert werden.",

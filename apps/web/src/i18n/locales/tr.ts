@@ -5298,7 +5298,7 @@ export const tr: Dict = {
   'labs.navHint': "Yayınlanmadan önce özellikleri deneyin.",
   'labs.pageDesc': "Henüz yayınlanmamış özelliklere erken erişin. Genellikle mevcut davranıştan daha iyidir ve kapattığınızda her şey anında eski haline döner.",
   'labs.harnessName': "Design Harness",
-  'labs.harnessHint': "Bir sonraki üretimde geçerli · Mevcut çıktılar değişmez",
+  'labs.harnessHint': "Açtığınızda bir sonraki üretim OpenDesign'ın en yeni stratejisini kullanır, çıktı belirgin şekilde daha özenli olur (beta)",
   'labs.harnessTooltip': "Open Design in tasarım işi için geliştirdiği agent harness a geçer. Çıktının yerleşimi, yapısı ve tamamlanmışlığı gözle görülür şekilde daha iyi olur.",
   'labs.harnessScope': "Şu anda prototipleri, slaytları, pazarlama içeriklerini ve Hyperframes i kapsıyor. Bazı agent lar henüz desteklenmiyor.",
   'labs.envOverrideNotice': "Bu ayarı bir ortam değişkeni yönetiyor, burada değiştirilemez.",

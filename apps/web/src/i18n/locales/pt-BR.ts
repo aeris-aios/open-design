@@ -5298,7 +5298,7 @@ export const ptBR: Dict = {
   'labs.navHint': "Teste recursos antes do lançamento.",
   'labs.pageDesc': "Tenha acesso antecipado a recursos que ainda não foram lançados. Costumam ser melhores que o comportamento atual, e desligar restaura o estado atual na hora.",
   'labs.harnessName': "Design Harness",
-  'labs.harnessHint': "Vale a partir da próxima geração · O que já foi criado não muda",
+  'labs.harnessHint': "Ao ativar, a próxima geração usará a estratégia mais recente da OpenDesign, com resultados bem mais caprichados (beta)",
   'labs.harnessTooltip': "Passa a usar o harness de agente que a Open Design criou para trabalho de design. Layout, estrutura e nível de acabamento ficam visivelmente melhores.",
   'labs.harnessScope': "Hoje cobre protótipos, slides, materiais de marketing e Hyperframes. Alguns agentes ainda não têm suporte.",
   'labs.envOverrideNotice': "Uma variável de ambiente controla esta configuração, então ela não pode ser alterada aqui.",

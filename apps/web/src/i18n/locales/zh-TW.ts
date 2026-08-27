@@ -5754,7 +5754,7 @@ export const zhTW: Dict = {
   'labs.navHint': "搶先體驗尚未正式發布的能力。",
   'labs.pageDesc': "搶先體驗尚未正式發布的能力，通常已優於目前版本；隨時關閉即可恢復現狀。",
   'labs.harnessName': "Design Harness",
-  'labs.harnessHint': "下次生成時生效 · 既有產物不受影響",
+  'labs.harnessHint': "開啟後，下次生成將使用 OpenDesign 最新生成策略，生成效果更精緻（內測中）",
   'labs.harnessTooltip': "開啟後改用 Open Design 為設計場景打造的 agent harness，產物在版面、結構與完成度上會明顯更好。",
   'labs.harnessScope': "目前涵蓋原型、簡報、行銷素材與 Hyperframes；部分 agent 尚未支援。",
   'labs.envOverrideNotice': "目前由環境變數接管，無法在此修改。",

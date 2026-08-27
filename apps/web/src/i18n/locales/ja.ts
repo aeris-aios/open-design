@@ -5298,7 +5298,7 @@ export const ja: Dict = {
   'labs.navHint': "未リリースの機能をひと足先に。",
   'labs.pageDesc': "まだ正式リリースされていない機能をひと足先に試せます。多くの場合は現在の挙動より優れており、オフにすればすぐに元の状態へ戻ります。",
   'labs.harnessName': "Design Harness",
-  'labs.harnessHint': "次回の生成から有効 · 既存の成果物はそのまま",
+  'labs.harnessHint': "オンにすると、次回の生成から OpenDesign の最新生成戦略を使用します。仕上がりがより洗練されます（ベータ）",
   'labs.harnessTooltip': "Open Design がデザイン用途に構築した agent harness に切り替えます。レイアウト・構成・完成度が目に見えて良くなります。",
   'labs.harnessScope': "現在はプロトタイプ、スライド、マーケティング素材、Hyperframes に対応しています。一部の agent は未対応です。",
   'labs.envOverrideNotice': "環境変数が優先されているため、ここでは変更できません。",

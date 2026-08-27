@@ -5747,7 +5747,7 @@ export const zhCN: Dict = {
   'labs.navHint': "抢先体验尚未正式发布的能力。",
   'labs.pageDesc': "抢先体验尚未正式发布的能力，通常已优于当前版本；随时关闭即可恢复现状。",
   'labs.harnessName': "Design Harness",
-  'labs.harnessHint': "下次生成时生效 · 已有产物不受影响",
+  'labs.harnessHint': "开启后，下次生成将使用 OpenDesign 最新生成策略，生成效果更精美（内测中）",
   'labs.harnessTooltip': "开启后改用 Open Design 为设计场景专门打造的 agent harness，产物在版式、结构和完成度上会明显更好。",
   'labs.harnessScope': "目前覆盖原型、PPT、营销物料与 Hyperframes；部分 agent 暂不支持。",
   'labs.envOverrideNotice': "当前由环境变量接管，无法在此修改。",

@@ -5298,7 +5298,7 @@ export const id: Dict = {
   'labs.navHint': "Coba fitur sebelum dirilis.",
   'labs.pageDesc': "Dapatkan akses awal ke kemampuan yang belum dirilis. Umumnya lebih baik dari perilaku saat ini, dan mematikannya langsung mengembalikan keadaan sekarang.",
   'labs.harnessName': "Design Harness",
-  'labs.harnessHint': "Berlaku pada generasi berikutnya · Hasil yang sudah ada tidak berubah",
+  'labs.harnessHint': "Setelah diaktifkan, generasi berikutnya memakai strategi terbaru OpenDesign dengan hasil yang jauh lebih rapi (beta)",
   'labs.harnessTooltip': "Beralih ke agent harness yang dibangun Open Design untuk pekerjaan desain. Tata letak, struktur, dan kelengkapan hasil terasa jauh lebih baik.",
   'labs.harnessScope': "Saat ini mencakup prototipe, slide, aset pemasaran, dan Hyperframes. Sebagian agent belum didukung.",
   'labs.envOverrideNotice': "Pengaturan ini dikendalikan variabel lingkungan, jadi tidak bisa diubah di sini.",

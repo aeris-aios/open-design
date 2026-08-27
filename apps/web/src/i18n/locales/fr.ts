@@ -5298,7 +5298,7 @@ export const fr: Dict = {
   'labs.navHint': "Essayez des fonctionnalités avant leur sortie.",
   'labs.pageDesc': "Accédez en avant-première à des fonctionnalités qui ne sont pas encore publiées. Elles sont en général meilleures que le comportement actuel, et les désactiver rétablit immédiatement l état actuel.",
   'labs.harnessName': "Design Harness",
-  'labs.harnessHint': "Actif dès la prochaine génération · Les productions existantes ne changent pas",
+  'labs.harnessHint': "Une fois activé, la prochaine génération utilise la dernière stratégie d'OpenDesign, pour un rendu nettement plus soigné (bêta)",
   'labs.harnessTooltip': "Bascule vers le harness d agent conçu par Open Design pour le design. La mise en page, la structure et le niveau de finition des productions sont nettement meilleurs.",
   'labs.harnessScope': "Couvre aujourd hui les prototypes, les présentations, les supports marketing et les Hyperframes. Certains agents ne sont pas encore pris en charge.",
   'labs.envOverrideNotice': "Une variable d environnement contrôle ce réglage, il ne peut pas être modifié ici.",

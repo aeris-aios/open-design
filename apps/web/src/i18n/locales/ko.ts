@@ -5298,7 +5298,7 @@ export const ko: Dict = {
   'labs.navHint': "아직 출시되지 않은 기능을 미리 사용해 보세요.",
   'labs.pageDesc': "아직 정식 출시되지 않은 기능을 먼저 사용해 볼 수 있습니다. 대체로 현재 동작보다 낫고, 언제든 꺼서 원래대로 되돌릴 수 있습니다.",
   'labs.harnessName': "Design Harness",
-  'labs.harnessHint': "다음 생성부터 적용 · 기존 결과물은 그대로",
+  'labs.harnessHint': "켜면 다음 생성부터 OpenDesign 최신 생성 전략을 사용해 결과물이 한층 정교해집니다 (베타)",
   'labs.harnessTooltip': "Open Design 이 디자인 작업을 위해 만든 agent harness 로 전환합니다. 레이아웃, 구조, 완성도가 눈에 띄게 좋아집니다.",
   'labs.harnessScope': "현재 프로토타입, 슬라이드, 마케팅 자산, Hyperframes 를 지원합니다. 일부 agent 는 아직 지원되지 않습니다.",
   'labs.envOverrideNotice': "환경 변수가 이 설정을 제어하고 있어 여기서 변경할 수 없습니다.",

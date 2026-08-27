@@ -91,7 +91,9 @@ describe('LabsSection', () => {
     expect(switchEl().getAttribute('aria-checked')).toBe('false');
     expect(screen.getByText('Design Harness')).toBeTruthy();
     expect(
-      screen.getByText('Applies to your next generation · Existing work is untouched'),
+      screen.getByText(
+        "Your next generation will use OpenDesign's latest strategy, with noticeably more polished results (beta)",
+      ),
     ).toBeTruthy();
   });
 
