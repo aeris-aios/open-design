@@ -142,8 +142,15 @@ function sanitizeCommentAttachments(raw: unknown): ChatCommentAttachment[] {
   return out;
 }
 
-/** 引用必须有正文,超长掐断 —— 全文本来就只在 hover 浮层里露一眼。 */
-function sanitizeQuotes(raw: unknown): ChatQuote[] {
+/**
+ * 引用必须有正文,超长掐断 —— 全文本来就只在 hover 浮层里露一眼。
+ *
+ * 导出是因为**引用有两条落盘路**,而它们必须受同一套上限约束:
+ * 一条是这里的草稿 extras,另一条是发送队列(`od:chat-queued-sends:*`,
+ * 那一层对 `meta` 不做任何校验,原样 JSON 落盘)。少了这道闸,一次超长选区
+ * 就能把队列撑爆 localStorage 的配额,而症状会出现在完全不相干的地方。
+ */
+export function sanitizeQuotes(raw: unknown): ChatQuote[] {
   if (!Array.isArray(raw)) return [];
   const out: ChatQuote[] = [];
   for (const item of raw) {

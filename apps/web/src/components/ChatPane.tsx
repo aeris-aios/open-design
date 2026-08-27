@@ -2072,6 +2072,9 @@ export function ChatPane({
       text: item.prompt,
       attachments: item.attachments ?? [],
       commentAttachments: item.commentAttachments ?? [],
+      // 排队时折进正文的那段引文,靠这份结构数据拆回芯片。老队列里没有这个
+      // 字段(它是后加的),那就退回「整段都是正文」——不报错,只是没有芯片。
+      quotes: item.meta?.quotes ?? [],
       meta: item.meta,
     });
   };

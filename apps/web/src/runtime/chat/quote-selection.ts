@@ -61,3 +61,34 @@ export function appendQuote(quotes: ChatQuote[], next: ChatQuote): ChatQuote[] {
   if (quotes.some((q) => normalizeQuoteText(q.text) === key)) return quotes;
   return [...quotes, next];
 }
+
+/**
+ * 发送时折进正文的那段**引文前缀**(设计稿组件 23)。
+ *
+ * 折进去是为了让 agent 一眼分得清「这是我上一轮说的话」和「这是新指令」;
+ * 但折完之后这一条在结构上就没有引用了 —— 排进发送队列的就是这段散文。
+ * 所以取回编辑时得能原样拆开,而**拆的一方必须和折的一方用同一个前缀**。
+ * 两边各写各的字符串,早晚会对不上,那时候拆出来的正文会被啃掉一截,
+ * 现场只剩「用户的字莫名少了半句」这一个症状。
+ */
+export function quotePromptPrefix(quotes: ChatQuote[]): string {
+  if (quotes.length === 0) return '';
+  return `${quotes.map((q) => `> ${q.text}`).join('\n')}\n\n`;
+}
+
+/**
+ * `quotePromptPrefix` 的逆运算,而且**只在完全对得上时才动手**。
+ *
+ * 对不上就原样返回。这不是保守,是唯一安全的选择:队列里的正文是可以被改的
+ * (就地编辑那条路),用户自己也可能敲出以 `> ` 开头的行。拆错一次就是把
+ * 用户写的话啃掉一截,比多留一段引文糟得多 —— 后者看得见,前者看不见。
+ */
+export function splitQuotedPrompt(prompt: string, quotes: ChatQuote[]): string {
+  const prefix = quotePromptPrefix(quotes);
+  if (!prefix) return prompt;
+  if (prompt.startsWith(prefix)) return prompt.slice(prefix.length);
+  // 只有引用、没有正文的那一发:`submit()` 收尾的 trim 会把末尾那个空行吃掉,
+  // 于是整条正文正好等于前缀去掉尾部空白。这时候正文本来就是空的。
+  if (prompt === prefix.trimEnd()) return '';
+  return prompt;
+}
