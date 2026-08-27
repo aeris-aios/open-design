@@ -2221,15 +2221,6 @@ export function ProjectView({
   const [activePluginActionPaths, setActivePluginActionPaths] = useState<Set<string>>(() => new Set());
   const [hiddenAssistantPluginActionPaths, setHiddenAssistantPluginActionPaths] = useState<Set<string>>(() => new Set());
   const [forceStreamingPluginMessageIds, setForceStreamingPluginMessageIds] = useState<Set<string>>(() => new Set());
-  // Ephemeral, live-only accumulation of a tool call's streaming JSON input,
-  // keyed by tool-use id (globally unique per run). Fed by `onToolInputDelta`
-  // while the model is still emitting `input_json_delta`; dropped per-id once
-  // the full `tool_use` lands and wiped when the run ends. Never persisted —
-  // see daemon `daemonAgentPayloadToPersistedAgentEvent` (returns null).
-  // `seq` records how many persisted events existed when the tool started
-  // streaming, so the renderer can place the live card at the tool call's
-  // position in the message (text before it = preamble, after it = hedging).
-  const [liveToolInput, setLiveToolInput] = useState<Record<string, { name: string; text: string; seq: number }>>({});
   // True once the initial DB read for the active conversation has settled.
   // Auto-send gates on this so it can't fire before listMessages resolves and
   // race-clobber the freshly-pushed user + assistant placeholder. Without
@@ -2257,11 +2248,6 @@ export function ProjectView({
   const [attachedComments, setAttachedComments] = useState<PreviewComment[]>([]);
   const [streaming, setStreaming] = useState(false);
   const [streamingConversationId, setStreamingConversationId] = useState<string | null>(null);
-  // Safety net: drop any live tool-input partials whose tool never produced a
-  // full `tool_use` (run errored/canceled mid-call) once streaming settles.
-  useEffect(() => {
-    if (!streaming) setLiveToolInput((prev) => (Object.keys(prev).length ? {} : prev));
-  }, [streaming]);
   const [paneError, setPaneError] = useState<{
     message: string;
     sourceAssistantId: string | null;
@@ -7395,17 +7381,6 @@ export function ProjectView({
         // file the moment the agent finishes writing it. The file-creating
         // tools we care about: Write (new file), Edit (existing file —
         // surfacing the freshly-modified file is also useful).
-        if (ev.kind === 'tool_use') {
-          // The authoritative input has landed; drop the live partial so the
-          // card renders from the parsed `tool_use.input` instead of the
-          // mid-token JSON fragment.
-          setLiveToolInput((prev) => {
-            if (!(ev.id in prev)) return prev;
-            const next = { ...prev };
-            delete next[ev.id];
-            return next;
-          });
-        }
         if (ev.kind === 'tool_use' && isFileWriteToolName(ev.name)) {
           const filePath = extractFileWriteToolPath(ev.input);
           if (typeof filePath === 'string' && filePath.length > 0) {
@@ -7589,24 +7564,6 @@ export function ProjectView({
             max: state.max,
             phase: state.phase,
           });
-        },
-        onToolInputDelta: (id: string, name: string, delta: string) => {
-          setLiveToolInput((prev) => ({
-            ...prev,
-            [id]: {
-              name,
-              text: (prev[id]?.text ?? '') + delta,
-              // Pin the tool's stream position the first time we see it: the
-              // count of events already on the message is everything the model
-              // emitted before the tool call (its preamble). Buffered text
-              // (appendTextEvent) isn't flushed into `events` until the next
-              // frame, so add 1 for any still-pending preamble chunk — it will
-              // commit as one text event just before this tool's position.
-              seq:
-                prev[id]?.seq ??
-                ((latestAssistantMsg.events?.length ?? 0) + (textBuffer.hasPendingText() ? 1 : 0)),
-            },
-          }));
         },
         onDone: (fullText = '') => {
           // The daemon delivers onDone even for a canceled run, so a run
@@ -11460,7 +11417,6 @@ export function ProjectView({
               key={`${project.id}:${activeConversationId ?? 'conversation-unavailable'}:${chatSeed?.id ?? 'ready'}`}
               messages={messages}
               streaming={currentConversationControlStreaming}
-              liveToolInput={liveToolInput}
               loading={currentConversationLoading}
               // A read-only viewer of a team-shared project cannot drive artifact
               // changes through chat (comments go through the separate overlay).

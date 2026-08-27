@@ -671,7 +671,7 @@ classDiagram
 
 **接入时发现、新链路确实没有的三样(按规矩停手没删,组件留着)**
 
-1. **流式 Write/Edit 代码预览** —— `buildTurnBlocks` 只读已落库事件,`liveToolInput` 没落点;现在先在壳外原地渲染,位置不对但能力不丢
+1. ~~**流式 Write/Edit 代码预览**~~ —— **2026-08-27 已删,不再是缺口**。原话是「现在先在壳外原地渲染,位置不对但能力不丢」;用户看到实物后当场否掉(`chat-panel-feedback.md` N4:「这又是啥啊,不应该是一个普通工具调用的样式吗?」)。一份大 HTML 流几十秒,壳外就摊着几十行源码,而 D3 本来就规定调用没配对结果不出行。整条 `liveToolInput` 链路(ProjectView 累料 → ChatPane 穿透 → AssistantMessage 落 `live-tool` 块 → `LiveCodeBox`)删掉,Write 只剩执行记录里那一行。**别把它当遗留能力捡回来** —— 真要在壳内给流式调用一个落点,得先有新的设计裁决
 2. **`ThinkingBlock` 的 markdown 与文件链接** —— 壳内 thinking 走 `SayText` 纯文字
 3. ~~**壳的活计时器**~~ —— **2026-08-25 已补**。原因是 `AssistantMessage` 压根没给 `buildTurnBlocks` 喂 `nowMs`,于是运行中的耗时只能算到「最后一次结束时间」:一次长工具调用期间没有新事件落下来,秒数就冻在那儿,页面上看着像卡死。改法是加 `useTickingNow(streaming)`,跑着的时候每秒推一格,轮次一结束就不再挂定时器(耗时锁回最后一次结束时间)。红测先行:`tests/components/chat/live-timer.test.tsx` 两例(「没有新事件也照走」在改之前是 `'进行中'` 里连秒数都没有)
 

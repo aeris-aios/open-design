@@ -414,12 +414,14 @@
 
 ### F-9 ⚠️ 用户已提出、**尚未修**的(接手请从这里开始)
 
+> N4 已经做完了,留在表里是为了把「查到哪儿、推翻了什么」写清楚。
+
 | # | 用户原话 / 现象 | 已查到的根因 | 下一步 |
 |---|---|---|---|
 | **N1** | 「为什么我们已完成旁边没显示耗时??」 | **根因已定位**:`shellElapsed()` 只从**事件上的时刻**推跨度(`shellSpan` / `firstStartedAt` / `lastEndedAt`),而很多 agent 根本不给事件打时刻 —— 真机上一条 succeeded 的 run 26 个事件里**只有 9 个带时刻**。可 `message` 自己是有 `startedAt` **和** `endedAt` 的,那才是最权威的跨度,却没人用 | 给 `BuildTurnInput` 补 `endedAtMs`(`startedAtMs` 我做 S12 时已经加了),让 `shellElapsed` 在事件推不出跨度时回落到「消息自己的起止」。注意 `formatShellElapsed` 有 **1000ms 地板**,低于 1 秒一律不显示 —— 我那条 100ms 的夹具就是这么消失的,别被它误导 |
 | **N2** | 「thinking 也要包裹在进行中的下拉卡片里,其次 thinking 完成后就变成普通工具调用的状态,可以下拉展开看思考细节」 | 现在 thinking 落成 `ShellText{thinking:true}`,由 `SayText` 画成**裸段落**,一轮结束就把全文摊开。**设计稿是支持他这个说法的**:`chat-panel-next.html` 的组件 3 就叫「Thinking」,原话「Thinking 那块用的是**同一副壳**、里面也是 `.think`」,而且「Thinking」和「进行中 / 已完成 / 运行失败」并列被称作**分段头** | 把 thinking 段渲染成 `Foldable`(头= Thinking,默认收起,展开看推理),**流式中那一条除外** —— 稿子里「进行中的一行」是另一样东西(`.thinking-live`),它「不套框、不挂耗时」,只活到第一个字落地 |
 | **N3** | 「你这左右/下面的间距呢? 去看看设计稿」(截图是 question-form 的输入框,红框标着左右和下方几乎没有留白) | 未查 | 拿 `<question-form>` 那一格去比设计稿的内边距。**记住教训**:必须在浏览器里量计算样式,只 diff CSS 文本会漏掉层叠反转 |
-| **N4** | 「这又是啥啊,不应该是一个普通工具调用的样式吗? 创建 xxx?」(截图是 `写入 design-manifesto-parchment.html` 底下摊着一大块 HTML 源码预览) | 未查 | Write 类工具应该只落**一行**(「写入 <文件名>」),不该把文件内容摊成代码块。查 `ToolRow` / `build-turn-blocks` 里 write 的落行逻辑 |
+| **N4** | 「这又是啥啊,不应该是一个普通工具调用的样式吗? 创建 xxx?」(截图是 `写入 design-manifesto-parchment.html` 底下摊着一大块 HTML 源码预览) | ✅ **已修**。**不在 `ToolRow` / `build-turn-blocks`** —— 那两处一直是对的(Write 跑完就是「新建 <文件名> +N −0」一行)。那块源码是 `AssistantMessage` 在**壳外**另起的一张流式代码卡 `LiveCodeBox`:daemon 的 `tool_input_delta`(`claude-stream.ts:619` 转 claude 的 `input_json_delta`)→ `ProjectView` 按 tool id 累成字符串 → `ChatPane` 穿透 → 落成 `live-tool` 块。所以它**只在流式期间存在**,`tool_use` 一落库就换回那一行,刷新页面也不会再出现 —— 但一份大 HTML 要流几十秒,用户看到的就是那几十秒。头上那个「写入」用的还是老键 `tool.write`(新链路的动词是 `chat.record.verb.write` =「新建」),这也是截图里的字对不上新壳的原因 | **修法**:整条 `liveToolInput` 链路删掉(ProjectView 累料 → ChatPane 穿透 → AssistantMessage 落块 → `LiveCodeBox`)。依据是 D3(`chat-panel-next.md:413`)与 B8(`:754`):调用没配对结果就不出行。这**推翻了接入时的临时安排**(`chat-panel-next.md:674` 第 1 条「位置不对但能力不丢」)—— 「不丢」被 N4 明确否掉。顺带省掉一处按 token 打的 `setState`(每个 `input_json_delta` 都在 setLiveToolInput,大文件是几千次 ProjectView 重渲染)。**没动**的是 `<artifact type="text/html">` 那条流式代码卡:它防的是半截 HTML 当 markdown 正文漏出来,不是工具调用。红测 `apps/web/tests/components/chat/write-live-preview.test.tsx`(4 条,含终端输出的反面守卫) |
 
 ### F-10 claude 为什么写不出 todo(查清了)
 
