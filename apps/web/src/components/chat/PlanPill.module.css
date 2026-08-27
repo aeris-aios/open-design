@@ -10,16 +10,35 @@
  * 「真实场景里药丸钉在流水底部,上方本来就是空的,不需要这一层。」
  */
 
-/* 稿子 `.pmini { position: relative; display: inline-flex }`。
-   后面两条是**接产品这一侧的宿主**,稿子那张演示卡里没有对应物:
-   · `.pane` 是 flex 列,不写 align-self 的话这枚 inline-flex 会被拉满整列宽;
-   · 左右内缩取和发送队列 / 输入框同一个 `--chat-composer-inline-inset`,
-     三者左边界必须对齐,否则药丸看着像挂偏了。 */
-.wrap {
+/* 药丸那一行 —— 稿子里没有这一层,它是**接产品这一侧宿主**用的。
+   ------------------------------------------------------------
+   产品 2026-08-27 的原话:「把这个 todo 放到左右居中,第 N/M 步和上面的 hover 卡片,
+   都和对话内容、下面输入框中心对齐」。
+
+   中线不是自己算的,是**沿用同一套机制**:`.pane` 是一列 flex,
+   `.chat-composer-slot`(输入框)和 `.chat-queued-send-strip`(发送队列)都靠
+   「交叉轴 stretch 铺满整列 + 左右对称的内缩」拿到那条中线,`.composer` 自己的
+   左右内距也是对称的。这一行照做 —— 不写 `align-self`(交叉轴跟着 `.pane` 铺满)、
+   左右内缩取同一个 `--chat-composer-inline-inset`、`justify-content: center`
+   把药丸摆到正中。面板拖宽拖窄、侧栏开合,中线自动跟着走,
+   **没有任何一个写死的偏移量**(写死的量在下一次拖动就漂了)。
+
+   `position: relative` 从 `.wrap` 挪到了这里:浮层要能按「这一列有多宽」收自己的
+   宽度上限(见下面的 `max-width`),而 `.wrap` 只有药丸那么宽,拿它当包含块的话
+   百分比算的是药丸的宽度,收不住任何东西。 */
+.row {
   position: relative;
-  display: inline-flex;
-  align-self: flex-start;
+  display: flex;
+  justify-content: center;
   margin: 0 var(--chat-composer-inline-inset, 12px) 4px;
+}
+
+/* 稿子 `.pmini { position: relative; display: inline-flex }`。
+   `position: relative` 见上面 `.row` 的注释,不在这儿。
+   这一层仍旧是**悬停 / 聚焦的触发面**:它裹住药丸本身,不铺满整行 ——
+   铺满的话整条空白扫过去都会把浮层勾出来。 */
+.wrap {
+  display: inline-flex;
 }
 
 .wrap .pill {
@@ -43,20 +62,27 @@
 
 /* 浮层落在药丸【上方】:药丸自己钉在流水底部,往下开会顶到输入框。
    ------------------------------------------------------------
-   水平方向**没有照抄** `left: 50%; transform: translateX(-50%)`:
-   稿子那张演示卡里药丸浮在空处,居中的浮层往左探出 63px 没人管;
-   产品里药丸钉在输入框的左内缩线上,而 `.pane` 是 `overflow: hidden` ——
-   居中会让浮层左边被面板直接切掉约 50px。所以改成贴着药丸左边缘开,
-   这是接宿主的取舍,不是改设计意图(浮层仍旧从药丸上方浮出、仍旧 8px 缝)。
+   水平方向**回到稿子原文** `left: 50%; transform: translateX(-50%)`。
+   这两条曾经被改成 `left: 0`,理由是「药丸钉在输入框的左内缩线上,而 `.pane` 是
+   `overflow: hidden`,居中会让浮层左边被面板切掉约 50px」—— 药丸自己居中之后
+   那个理由不成立了:包含块是上面那一行(= 输入框那一列),50% 正是那条中线。
+
+   `max-width` 是产品这一侧补的一道夹子,稿子只写了 `320px`。
+   `100%` 量的是那一行,也就是输入框那一列的宽度:窄面板下(实测 `.pane` 320px 那一档
+   这一行只有 292px)光靠 320px 的上限,浮层会被 `.pane` 的 `overflow: hidden`
+   两头切掉。夹上之后浮层永远不宽于输入框,切不着。
+   (`min-width: 232px` 照抄稿子,它比 `max-width` 优先 —— 面板窄到这一行不足 232px
+   时浮层仍会探出去,那已经在 `MIN_CHAT_PANEL_WIDTH = 345` 之下。)
    `pointer-events: none` 照抄:这份清单只看不点,鼠标穿过去不抢事件。 */
 .wrap .pop {
   position: absolute;
-  left: 0;
+  left: 50%;
+  transform: translateX(-50%);
   bottom: calc(100% + 8px);
   z-index: 7;
   width: max-content;
   min-width: 232px;
-  max-width: 320px;
+  max-width: min(320px, 100%);
   padding: 6px 4px;
   border-radius: var(--chat-radius-lg);
   background: var(--chat-bg);
