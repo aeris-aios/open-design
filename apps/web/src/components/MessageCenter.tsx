@@ -243,8 +243,8 @@ export function MessageCenter({
     // Taken before the read goes out — which of two answers is newer is a
     // question about the requests, not about when they were consumed.
     const issuedStatusObservation = issueStatusObservation();
-    const authMode = await readAmrAuthMode();
-    const account = authMode === 'signed-in';
+    let authMode = await readAmrAuthMode();
+    let account = authMode === 'signed-in';
     // Before the writes, not after them. `account` describes the authority the
     // request was issued under; publishing it into component state once the
     // boundary has moved shows the previous account's signed-in state, and
@@ -273,7 +273,17 @@ export function MessageCenter({
       // component's own, because both publish here. If this read was overtaken
       // while it was on the wire it no longer describes the session, and the
       // rest of the run is working from it.
-      if (!noteAuthoritativeAuthMode(account, issuedStatusObservation)) return;
+      // A refusal orders this answer; it does not say the answer was wrong.
+      // Another host's read can be issued later and come back first with the
+      // SAME mode, and abandoning the run there left a first mount with an
+      // empty bell until the user opened the panel or the 60s poll came round —
+      // `retrySync` sees a resolved promise, so nothing reports it or tries
+      // again. Adopt what won instead: it is by definition the better answer,
+      // and it costs no second request.
+      if (!noteAuthoritativeAuthMode(account, issuedStatusObservation)) {
+        account = currentAuthoritativeLoggedIn() ?? account;
+        authMode = account ? 'signed-in' : 'signed-out';
+      }
       loggedInRef.current = account;
       setLoggedIn(account);
     }
@@ -332,6 +342,12 @@ export function MessageCenter({
     // looking current, and wipes the anonymous cache a newer signed-out run
     // has already written. For an anonymous reader those read ids exist
     // nowhere else, so the badges simply come back.
+    // Ahead of the clear, not after it. This clear is a write to shared
+    // storage, and a run that is about to be discarded must not make it: a
+    // signed-in pull resuming after a remote sign-out erased the anonymous
+    // messages and read ids and was only then thrown away, putting nothing
+    // back. For an anonymous reader those read ids exist nowhere else.
+    if (overtakenByAuthorityChange(issuedAuthModeEpoch)) return;
     if (account && currentAnonymousWriteSeq() === anonSeqAtStart) clearAnonymousState(window.localStorage);
     // Two more readings of the same collapsed boolean, found by walking the
     // rest of this function rather than waiting for them to be reported.
@@ -342,8 +358,6 @@ export function MessageCenter({
     // so blanking it during an outage makes a required notice vanish and
     // reappear — the regression fixed two rounds ago, by a different route.
     // Both wait for an answer; neither guesses from a non-answer.
-    // The pull was answered for the session that was valid when it went out.
-    if (overtakenByAuthorityChange(issuedAuthModeEpoch)) return;
     const authoritative = authMode !== 'unavailable';
     commitState(merged, overlayReadIds, {
       persistAnonymous: authMode === 'signed-out' && ownsLatestWrite,
@@ -635,10 +649,17 @@ export function MessageCenter({
       }
       return;
     }
-    const account = writeAuthMode === 'signed-in';
-    // Refused means this answer was overtaken while it was on the wire; it no
-    // longer describes the session, and the whole write is working from it.
-    if (!noteAuthoritativeAuthMode(account, issuedStatusObservation)) return;
+    let account = writeAuthMode === 'signed-in';
+    // Same adoption as `sync`, and here returning was actively harmful:
+    // `GoPlanSunsetDialog` sets `dismissing` before awaiting and only clears it
+    // if the promise REJECTS, so a silent success left the notice mounted with
+    // every control disabled and no way back short of a remount. Adopting lets
+    // the write finish when the winning answer agrees, and lets the
+    // `requireAccount` contract below raise its own retryable error when it
+    // does not.
+    if (!noteAuthoritativeAuthMode(account, issuedStatusObservation)) {
+      account = currentAuthoritativeLoggedIn() ?? account;
+    }
     // Published only once the boundary is confirmed, below.
     if (options?.requireAccount && !account) {
       throw new Error('A signed-in account is required to acknowledge this announcement');

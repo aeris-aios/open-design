@@ -556,14 +556,58 @@ describe('MessageCenter remount snapshot', () => {
     expect(screen.queryByTestId('go-plan-sunset-dialog')).toBeNull();
   });
 
-  it('does not POST an account read whose auth check crossed the end of the session', async () => {
-    // The sibling spec below holds the POST. This one holds the STATUS READ
-    // that authorises it — which is the earlier and worse case, because the
-    // epoch was captured after that read came back, by which time the change it
-    // was meant to detect had already been counted. The post-POST comparison
-    // then saw no change at all, so the write went through: an account POST for
-    // a session that had ended, plus the read state, the anonymous clear and
-    // the delta behind it.
+  it('still pulls when its own status read loses the order to an identical answer', async () => {
+    // Refusing an observation orders it; it does not mean the answer was wrong.
+    // Another host's read can be issued later and answer first with the SAME
+    // mode, and this run is then refused for ordering alone. Returning there
+    // abandoned the pull: `retrySync` sees a resolved promise, so nothing
+    // reports an error or schedules a retry, and a first mount finishes with an
+    // empty bell until the user opens the panel or the 60s poll comes round.
+    let releaseStatus: (() => void) | null = null;
+    let holdStatus = true;
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/integrations/vela/status')) {
+        statusCalls += 1;
+        if (holdStatus) {
+          holdStatus = false;
+          await new Promise<void>((resolve) => { releaseStatus = resolve; });
+        }
+        return Response.json({ loggedIn: true });
+      }
+      if (url.includes('/message-center') && url.includes('/messages')) {
+        messageCalls += 1;
+        return Response.json({
+          messages: [row('late-order-row', null)],
+          nextCursor: null,
+          unreadCount: 1,
+        });
+      }
+      return Response.json({});
+    }));
+
+    const counts: number[] = [];
+    render(
+      <I18nProvider initial="zh-CN">
+        <MessageCenter onUnreadCountChange={(n) => counts.push(n)} />
+      </I18nProvider>,
+    );
+    await waitFor(() => expect(releaseStatus).not.toBeNull());
+
+    // Another host's read was issued later and answers first — same mode.
+    noteAuthoritativeAuthMode(true, issueStatusObservation());
+
+    releaseStatus!();
+    await waitFor(() => expect(counts[counts.length - 1]).toBe(1));
+    expect(messageCalls).toBeGreaterThan(0);
+  });
+
+  it('finishes the announcement dismissal when its auth read loses the order', async () => {
+    // Same refusal on the write path, where returning normally is worse than
+    // useless: `GoPlanSunsetDialog` sets `dismissing` before awaiting and only
+    // clears it if the promise REJECTS, so a silent success leaves the notice
+    // mounted with every control disabled and no way back short of a remount —
+    // the exact failure the `unavailable` branch above already guards against.
     let releaseStatus: (() => void) | null = null;
     let holdStatus = false;
     const posted: string[] = [];
@@ -576,6 +620,120 @@ describe('MessageCenter remount snapshot', () => {
           await new Promise<void>((resolve) => { releaseStatus = resolve; });
         }
         return Response.json({ loggedIn: true });
+      }
+      if (url.includes('/read') && init?.method === 'POST') {
+        posted.push(url);
+        return Response.json({});
+      }
+      if (url.includes('/message-center') && url.includes('/messages')) {
+        messageCalls += 1;
+        return Response.json({
+          messages: [{
+            ...row('announcement-row', null),
+            audienceType: 'targeted',
+            messageKey: 'go-plan-sunset-2026-08',
+          }],
+          nextCursor: null,
+          unreadCount: 1,
+        });
+      }
+      return Response.json({});
+    }));
+
+    render(
+      <I18nProvider initial="zh-CN">
+        <MessageCenter priorityAnnouncementActive />
+      </I18nProvider>,
+    );
+    await waitFor(() => expect(screen.queryByTestId('go-plan-sunset-dialog')).not.toBeNull());
+
+    // The dismissal's own auth read is held, and loses the order to an
+    // identical answer from elsewhere.
+    holdStatus = true;
+    fireEvent.click(screen.getByLabelText('关闭弹窗'));
+    await waitFor(() => expect(releaseStatus).not.toBeNull());
+    noteAuthoritativeAuthMode(true, issueStatusObservation());
+    releaseStatus!();
+    await new Promise((r) => setTimeout(r, 60));
+
+    expect(posted.length).toBe(1);
+    expect(screen.queryByTestId('go-plan-sunset-dialog')).toBeNull();
+  });
+
+  it('leaves the anonymous cache alone when the pull that would clear it is discarded', async () => {
+    // The clear ran BEFORE the authority revalidation, so a signed-in pull that
+    // resumed after a remote sign-out erased the anonymous messages and read
+    // ids and was only then discarded — and being discarded, it put nothing
+    // back. The session that is now signed out loses read state that exists
+    // nowhere else.
+    let releasePull!: () => void;
+    window.localStorage.setItem(
+      'open-design.message-center.anonymous-messages.v1',
+      JSON.stringify([{ ...row('seeded-row', '2026-08-01T00:00:00.000Z') }]),
+    );
+    window.localStorage.setItem(
+      'open-design.message-center.anonymous-read-ids.v1',
+      JSON.stringify(['seeded-row']),
+    );
+    const seededKeys = [
+      'open-design.message-center.anonymous-messages.v1',
+      'open-design.message-center.anonymous-read-ids.v1',
+    ];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/integrations/vela/status')) {
+        statusCalls += 1;
+        return Response.json({ loggedIn: true });
+      }
+      if (url.includes('/message-center') && url.includes('/messages')) {
+        messageCalls += 1;
+        await new Promise<void>((resolve) => { releasePull = resolve; });
+        return Response.json({ messages: [], nextCursor: null, unreadCount: 0 });
+      }
+      return Response.json({});
+    }));
+
+    render(
+      <I18nProvider initial="zh-CN">
+        <MessageCenter />
+      </I18nProvider>,
+    );
+    await waitFor(() => expect(releasePull).toBeTypeOf('function'));
+
+    // Polling observes the session ending. No generation change.
+    noteAuthoritativeAuthMode(false, issueStatusObservation());
+    releasePull();
+    await new Promise((r) => setTimeout(r, 40));
+
+    for (const key of seededKeys) expect(window.localStorage.getItem(key)).not.toBeNull();
+  });
+
+  it('does not POST an account read whose auth check crossed the end of the session', async () => {
+    // The sibling spec below holds the POST. This one holds the STATUS READ
+    // that authorises it — which is the earlier and worse case, because the
+    // epoch was captured after that read came back, by which time the change it
+    // was meant to detect had already been counted. The post-POST comparison
+    // then saw no change at all, so the write went through: an account POST for
+    // a session that had ended, plus the read state, the anonymous clear and
+    // the delta behind it.
+    let releaseStatus: (() => void) | null = null;
+    let holdStatus = false;
+    // The upstream answers for the session that was valid when the request went
+    // out. A stub that keeps saying signed-in after the sign-out is not the
+    // scenario: the boundary's own resync would then legitimately put the
+    // authority back, and the write would be right to proceed.
+    let sessionValid = true;
+    const posted: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/integrations/vela/status')) {
+        statusCalls += 1;
+        const answeredFor = sessionValid;
+        if (holdStatus) {
+          holdStatus = false;
+          await new Promise<void>((resolve) => { releaseStatus = resolve; });
+        }
+        return Response.json({ loggedIn: answeredFor });
       }
       if (url.includes('/read') && init?.method === 'POST') {
         posted.push(url);
@@ -610,6 +768,7 @@ describe('MessageCenter remount snapshot', () => {
     await waitFor(() => expect(releaseStatus).not.toBeNull());
 
     // Polling elsewhere observes the session ending. No generation change.
+    sessionValid = false;
     noteAuthoritativeAuthMode(false, issueStatusObservation());
     await new Promise((r) => setTimeout(r, 20));
 
