@@ -322,6 +322,54 @@ describe('App AMR polling', () => {
     vi.clearAllMocks();
   });
 
+  it('leaves the sign-in boundary to the surfaces that own it', async () => {
+    // Every shipped sign-in owner already calls `notifyWorkspaceContextRefresh`
+    // — `CloudSignInTip.finishSignedIn`, `EntryShell.pollAmrLoginCompletion` and
+    // its onboarding helper, `AmrLoginPill`. Announcing the boundary here as
+    // well advances the generation TWICE for one login and dispatches two
+    // differently keyed refreshes, so a subscriber like the message centre
+    // clears and resyncs twice — the duplicate work this PR exists to remove.
+    //
+    // Signing in and signing out are covered without this branch anyway: both
+    // move the authoritative auth mode, and the message centre subscribes to
+    // that. The case nothing covers is account -> account, where the auth mode
+    // is true on both sides, and that is the only case this branch is for.
+    resetMessageCenterSnapshot();
+    mockedFetchAmrModels.mockReset();
+    mockedFetchAmrModels.mockResolvedValue({
+      source: 'remote',
+      refreshing: false,
+      models: [{ id: 'remote-a', label: 'remote-a' }],
+    });
+
+    const signedOut = { loggedIn: false, loginInFlight: false, profile: 'local' };
+    const signedIn = {
+      loggedIn: true,
+      loginInFlight: false,
+      profile: 'local',
+      user: { id: 'account-a', email: 'a@example.com' },
+      configPath: '/tmp/amr-config.json',
+    };
+    let current: unknown = signedOut;
+    mockedFetchVelaLoginStatus.mockImplementation(async () => (
+      stampStatusObservation({ ...(current as object) }, issueStatusObservation()) as never
+    ));
+
+    render(<App />);
+    await waitFor(() => expect(currentAuthoritativeLoggedIn()).toBe(false));
+    await act(async () => { await new Promise((r) => setTimeout(r, 30)); });
+    const generationWhileSignedOut = currentWorkspaceAccountGeneration();
+
+    current = signedIn;
+    await act(async () => {
+      window.dispatchEvent(new Event(AMR_LOGIN_STATUS_EVENT));
+      await new Promise((r) => setTimeout(r, 30));
+    });
+    await waitFor(() => expect(currentAuthoritativeLoggedIn()).toBe(true));
+
+    expect(currentWorkspaceAccountGeneration()).toBe(generationWhileSignedOut);
+  });
+
   it('retires the previous account\'s message-centre cache on a direct account switch', async () => {
     // A signed-in account A -> signed-in account B switch is a supported shape:
     // `deriveTabIdentityScope` identifies the account by `user.id`, then email,

@@ -143,7 +143,7 @@ import {
   useProjectRouteWorkspaceContext,
 } from './collab/useProjectRouteWorkspaceContext';
 import { resolvePlanTier } from './collab/team-plan';
-import { deriveAccountBucket, deriveTabIdentityScope, UNSET_ACCOUNT_BUCKET } from './collab/tab-scope';
+import { ANONYMOUS_ACCOUNT_BUCKET, deriveAccountBucket, deriveTabIdentityScope, UNSET_ACCOUNT_BUCKET } from './collab/tab-scope';
 import { CommunityView } from './components/CommunityView';
 import { seedHomeComposerPrompt } from './components/HomeView';
 import {
@@ -1723,9 +1723,23 @@ function AppInner() {
     const accountBucket = deriveAccountBucket(status);
     const previousAccountBucket = amrAccountBucketRef.current;
     amrAccountBucketRef.current = accountBucket;
-    if (previousAccountBucket !== null && previousAccountBucket !== accountBucket) {
-      notifyWorkspaceContextRefresh();
-    }
+    // Only account -> account. Signing in and signing out both move the
+    // authoritative auth mode, which every account-scoped consumer here already
+    // subscribes to, and each sign-in owner (`CloudSignInTip.finishSignedIn`,
+    // `EntryShell.pollAmrLoginCompletion` and its onboarding helper,
+    // `AmrLoginPill`) already announces the boundary itself — announcing it
+    // here as well advanced the generation twice for one login and made a
+    // subscriber clear and resync twice, which is the duplicate work this
+    // change exists to remove.
+    //
+    // A switch between two accounts is the one transition neither covers: the
+    // auth mode is true on both sides, so nothing moves unless identity is
+    // compared.
+    const switchedBetweenAccounts = previousAccountBucket !== null
+      && previousAccountBucket !== accountBucket
+      && previousAccountBucket !== ANONYMOUS_ACCOUNT_BUCKET
+      && accountBucket !== ANONYMOUS_ACCOUNT_BUCKET;
+    if (switchedBetweenAccounts) notifyWorkspaceContextRefresh();
     const pendingRetry = amrAuthRetryContinuationRef.current;
     const accountChangedWhileAuthorizing = Boolean(
       pendingRetry

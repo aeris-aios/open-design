@@ -23,6 +23,9 @@ export interface TabScopeLoginStatus {
  *  so the first resolution is never mistaken for an account change. */
 export const UNSET_ACCOUNT_BUCKET = '__unset__';
 
+/** The bucket for a session with no account at all. */
+export const ANONYMOUS_ACCOUNT_BUCKET = 'anon';
+
 export interface TabIdentityScopeInputs {
   /** App.tsx's merged AMR login status, or `null` before the first read
    *  completes. */
@@ -130,7 +133,7 @@ export interface TabIdentityScopeResult {
  * way; two answers to "which account is this" is how one of them goes stale.
  */
 export function deriveAccountBucket(status: TabScopeLoginStatus): string {
-  if (!status.loggedIn) return 'anon';
+  if (!status.loggedIn) return ANONYMOUS_ACCOUNT_BUCKET;
   // Ordered by how tightly each answer is bound to an ACCOUNT. A user id or
   // email survives re-authentication, so they come first — keying on the
   // credential there would call a routine token refresh an account switch.
