@@ -5531,6 +5531,15 @@ export interface Dict {
   'chat.record.verb.exec': string;
   'chat.record.failed': string;
   'chat.record.hits': string;
+  /**
+   * S12「上游响应慢，已等 N 秒」。**2026-08-27 起没有调用点** —— 产品把这句文案从壳头
+   * 撤回了(裁决原文在 `components/chat/ExecutionShell.tsx` 的 `head` 注释里),
+   * 但明确要求「后续可能会用到,只不过用别的展现形式」。
+   *
+   * 键连同 19 份译文一起留着:一个没人调的键不花什么成本,而重新组织 19 种语言的翻译
+   * 要花的是真金白银。`scripts/i18n-check.ts` 只查「每个 locale 有没有 Dict 里的键」,
+   * 不查反向的「键有没有人用」,所以留着不会让任何检查变红(已核对)。
+   */
   'chat.record.slowUpstream': string;
   'chat.record.running': string;
   'chat.record.thinking': string;

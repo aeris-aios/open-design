@@ -197,12 +197,17 @@ describe('思考流(D46)', () => {
   });
 });
 
-describe('S12 · 等太久没动静时壳头换一句话', () => {
+describe('S12 · 静默再久,壳头也不换词', () => {
   /**
-   * 权威:`docs/design/run-errors/error-ux-design.md:33`
-   * 「60 秒没新输出显示『上游响应慢，已等 N 秒』+〔停止〕」。
-   * 产品口述的落点是**现有这张卡的文案**,不新起一块 UI。
-   * 〔停止〕那一半由输入框那颗常驻的停止键承担。
+   * 这一节原来叫「等太久没动静时壳头换一句话」,断言的是
+   * `docs/design/run-errors/error-ux-design.md:33`「60 秒没新输出显示
+   * 『上游响应慢，已等 N 秒』」——**那句文案 2026-08-27 被产品撤回了**
+   * (裁决原文在 `components/chat/ExecutionShell.tsx` 的 `head` 注释里,
+   * 只撤展现、探测全留)。所以断言跟着翻面:运行中的壳头回到「壳头四种样子」那条
+   * 不变量,只有「进行中 / 思考中」两种,静默多久都不再插一句话进来。
+   *
+   * 没有整段删掉,是因为它守的是**这个组件的不变量**:运行态壳头不因数据层多出来的
+   * 字段而变形。撤回本身与保留的探测另有专门一份:`s12-copy-revert.test.tsx`。
    */
   const START = 1_000_000;
   const startedTurn = (nowMs: number): ShellData[] =>
@@ -218,13 +223,13 @@ describe('S12 · 等太久没动静时壳头换一句话', () => {
     expect(screen.queryByText(/上游响应慢/)).toBeNull();
   });
 
-  it('acknowledges the wait past a minute, with the seconds it has waited', () => {
+  it('still says 进行中 well past the old 60s threshold', () => {
     render(<ExecutionShell shell={nth(startedTurn(START + 95_000), 0)} />);
-    expect(screen.getByText('上游响应慢，已等 95 秒')).toBeTruthy();
-    expect(screen.queryByText('进行中')).toBeNull();
+    expect(screen.getByText('进行中')).toBeTruthy();
+    expect(screen.queryByText(/上游响应慢/)).toBeNull();
   });
 
-  it('goes back to 进行中 as soon as something lands', () => {
+  it('stays 进行中 when something lands too — nothing about the head moves', () => {
     const shells = buildTurnBlocks({
       events: [
         { kind: 'tool_use', id: 'item_1', name: 'Read', input: { file_path: '/a.ts' }, startedAt: START },
