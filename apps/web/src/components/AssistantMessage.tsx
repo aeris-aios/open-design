@@ -55,8 +55,11 @@ import {
   type QuestionForm,
 } from "../artifacts/question-form";
 import {
+  foldArtifactFocusSelections,
   hasOdCard,
+  narrowProducedFilesToFocus,
   splitOnOdCards,
+  stripArtifactFocusMarkers,
   stripCritiqueGrammar,
   stripTrailingOpenOdCard,
   todoStatusIsUnfinished,
@@ -714,7 +717,37 @@ function AssistantMessageImpl({
   }, [nextTurn, blocks]);
 
   const fileOps = useMemo(() => deriveFileOps(displayEvents), [displayEvents]);
-  const produced = message.producedFiles ?? [];
+  const rawProduced = message.producedFiles ?? [];
+  /**
+   * 这一轮 agent 自己声明的「显示什么」—— `<od-focus …/>` 的 `show`。
+   *
+   * daemon 已经校过 key、折过路径、剥过正文,这里拿到的只有结论。一轮可以发
+   * 好几枚(`open` 早发、`show` 晚发),所以**按字段**取最后一个,而不是按事件
+   * 整条覆盖 —— 否则晚到的 `show` 会把早到的 `open` 抹掉。
+   *
+   * 没有这个事件时 `show` 是 undefined,下面每一处收窄都退化成恒等 ——
+   * 「不发标记就按现在的规则展示」是产品拍的板,也是所有旧会话的样子。
+   */
+  const artifactFocus = useMemo(() => {
+    const selections: { open?: string; show?: string[] }[] = [];
+    for (const event of message.events ?? []) {
+      if (event?.kind !== 'artifact_focus') continue;
+      selections.push({
+        ...(event.open ? { open: event.open } : {}),
+        ...(event.show && event.show.length > 0 ? { show: event.show } : {}),
+      });
+    }
+    return foldArtifactFocusSelections(selections);
+  }, [message.events]);
+  /*
+   * `produced` 保持原样 —— 它是 daemon 结算出的**权威清单**,语义不能动。
+   *
+   * 收窄发生在两个**消费点**,不是在这里:结果面板有两条互斥的渲染路,
+   * 有写 / 改工具记录时走 `FileOpsSummary`(`summaryArtifactOps`),没有时走
+   * `ProducedFiles`(`displayedProduced`)。两条各收窄一次,各有各的测试和
+   * 各自的 ablation;在这里收窄会让其中一条被收两遍,那条的测试就永远红不了。
+   */
+  const produced = rawProduced;
   const displayedProduced = useMemo(
     () => {
       const linkedFiles = recoverLinkedProjectFilesFromContent({
@@ -734,9 +767,19 @@ function AssistantMessageImpl({
               fileOps,
               streaming,
             });
-      return mergeProjectFiles(baseFiles, linkedFiles);
+      /*
+       * 收窄放在**合并之后**,不是合并之前。
+       *
+       * `baseFiles` 有两个来源(daemon 结算的清单 / 本地推断),`linkedFiles`
+       * 是从正文里捞回来的第三个来源。三条都能往面板里塞卡片,所以只有在它们
+       * 汇成一条之后收窄,才是「这一轮显示哪些卡」的唯一出口 —— 收在任何一条
+       * 支流上,另外两条都会绕过去。
+       */
+      const merged = mergeProjectFiles(baseFiles, linkedFiles);
+      const narrowed = narrowProducedFilesToFocus(merged, artifactFocus.show);
+      return narrowed === merged ? merged : [...narrowed];
     },
-    [blocks, fileOps, message, produced, projectFiles, projectId, streaming],
+    [artifactFocus.show, blocks, fileOps, message, produced, projectFiles, projectId, streaming],
   );
   const turnFileOps = useMemo(
     () => mergeProducedFilesIntoFileOps(fileOps, displayedProduced),
@@ -752,9 +795,14 @@ function AssistantMessageImpl({
   // the daemon has attached an authoritative produced-file list, the result
   // card must describe that delivered set rather than every attempted tool
   // path. Failed attempts remain visible in the execution disclosure.
+  // 第二个收窄点:汇总行。它读的是权威清单,所以收窄要在这里做一次 —— 否则
+  // 卡片精简了、汇总行还写着 6 个文件,同一块面板自己跟自己不一致。
   const summaryArtifactOps = useMemo(
-    () => summaryArtifactOpsForProducedFiles(fileOps, produced),
-    [fileOps, produced],
+    () => summaryArtifactOpsForProducedFiles(
+      fileOps,
+      [...narrowProducedFilesToFocus(produced, artifactFocus.show)],
+    ),
+    [artifactFocus.show, fileOps, produced],
   );
   // The single artifact the "next step" affordance anchors to: prefer the HTML
   // produced by THIS turn; if the final turn emitted none (a summary / continue
@@ -2897,7 +2945,7 @@ function ProseBlock({
      * 噪音清掉,它们的扫描才不会被岔开。
      * 语法出处在 `@open-design/contracts`,两边共用一份,不会分叉。
      */
-    const stripped = stripArtifact(stripCritiqueGrammar(text));
+    const stripped = stripArtifact(stripArtifactFocusMarkers(stripCritiqueGrammar(text)));
     return hideRecoveredHtmlFallback ? stripRecoveredHtmlFallbackForDisplay(stripped, text) : stripped;
   }, [hideRecoveredHtmlFallback, text]);
   // While the latest turn is still streaming a not-yet-closed question-form,

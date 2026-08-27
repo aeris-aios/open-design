@@ -870,6 +870,23 @@ export type PersistedAgentEvent =
    * turn built and cannot be reconstructed after the fact.
    */
   | { kind: 'next_steps'; suggestions: string[] }
+  /**
+   * This turn's display intent — which file the preview opened and which
+   * produced files earned a card. Parsed by the daemon out of the agent's
+   * `<od-focus …/>` marker, key-checked against the turn nonce, and resolved to
+   * project-relative paths inside the project root, so the client stores
+   * conclusions and never raw protocol.
+   *
+   * Persisted with the turn's other events so a reloaded conversation shows the
+   * same card set it showed live. Turns recorded before this event existed have
+   * none, and MUST fall back to the host's own produced-file inference —
+   * unlike `next_steps`, "no event" here has a well-defined legacy meaning and
+   * rendering nothing would blank a panel that used to work.
+   *
+   * More than one may be persisted for a turn; fold last-wins per field with
+   * `foldArtifactFocusSelections`.
+   */
+  | { kind: 'artifact_focus'; open?: string; show?: string[] }
   | { kind: 'conversation_title'; title: string }
   | { kind: 'thinking'; text: string }
   | {

@@ -314,6 +314,7 @@ import {
 import { useIframeKeepAlivePool } from './IframeKeepAlivePool';
 import { invalidateHtmlSourceSnapshotProject } from './html-source-snapshot-cache';
 import {
+  decideAgentFocusOpen,
   decideAutoOpenAfterWrite,
   selectAutoOpenProducedArtifact,
   selectAutoOpenTurnArtifact,
@@ -3508,6 +3509,12 @@ export function ProjectView({
 
   const persistTabsState = useCallback(
     (next: OpenTabsState) => {
+      // A tab activation the host did not ask for is the user steering the
+      // preview themselves. See `userTookOverPreviewRef` for why that outranks
+      // an agent's `<od-focus open="…">`.
+      if (next.active && next.active !== lastHostRequestedOpenRef.current) {
+        userTookOverPreviewRef.current = true;
+      }
       setOpenTabsState(next);
       if (!tabsLoadedRef.current) return;
       // Immediate, cheap, synchronous — keeps the cache canonical for reload.
@@ -3774,8 +3781,31 @@ export function ProjectView({
     persistTabsState({ tabs: [primaryFile.name], active: primaryFile.name });
   }, [openTabsState.active, openTabsState.tabs.length, persistTabsState, projectFiles, routeFileName]);
 
+  /**
+   * The last file the HOST asked to open. Everything the host opens — an
+   * auto-open decision, a Share/Download affordance, a route restore — goes
+   * through `requestOpenFile`, so a tab activation that lands anywhere ELSE is
+   * the user's own click.
+   */
+  const lastHostRequestedOpenRef = useRef<string | null>(null);
+  /**
+   * True once the user has taken the preview over during the current run.
+   *
+   * Read by the `<od-focus open="…">` handler, which declines rather than yank
+   * the tab away. Reset when a run starts: taking over during turn N says
+   * nothing about turn N+1.
+   *
+   * Known false negative, accepted: the user clicking BACK to the file the host
+   * last opened is indistinguishable from the host's own open. The cost is that
+   * a later agent `open` may still fire in that one case, and the cost of
+   * closing it would be threading a "who asked" flag through FileWorkspace's
+   * whole tab surface.
+   */
+  const userTookOverPreviewRef = useRef(false);
+
   const requestOpenFile = useCallback((name: string) => {
     if (!name) return;
+    lastHostRequestedOpenRef.current = name;
     setOpenRequest({ name, nonce: Date.now() });
   }, []);
 
@@ -7288,6 +7318,9 @@ export function ProjectView({
       // has selected a turn-level artifact, however, an older Write refresh
       // must not move focus again.
       let completionSelectedAutoOpen = false;
+      // A new run gets a clean slate: taking the preview over during the last
+      // turn says nothing about this one.
+      userTookOverPreviewRef.current = false;
       const clearTraceTouchedFilePaths = () => {
         pendingWrites.clear();
         traceTouchedFilePaths.clear();
@@ -7369,6 +7402,40 @@ export function ProjectView({
           ...prev,
           events: appendCoalescedAgentEvent(prev.events ?? [], ev),
         }));
+        /*
+         * `<od-focus open="…">` —— agent 说「现在开这个」。
+         *
+         * daemon 已经证过三件事:key 是这一轮的、路径落在项目根之内、文件**非空**
+         * (空白预览在用户眼里就是 bug,产品明确拍过)。所以这里不再复核那三条,
+         * 只判客户端才知道的两条:是不是**本轮新建**的,以及用户有没有自己接管
+         * 过预览。判据全在 `decideAgentFocusOpen` 里,那是个纯函数,有独立红测。
+         *
+         * 事件可能在**回合中途**到达 —— 这正是它存在的意义:agent 写完 index.html
+         * 之后还要再花一分半写配套资源,不该让用户对着空白等到回合结束。
+         */
+        if (ev.kind === 'artifact_focus' && ev.open) {
+          const declaredPath = ev.open;
+          void refreshProjectFiles().then(async (nextFiles) => {
+            const moduleFileNames = /\.(jsx|tsx)$/i.test(declaredPath)
+              ? await collectReferencedJsxNames(nextFiles, readProjectHtml)
+              : undefined;
+            const decision = decideAgentFocusOpen({
+              declaredPath,
+              projectFiles: nextFiles,
+              preTurnFileNames: beforeFileNames,
+              userTookOverPreview: userTookOverPreviewRef.current,
+              moduleFileNames,
+            });
+            if (decision.shouldOpen && decision.fileName) {
+              // agent 的明示优先于本轮后续的启发式排序:它比 rank/mtime 更知道
+              // 哪个才是交付物。置位之后,尾随的配套文件写入不会再抢走焦点。
+              completionSelectedAutoOpen = true;
+              requestOpenFile(decision.fileName);
+            }
+          }).catch(() => {
+            // 后台读文件列表失败不具权威性 —— 保持现状,等下一个事件。
+          });
+        }
         if (ev.kind === 'live_artifact') {
           setLiveArtifactEvents((prev) => appendLiveArtifactEventItem(prev, ev));
           void refreshLiveArtifacts().then(() => {

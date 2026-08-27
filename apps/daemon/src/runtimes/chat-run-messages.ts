@@ -1,7 +1,7 @@
 import { performance } from 'node:perf_hooks';
 import type Database from 'better-sqlite3';
 import type { PersistedAgentEvent } from '@open-design/contracts';
-import { MAX_NEXT_STEP_SUGGESTIONS } from '@open-design/contracts';
+import { MAX_ARTIFACT_FOCUS_SHOW, MAX_NEXT_STEP_SUGGESTIONS } from '@open-design/contracts';
 import type { RunFinishedProps } from '@open-design/contracts/analytics';
 import {
   appendMessageAgentEvents,
@@ -426,6 +426,29 @@ export function daemonAgentPayloadToPersistedAgentEvent(data: unknown): Persiste
       .slice(0, MAX_NEXT_STEP_SUGGESTIONS);
     if (suggestions.length === 0) return null;
     return { kind: 'next_steps', suggestions };
+  }
+  /**
+   * Persisted so a reloaded conversation shows the same card set it showed
+   * live. Unlike `next_steps`, a turn with no such event is NOT rendered empty:
+   * the host falls back to its own produced-file inference, which is what every
+   * conversation recorded before this event looks like.
+   *
+   * Stored only when it carries something usable — an event with neither field
+   * would be a persisted no-op that later folds have to skip anyway.
+   */
+  if (type === 'artifact_focus') {
+    const open = typeof data.open === 'string' && data.open ? data.open : undefined;
+    const show = Array.isArray(data.show)
+      ? data.show
+          .filter((p): p is string => typeof p === 'string' && p.trim().length > 0)
+          .slice(0, MAX_ARTIFACT_FOCUS_SHOW)
+      : undefined;
+    if (!open && (!show || show.length === 0)) return null;
+    return {
+      kind: 'artifact_focus',
+      ...(open ? { open } : {}),
+      ...(show && show.length > 0 ? { show } : {}),
+    };
   }
   if (type === 'conversation_title' && typeof data.title === 'string') {
     return { kind: 'conversation_title', title: data.title };

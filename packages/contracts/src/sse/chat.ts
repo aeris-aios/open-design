@@ -127,6 +127,26 @@ export type DaemonAgentPayload =
    * list.
    */
   | { type: 'next_steps'; suggestions: string[] }
+  /**
+   * This turn's display intent, already parsed, key-checked, and path-resolved
+   * out of the agent's `<od-focus …/>` marker. See
+   * `api/artifact-focus-marker.ts` for the marker itself.
+   *
+   * `open` is a project-relative path the preview should show; the daemon has
+   * already proven it resolves inside the project root and that the file is
+   * non-empty, so the client never opens a blank tab and never asks for a path
+   * the agent invented. `show` is the subset of this turn's produced files that
+   * deserves a card — a filter, never an addition.
+   *
+   * May arrive more than once per turn: `open` fires as soon as the file has
+   * content (mid-turn, deliberately), while `show` is only knowable at the end.
+   * Consumers fold last-wins PER FIELD (`foldArtifactFocusSelections`), so a
+   * late `show`-only event cannot retract an early `open`.
+   *
+   * A turn with no marker emits no event, and the client must keep its existing
+   * inference exactly as-is — "no event" never means "show nothing".
+   */
+  | { type: 'artifact_focus'; open?: string; show?: string[] }
   | { type: 'conversation_title'; title: string }
   | { type: 'thinking_delta'; delta: string }
   | { type: 'thinking_start' }

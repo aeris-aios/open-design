@@ -25,7 +25,7 @@ import {
   unfinishedTodosFromTodoWriteInput,
   type RecalledTodo,
 } from '@open-design/contracts';
-import { renderNextStepMarkerExample } from '@open-design/contracts';
+import { renderArtifactFocusMarkerExample, renderNextStepMarkerExample } from '@open-design/contracts';
 import type {
   CollabCloudMemberDirectoryEntry,
   TeamProject,
@@ -426,6 +426,7 @@ import { ingestRoutineConnectorEvolution } from './automation-routine-evolution.
 import { createClaudeStreamHandler } from './runtimes/claude-stream.js';
 import { createAgentTitleMarkerStripper } from './title-marker.js';
 import { createPanelGrammarStripper } from './panel-grammar-strip.js';
+import { createArtifactFocusMarkerStripper } from './artifact-focus-marker.js';
 import { createNextStepMarkerStripper } from './next-step-marker.js';
 import { createRoleMarkerGuard } from './role-marker-guard.js';
 import { createToolLoopGuard, resolveToolLoopMode, type ToolLoopVerdict } from './tool-loop-guard.js';
@@ -10665,6 +10666,32 @@ export async function startServer({
           'The block is protocol, not prose: do not mention it, do not explain it, and do not wrap it in a code fence.',
         ].join('\n')
       : '';
+    /*
+     * This turn's display intent.
+     *
+     * Same per-turn slice and same shared nonce as the two markers above — see
+     * `packages/contracts/src/api/artifact-focus-marker.ts` for why this one is
+     * keyed (it names a path the host then reads and renders, so an unkeyed
+     * form would let any document the agent merely READ steer the preview).
+     *
+     * Deliberately short. Everything the host can decide for itself is decided
+     * for itself: the marker is optional, and a turn without one keeps the
+     * existing produced-file inference untouched.
+     */
+    const artifactFocusPrompt = typeof run.doneKey === 'string' && run.doneKey
+      ? [
+          'Artifact focus:',
+          'The moment a file you created this turn has real content in it — not before it is written, and not held until the end of the turn — emit one marker naming it:',
+          renderArtifactFocusMarkerExample(run.doneKey, { open: 'index.html' }),
+          'That opens it in the preview immediately, so the user is not staring at an empty pane while you write the rest.',
+          `Add a \`show\` list — on the same marker or a later one — to say which files deserve a result card: ${renderArtifactFocusMarkerExample(run.doneKey, { show: ['index.html', 'report.md'] })}`,
+          'Name only the deliverables. A page plus its stylesheet, scripts, and a dozen images is ONE deliverable; list the page.',
+          'Paths are relative to the project root, and `open` must be a file you created in THIS turn. Emit the marker again to change your mind — the last value of each attribute wins.',
+          'Skip it entirely when the turn created nothing worth looking at. The host then picks for itself, which is the behaviour you get today.',
+          `This turn's key is ${run.doneKey}: copy it verbatim, never reuse an earlier one, and never invent one.`,
+          'The marker is protocol, not prose: do not mention it, do not explain it, and do not wrap it in a code fence.',
+        ].join('\n')
+      : '';
     // The connected-external-MCP directive reflects live OAuth token state,
     // which flips mid-conversation as Bearers expire/refresh. Keeping it out of
     // the cached stable prefix (daemonSystemPrompt) and re-sending it here in
@@ -10673,8 +10700,8 @@ export async function startServer({
     // giving the model the current MCP auth state on every turn.
     const mcpConnectedDirective = renderConnectedExternalMcpDirective(connectedExternalMcp);
     const clientInstructionParts = includeStableInstructions
-      ? [researchCommandContract, runContextPrompt, mcpConnectedDirective, browserUsePromptGuard, titleGenerationPrompt, doneMarkerPrompt, nextStepPrompt, systemPrompt]
-      : [researchCommandContract, runContextPrompt, mcpConnectedDirective, browserUsePromptGuard, titleGenerationPrompt, doneMarkerPrompt, nextStepPrompt];
+      ? [researchCommandContract, runContextPrompt, mcpConnectedDirective, browserUsePromptGuard, titleGenerationPrompt, doneMarkerPrompt, nextStepPrompt, artifactFocusPrompt, systemPrompt]
+      : [researchCommandContract, runContextPrompt, mcpConnectedDirective, browserUsePromptGuard, titleGenerationPrompt, doneMarkerPrompt, nextStepPrompt, artifactFocusPrompt];
     const clientInstructionPrompt = clientInstructionParts
       .map((part) => (typeof part === 'string' ? part.trim() : ''))
       .filter(Boolean)
@@ -12902,23 +12929,58 @@ export async function startServer({
       key: typeof run.doneKey === 'string' && run.doneKey ? run.doneKey : null,
       emit: (suggestions) => send('agent', { type: 'next_steps', suggestions }),
     });
+    /*
+     * 这一轮的「显示什么」(`<od-focus …/>`,见 `artifact-focus-marker.ts`)。
+     *
+     * 和上面三个剥离器串在同一条链上,理由一样:所有可见文本都要过这条链,
+     * 挂在这里就不会漏掉任何一个调用点。
+     *
+     * key 只管**采纳**,不管**剥离** —— 和 `<od-next>` 同一条规矩,也是
+     * `<od-title>` 拿线上事故换来的。
+     *
+     * `open` 还要过一道文件系统门:声明的路径必须落在项目根之内(realpath 之后
+     * 再判一次,软链走不出去),而且文件必须**非空**。空白预览在用户眼里就是
+     * bug,所以标记先到、字节后到时,标记是**攒着**而不是丢掉 —— 由
+     * `settle()` 在每个 tool_result 之后补发。
+     */
+    const artifactFocusStripper = createArtifactFocusMarkerStripper({
+      key: typeof run.doneKey === 'string' && run.doneKey ? run.doneKey : null,
+      projectRoot: typeof cwd === 'string' && cwd ? cwd : null,
+      emit: (selection) => send('agent', { type: 'artifact_focus', ...selection }),
+    });
     const titleMarkerStripper = {
       strip: (delta: string) =>
         nextStepMarkerStripper.strip(
-          panelGrammarStripper.strip(rawTitleMarkerStripper.strip(delta)),
+          artifactFocusStripper.strip(
+            panelGrammarStripper.strip(rawTitleMarkerStripper.strip(delta)),
+          ),
         ),
       flush: () => {
         const head = nextStepMarkerStripper.strip(
-          panelGrammarStripper.strip(rawTitleMarkerStripper.flush()),
+          artifactFocusStripper.strip(
+            panelGrammarStripper.strip(rawTitleMarkerStripper.flush()),
+          ),
         );
-        const mid = nextStepMarkerStripper.strip(panelGrammarStripper.flush());
-        return head + mid + nextStepMarkerStripper.flush();
+        const mid = nextStepMarkerStripper.strip(
+          artifactFocusStripper.strip(panelGrammarStripper.flush()),
+        );
+        const tail = nextStepMarkerStripper.strip(artifactFocusStripper.flush());
+        return head + mid + tail + nextStepMarkerStripper.flush();
       },
     };
 
     function flushAgentTitleMarkerBuffer() {
       const visible = titleMarkerStripper.flush();
       if (visible) emitGuardedTextDelta(visible);
+      /*
+       * Backstop for the empty-file gate. The normal release path is the
+       * `tool_result` hook in `emitAgentEvent` — the write lands, the result
+       * frame arrives, the bytes are there. This covers the runtime that
+       * reports no write event at all: the file is on disk by the time the
+       * stream ends, so one last probe turns a held marker into an event.
+       * Fire-and-forget on purpose; the run must not block on a stat.
+       */
+      void artifactFocusStripper.settle();
     }
 
     function guardTextDelta(delta) {
@@ -13083,6 +13145,17 @@ export async function startServer({
       noteFirstOutputEvent(ev);
       send('agent', ev);
       observeToolEventForLoop(ev);
+      /*
+       * The `<od-focus open="…">` release point.
+       *
+       * A tool result is the daemon's only runtime-agnostic "the filesystem may
+       * have changed" signal — Write, Edit, and a Bash heredoc all land here,
+       * and this is the choke point every one of the 27 adapters funnels
+       * through, so no runtime can drift out of coverage. `settle()` is a no-op
+       * unless a marker is actually waiting on bytes, and it is idempotent, so
+       * calling it on every result costs one branch.
+       */
+      if (ev?.type === 'tool_result') void artifactFocusStripper.settle();
     }
 
     const sendAgentEvent = (ev) => {
