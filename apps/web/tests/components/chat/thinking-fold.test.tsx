@@ -83,10 +83,32 @@ describe('N2 跑完的 thinking 收进折叠行', () => {
     )));
     openShell(container);
     expect(screen.queryByText('思考过程')).toBeNull();
-    /* 结构断言:推理段必须**直接**挂在壳的 body 上。只写 queryByText 为 null
-       的话,这条在没实现折叠时天然成立 —— 空转。 */
-    const p = screen.getByText('先判断这一屏属于哪种页面类型。');
-    expect(p.parentElement?.className).toMatch(/body/);
+    /*
+     * 结构断言。只写 `queryByText('思考过程')` 为 null 的话,这条在没实现折叠时
+     * 天然成立 —— 空转,所以必须配一条说明推理**到底在哪**的正向断言。
+     *
+     * ⚠️ 这里原来断言的是「推理段直接挂在壳的 body 上」。**那描述的是旧架构**:
+     * 当时思考是**壳的一种形态**(整只壳 body 换成 96px 的流式窗)。用户
+     * 2026-08-27 把它推翻了 —— 「绝不能 thinking 的时候直接把进行中或原本的
+     * 东西给替换了」—— 思考改成**壳里的一个条目**,流式窗下沉到那一格自己身上
+     * (§F-15 / §F-18)。所以推理现在的正确位置是 `.thoughts` 那一格里面,
+     * 不是壳 body 的直接子代。
+     *
+     * 另外不能用 `getByText` 找这一段:还在跑的那一段会被逐字浮现
+     * (`useCharReveal`,§F-16)按字拆成一串 `<span>`,整段匹配从此找不到它。
+     * 改成在段落自己的 `textContent` 上找,拆不拆都成立。
+     */
+    const p = [...container.querySelectorAll('p, div')]
+      .find((n) => (n.textContent ?? '') === '先判断这一屏属于哪种页面类型。');
+    expect(p).toBeTruthy();
+    // 推理住在思考那一格里
+    const row = p?.closest('details');
+    expect(row?.className).toMatch(/thoughts/);
+    // 而且那一格是**摊开**的 —— 还在想的时候不该要用户点开才看得见
+    expect(row?.open).toBe(true);
+    // 反向对照:这一格仍然在壳里,没有跑到壳外面去
+    expect(row?.closest('details')?.parentElement ?? row?.parentElement)
+      .toBeTruthy();
   });
 
   it('普通过程叙述(非 thinking)不进折叠,照旧平铺', () => {
