@@ -4053,8 +4053,14 @@ function sortChatCommentAttachmentsByOrder(attachments: ChatCommentAttachment[])
 /* 5×5 dot-matrix "cross expand" glyph shown inside the black send button while
    a run is executing: a plus shape blooms outward from the center in Manhattan
    steps (delay = 220ms × Manhattan distance from the middle dot); the faint
-   base grid stays static. Dots use currentColor so the glyph adapts to the
-   button's light-on-dark (and dark-mode inverted) fill. */
+   base grid stays static.
+
+   The dot ink is baked into the file (#DEDDDD), NOT currentColor: an <img>
+   renders its SVG in an isolated document, so no host colour — currentColor
+   included — reaches inside it. Anything this glyph needs to look right has to
+   live in the file itself, which is also why a filter in there once painted a
+   black box over the whole 18×18 box with nothing in the app able to override
+   it (see ChatComposer.thinking-glyph.test.tsx). */
 function ComposerRunIcon({ className }: { className?: string }) {
   // Self-animating matrix loader (SMIL inside the SVG); runs on its own as an
   // <img>, so it needs none of the <video> autoplay/loop plumbing.

@@ -2325,7 +2325,7 @@
   height: 18px;
   pointer-events: none;
   /* Self-animating matrix-loader SVG: show the whole square grid (no circular
-     crop) so the corner cells and their bloom aren't clipped. */
+     crop) so the corner cells aren't clipped. */
   object-fit: contain;
 }
 .composer-hint {

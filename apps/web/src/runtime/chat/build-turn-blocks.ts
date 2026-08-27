@@ -295,6 +295,38 @@ function makeSegment(todo: RawTodo, recalled: boolean): TodoSegment {
   };
 }
 
+/**
+ * 上一轮里**真动过手**的那些 todo 的 content —— 也就是「旧账」的全集。
+ *
+ * 召回要判的是「这一条不是本轮新开的活」(见 `contract.ts` 的 `isStruck`)。
+ * 一条 todo 只有在**更早那轮已经开工或已经关掉**时才够得上这句话:
+ * 上一轮做完的、做到一半被打断的,本轮再列出来都是欠账。
+ *
+ * 反过来,一条上一轮只是**说出口、一次都没开始**(`pending`)的 todo,不是欠账 ——
+ * 它连开工都没有,本轮把它建出来就是**头一回真的要干**。
+ * 真机复现(2026-08-27,产品负责人截图,会话 `7e97c7e9-…`):
+ * 某一轮声明了五条就被取消,五条全停在 `pending`;两轮之后 agent 重新建出同样五条
+ * (claude 的 `TaskList` 返回 `No tasks found`,并没有从哪儿捞回来),
+ * 结果整份**刚开始跑**的计划五条全划线,第一条还同时是「进行中」——
+ * 又说「正在做」又说「这是旧账」,自相矛盾。
+ *
+ * 注意这**不是**「按状态过滤 carry」:上一轮做完的条目照样留在集合里
+ * (`todos.ts` 那段注释说的「Recall is matched on content, never on status」
+ * 防的是把 carry 砍成只剩未完成项,那会让「召回 · 上一轮就完成的」判不出来)。
+ * 这里只把「从没开始过」摘出去,规格 `chat-panel-next.md:274-283` 那张表里
+ * 「还没跑的 → 划线 ✗」说的就是它。
+ */
+function recalledContents(
+  previousTodos: BuildTurnInput['previousTodos'],
+): Set<string> {
+  const out = new Set<string>();
+  for (const todo of previousTodos ?? []) {
+    if (todo.status === 'pending') continue;
+    out.add(todo.content);
+  }
+  return out;
+}
+
 export function buildTurnBlocks(input: BuildTurnInput): TurnBlock[] {
   const events = input.events ?? [];
   /*
@@ -305,7 +337,7 @@ export function buildTurnBlocks(input: BuildTurnInput): TurnBlock[] {
   const turnIsLive = (input.runStatus ?? 'running') === 'running'
     || input.runStatus === 'queued';
   const blocks: TurnBlock[] = [];
-  const previous = new Set((input.previousTodos ?? []).map((t) => t.content));
+  const previous = recalledContents(input.previousTodos);
   /**
    * 本轮的 done 密钥。`null` = 这一轮没有密钥,回落到老判据。
    *
