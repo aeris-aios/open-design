@@ -981,10 +981,13 @@
 }
 .assistant-label { font-weight: 500; color: var(--text-muted); font-size: 11px; }
 
+/* 一轮**内部**那一档间距。稿子 `docs/design/chat-panel/src/scene-shell.css`:
+   `.flow { … gap: 12px }` —— 「同一个人连着说的几块之间是 12」。
+   轮次**之间**的 24 不在这里,在 `routines.css` 的 `.chat-log` 那一段。 */
 .assistant-flow {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 12px;
   min-width: 0;
 }
 .prose-block {

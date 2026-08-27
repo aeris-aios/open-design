@@ -848,8 +848,9 @@
      —— 这张卡是定宽的,不跟着聊天列宽摊开。原来没写宽度,量出来 728px(稿子 380)。 */
   width: 380px;
   max-width: 100%;
-  /* 稿子 `.card` 不带外距也不带投影 —— 上下间距由 `.assistant-flow` 的 gap:14px 给。
-     自己再加 margin 就是 14+8,比稿子松一档。 */
+  /* 稿子 `.card` 不带外距也不带投影 —— 上下间距由 `.assistant-flow` 的 gap:12px 给
+     (稿子 `scene-shell.css` 的 `.flow { gap: 12px }`,轮次**内部**那一档)。
+     自己再加 margin 就是 12+8,比稿子松一档。 */
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   background: var(--bg-panel);
