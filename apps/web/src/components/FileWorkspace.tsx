@@ -9,8 +9,6 @@ import {
   type DragEvent as ReactDragEvent,
   type ReactNode,
 } from 'react';
-import type { ArtifactExportFormat } from '../runtime/chat/artifact-export';
-import type { ArtifactPublishTarget } from '../runtime/chat/artifact-publish';
 import { Button } from '@open-design/components';
 import { createPortal } from 'react-dom';
 import type { DesignSystemEditClickProps, TrackingArtifactKind, TrackingProjectKind } from '@open-design/contracts/analytics';
@@ -238,10 +236,10 @@ interface Props {
   pinnedBrowserTabId?: string | null;
   // Open the named file AND surface its Share/Export menu. Drives the chat-side
   // "Share" next-step action without a dedicated share backend.
-  shareRequest?: { name: string; nonce: number; target?: ArtifactPublishTarget } | null;
+  shareRequest?: { name: string; nonce: number; anchorId?: string } | null;
   // Open the named file AND surface its Download/Export menu. Drives the
   // chat-side "Download" next-step action.
-  downloadRequest?: { name: string; nonce: number; format?: ArtifactExportFormat } | null;
+  downloadRequest?: { name: string; nonce: number; anchorId?: string } | null;
   // Flip a deck preview to a given slide when a queued chat send starts. Mirrors
   // `shareRequest`: the named file is activated (if open) and the matching
   // FileViewer consumes the nonce to navigate.
@@ -3322,7 +3320,7 @@ export function FileWorkspace({
     () => (shareRequest
       ? {
           name: shareRequest.name,
-          request: { nonce: shareRequest.nonce, target: shareRequest.target },
+          request: { nonce: shareRequest.nonce, anchorId: shareRequest.anchorId },
         }
       : null),
     [shareRequest],
@@ -3331,7 +3329,7 @@ export function FileWorkspace({
     () => (downloadRequest
       ? {
           name: downloadRequest.name,
-          request: { nonce: downloadRequest.nonce, format: downloadRequest.format },
+          request: { nonce: downloadRequest.nonce, anchorId: downloadRequest.anchorId },
         }
       : null),
     [downloadRequest],

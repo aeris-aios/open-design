@@ -5,8 +5,6 @@ import { buildTurnBlocks } from "../runtime/chat/build-turn-blocks";
 import type { ExecutionShell as ExecutionShellData } from "../runtime/chat/contract";
 import { upstreamActivityAt } from "../runtime/chat/upstream-activity";
 import { FileOpsSummary } from "./FileOpsSummary";
-import type { ArtifactExportFormat } from "../runtime/chat/artifact-export";
-import type { ArtifactPublishTarget } from "../runtime/chat/artifact-publish";
 import {
   renderMarkdown,
   type MarkdownLinkClickHandler,
@@ -418,14 +416,13 @@ interface Props {
   // assistant message. Omitting them hides the affordance entirely (e.g. in
   // tests that don't wire chat send).
   /**
-   * 发布这份产物。
+   * 发布这份产物 —— 打开文件并展开预览区**本来那块**分享菜单。
    *
-   * `target` **只有产物卡的发布浮层会传** —— 卡上已经选完「发到哪儿」了,
-   * 不该再把人送去预览区的分享面板选第二遍(那块面板还开在视口右上角,离卡
-   * 两千像素)。不带 `target` 的调用(「下一步引导」那行〔分享〕)沿用原语义:
-   * 打开文件并展开分享菜单。
+   * `anchorId` **只有产物卡的那枚胶囊会传**:菜单不再开在预览区右上角,而是
+   * 开在这枚按钮旁边(产品 2026-08-27)。不带 `anchorId` 的调用(「下一步引导」
+   * 那行〔分享〕)照旧开在预览区自己的工具栏下面。
    */
-  onArtifactShare?: (fileName: string, target?: ArtifactPublishTarget) => void;
+  onArtifactShare?: (fileName: string, anchorId?: string) => void;
   // Featured design-toolbox follow-up rows on the "next step" card. Seeding the
   // composer with an action / opening the toolbox both route through the
   // composer; see ChatPane's composer ref wiring.
@@ -452,16 +449,15 @@ interface Props {
    */
   onNextStepSuggestion?: (text: string) => void;
   /**
-   * 导出这份产物。
+   * 导出这份产物 —— 打开文件并展开预览区**本来那块**导出菜单。
    *
-   * `format` **只有产物卡的格式浮层会传** —— 多格式产物(HTML)在卡上就把格式
-   * 选完了,不该再把人送进预览区的导出菜单里选第二遍。不带 `format` 的调用
-   * (「下一步引导」那一行的〔下载〕)沿用原来的语义:打开文件并展开导出菜单。
+   * `anchorId` 的作用同 `onArtifactShare`:产物卡传它,菜单就开在卡上那枚按钮
+   * 旁边;「下一步引导」那行〔下载〕不传,菜单开在预览区工具栏下面。
    *
    * 单格式产物(md / 图片 / 视频 / 其它)压根不调这个回调 —— 卡上那枚就是
    * 一条 `<a download>`,见 `runtime/chat/artifact-export.ts`。
    */
-  onArtifactDownload?: (fileName: string, format?: ArtifactExportFormat) => void;
+  onArtifactDownload?: (fileName: string, anchorId?: string) => void;
   nextStepSkills?: SkillSummary[];
   nextStepVariant?: NextStepActionsVariant;
 }

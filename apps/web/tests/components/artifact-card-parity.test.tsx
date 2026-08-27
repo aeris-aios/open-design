@@ -330,7 +330,7 @@ describe('动作胶囊的字形', () => {
 });
 
 /* ------------------------------------------------------------------ *
- * 5 · 导出:单格式直接下载,多格式才开浮层
+ * 5 · 导出:单格式直接下载,多格式才把菜单交给预览区
  * ------------------------------------------------------------------ */
 describe('导出行为', () => {
   it('单格式产物(md)点「导出」直接下载,不弹任何东西', () => {
@@ -349,7 +349,6 @@ describe('导出行为', () => {
     expect(act.tagName, 'md 的导出应该就是一条下载链接').toBe('A');
     expect(act.getAttribute('download')).toBe('notes.md');
     fireEvent.click(act);
-    expect(screen.queryByTestId('artifact-export-popover'), 'md 不该弹格式浮层').toBeNull();
     expect(onExport, 'md 不该绕道预览区的导出菜单').not.toHaveBeenCalled();
   });
 
@@ -371,7 +370,7 @@ describe('导出行为', () => {
     expect(onExport).not.toHaveBeenCalled();
   });
 
-  it('多格式产物(html)点「导出」开一枚**贴着按钮**的浮层', () => {
+  it('多格式产物(html)是按钮,点它把菜单交给预览区(反向对照)', () => {
     const onExport = vi.fn();
     render(
       <CollabProvider value={projectCollabValue()}>
@@ -384,47 +383,29 @@ describe('导出行为', () => {
     );
 
     const act = screen.getByTestId('artifact-card-export-landing.html');
-    expect(act.tagName, 'html 的导出要能开浮层,所以是按钮不是链接').toBe('BUTTON');
-    expect(screen.queryByTestId('artifact-export-popover'), '还没点就开着').toBeNull();
-
+    expect(act.tagName, 'html 的导出要开菜单,所以是按钮不是链接').toBe('BUTTON');
+    expect(act.getAttribute('aria-haspopup')).toBe('menu');
     fireEvent.click(act);
-    const popover = screen.getByTestId('artifact-export-popover');
-    expect(popover).toBeTruthy();
-    /*
-     * 「贴着按钮」现在由坐标证明,不是由 DOM 父子证明 —— 浮层已经 portal 到
-     * body(不 portal 就困在 `.artifact-card-acts` 那个 z=2 的层叠上下文里,
-     * 压不过提示层)。父子关系反过来必须是**分开的**。
-     * 坐标本身在下面「浮层的坐标」那一组里量。
-     */
-    expect(act.closest('.artifact-card-act-anchor')?.contains(popover)).toBe(false);
-    expect(popover.parentElement).toBe(document.body);
-    // 落在按钮的上下由空间决定,所以要有个可判读的落位标记
-    expect(['above', 'below']).toContain(popover.getAttribute('data-placement'));
-
-    // 选一种格式才真的走导出
-    const pdf = within(popover).getByTestId('artifact-export-format-pdf');
-    fireEvent.click(pdf);
-    expect(onExport).toHaveBeenCalledWith('landing.html', 'pdf');
-    expect(screen.queryByTestId('artifact-export-popover'), '选完没关掉').toBeNull();
+    expect(onExport).toHaveBeenCalledTimes(1);
   });
 });
 
 /* ------------------------------------------------------------------ *
- * 6 · 发布也贴着按钮开(产品 2026-08-27 第二次口径)
+ * 6 · 卡上两枚都**复用预览区那两块菜单**,自己不另画
  * ------------------------------------------------------------------ *
- * 「产品期望 html 的导出和发布的弹窗,都直接显示在卡片导出发布的按钮附近,
- *   动态根据上下空间判断是显示在按钮上面还是下面」。
+ * 产品 2026-08-27 看到卡上自制的窄浮层之后当场推翻:
+ *   「为啥这个发布弹窗是这样的?? 为啥不直接复用现在那个分享弹窗??」
+ *   「导出这个样式也不对呢, 为啥不直接复用?」
  *
- * 之前只有〔导出〕做了。〔发布〕仍旧把请求甩给预览区,由那边在**视口右上角**
- * 展开自己的分享菜单 —— 实测按钮在 (129, 2287),弹层在 (1436, 94),两者相距
- * 整整一屏。用户原话:「发布按钮的弹窗怎么还是到右上角弹出来的??」
+ * 所以卡上**不再有自己的菜单**。两枚胶囊只做一件事:把「在哪儿开」告诉预览区,
+ * 由预览区把它**本来那块**菜单开在这枚按钮旁边。位置那条口径不变:
+ *   「都直接显示在卡片导出发布的按钮附近,动态根据上下空间判断是显示在按钮
+ *     上面还是下面」。
  *
- * 稿子对「发布点下去之后长什么样」**没有任何规定** —— 全稿 24 个组件里
- * 「发布」只在组件 14 的卡上出现过,散文只说了一句「『发布』说的是"送出去"」。
- * 所以这里的规格是产品那条口径 + 稿子那条「这张卡上要做的事本来就只有两件」:
- * 卡上给一枚**窄**浮层(去哪儿发),不是把预览区那整块分享面板搬过来。
+ * 稿子对「发布点下去之后长什么样」仍旧一个字没写(全稿 24 个组件里「发布」只在
+ * 组件 14 的卡上出现过一次)—— 现在由产品指定了,答案是「就用现在那块」。
  */
-describe('发布也贴着按钮开', () => {
+describe('卡上的两枚胶囊复用预览区的菜单', () => {
   function renderHtmlCard(overrides: Record<string, unknown> = {}) {
     return render(
       <CollabProvider value={projectCollabValue()}>
@@ -439,177 +420,67 @@ describe('发布也贴着按钮开', () => {
     );
   }
 
-  it('点〔发布〕开一枚浮层,而不是把请求甩给别处', () => {
+  it('卡上不再自造发布菜单 —— 点一下就把「在哪儿开」交出去', () => {
     const onPublish = vi.fn();
     renderHtmlCard({ onPublish });
 
     const act = screen.getByTestId('artifact-card-publish-landing.html');
-    expect(act.tagName, '发布要能开浮层,所以是按钮').toBe('BUTTON');
-    expect(screen.queryByTestId('artifact-publish-popover'), '还没点就开着').toBeNull();
-    // 关键:点一下**不该**立刻把动作甩出去,那正是「跑去右上角弹」的成因
     fireEvent.click(act);
-    expect(onPublish, '点按钮本身就把动作甩出去了').not.toHaveBeenCalled();
-    expect(screen.getByTestId('artifact-publish-popover')).toBeTruthy();
+
+    // 自制的那枚窄浮层必须消失
+    expect(
+      screen.queryByTestId('artifact-publish-popover'),
+      '卡上还留着自造的发布菜单',
+    ).toBeNull();
+    // 交出去的是「哪份产物 + 锚在哪枚按钮上」
+    expect(onPublish).toHaveBeenCalledTimes(1);
+    const [name, anchorId] = onPublish.mock.calls[0] as [string, string];
+    expect(name).toBe('landing.html');
+    expect(anchorId, '没有把锚点交出去,预览区无从知道开在哪儿').toBeTruthy();
+    // 锚点必须能在文档里找回来 —— 菜单是几百毫秒之后才挂上的
+    expect(document.querySelector(`[data-artifact-anchor="${anchorId}"]`)).toBe(act);
   });
 
-  it('浮层里是发布目的地,选一个才真的发布', () => {
+  it('卡上也不再自造导出格式菜单', () => {
+    const onExport = vi.fn();
+    renderHtmlCard({ onExport });
+
+    const act = screen.getByTestId('artifact-card-export-landing.html');
+    fireEvent.click(act);
+
+    expect(
+      screen.queryByTestId('artifact-export-popover'),
+      '卡上还留着自造的导出菜单',
+    ).toBeNull();
+    expect(onExport).toHaveBeenCalledTimes(1);
+    const [name, anchorId] = onExport.mock.calls[0] as [string, string];
+    expect(name).toBe('landing.html');
+    expect(document.querySelector(`[data-artifact-anchor="${anchorId}"]`)).toBe(act);
+  });
+
+  it('两枚锚点互不相同 —— 否则发布会开到导出那枚上', () => {
     const onPublish = vi.fn();
-    renderHtmlCard({ onPublish });
+    const onExport = vi.fn();
+    renderHtmlCard({ onPublish, onExport });
     fireEvent.click(screen.getByTestId('artifact-card-publish-landing.html'));
-
-    const popover = screen.getByTestId('artifact-publish-popover');
-    // 公开链接 + 两家部署商 —— 与 `DEPLOY_PROVIDER_IDS` 同源,不另抄一份
-    expect(within(popover).getByTestId('artifact-publish-target-public-link')).toBeTruthy();
-    expect(within(popover).getByTestId('artifact-publish-target-vercel-self')).toBeTruthy();
-    expect(within(popover).getByTestId('artifact-publish-target-cloudflare-pages')).toBeTruthy();
-    // 预览区那块分享面板里的**链接管理**不搬过来(它们要 viewer 的状态)
-    expect(within(popover).queryByTestId('artifact-publish-target-save-template')).toBeNull();
-
-    fireEvent.click(within(popover).getByTestId('artifact-publish-target-vercel-self'));
-    expect(onPublish).toHaveBeenCalledWith('landing.html', 'vercel-self');
-    expect(screen.queryByTestId('artifact-publish-popover'), '选完没关掉').toBeNull();
-  });
-
-  it('两枚浮层都带上下落位标记(空间不够就翻面)', () => {
-    renderHtmlCard();
-    fireEvent.click(screen.getByTestId('artifact-card-publish-landing.html'));
-    expect(['above', 'below']).toContain(
-      screen.getByTestId('artifact-publish-popover').getAttribute('data-placement'),
-    );
     fireEvent.click(screen.getByTestId('artifact-card-export-landing.html'));
-    expect(['above', 'below']).toContain(
-      screen.getByTestId('artifact-export-popover').getAttribute('data-placement'),
-    );
+    expect(onPublish.mock.calls[0]?.[1]).not.toBe(onExport.mock.calls[0]?.[1]);
   });
-});
 
-/* ------------------------------------------------------------------ *
- * 7 · 浮层挂在 body 上,不困在卡的层叠上下文里
- * ------------------------------------------------------------------ *
- * `.artifact-card-acts` 是 `position:absolute; z-index:2` —— 它**自己就是一个
- * 层叠上下文**。浮层留在里面的话,不管写多大的 z-index,都只能在这个 z=2 的
- * 盒子里和兄弟比高低,永远压不过 portal 到 body 的提示层(`.od-tooltip-layer`,
- * z-index 4000)。用户截图里那条深色 tooltip 就是这么盖在导出菜单上的。
- *
- * 仓库里已有的同类是 `CustomSelect`:portal 到 body + fixed 坐标 + 滚动/缩放
- * 时重算,菜单类 `.od-select-menu` 落在 9000,**本来就在提示层之上**。
- */
-describe('浮层的层位', () => {
-  it('导出浮层 portal 到 body,不留在卡里', () => {
+  it('单格式产物照旧直接下载,压根不惊动预览区(反向对照)', () => {
+    const onExport = vi.fn();
     render(
       <CollabProvider value={projectCollabValue()}>
         <FileOpsSummary
-          entries={[fileOpEntry('landing.html')]}
+          entries={[fileOpEntry('notes.md')]}
           projectId={PROJECT_ID}
-          onExport={vi.fn()}
+          onExport={onExport}
         />
       </CollabProvider>,
     );
-    fireEvent.click(screen.getByTestId('artifact-card-export-landing.html'));
-    const popover = screen.getByTestId('artifact-export-popover');
-    expect(popover.closest('[data-artifact-card]'), '浮层还困在卡的层叠上下文里').toBeNull();
-    expect(popover.parentElement, '没有 portal 到 body').toBe(document.body);
-  });
-
-  it('发布浮层同样 portal 到 body', () => {
-    render(
-      <CollabProvider value={projectCollabValue()}>
-        <FileOpsSummary
-          entries={[fileOpEntry('landing.html')]}
-          projectId={PROJECT_ID}
-          onPublish={vi.fn()}
-        />
-      </CollabProvider>,
-    );
-    fireEvent.click(screen.getByTestId('artifact-card-publish-landing.html'));
-    const popover = screen.getByTestId('artifact-publish-popover');
-    expect(popover.closest('[data-artifact-card]')).toBeNull();
-    expect(popover.parentElement).toBe(document.body);
-  });
-});
-
-/* ------------------------------------------------------------------ *
- * 8 · 坐标真的落在按钮旁边
- * ------------------------------------------------------------------ *
- * portal 之后浮层是 `position: fixed`,坐标要自己算。jsdom 不排版(所有
- * `getBoundingClientRect()` 都是 0),所以这里给**按钮**喂一个真实 rect,
- * 再看组件算出来的 `top` / `left` —— 量的是它的判断,不是浏览器的排版。
- * 真实排版下的坐标另外用 headless Chrome 走 CDP 量,不在这一层冒充。
- */
-describe('浮层的坐标', () => {
-  const VIEWPORT_H = 768;
-
-  function rect(partial: { top: number; left: number; width?: number; height?: number }): DOMRect {
-    const width = partial.width ?? 60;
-    const height = partial.height ?? 21;
-    const box = {
-      x: partial.left,
-      y: partial.top,
-      left: partial.left,
-      top: partial.top,
-      right: partial.left + width,
-      bottom: partial.top + height,
-      width,
-      height,
-    };
-    return { ...box, toJSON: () => box } as DOMRect;
-  }
-
-  function openWith(testId: 'publish' | 'export', anchorRect: DOMRect) {
-    render(
-      <CollabProvider value={projectCollabValue()}>
-        <FileOpsSummary
-          entries={[fileOpEntry('landing.html')]}
-          projectId={PROJECT_ID}
-          onPublish={vi.fn()}
-          onExport={vi.fn()}
-        />
-      </CollabProvider>,
-    );
-    const act = screen.getByTestId(`artifact-card-${testId}-landing.html`);
-    act.getBoundingClientRect = () => anchorRect;
+    const act = screen.getByTestId('artifact-card-export-notes.md');
+    expect(act.tagName).toBe('A');
     fireEvent.click(act);
-    const popover = screen.getByTestId(`artifact-${testId}-popover`) as HTMLElement;
-    return { act, popover, top: Number.parseFloat(popover.style.top), left: Number.parseFloat(popover.style.left) };
-  }
-
-  it('按钮在视口中间:浮层贴在它正下方', () => {
-    const anchor = rect({ top: 300, left: 600 });
-    const { popover, top, left } = openWith('export', anchor);
-    expect(popover.style.position).toBe('fixed');
-    expect(popover.getAttribute('data-placement')).toBe('below');
-    // 6px 是 hook 里的 gap —— 贴着下缘,不是随便一个数
-    expect(top).toBe(anchor.bottom + 6);
-    // 横向不许跑到视口另一头:右缘对齐按钮右缘,再夹回视口内
-    expect(left).toBeLessThanOrEqual(anchor.right);
-    expect(left).toBeGreaterThanOrEqual(12);
-  });
-
-  it('按钮贴着视口下缘:浮层翻到上面', () => {
-    const anchor = rect({ top: VIEWPORT_H - 40, left: 600 });
-    const { popover, top } = openWith('export', anchor);
-    expect(popover.getAttribute('data-placement')).toBe('above');
-    expect(top, '翻上去之后应该在按钮上方').toBeLessThan(anchor.top);
-    // 一枚三四条的菜单不会有几百像素高 —— 上界兜住「翻上去但飞到屏幕顶上」
-    expect(anchor.top - top).toBeLessThan(400);
-  });
-
-  it('实测出事的那个位置:按钮在 (129, 2287),浮层不许跑到视口右上角', () => {
-    /*
-     * 真机实测(2026-08-27):按钮 x=129 y=2287(深在聊天流里),弹层却在
-     * x=1436 y=94 —— 视口右上角,离按钮整整一屏。用户原话:「发布按钮的弹窗
-     * 怎么还是到右上角弹出来的??」
-     */
-    const anchor = rect({ top: 2287, left: 129 });
-    const { top, left } = openWith('publish', anchor);
-    // 按钮远在视口下方之外 → 只能翻到上面;但必须跟着按钮那一列,不是右上角
-    expect(left, `浮层横向落在 ${left},按钮在 129`).toBeLessThan(400);
-    expect(Number.isFinite(top)).toBe(true);
-  });
-
-  it('发布浮层用的是它自己那枚按钮的位置,不是导出那枚的', () => {
-    const anchor = rect({ top: 300, left: 600 });
-    const { top } = openWith('publish', anchor);
-    expect(top).toBe(anchor.bottom + 6);
+    expect(onExport).not.toHaveBeenCalled();
   });
 });

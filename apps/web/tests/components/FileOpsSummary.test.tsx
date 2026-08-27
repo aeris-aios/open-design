@@ -262,20 +262,14 @@ describe('FileOpsSummary artifact cards', () => {
     expect(acts[1]).toBe(screen.getByTestId('artifact-card-export-landing.html'));
 
     /*
-     * 两枚都是**先开一枚贴着按钮的浮层**,选完那一条才真的动作
-     * (产品 2026-08-27:「html 的导出和发布的弹窗,都直接显示在卡片导出发布的
-     *  按钮附近」)。发布那枚原来是点下去就把请求甩给预览区,于是面板在视口
-     * 右上角展开,离按钮两千像素。
+     * 两枚都**不在卡上画菜单**:它们把「哪份产物 + 锚在哪枚按钮上」交给预览区,
+     * 由预览区把**它本来那两块菜单**开在这枚按钮旁边(产品 2026-08-27:
+     * 「为啥不直接复用现在那个分享弹窗??」「导出这个样式也不对呢, 为啥不直接复用?」)。
      */
     fireEvent.click(acts[0] as HTMLElement);
-    expect(onPublish).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByTestId('artifact-publish-target-vercel-self'));
-    expect(onPublish).toHaveBeenCalledWith('landing.html', 'vercel-self');
-
+    expect(onPublish).toHaveBeenCalledWith('landing.html', 'publish:landing.html');
     fireEvent.click(acts[1] as HTMLElement);
-    expect(onExport).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByTestId('artifact-export-format-pdf'));
-    expect(onExport).toHaveBeenCalledWith('landing.html', 'pdf');
+    expect(onExport).toHaveBeenCalledWith('landing.html', 'export:landing.html');
   });
 
   it('leaves a non-HTML artifact with export alone (grid 32)', () => {
