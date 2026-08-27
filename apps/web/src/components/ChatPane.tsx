@@ -2858,6 +2858,7 @@ export function ChatPane({
       ref={composerRef}
       quotes={quotes}
       onClearQuotes={clearQuotes}
+      onRestoreQuotes={setQuotes}
       designSystemPicker={designSystemPicker}
       projectId={projectId}
       projectFiles={projectFiles}
