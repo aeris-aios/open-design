@@ -3248,16 +3248,27 @@ export function ChatPane({
                               </button>
                             ) : runFailureUi.primaryAction === 'retry' ||
                               runFailureUi.secondaryRetry ? (
-                              <button
+                              /*
+                               * 和旁边两颗**同一副壳**:稿子 3360-3377 那一排三颗都是
+                               * `.btn`,差别只在 primary / secondary。原来这颗是裸
+                               * `<button class="chat-error-action">`,自带 4px 圆角和
+                               * 6px 14px 内距,而旁边两颗走共享 Button 的 sm(999px /
+                               * 4px 11px)—— 排在一起圆角明显对不上(用户 2026-08-27)。
+                               * 图标也照稿子补上:那一排三颗都带图标。
+                               */
+                              <Button
                                 type="button"
-                                className="chat-error-action chat-error-retry"
+                                variant="primary"
+                                size="sm"
+                                data-testid="chat-error-retry"
                                 onClick={() => {
                                   trackRecoveryClick(retryAssistant, 'manual_retry');
                                   onRetry(retryAssistant, 'manual_retry');
                                 }}
                               >
+                                <Icon name="refresh" size={11} />
                                 {t('promptTemplates.retry')}
-                              </button>
+                              </Button>
                             ) : null}
                           </>
                         ) : null}
