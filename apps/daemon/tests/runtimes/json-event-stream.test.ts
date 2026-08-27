@@ -1584,6 +1584,176 @@ test('codex json stream emits command execution tool events', () => {
   ]);
 });
 
+/*
+ * The `file_change` fixtures below are copied verbatim out of recorded runs
+ * under `.od/runs/<id>/events.jsonl`, where they were passed through as
+ * `{"type":"raw",...}` because the parser had no branch for the item type.
+ * Do not "tidy" the field names — the whole point is that they are codex's.
+ */
+const CODEX_FILE_CHANGE_ADD_STARTED =
+  '{"type":"item.started","item":{"id":"item_3","type":"file_change","changes":[{"path":"/Users/elian/Documents/od-wt-chat-panel/.od/projects/c6893efa-5f78-43c8-82da-19a2b7acf65c/ai-design-judgment.html","kind":"add"},{"path":"/Users/elian/Documents/od-wt-chat-panel/.od/projects/c6893efa-5f78-43c8-82da-19a2b7acf65c/brand-spec.md","kind":"add"}],"status":"in_progress"}}';
+const CODEX_FILE_CHANGE_ADD_COMPLETED =
+  '{"type":"item.completed","item":{"id":"item_3","type":"file_change","changes":[{"path":"/Users/elian/Documents/od-wt-chat-panel/.od/projects/c6893efa-5f78-43c8-82da-19a2b7acf65c/ai-design-judgment.html","kind":"add"},{"path":"/Users/elian/Documents/od-wt-chat-panel/.od/projects/c6893efa-5f78-43c8-82da-19a2b7acf65c/brand-spec.md","kind":"add"}],"status":"completed"}}';
+const CODEX_FILE_CHANGE_UPDATE_STARTED =
+  '{"type":"item.started","item":{"id":"item_9","type":"file_change","changes":[{"path":"/Users/elian/Documents/od-wt-chat-panel/.od/projects/2ba97aa7-24ce-424a-8923-437cf4fcd5b5/trustworthy-design-one-pager.html","kind":"update"}],"status":"in_progress"}}';
+const CODEX_FILE_CHANGE_UPDATE_COMPLETED =
+  '{"type":"item.completed","item":{"id":"item_9","type":"file_change","changes":[{"path":"/Users/elian/Documents/od-wt-chat-panel/.od/projects/2ba97aa7-24ce-424a-8923-437cf4fcd5b5/trustworthy-design-one-pager.html","kind":"update"}],"status":"completed"}}';
+const ADDED_HTML =
+  '/Users/elian/Documents/od-wt-chat-panel/.od/projects/c6893efa-5f78-43c8-82da-19a2b7acf65c/ai-design-judgment.html';
+const ADDED_MD =
+  '/Users/elian/Documents/od-wt-chat-panel/.od/projects/c6893efa-5f78-43c8-82da-19a2b7acf65c/brand-spec.md';
+const UPDATED_HTML =
+  '/Users/elian/Documents/od-wt-chat-panel/.od/projects/2ba97aa7-24ce-424a-8923-437cf4fcd5b5/trustworthy-design-one-pager.html';
+
+test('codex json stream emits a Write tool row per added file (regression: codex file writes never appeared in the chat)', () => {
+  const { events, handler } = collectEvents('codex');
+
+  handler.feed(`${CODEX_FILE_CHANGE_ADD_STARTED}\n${CODEX_FILE_CHANGE_ADD_COMPLETED}\n`);
+
+  assert.deepEqual(events, [
+    { type: 'tool_use', id: 'item_3#0', name: 'Write', input: { file_path: ADDED_HTML } },
+    { type: 'tool_use', id: 'item_3#1', name: 'Write', input: { file_path: ADDED_MD } },
+    { type: 'tool_result', toolUseId: 'item_3#0', content: '', isError: false },
+    { type: 'tool_result', toolUseId: 'item_3#1', content: '', isError: false },
+  ]);
+});
+
+test('codex json stream emits an Edit tool row for an updated file', () => {
+  const { events, handler } = collectEvents('codex');
+
+  handler.feed(`${CODEX_FILE_CHANGE_UPDATE_STARTED}\n${CODEX_FILE_CHANGE_UPDATE_COMPLETED}\n`);
+
+  assert.deepEqual(events, [
+    { type: 'tool_use', id: 'item_9#0', name: 'Edit', input: { file_path: UPDATED_HTML } },
+    { type: 'tool_result', toolUseId: 'item_9#0', content: '', isError: false },
+  ]);
+});
+
+/*
+ * The `tool_use` must leave the parser at `item.started`, not be held back
+ * until `item.completed`. `tool-timing.ts` stamps `startedAt` at the single
+ * event exit, so a `tool_use` that arrives together with its `tool_result`
+ * gives the row a near-zero span the web reads as "unknown" rather than a
+ * duration. Feeding the started line alone is the only way to observe that,
+ * since a completed-only stream emits the same events in the same order.
+ */
+test('codex json stream emits the file_change tool_use at item.started, before the result exists', () => {
+  const { events, handler } = collectEvents('codex');
+
+  handler.feed(`${CODEX_FILE_CHANGE_UPDATE_STARTED}\n`);
+
+  assert.deepEqual(events, [
+    { type: 'tool_use', id: 'item_9#0', name: 'Edit', input: { file_path: UPDATED_HTML } },
+  ]);
+});
+
+/*
+ * A file_change ends the current assistant message the same way a
+ * command_execution does, so the next agent_message must not be glued to the
+ * previous one with a synthetic newline — the tool row already separates them.
+ */
+test('codex file_change clears the agent_message boundary state like command_execution does', () => {
+  const { events, handler } = collectEvents('codex');
+
+  const agentMessage = (id: string, text: string): string =>
+    JSON.stringify({ type: 'item.completed', item: { id, type: 'agent_message', text } });
+
+  handler.feed(
+    `${agentMessage('item_8', 'rewriting the page')}\n` +
+    `${CODEX_FILE_CHANGE_UPDATE_STARTED}\n` +
+    `${CODEX_FILE_CHANGE_UPDATE_COMPLETED}\n` +
+    `${agentMessage('item_10', 'done')}\n`,
+  );
+
+  assert.deepEqual(events, [
+    { type: 'text_delta', delta: 'rewriting the page' },
+    { type: 'tool_use', id: 'item_9#0', name: 'Edit', input: { file_path: UPDATED_HTML } },
+    { type: 'tool_result', toolUseId: 'item_9#0', content: '', isError: false },
+    { type: 'text_delta', delta: 'done' },
+  ]);
+});
+
+test('codex json stream still emits a file_change tool pair when only item.completed arrives', () => {
+  const { events, handler } = collectEvents('codex');
+
+  handler.feed(`${CODEX_FILE_CHANGE_UPDATE_COMPLETED}\n`);
+
+  assert.deepEqual(events, [
+    { type: 'tool_use', id: 'item_9#0', name: 'Edit', input: { file_path: UPDATED_HTML } },
+    { type: 'tool_result', toolUseId: 'item_9#0', content: '', isError: false },
+  ]);
+});
+
+test('codex json stream marks a failed file_change item as an errored tool result', () => {
+  const { events, handler } = collectEvents('codex');
+
+  handler.feed(
+    `${JSON.stringify({
+      type: 'item.completed',
+      item: {
+        id: 'item_9',
+        type: 'file_change',
+        changes: [{ path: UPDATED_HTML, kind: 'update' }],
+        status: 'failed',
+      },
+    })}\n`,
+  );
+
+  assert.deepEqual(events, [
+    { type: 'tool_use', id: 'item_9#0', name: 'Edit', input: { file_path: UPDATED_HTML } },
+    { type: 'tool_result', toolUseId: 'item_9#0', content: '', isError: true },
+  ]);
+});
+
+test('codex json stream leaves an unrecognized file_change kind as raw instead of guessing a verb', () => {
+  const { events, handler } = collectEvents('codex');
+
+  const line = JSON.stringify({
+    type: 'item.completed',
+    item: {
+      id: 'item_9',
+      type: 'file_change',
+      changes: [{ path: UPDATED_HTML, kind: 'delete' }],
+      status: 'completed',
+    },
+  });
+  handler.feed(`${line}\n`);
+
+  assert.deepEqual(events, [{ type: 'raw', line }]);
+});
+
+test('codex file_change handling leaves other json-event-stream runtimes untouched', () => {
+  const { events, handler } = collectEvents('opencode');
+
+  handler.feed(`${CODEX_FILE_CHANGE_ADD_COMPLETED}\n`);
+
+  assert.deepEqual(events, [{ type: 'raw', line: CODEX_FILE_CHANGE_ADD_COMPLETED }]);
+});
+
+test('codex file_change rows do not disturb neighbouring reasoning and agent_message items', () => {
+  const { events, handler } = collectEvents('codex');
+
+  handler.feed(
+    `${JSON.stringify({
+      type: 'item.completed',
+      item: { id: 'item_2', type: 'reasoning', text: 'weighing the layout' },
+    })}\n` +
+    `${CODEX_FILE_CHANGE_UPDATE_STARTED}\n` +
+    `${CODEX_FILE_CHANGE_UPDATE_COMPLETED}\n` +
+    `${JSON.stringify({
+      type: 'item.completed',
+      item: { id: 'item_10', type: 'agent_message', text: 'done rewriting the page' },
+    })}\n`,
+  );
+
+  assert.deepEqual(events, [
+    { type: 'thinking_delta', delta: 'weighing the layout' },
+    { type: 'tool_use', id: 'item_9#0', name: 'Edit', input: { file_path: UPDATED_HTML } },
+    { type: 'tool_result', toolUseId: 'item_9#0', content: '', isError: false },
+    { type: 'text_delta', delta: 'done rewriting the page' },
+  ]);
+});
+
 test('codex json stream emits TodoWrite events from todo_list items', () => {
   const { events, handler } = collectEvents('codex');
 
