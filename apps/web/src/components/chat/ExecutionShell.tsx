@@ -23,6 +23,7 @@ import { groupThinking, type GroupedShellItem } from '../../runtime/chat/group-t
 import { Foldable } from './primitives/Foldable';
 import { ImageRow } from './primitives/ImageRow';
 import { useThinkingStream } from './primitives/useThinkingStream';
+import { useCharReveal } from './useCharReveal';
 import { Orb } from './primitives/Orb';
 import { SayText } from './primitives/SayText';
 import { StatusMark } from './primitives/StatusMark';
@@ -176,10 +177,26 @@ export function ExecutionShell({ shell, onOpenFile, onRetryImage }: ExecutionShe
       className={hasTodo ? styles.hasTodo : undefined}
     >
       {items.length
-        ? items.map((item, i) => renderItem(item, i, { t, onOpenFile, onRetryImage, thinkingNow }))
+        ? items.map((item, i) => renderItem(item, i, {
+            t, onOpenFile, onRetryImage, thinkingNow, running,
+            liveTextIndex: liveTextIndexOf(items, running),
+          }))
         : null}
     </Foldable>
   );
+}
+
+/**
+ * 这一摞里「还在往里写」的那一段叙述排第几 —— 逐字化开只发给它。
+ *
+ * 判据是**排在最后**:壳里的条目按到达顺序排,还在长的那一段只可能是最后一个 `text`,
+ * 它后面若已经压上了工具行 / 抽屉,说明那段话早就写完了。
+ * 不在跑的时候返回 `-1`,历史消息重渲染时一个字都不化开。
+ */
+function liveTextIndexOf(items: GroupedShellItem[], running: boolean): number {
+  if (!running) return -1;
+  const last = items.length - 1;
+  return last >= 0 && items[last]?.kind === 'text' ? last : -1;
 }
 
 interface RenderCtx {
@@ -188,6 +205,13 @@ interface RenderCtx {
   onRetryImage?: (row: ImageRowData, index: number) => void;
   /** 模型此刻在想 —— 传给 todo 抽屉,让它认出自己那一摞里的 `live` 格 */
   thinkingNow: boolean;
+  /** 这一轮还在跑吗 —— 抽屉里那一摞要自己算 `liveTextIndex`,得知道这件事 */
+  running: boolean;
+  /**
+   * **这一摞**里「还在往里写」的那一段叙述排第几 —— 只有它逐字化开。
+   * 不在跑的时候是 `-1`(历史消息重渲染时不能再化开一遍)。
+   */
+  liveTextIndex: number;
 }
 
 function renderItem(item: GroupedShellItem, index: number, ctx: RenderCtx): ReactElement | null {
@@ -210,7 +234,12 @@ function renderItem(item: GroupedShellItem, index: number, ctx: RenderCtx): Reac
     return <ToolRow key={`tool-${item.id}-${index}`} row={item} onOpenFile={ctx.onOpenFile} />;
   }
   if (item.kind === 'text') {
-    return <SayText key={`text-${index}`} text={item.text} />;
+    /*
+     * 壳内的过程叙述也逐字化开,但**只有还在往里写的那一段**(用户 2026-08-27:
+     * 「包括我们所有普通文本, 都应该有这个流式输出的效果才对」)。
+     * 前面几段早就写完了,再化开一遍等于每次重渲染重放一次历史。
+     */
+    return <SayText key={`text-${index}`} text={item.text} live={index === ctx.liveTextIndex} />;
   }
   if (item.kind === 'image') {
     return <ImageRow key={`img-${item.id}-${index}`} row={item} onRetry={ctx.onRetryImage} />;
@@ -246,6 +275,15 @@ function ThoughtsRow({ texts, live, t }: {
 }): ReactElement {
   const bodyRef = useRef<HTMLDivElement>(null);
   useThinkingStream(bodyRef, live);
+  /*
+   * 推理也逐字化开(用户 2026-08-27:「能不能 thinking 还是用有个流式输出的效果…
+   * 包括我们所有普通文本, 都应该有这个流式输出的效果才对, 不能直接刷一下子整个出来」)。
+   *
+   * 挂在**整只 body** 上而不是每个 `SayText` 上:新字总是落在最后一段的末尾,
+   * 一只 host 就能一路跟下去;分给每段各挂一只反而要在段与段之间交接状态。
+   * 想完了(`live` 翻假)那一格是用户点开来读的,不再化开 —— 化开是「正在写」的表达。
+   */
+  useCharReveal(bodyRef, live);
 
   /*
    * 两态的行首都占**同一只 15px 图标槽**(`.icon`)。这是「左边缘不会跳」的另一半:
@@ -278,6 +316,10 @@ function ThoughtsRow({ texts, live, t }: {
       className={styles.thoughts}
       defaultOpen={live}
       stream={live}
+      /* 想完了那一格是用户**专程点开来读**的,所以是 `max-height` + 正常滚动条,
+         不是上面那只 96px 定高 + 渐隐 + 自己往上走的窗(用户 2026-08-27:
+         「thought 展开应该有个最高高度, 可以滚动」)。两者互斥,见 `.scroll` 的注释。 */
+      scroll={!live}
       bodyRef={bodyRef}
       /* 一段都没有就不出箭头也不出 body。claude 的 thinking 全是空串(真实数据:
          本机 14 条 claude 共 1786 帧、非空 0 帧),此时这一行只报「在想」,
@@ -341,7 +383,13 @@ function TodoRow({ segment, ctx }: { segment: TodoSegment; ctx: RenderCtx }): Re
       expandable={expandable}
       defaultOpen={segment.status === 'in_progress'}
     >
-      {expandable ? items.map((item, i) => renderItem(item, i, ctx)) : null}
+      {expandable
+        ? items.map((item, i) => renderItem(item, i, {
+            ...ctx,
+            /* 抽屉里那一摞有自己的顺序:还在写的那一段只可能在**进行中**那条 todo 的末尾 */
+            liveTextIndex: liveTextIndexOf(items, ctx.running && segment.status === 'in_progress'),
+          }))
+        : null}
     </Foldable>
   );
 }

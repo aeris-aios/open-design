@@ -69,8 +69,8 @@ export function Foldable({
       {expandable && hasBody ? (
         <div
           ref={bodyRef}
-          className={`${styles.body} ${stream ? styles.stream : styles.stack}`}
-          style={scroll ? { maxHeight: scroll.maxHeight, overflowY: 'auto' } : undefined}
+          className={[styles.body, stream ? styles.stream : styles.stack, scroll ? styles.scroll : null]
+            .filter(Boolean).join(' ')}
         >
           {children}
         </div>

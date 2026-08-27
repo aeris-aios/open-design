@@ -247,9 +247,17 @@
  * summary 的行**(工具行、说明段)少缩 18px(29 − 11),整列比稿子往左偏一格。
  * 逐属性比对看不见(它们各自的 padding 值都"没被稿子写过"),只有量位置才露馅。
  */
-.fold .body.stack .body.stack > *,
+/*
+ * `.body.stream` 走**和 `.body.stack` 同一条**缩进(2026-08-27)。
+ *
+ * 思考那一格有两种 body:想完了是 `.body.stack`(点开来读),还在想是 `.body.stream`
+ * (96px 限高窗)。缩进只写给了 `.stack`,于是两态的正文左缘一个 22px、一个 4px,
+ * 思考一结束整段字横跳 18px。它们是同一行的同一段文字,列必须是同一列。
+ * 真 Chrome 逐档量过,记录见 `specs/current/chat-panel-feedback.md` §F-17。
+ */
+.fold .body.stack :is(.body.stack, .body.stream) > *,
 .fold .body.stack .body.stack > .fold > summary { padding-inline-start: 33px; }
-.fold.flat .body.stack .body.stack > *,
+.fold.flat .body.stack :is(.body.stack, .body.stream) > *,
 .fold.flat .body.stack .body.stack > .fold > summary { padding-inline-start: 29px; }
 /*
  * 稿子紧接着还有一条**例外**:`.fold.mod-flat .body.mod-stack .body.mod-stack > .fold
@@ -751,9 +759,22 @@
     to bottom, transparent 0, #000 var(--stream-fade),
     #000 calc(100% - var(--stream-fade)), transparent 100%);
 }
-.fold.flat[open] > summary + .body.stream {
+/*
+ * ⚠️ **特异性,不是字面值。** 这条原来写的是 `.fold.flat[open] > summary + .body.stream`
+ * —— 那要求这只窗是**壳自己**的 body。思考下沉成壳里的一个条目(§F-15)之后,
+ * 窗子挂在 `.fold.thoughts` 上,这条选择器**整条失配**,于是:
+ *   `.fold .body { padding: 0 11px 11px }`      (0,2,0) 赢了
+ *   `.fold[open] > summary + .body { padding-top: 4px }` (0,3,0) 又赢了它
+ *   而 `.stream { padding: 0 }` 只有 (0,1,0),两条都打不过。
+ * 真 Chrome 量到的后果:窗内 padding 变成 `4px 11px 11px`,正文左缘落在 4px,
+ * 而这一行自己的图标在 22px —— 正文比图标还靠左 18px,跟谁都不对齐,
+ * 而且思考一结束(换成 `.body.stack`)正文又跳回 22px。
+ * 交付稿对应的那条是 `.fold.mod-flat > .body.mod-stream`,(0,4,0);
+ * 这里补到同一档,并且**不再要求祖先是扁平壳**。
+ */
+.fold[open] > summary + .body.stream {
   border-top: 0;
-  padding-top: 0;
+  padding: 0;
 }
 .stream > .think {
   padding: 0;
@@ -764,4 +785,25 @@
 @media (prefers-reduced-motion: reduce) {
   /* 关了动效就别自己滚 —— 高度放开,让人自己读 */
   .stream { height: auto; max-height: none; -webkit-mask-image: none; mask-image: none; }
+}
+
+/* ── 限高 + 正常滚动条(点开来读的那一类长内容)────────────────────
+ * 用户 2026-08-27:「thought 展开应该有个最高高度, 可以滚动」——
+ * 配图是**思考已结束**那一档点开之后十几段推理一路铺到屏外。
+ *
+ * 值不是我挑的。交付稿第 1252 行:
+ *   `.fold .body.mod-scroll { max-height: 96px; overflow-y: auto; }`
+ * 3674 行那条注释把这个数说死了:「96px ≈ 5 行,和折叠块里 .mod-scroll 用的是同一个
+ * 高度,这一屏里所有『够看但不占屏』的窗口都是这一档」。
+ *
+ * 和上面的 `.stream` 是**两回事**,别合并:
+ *   `.stream` 是 `height` **定死** + 上下渐隐 + 自己往上走,用户不主动滚;
+ *   这里是 `max-height`,**短内容完全不限高、不出滚动条**,长了才截住,而且不遮罩
+ *   —— 遮罩会把用户正在读的那一行的上下半截抹掉。
+ */
+.fold .body.scroll {
+  max-height: 96px;
+  overflow-y: auto;
+  /* 越界的字贴着滚动条,留一点气口(限高之前它靠 body 自己的右内距) */
+  padding-inline-end: 4px;
 }

@@ -27,8 +27,21 @@ export interface FoldableProps {
   onToggle?: (open: boolean) => void;
   /** false 时整行不可点(跨轮召回的 todo) */
   expandable?: boolean;
-  /** 内容区是否定高滚动(Thinking 推理流 / 终端 / 队列) */
-  scroll?: { maxHeight: number; stickToBottom?: boolean };
+  /**
+   * 内容区限高 + 正常滚动条(展开的「思考过程」/ 终端 / 队列)。
+   *
+   * 高度不写在这里 —— 交付稿把它放在 CSS 上:
+   * `.fold .body.mod-scroll { max-height: 96px; overflow-y: auto }`(第 1252 行),
+   * 我们对应的是 `record.module.css` 的 `.scroll`。这个旗标只回答「要不要限高」。
+   *
+   * ⚠️ 和 `stream` 是**两回事**:`stream` 是思考**中**那只窗(`height` 固定死、
+   * 上下渐隐遮罩、自己往上走,用户不主动滚);`scroll` 是用户**专程点开来读**的东西,
+   * 所以不遮罩、不自动走,短内容时完全不限高。
+   *
+   * (原来是 `{ maxHeight: number; stickToBottom?: boolean }`,全仓零消费方 ——
+   * 高度改由 CSS 出,`stickToBottom` 没有任何实现,一并收掉。)
+   */
+  scroll?: boolean;
   children?: ReactNode;
 }
 
