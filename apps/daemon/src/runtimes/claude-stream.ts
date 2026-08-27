@@ -729,8 +729,22 @@ export function createClaudeStreamHandler(
         return;
       }
       if (delta.type === 'thinking_delta' && typeof delta.thinking === 'string') {
-        if (currentMessageId) thinkingStreamed.add(currentMessageId);
-        currentMessageStreamedThinking = true;
+        /*
+         * Only an delta that actually carried characters counts as "the
+         * reasoning already streamed".
+         *
+         * Claude Code sends `thinking_delta` frames whose `thinking` is the
+         * empty string — 1508 of 1707 across 32 recorded runs. Marking the
+         * message as streamed on those retired the message-end fallback below,
+         * which is the ONLY place the real reasoning arrives, so the whole
+         * turn's thinking was dropped: the record head said 「思考中」 over an
+         * empty reasoning window, and after 60s S12 replaced even that with
+         * 「上游响应慢」 while the model was streaming the whole time.
+         */
+        if (delta.thinking.length > 0) {
+          if (currentMessageId) thinkingStreamed.add(currentMessageId);
+          currentMessageStreamedThinking = true;
+        }
         emitSafeText(currentMessageId, delta.thinking, 'thinking_delta');
         return;
       }
