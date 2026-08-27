@@ -1,3 +1,5 @@
+import { pricingEntryScript } from './pricing-entry-script';
+
 /*
  * PostHog product analytics for the marketing site.
  *
@@ -30,73 +32,16 @@ function buildTrackerScript(pageName: string, downloadAttributionUrl: string): s
   (function () {
     if (typeof window.posthog === 'undefined') return;
 
+    ${pricingEntryScript(pageName)}
+
     // Shared global so other inline scripts (e.g. the homepage reveal
     // IntersectionObserver) can emit events without re-implementing the guard.
     // Reads window.posthog on every call (no cached reference) so the snippet
     // queue still receives events fired before array.js finishes loading.
     window.__odTrack = function (name, props) {
-      try { if (window.posthog) window.posthog.capture(name, props || {}); } catch (e) {}
+      try { if (window.posthog) window.posthog.capture(name, Object.assign({}, window.__odEntryProperties(), props || {})); } catch (e) {}
     };
 
-    // Cross-product campaign attribution is minted on the first click that
-    // enters a conversion path. Later Pricing clicks preserve that first-touch
-    // id/source and add a separate conversion source, allowing Vela's final
-    // payment event to report both entry and checkout placement.
-    window.__odRecordCampaignEntry = function (sourceDetail, campaignId) {
-      // Pricing validates Vela's persisted first touch before publishing this
-      // global. Prefer it to the URL because Dashboard -> Pricing intentionally
-      // creates a clean URL after absorbing the original od_* handoff.
-      var trustedFirstTouch = window.__odPricingBridgeAttribution || null;
-      var inbound = null;
-      try { inbound = new URLSearchParams(window.location.search || ''); } catch (e) {}
-      var inboundEntryId = (trustedFirstTouch && trustedFirstTouch.entryId) || (inbound && inbound.get('od_entry_id'));
-      var inboundEntrySource = (trustedFirstTouch && trustedFirstTouch.sourceDetail) || (inbound && inbound.get('od_entry_source'));
-      var inboundEntryAt = (trustedFirstTouch && trustedFirstTouch.entryOccurredAt) || (inbound && inbound.get('od_entry_at'));
-      // Consent-gated device id survives desktop → Pricing → Cloud. Only the
-      // validated first touch or inbound query can supply it; callers never mint it.
-      var inboundDeviceId = (trustedFirstTouch && trustedFirstTouch.odDeviceId) || (inbound && inbound.get('od_device_id'));
-      // Existing time-boxed Pricing campaigns remain explicit per click. The
-      // Go sunset campaign is different: it is an already validated first-touch
-      // campaign and must survive the clean Dashboard -> Pricing navigation.
-      var trustedGoCampaignId = trustedFirstTouch &&
-        trustedFirstTouch.sourceDetail === 'go_plan_sunset_modal' &&
-        trustedFirstTouch.campaignId === 'go_plan_sunset_202608'
-        ? trustedFirstTouch.campaignId
-        : undefined;
-      var random = '';
-      try {
-        random = window.crypto && typeof window.crypto.randomUUID === 'function'
-          ? window.crypto.randomUUID()
-          : Math.random().toString(36).slice(2) + Date.now().toString(36);
-      } catch (e) { random = Math.random().toString(36).slice(2) + Date.now().toString(36); }
-      return {
-        entry_id: inboundEntryId || ('od-campaign-' + random),
-        source_product: 'open_design',
-        source_detail: inboundEntrySource || String(sourceDetail || 'unknown'),
-        entry_occurred_at: inboundEntryAt || new Date().toISOString(),
-        conversion_source: String(sourceDetail || 'unknown'),
-        // Do not inherit arbitrary/stale URL campaign ids. Only the validated
-        // Go first touch or the click's active Pricing campaign is accepted.
-        campaign_id: trustedGoCampaignId || campaignId || undefined,
-        device_id: inboundDeviceId || undefined,
-      };
-    };
-
-    window.__odAttributedUrl = function (href, attribution) {
-      try {
-        var target = new URL(href, window.location.href);
-        if (attribution) {
-          target.searchParams.set('od_origin', attribution.source_product || 'open_design');
-          target.searchParams.set('od_entry_id', attribution.entry_id || '');
-          target.searchParams.set('od_entry_source', attribution.source_detail || 'unknown');
-          target.searchParams.set('od_entry_at', attribution.entry_occurred_at || new Date().toISOString());
-          target.searchParams.set('od_conversion_source', attribution.conversion_source || attribution.source_detail || 'unknown');
-          if (attribution.campaign_id) target.searchParams.set('od_campaign_id', attribution.campaign_id);
-          if (attribution.device_id) target.searchParams.set('od_device_id', attribution.device_id);
-        }
-        return target.toString();
-      } catch (e) { return href; }
-    };
 
     var REPO = 'github.com/nexu-io/open-design';
     var PAGE = ${JSON.stringify(pageName)};
@@ -220,6 +165,28 @@ function buildTrackerScript(pageName: string, downloadAttributionUrl: string): s
     // landing funnel reads consistently with the rest of 埋点文档2.0.
     window.__odTrack('page_view', { page_name: PAGE, locale: localeNow() });
 
+    var preparePricingLink = function (link) {
+      if (link && link.hasAttribute && link.hasAttribute('data-pricing-cta')) return null;
+      if (link && link.closest && link.closest('[data-home-campaign-banner]')) return null;
+      if (!link || !/\\/pricing\\/?$/.test(link.pathname || '') || new URL(link.href).origin !== window.location.origin) return null;
+      var area = areaOf(link);
+      var source = area === 'header' ? 'landing_pricing_header' : area === 'footer' ? 'landing_pricing_footer' : 'landing_pricing_content';
+      var attribution = link.__odPricingEntry || window.__odPreparePricingEntry(source);
+      link.__odPricingEntry = attribution;
+      link.href = window.__odAttributedUrl(link.href, attribution);
+      return attribution;
+    };
+    document.addEventListener('DOMContentLoaded', function () {
+      document.querySelectorAll('a[href]').forEach(preparePricingLink);
+    });
+    // Also prepare dynamically inserted links before native middle-click or
+    // context-menu navigation, without blocking either browser behavior.
+    ['pointerdown', 'contextmenu'].forEach(function (name) {
+      document.addEventListener(name, function (event) {
+        if (event.target && event.target.closest) preparePricingLink(event.target.closest('a[href]'));
+      }, true);
+    });
+
     // (a) Click delegation — one event, element discriminator. First match wins.
     document.addEventListener('click', function (event) {
       var t = event.target;
@@ -258,9 +225,20 @@ function buildTrackerScript(pageName: string, downloadAttributionUrl: string): s
       // Link-based CTAs.
       var link = t.closest('a[href]');
       if (!link) return;
+      if (link.hasAttribute && link.hasAttribute('data-pricing-cta')) return;
+      if (link.closest('[data-home-campaign-banner]')) return;
       var href = link.href || '';
       var lowerHref = href.toLowerCase();
       var lowerLabel = textOf(link).toLowerCase();
+
+      // Preserve native link behavior (including new tabs) while carrying the
+      // actual pricing placement. Do not rely on referrer or shared storage.
+      if (/\\/pricing\\/?$/.test(link.pathname || '') && new URL(href).origin === window.location.origin) {
+        var attribution = window.__odCommitPricingEntry(preparePricingLink(link));
+        link.href = window.__odAttributedUrl(href, attribution);
+        click(link, 'navigation', Object.assign({ link_url: link.href }, attribution));
+        return;
+      }
 
       // Explicit placement (hero / cta / nav) so the multiple desktop-download
       // buttons are distinguishable in PostHog without decoding section ids;

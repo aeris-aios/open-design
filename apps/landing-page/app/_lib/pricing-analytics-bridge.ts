@@ -177,7 +177,7 @@ const pricingAttributionTtlMs = 7 * 24 * 60 * 60 * 1_000;
 const usdAmountPattern = /^(?:0|[1-9][0-9]{0,8})\.[0-9]{2}$/u;
 // Mirrors Zod 3.25 `z.string().datetime()` used by Vela: real calendar date,
 // UTC Z suffix, optional seconds, and arbitrary fractional-second precision.
-const velaDateTimePattern = new RegExp(
+export const velaDateTimePattern = new RegExp(
   '^((\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-((0[13578]|1[02])-(0[1-9]|[12]\\d|3[01])|(0[469]|11)-(0[1-9]|[12]\\d|30)|(02)-(0[1-9]|1\\d|2[0-8])))T([01]\\d|2[0-3]):[0-5]\\d(:[0-5]\\d(\\.\\d+)?)?Z$',
   'u',
 );
@@ -185,7 +185,7 @@ const velaDateTimePattern = new RegExp(
 // Mirrors the Vela pricing bridge allowlists. This app cannot import Vela or
 // product-runtime contracts, so the public handoff is validated at this
 // standalone boundary before it reaches Vela's stricter server schema.
-const pricingAttributionSourceDetails = new Set([
+export const pricingAttributionSourceDetails = new Set([
   'onboarding_amr_card',
   'onboarding_amr_sign_in_continue',
   'inline_model_switcher_amr_row',
@@ -225,17 +225,28 @@ const pricingAttributionSourceDetails = new Set([
   'landing_home_banner',
   'landing_pricing_personal_plan',
   'landing_pricing_team_plan',
+  'landing_pricing_header',
+  'landing_pricing_footer',
+  'landing_pricing_content',
+  'landing_pricing_referral',
+  'landing_pricing_unattributed',
+  'cloud_dashboard_plan',
+  'cloud_dashboard_upgrade',
+  'cloud_dashboard_autotopup',
+  'cloud_wallet_plan',
+  'cloud_trial_welcome',
+  'cloud_balance_insufficient',
+  'cloud_summary_upgrade',
+  'cloud_summary_manage',
+  'cloud_usage_guide',
+  'cloud_navigation_pricing',
+  'cloud_subscription_redirect',
+  'cloud_team_plan',
+  'cloud_team_upgrade',
+  'cloud_team_seats',
 ]);
 
-const pricingAttributionConversionSources = new Set([
-  'go_plan_sunset_modal',
-  'deepseek_unpaid_modal',
-  'deepseek_workbench_badge',
-  'deepseek_model_switcher_upgrade',
-  'landing_home_banner',
-  'landing_pricing_personal_plan',
-  'landing_pricing_team_plan',
-]);
+const pricingAttributionConversionSources = pricingAttributionSourceDetails;
 
 function isBoundedId(value: unknown): value is string {
   return (

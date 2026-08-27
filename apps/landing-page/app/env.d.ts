@@ -43,4 +43,8 @@ interface Window {
     href: string,
     attribution?: ReturnType<NonNullable<Window['__odRecordCampaignEntry']>>,
   ) => string;
+  __odPreparePricingEntry?: Window['__odRecordCampaignEntry'];
+  __odCommitPricingEntry?: (
+    attribution: ReturnType<NonNullable<Window['__odRecordCampaignEntry']>>,
+  ) => ReturnType<NonNullable<Window['__odRecordCampaignEntry']>>;
 }

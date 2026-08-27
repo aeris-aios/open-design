@@ -132,6 +132,12 @@ async function openPricing(input: {
     locale: input.browserLocale ?? 'en-US',
   });
   const page = await context.newPage();
+  // Capture the production tracker without sending QA events to live PostHog.
+  await context.addInitScript(() => {
+    const state = window as unknown as { __qaEvents: Array<{ name: string; props: Record<string, unknown> }>; posthog: unknown };
+    state.__qaEvents = [];
+    state.posthog = { __SV: 1, init() {}, capture(name: string, props: Record<string, unknown>) { state.__qaEvents.push({ name, props }); } };
+  });
   const requests: BridgeRequest[] = [];
   const navigations: string[] = [];
   page.on('request', (request) => {
@@ -221,6 +227,57 @@ function flattened(requests: BridgeRequest[]): BridgeEvent[] {
 }
 
 describe('authenticated Pricing compatibility browser wiring', { concurrency: false }, () => {
+  it('joins anonymous Personal and Team impressions to the actual checkout URLs', async (t) => {
+    for (const [audience, button] of [['creator', 'left'], ['team', 'left'], ['creator', 'middle'], ['team', 'middle']] as const) {
+      const { page } = await openPricing({ signedIn: false, sourcePath: null });
+      t.after(() => page.context().close());
+      if (audience === 'team') await page.locator('[data-audience-btn="team"]').click();
+      const events = await page.evaluate(() => (window as unknown as { __qaEvents: Array<{ name: string; props: Record<string, unknown> }> }).__qaEvents);
+      const impression = events.find((event) => event.name === 'surface_view' && event.props.element === 'plan_view' && event.props.audience === audience);
+      assert.ok(impression?.props.entry_id, `${audience} impression must have an entry before auth`);
+      const originalId = impression.props.entry_id;
+      await page.context().route('https://open-design.ai/**', (route) => route.abort());
+      const cta = page.locator(audience === 'team' ? '[data-pricing-cta][data-tier="team"]' : '[data-pricing-cta][data-tier="plus"]').first();
+      const nativeHref = new URL((await cta.getAttribute('href'))!);
+      assert.equal(nativeHref.searchParams.get('od_entry_id'), originalId, 'context-menu and middle-click need the attributed href before click');
+      let url: URL;
+      if (button === 'middle') {
+        const opened = page.context().waitForEvent('page');
+        await cta.click({ button });
+        const popup = await opened;
+        await popup.waitForURL((url) => url.searchParams.has('od_entry_id'));
+        url = new URL(popup.url());
+      } else {
+        const navigation = page.waitForRequest((request) => request.isNavigationRequest() && request.url().includes('od_entry_id='));
+        await cta.click();
+        url = new URL((await navigation).url());
+      }
+      assert.equal(url.searchParams.get('od_entry_id'), originalId);
+      assert.equal(url.searchParams.get('od_entry_source'), 'landing_pricing_unattributed');
+      assert.equal(url.searchParams.get('od_conversion_source'), audience === 'team' ? 'landing_pricing_team_plan' : 'landing_pricing_personal_plan');
+    }
+  });
+  it('carries the header entry through a native middle-click without claiming a render as a visit', async (t) => {
+    const { page } = await openPricing({ signedIn: false, sourcePath: null });
+    t.after(() => page.context().close());
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.evaluate(() => {
+      sessionStorage.removeItem('od.pricingEntry.v1');
+      localStorage.removeItem('amr.openDesignAttribution.v1');
+    });
+    await page.goto(baseUrl + '/');
+    const link = page.locator('header a[href*="/pricing/"]').first();
+    const href = new URL((await link.getAttribute('href'))!);
+    assert.equal(href.searchParams.get('od_entry_source'), 'landing_pricing_header');
+    assert.equal(await page.evaluate(() => localStorage.getItem('amr.openDesignAttribution.v1')), null);
+    await page.context().route('https://amr-api.open-design.ai/**', (route) => route.abort());
+    const opened = page.context().waitForEvent('page');
+    await link.click({ button: 'middle' });
+    const popup = await opened;
+    await popup.waitForURL((url) => url.searchParams.has('od_entry_id'));
+    assert.equal(new URL(popup.url()).searchParams.get('od_entry_id'), href.searchParams.get('od_entry_id'));
+    assert.equal(await popup.evaluate(() => window.__odPricingBridgeAttribution?.entryId), href.searchParams.get('od_entry_id'));
+  });
   it('shows Go as sold out for a signed-out visitor', async (t) => {
     const { page } = await openPricing({
       browserLocale: 'zh-CN',
@@ -499,6 +556,9 @@ describe('authenticated Pricing compatibility browser wiring', { concurrency: fa
 
   it('preserves the real Go popup first touch through Vela Dashboard into Pricing', async (t) => {
     const context = await browser.newContext({ locale: 'zh-CN' });
+    await context.addInitScript(() => {
+      window.posthog = { __SV: 1, init() {}, capture() {} };
+    });
     const launcher = await context.newPage();
     const requests: BridgeRequest[] = [];
     const entryOccurredAt = new Date().toISOString();
