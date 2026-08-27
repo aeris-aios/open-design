@@ -2092,3 +2092,276 @@ test('codex json stream does not downgrade non-reconnect errors that mention rec
     },
   ]);
 });
+
+/*
+ * ── codex `mcp_tool_call` / `web_search` ────────────────────────────────
+ *
+ * Both fixtures below are copied VERBATIM out of live `codex exec --json`
+ * captures taken with the daemon's own flags (codex-cli 0.149.1). Do not
+ * normalise them — the oddities are codex's and the tests exist to pin them:
+ *
+ *  · `mcp_tool_call` carries `server` / `tool` / `arguments` already on
+ *    `item.started`, and reports failure through BOTH `status:"failed"` and a
+ *    populated `error` object.
+ *  · `web_search` serialises `id` TWICE in the same object — the item id first,
+ *    then an `exec-…` id. `JSON.parse` keeps the LAST one, so the tool id the
+ *    parser sees is the `exec-…` value, not `item_2`. It is stable across the
+ *    started/completed pair, so the pairing still holds.
+ *  · `web_search`'s started frame has an EMPTY `query` and `action.type:"other"`;
+ *    the real query only exists on `item.completed`.
+ *
+ * Both item types fell through to `{"type":"raw"}` before this family existed,
+ * and `build-turn-blocks.ts` skips `raw` outright — so a codex turn that
+ * searched the web or called a connected MCP server showed NO row at all.
+ */
+const CODEX_MCP_TOOL_CALL_STARTED =
+  '{"type":"item.started","item":{"id":"item_2","type":"mcp_tool_call","server":"echofacts","tool":"echo_fact","arguments":{"topic":"orbital-mechanics"},"result":null,"error":null,"status":"in_progress"}}';
+const CODEX_MCP_TOOL_CALL_FAILED =
+  '{"type":"item.completed","item":{"id":"item_2","type":"mcp_tool_call","server":"echofacts","tool":"echo_fact","arguments":{"topic":"orbital-mechanics"},"result":null,"error":{"message":"MCP tool call requires approval, but approval policy is never"},"status":"failed"}}';
+const CODEX_WEB_SEARCH_STARTED =
+  '{"type":"item.started","item":{"id":"item_2","type":"web_search","id":"exec-9fb8985e-4163-4af2-82a2-d499ab71d18b","query":"","action":{"type":"other"}}}';
+const CODEX_WEB_SEARCH_COMPLETED =
+  '{"type":"item.completed","item":{"id":"item_2","type":"web_search","id":"exec-9fb8985e-4163-4af2-82a2-d499ab71d18b","query":"OpenAI Codex CLI release notes","action":{"type":"search","query":"OpenAI Codex CLI release notes"}}}';
+/** Duplicate `id` key: `JSON.parse` keeps the last, so this is the tool id. */
+const CODEX_WEB_SEARCH_ID = 'exec-9fb8985e-4163-4af2-82a2-d499ab71d18b';
+const MCP_TOOL_NAME = 'mcp__echofacts__echo_fact';
+
+test('codex json stream emits a tool row for an mcp_tool_call (regression: connected MCP servers were invisible)', () => {
+  const { events, handler } = collectEvents('codex');
+
+  handler.feed(`${CODEX_MCP_TOOL_CALL_STARTED}\n${CODEX_MCP_TOOL_CALL_FAILED}\n`);
+
+  assert.deepEqual(events, [
+    {
+      type: 'tool_use',
+      id: 'item_2',
+      name: MCP_TOOL_NAME,
+      input: { topic: 'orbital-mechanics' },
+    },
+    {
+      type: 'tool_result',
+      toolUseId: 'item_2',
+      content: 'MCP tool call requires approval, but approval policy is never',
+      isError: true,
+    },
+  ]);
+});
+
+/*
+ * The `tool_use` must leave the parser at `item.started` — every field the row
+ * needs (server, tool, arguments) is already there, so holding it back would
+ * cost the row its duration for nothing. Feeding the started line alone is the
+ * only way to observe that; it must also NOT produce a `tool_result`, because
+ * an unpaired `tool_use` is exactly what B8 relies on to keep the row off
+ * screen until the call returns (D3: no 「执行中」 state for tool rows).
+ */
+test('codex json stream emits the mcp_tool_call tool_use at item.started, with no result yet', () => {
+  const { events, handler } = collectEvents('codex');
+
+  handler.feed(`${CODEX_MCP_TOOL_CALL_STARTED}\n`);
+
+  assert.deepEqual(events, [
+    {
+      type: 'tool_use',
+      id: 'item_2',
+      name: MCP_TOOL_NAME,
+      input: { topic: 'orbital-mechanics' },
+    },
+  ]);
+});
+
+test('codex json stream still emits an mcp_tool_call pair when only item.completed arrives', () => {
+  const { events, handler } = collectEvents('codex');
+
+  handler.feed(`${CODEX_MCP_TOOL_CALL_FAILED}\n`);
+
+  assert.deepEqual(events, [
+    {
+      type: 'tool_use',
+      id: 'item_2',
+      name: MCP_TOOL_NAME,
+      input: { topic: 'orbital-mechanics' },
+    },
+    {
+      type: 'tool_result',
+      toolUseId: 'item_2',
+      content: 'MCP tool call requires approval, but approval policy is never',
+      isError: true,
+    },
+  ]);
+});
+
+test('codex mcp_tool_call clears the agent_message boundary state like command_execution does', () => {
+  const { events, handler } = collectEvents('codex');
+
+  const agentMessage = (id: string, text: string): string =>
+    JSON.stringify({ type: 'item.completed', item: { id, type: 'agent_message', text } });
+
+  handler.feed(
+    `${agentMessage('item_1', 'calling the tool')}\n` +
+    `${CODEX_MCP_TOOL_CALL_STARTED}\n` +
+    `${CODEX_MCP_TOOL_CALL_FAILED}\n` +
+    `${agentMessage('item_3', 'that is what it said')}\n`,
+  );
+
+  assert.deepEqual(events, [
+    { type: 'text_delta', delta: 'calling the tool' },
+    {
+      type: 'tool_use',
+      id: 'item_2',
+      name: MCP_TOOL_NAME,
+      input: { topic: 'orbital-mechanics' },
+    },
+    {
+      type: 'tool_result',
+      toolUseId: 'item_2',
+      content: 'MCP tool call requires approval, but approval policy is never',
+      isError: true,
+    },
+    { type: 'text_delta', delta: 'that is what it said' },
+  ]);
+});
+
+test('codex mcp_tool_call handling leaves other json-event-stream runtimes untouched', () => {
+  const { events, handler } = collectEvents('opencode');
+
+  handler.feed(`${CODEX_MCP_TOOL_CALL_STARTED}\n${CODEX_MCP_TOOL_CALL_FAILED}\n`);
+
+  assert.deepEqual(events, [
+    { type: 'raw', line: CODEX_MCP_TOOL_CALL_STARTED },
+    { type: 'raw', line: CODEX_MCP_TOOL_CALL_FAILED },
+  ]);
+});
+
+test('codex json stream emits a search tool row for a completed web_search', () => {
+  const { events, handler } = collectEvents('codex');
+
+  handler.feed(`${CODEX_WEB_SEARCH_STARTED}\n${CODEX_WEB_SEARCH_COMPLETED}\n`);
+
+  assert.deepEqual(events, [
+    {
+      type: 'tool_use',
+      id: CODEX_WEB_SEARCH_ID,
+      name: 'web_search',
+      input: { query: 'OpenAI Codex CLI release notes' },
+    },
+    { type: 'tool_result', toolUseId: CODEX_WEB_SEARCH_ID, content: '', isError: false },
+  ]);
+});
+
+/*
+ * The negative half of the test above. `web_search`'s started frame carries
+ * `query:""`, and the query IS the row (`toolTitle` and `searchPattern` both
+ * read it). Emitting the `tool_use` there would lock in a blank 「搜索」 row —
+ * the `codexToolUses` guard would then make `item.completed` a no-op and the
+ * real query would never arrive. So the started frame must produce nothing at
+ * all, and the pair must come from `item.completed`.
+ */
+test('codex web_search item.started produces no event, because its query is still empty', () => {
+  const { events, handler } = collectEvents('codex');
+
+  handler.feed(`${CODEX_WEB_SEARCH_STARTED}\n`);
+
+  assert.deepEqual(events, []);
+});
+
+/*
+ * codex's web_search `action` taxonomy has more members than `search` — the
+ * started frame above shows `other`. We have only ever captured `search`, so
+ * anything else must stay `raw` rather than be labelled 「搜索」: calling a page
+ * fetch a search is the same class of lie as calling a file deletion 「新建」
+ * (see the file_change `kind` fallback above).
+ */
+test('codex json stream leaves a non-search web_search action as raw instead of calling it a search', () => {
+  const { events, handler } = collectEvents('codex');
+
+  const line = JSON.stringify({
+    type: 'item.completed',
+    item: {
+      id: CODEX_WEB_SEARCH_ID,
+      type: 'web_search',
+      query: 'OpenAI Codex CLI release notes',
+      action: { type: 'other' },
+    },
+  });
+  handler.feed(`${line}\n`);
+
+  assert.deepEqual(events, [{ type: 'raw', line }]);
+});
+
+test('codex web_search handling leaves other json-event-stream runtimes untouched', () => {
+  const { events, handler } = collectEvents('opencode');
+
+  handler.feed(`${CODEX_WEB_SEARCH_STARTED}\n${CODEX_WEB_SEARCH_COMPLETED}\n`);
+
+  assert.deepEqual(events, [
+    { type: 'raw', line: CODEX_WEB_SEARCH_STARTED },
+    { type: 'raw', line: CODEX_WEB_SEARCH_COMPLETED },
+  ]);
+});
+
+/*
+ * A half-named MCP call must not become a row labelled `mcp____` — the same
+ * discipline the file_change `kind` fallback follows. The frame below is the
+ * verbatim capture minus its `tool` field; it pins OUR fallback, not codex's
+ * wording, and no captured frame has ever been missing one.
+ */
+test('codex json stream leaves a half-named mcp_tool_call as raw instead of naming it blank', () => {
+  const { events, handler } = collectEvents('codex');
+
+  const line = JSON.stringify({
+    type: 'item.completed',
+    item: {
+      id: 'item_2',
+      type: 'mcp_tool_call',
+      server: 'echofacts',
+      arguments: { topic: 'orbital-mechanics' },
+      result: null,
+      error: null,
+      status: 'completed',
+    },
+  });
+  handler.feed(`${line}\n`);
+
+  assert.deepEqual(events, [{ type: 'raw', line }]);
+});
+
+/*
+ * The success path. RECONSTRUCTED, not captured: `codex exec` runs with
+ * approval policy `never` and refuses every MCP call before it reaches the
+ * server, so no successful frame could be recorded. Every field value here is
+ * verbatim from the captured frames (`status:"completed"` is codex's own
+ * completion vocabulary, shared with command_execution and file_change;
+ * `result:null` appears in both captures), and the assertion is deliberately
+ * limited to what is structurally certain — a non-failed call is not an error.
+ * The payload shape of a populated `result` is NOT pinned here on purpose.
+ */
+test('codex json stream does not mark a non-failed mcp_tool_call as an error', () => {
+  const { events, handler } = collectEvents('codex');
+
+  handler.feed(
+    `${JSON.stringify({
+      type: 'item.completed',
+      item: {
+        id: 'item_2',
+        type: 'mcp_tool_call',
+        server: 'echofacts',
+        tool: 'echo_fact',
+        arguments: { topic: 'orbital-mechanics' },
+        result: null,
+        error: null,
+        status: 'completed',
+      },
+    })}\n`,
+  );
+
+  assert.deepEqual(events, [
+    {
+      type: 'tool_use',
+      id: 'item_2',
+      name: MCP_TOOL_NAME,
+      input: { topic: 'orbital-mechanics' },
+    },
+    { type: 'tool_result', toolUseId: 'item_2', content: '', isError: false },
+  ]);
+});
