@@ -27,7 +27,9 @@ import {
   joinableSync,
   ownsLatestSnapshotWrite,
   publishInFlightSync,
+  currentAuthoritativeLoggedIn,
   noteAuthoritativeAuthMode,
+  subscribeAuthoritativeAuthMode,
   publishSnapshot,
   recordSnapshotRead,
   subscribeMessageCenterReads,
@@ -154,6 +156,16 @@ export function MessageCenter({
     currentWorkspaceAccountGeneration,
   );
   const seenAccountGenerationRef = useRef(accountGeneration);
+  // Ending a session is the same kind of boundary as switching workspace, and
+  // it needs the same treatment: a host that stays mounted across it must drop
+  // what it fetched under the old authority instead of waiting for its next
+  // scheduled sync.
+  const authoritativeLoggedIn = useSyncExternalStore(
+    subscribeAuthoritativeAuthMode,
+    currentAuthoritativeLoggedIn,
+    currentAuthoritativeLoggedIn,
+  );
+  const seenAuthoritativeRef = useRef(authoritativeLoggedIn);
   const priorityPendingCallbackRef = useRef(onPriorityAnnouncementPendingChange);
   priorityPendingCallbackRef.current = onPriorityAnnouncementPendingChange;
 
@@ -382,7 +394,14 @@ export function MessageCenter({
     // account's rows before deciding anything, so they are never shown to
     // whoever signed in. Initialised to the current generation, so a first
     // mount does not wipe the anonymous state restored just above.
-    if (seenAccountGenerationRef.current !== accountGeneration) {
+    // `null` means nothing authoritative has been observed yet, so the first
+    // answer is not a boundary — treating it as one wiped the anonymous state
+    // this host had just hydrated. Matches how the module decides the same
+    // question.
+    const authorityChanged = seenAuthoritativeRef.current !== null
+      && seenAuthoritativeRef.current !== authoritativeLoggedIn;
+    seenAuthoritativeRef.current = authoritativeLoggedIn;
+    if (seenAccountGenerationRef.current !== accountGeneration || authorityChanged) {
       seenAccountGenerationRef.current = accountGeneration;
       messagesRef.current = [];
       readIdsRef.current = new Set();
@@ -443,7 +462,7 @@ export function MessageCenter({
       window.clearInterval(interval);
       document.removeEventListener('visibilitychange', onVisibility);
     };
-  }, [retrySync, commitState, locale, accountGeneration]);
+  }, [retrySync, commitState, locale, accountGeneration, authoritativeLoggedIn]);
 
   // A read recorded by ANOTHER host — typically this host's predecessor,
   // finishing a write the user started just before navigating. Without this the

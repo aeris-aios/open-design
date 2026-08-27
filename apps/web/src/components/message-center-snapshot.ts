@@ -68,7 +68,36 @@ export interface MessageCenterInFlightSync {
  */
 let lastAuthoritativeLoggedIn: boolean | null = null;
 
+/**
+ * The latest authoritative answer, or `null` if none has been observed. A run
+ * that captured the opposite answer before its awaits must not commit anything
+ * — refusing its snapshot is not enough, because component state is written
+ * first and a refused publication cannot undo a rendered row.
+ */
+export function currentAuthoritativeLoggedIn(): boolean | null {
+  return lastAuthoritativeLoggedIn;
+}
+
+const authModeListeners = new Set<() => void>();
+
+/**
+ * Subscribe to authoritative auth-mode changes.
+ *
+ * The account generation has had listeners since a host that stayed mounted
+ * across a workspace switch kept rendering the previous account's rows. Ending
+ * a SESSION is the same kind of boundary and had none: a mounted host learned
+ * about it only through its own next sync, so content fetched under the old
+ * authority stayed on screen until an open, a visibility change or the poll.
+ */
+export function subscribeAuthoritativeAuthMode(listener: () => void): () => void {
+  authModeListeners.add(listener);
+  return () => {
+    authModeListeners.delete(listener);
+  };
+}
+
 export function noteAuthoritativeAuthMode(loggedIn: boolean): void {
+  const changed = lastAuthoritativeLoggedIn !== null && lastAuthoritativeLoggedIn !== loggedIn;
   lastAuthoritativeLoggedIn = loggedIn;
   // Compared against what is actually CACHED, not against the previous
   // observation. Keying off the previous value meant the first authoritative
@@ -79,6 +108,14 @@ export function noteAuthoritativeAuthMode(loggedIn: boolean): void {
   if (lastSyncSnapshot && lastSyncSnapshot.loggedIn !== loggedIn) {
     lastSyncSnapshot = null;
     inFlightSync = null;
+  }
+  if (!changed) return;
+  for (const listener of [...authModeListeners]) {
+    try {
+      listener();
+    } catch (error) {
+      console.error('[message-center] auth-mode subscriber failed', error);
+    }
   }
 }
 
@@ -112,6 +149,7 @@ let snapshotWriteToken = 0;
 export function resetMessageCenterSnapshot(): void {
   lastSyncSnapshot = null;
   lastAuthoritativeLoggedIn = null;
+  authModeListeners.clear();
   inFlightSync = null;
   snapshotWriteToken = 0;
   readListeners.clear();

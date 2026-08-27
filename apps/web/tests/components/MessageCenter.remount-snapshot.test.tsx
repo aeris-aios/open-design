@@ -1599,6 +1599,84 @@ describe('MessageCenter remount snapshot', () => {
     expect(counts[counts.length - 1]).toBe(0);
   });
 
+  it('does not render the previous account\'s rows when the authority ends mid-pull', async () => {
+    // A remote or expired session is observed by status polling, not by the
+    // sign-out handler, so the workspace generation never moves. Refusing the
+    // run\'s SNAPSHOT is not enough on its own — component state is committed
+    // first, so the rows, the signed-in flag and the announcement would render
+    // in the still-mounted host and a refused publication cannot take them back.
+    // Every pull after the first is parked. The post-boundary resync is what
+    // used to refill the view and mask which mechanism was doing the work —
+    // with it held, the three states are distinguishable: cleared and kept
+    // clear, never cleared, or cleared and re-filled by the stale run.
+    let parkPulls = false;
+    const parked: Array<() => void> = [];
+    // The upstream answers according to the session that was valid when the
+    // request went out — the targeted row belongs to the ACCOUNT. A stub that
+    // returns it either way lets the post-boundary resync put it straight back,
+    // and the spec then fails no matter what the code does.
+    let sessionValid = true;
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/integrations/vela/status')) {
+        statusCalls += 1;
+        return Response.json({ loggedIn: sessionValid });
+      }
+      if (url.includes('/message-center') && url.includes('/messages')) {
+        messageCalls += 1;
+        const answeredFor = sessionValid;
+        if (parkPulls) {
+          await new Promise<void>((resolve) => { parked.push(resolve); });
+        }
+        if (!answeredFor) return Response.json({ messages: [], nextCursor: null, unreadCount: 0 });
+        return Response.json({
+          messages: [{
+            ...row('PRIOR-ACCOUNT-row', null),
+            audienceType: 'targeted',
+            messageKey: 'go-plan-sunset-2026-08',
+          }],
+          nextCursor: null,
+          unreadCount: 1,
+        });
+      }
+      return Response.json({});
+    }));
+
+    const pending: boolean[] = [];
+    render(
+      <I18nProvider initial="zh-CN">
+        <MessageCenter
+          priorityAnnouncementActive
+          onPriorityAnnouncementPendingChange={(v) => pending.push(v)}
+        />
+      </I18nProvider>,
+    );
+    await waitFor(() => expect(messageCalls).toBeGreaterThan(0));
+    await new Promise((r) => setTimeout(r, 30));
+
+    // A refresh parks on its pull while the session is still valid.
+    parkPulls = true;
+    document.dispatchEvent(new Event('visibilitychange'));
+    await waitFor(() => expect(parked.length).toBe(1));
+
+    // Polling elsewhere observes the session ending. No generation change.
+    sessionValid = false;
+    noteAuthoritativeAuthMode(false);
+
+    // The boundary's own resync is parked too, so nothing refills the view.
+    await new Promise((r) => setTimeout(r, 30));
+
+    // The stale pull lands.
+    parked[0]!();
+    await new Promise((r) => setTimeout(r, 40));
+
+    // The still-mounted host must show nothing of that account.
+    fireEvent.click(screen.getByTestId('message-center-trigger'));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByRole('button', { name: /PRIOR-ACCOUNT-row/ })).toBeNull();
+    expect(pending[pending.length - 1] ?? false).toBe(false);
+  });
+
   it('does not re-sync when it is remounted straight away', async () => {
     const first = await mountAndSettle();
     const afterFirst = { status: statusCalls, messages: messageCalls };
