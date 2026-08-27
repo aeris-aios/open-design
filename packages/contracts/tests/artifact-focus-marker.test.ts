@@ -2,10 +2,12 @@ import { describe, it, expect } from 'vitest';
 import {
   MAX_ARTIFACT_FOCUS_SHOW,
   foldArtifactFocusSelections,
+  declaredArtifactCards,
   narrowProducedFilesToFocus,
   normalizeArtifactFocusPath,
   parseArtifactFocusMarker,
   parseArtifactFocusPathList,
+  renderArtifactFocusInstruction,
   renderArtifactFocusMarkerExample,
   stripArtifactFocusMarkers,
 } from '../src/api/artifact-focus-marker';
@@ -291,5 +293,143 @@ describe('narrowProducedFilesToFocus — narrow only, never widen, never empty',
 
   it('an empty produced list stays empty — narrowing cannot invent a turn', () => {
     expect(narrowProducedFilesToFocus([], ['index.html'])).toEqual([]);
+  });
+});
+
+describe('declaredArtifactCards — the conversation lists what the turn declared', () => {
+  const produced = [
+    file('index.html'),
+    file('styles.css'),
+    file('app.js'),
+    file('hero.png', { kind: 'image', mime: 'image/png' }),
+    file('logo.svg', { kind: 'image', mime: 'image/svg+xml' }),
+    file('report.md'),
+  ];
+
+  /*
+   * The ruling this function exists to encode, verbatim:
+   *
+   *   「一张都不显示那就不显示呗, 如果有重要的新创建的没给用户展示那是问题,
+   *     但如果没什么重要的或者要让用户看的, 那就不展示呗没啥问题吧?」
+   *
+   * It REVERSES `narrowProducedFilesToFocus`'s fallback, which is why the two
+   * live side by side rather than one calling the other: that one still answers
+   * "what did this turn deliver" for the Share / Download / next-step anchor,
+   * where an undeclared turn must keep its inferred list. This one answers
+   * "what does the conversation list", where an undeclared turn lists nothing.
+   */
+  it('no declaration lists nothing', () => {
+    expect(declaredArtifactCards(produced, undefined)).toEqual([]);
+    expect(declaredArtifactCards(produced, null)).toEqual([]);
+    expect(declaredArtifactCards(produced, [])).toEqual([]);
+  });
+
+  /*
+   * Paired with the negative above on purpose. On its own, "no declaration
+   * lists nothing" is satisfied by a function that always returns `[]`.
+   */
+  it('a declaration naming one html lists exactly that card', () => {
+    expect(declaredArtifactCards(produced, ['index.html']).map((f) => f.name)).toEqual([
+      'index.html',
+    ]);
+  });
+
+  it('a declaration naming two deliverables lists exactly those two, in list order', () => {
+    expect(
+      declaredArtifactCards(produced, ['report.md', 'index.html']).map((f) => f.name),
+    ).toEqual(['index.html', 'report.md']);
+  });
+
+  it('never widens: a declared file the turn did not produce adds no card', () => {
+    expect(
+      declaredArtifactCards(produced, ['index.html', 'never-produced.html']).map((f) => f.name),
+    ).toEqual(['index.html']);
+  });
+
+  /*
+   * The cliff this closes: under a "fall back to the full list" rule, a typo
+   * would show SIX cards where declaring nothing shows none.
+   */
+  it('an entirely unmatched declaration lists nothing, not the full list', () => {
+    expect(declaredArtifactCards(produced, ['nothing-here.html'])).toEqual([]);
+  });
+
+  it('a declaration of only unusable paths counts as no declaration', () => {
+    expect(declaredArtifactCards(produced, ['../../etc/passwd'])).toEqual([]);
+    expect(declaredArtifactCards(produced, ['', '   '])).toEqual([]);
+  });
+
+  it('matches a nested file by full path or by basename', () => {
+    const nested = [
+      file('site/index.html', { name: 'site/index.html', path: 'site/index.html' }),
+      file('site/app.js'),
+    ];
+    expect(declaredArtifactCards(nested, ['site/index.html']).map((f) => f.name)).toEqual([
+      'site/index.html',
+    ]);
+    expect(declaredArtifactCards(nested, ['index.html']).map((f) => f.name)).toEqual([
+      'site/index.html',
+    ]);
+  });
+
+  it('an empty produced list stays empty — a declaration cannot invent a card', () => {
+    expect(declaredArtifactCards([], ['index.html'])).toEqual([]);
+  });
+});
+
+/**
+ * The instruction body itself.
+ *
+ * `grep -c od-focus` across the recorded runs is 0: everything downstream of
+ * this marker was built and tested before anything ever told a model to write
+ * one. This suite pins the four things the instruction has to say, so a later
+ * trim cannot quietly drop one and leave the protocol unreachable again.
+ */
+describe('renderArtifactFocusInstruction — what the model is actually told', () => {
+  const body = renderArtifactFocusInstruction(KEY);
+
+  it('shows the exact wire format the parser accepts, with this turn\'s key', () => {
+    expect(body).toContain(renderArtifactFocusMarkerExample(KEY, { open: 'index.html' }));
+    expect(body).toContain(
+      renderArtifactFocusMarkerExample(KEY, { show: ['index.html', 'report.md'] }),
+    );
+    // Round-trips through the parser: the example is not merely key-shaped.
+    const parsed = parseArtifactFocusMarker(
+      renderArtifactFocusMarkerExample(KEY, { open: 'index.html', show: ['index.html'] }),
+    );
+    expect(parsed.key).toBe(KEY);
+    expect(parsed.open).toBe('index.html');
+    expect(parsed.show).toEqual(['index.html']);
+  });
+
+  /* 「不要在空的时候打开…能看到产物有内容了再打开?但也不要等完全写完再打开」 */
+  it('times `open` at "has real content", between "created" and "turn over"', () => {
+    expect(body).toMatch(/real content/i);
+    expect(body).toMatch(/still empty/i);
+    expect(body).toMatch(/end of the turn|turn ends|until the turn/i);
+  });
+
+  /* 「最终主要的是这个 html,而不是其他杂七杂八的东西」 */
+  it('says `show` names the deliverable, not its sidecars', () => {
+    expect(body).toMatch(/stylesheet/i);
+    expect(body).toMatch(/ONE deliverable/);
+  });
+
+  /* The reversed fallback has to be stated, or the model has no reason to comply. */
+  it('states that declaring no `show` means no cards at all', () => {
+    expect(body).toMatch(/no cards/i);
+  });
+
+  it('says paths are project-relative', () => {
+    expect(body).toMatch(/relative to the project root/i);
+  });
+
+  it('carries the turn key verbatim and forbids inventing one', () => {
+    expect(body).toContain(KEY);
+    expect(body).toMatch(/never invent one/i);
+  });
+
+  it('is empty without a key — an unkeyed marker is never accepted, so never taught', () => {
+    expect(renderArtifactFocusInstruction('')).toBe('');
   });
 });

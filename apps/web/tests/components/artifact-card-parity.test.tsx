@@ -132,6 +132,9 @@ function toolOpTurn(names: string[], overrides: Partial<ChatMessage> = {}): Chat
     events.push({ kind: 'tool_result', id: `toolu_${index}`, content: 'ok' });
   }
   events.push({ kind: 'text', text: '做完了。' });
+  // 产物卡是 agent 声明出来的(`<od-focus show="…">`),两条路都一样 —— 这一组
+  // 讲的是「同一批文件在两条路上长得一不一样」,所以两边都把它声明出来。
+  events.push({ kind: 'artifact_focus', show: [...names] });
   return {
     id: 'msg-tool-ops',
     role: 'assistant',
@@ -159,6 +162,7 @@ function producedOnlyTurn(names: string[], overrides: Partial<ChatMessage> = {})
     events: [
       { kind: 'status', label: 'starting', detail: 'claude' },
       { kind: 'text', text: '做完了。' },
+      { kind: 'artifact_focus', show: [...names] },
     ] as ChatMessage['events'],
     producedFiles: names.map((name) => projectFile(name)),
     ...overrides,

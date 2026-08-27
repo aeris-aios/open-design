@@ -25,7 +25,7 @@ import {
   unfinishedTodosFromTodoWriteInput,
   type RecalledTodo,
 } from '@open-design/contracts';
-import { renderArtifactFocusMarkerExample, renderNextStepMarkerExample } from '@open-design/contracts';
+import { renderArtifactFocusInstruction, renderNextStepMarkerExample } from '@open-design/contracts';
 import type {
   CollabCloudMemberDirectoryEntry,
   TeamProject,
@@ -10674,24 +10674,16 @@ export async function startServer({
      * keyed (it names a path the host then reads and renders, so an unkeyed
      * form would let any document the agent merely READ steer the preview).
      *
-     * Deliberately short. Everything the host can decide for itself is decided
-     * for itself: the marker is optional, and a turn without one keeps the
-     * existing produced-file inference untouched.
+     * The body lives next to the parser rather than here, so the instruction,
+     * the example it shows, and the regexes that accept it cannot drift apart —
+     * and so a BYOK path composing its own per-turn slice reads the same string
+     * instead of a second copy of it. `renderArtifactFocusInstruction` returns
+     * '' without a key, which is the same guard the two markers above spell out
+     * inline.
      */
-    const artifactFocusPrompt = typeof run.doneKey === 'string' && run.doneKey
-      ? [
-          'Artifact focus:',
-          'The moment a file you created this turn has real content in it — not before it is written, and not held until the end of the turn — emit one marker naming it:',
-          renderArtifactFocusMarkerExample(run.doneKey, { open: 'index.html' }),
-          'That opens it in the preview immediately, so the user is not staring at an empty pane while you write the rest.',
-          `Add a \`show\` list — on the same marker or a later one — to say which files deserve a result card: ${renderArtifactFocusMarkerExample(run.doneKey, { show: ['index.html', 'report.md'] })}`,
-          'Name only the deliverables. A page plus its stylesheet, scripts, and a dozen images is ONE deliverable; list the page.',
-          'Paths are relative to the project root, and `open` must be a file you created in THIS turn. Emit the marker again to change your mind — the last value of each attribute wins.',
-          'Skip it entirely when the turn created nothing worth looking at. The host then picks for itself, which is the behaviour you get today.',
-          `This turn's key is ${run.doneKey}: copy it verbatim, never reuse an earlier one, and never invent one.`,
-          'The marker is protocol, not prose: do not mention it, do not explain it, and do not wrap it in a code fence.',
-        ].join('\n')
-      : '';
+    const artifactFocusPrompt = renderArtifactFocusInstruction(
+      typeof run.doneKey === 'string' ? run.doneKey : '',
+    );
     // The connected-external-MCP directive reflects live OAuth token state,
     // which flips mid-conversation as Bearers expire/refresh. Keeping it out of
     // the cached stable prefix (daemonSystemPrompt) and re-sending it here in

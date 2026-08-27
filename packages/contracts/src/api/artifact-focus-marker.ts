@@ -47,6 +47,17 @@
  * misbehaving marker can do is hide a card — never fabricate one, and never
  * point a card at a file the turn did not produce.
  *
+ * **Cards are opt-in.** A turn that declares no `show` gets no artifact cards
+ * in the conversation at all (`declaredArtifactCards`); the files stay in the
+ * project's file list, the conversation just stops enumerating them. The
+ * product ruling, verbatim: 「一张都不显示那就不显示呗, 如果有重要的新创建的没给
+ * 用户展示那是问题, 但如果没什么重要的或者要让用户看的, 那就不展示呗没啥问题吧?」
+ * `open` is NOT part of that ruling and keeps its own fallback: a turn without
+ * a marker still auto-opens by the host's rank/mtime inference.
+ *
+ * That makes `renderArtifactFocusInstruction` load-bearing rather than
+ * decorative — it is the only thing that will ever cause a model to emit one.
+ *
  * This module is the single source of truth for the marker's shape.
  */
 
@@ -231,6 +242,47 @@ export function renderArtifactFocusMarkerExample(
   return `<od-focus ${attrs.join(' ')}/>`;
 }
 
+/**
+ * The per-turn instruction that teaches this marker — the ONLY place it is
+ * taught, and the reason it lives here rather than in a prompt module.
+ *
+ * It has to be rendered per turn, because the key is a fresh nonce per run: a
+ * marker without this turn's key is stripped and never accepted. That rules out
+ * the cached stable prefix (`prompts/system.ts` on either side of the app
+ * contract), where a per-turn nonce would move the prefix on every turn of every
+ * conversation and miss the upstream prompt cache — the same reason `<od-done>`
+ * and `<od-next>` are taught from the per-turn slice. Keeping the body next to
+ * the parser and the example renderer means the daemon path and any BYOK path
+ * read one string, not two copies that drift.
+ *
+ * Everything the host can decide for itself is decided for itself, so this stays
+ * short. What it cannot decide, and therefore must say:
+ *
+ *  · **When** `open` fires. 「不要在空的时候打开,不然用户看到空的会感觉是 bug,
+ *    能看到产物有内容了再打开? 但也不要等完全写完再打开,不然用户可能会等很久」
+ *  · **What `show` is for.** 「一个 html 可能会有 js 或 css 文件或者一堆图片文件,
+ *    但最终主要的是这个 html,而不是其他杂七杂八的东西,所以让 agent 只显示这个
+ *    html」
+ *  · **What silence costs.** Declaring no `show` means no cards — see
+ *    `declaredArtifactCards`. That ruling makes this instruction load-bearing
+ *    rather than optional, so the consequence is stated rather than implied.
+ */
+export function renderArtifactFocusInstruction(key: string): string {
+  if (typeof key !== 'string' || !key) return '';
+  return [
+    'Artifact focus:',
+    'The moment a file you created this turn has real content in it — not while it is still empty, and not held back until the end of the turn — emit one marker naming it:',
+    renderArtifactFocusMarkerExample(key, { open: 'index.html' }),
+    'That switches the preview to it right then. Opening a file that is still empty reads as a bug to the user; waiting until the last sidecar asset is written leaves them watching a blank pane for minutes.',
+    `Separately, name this turn's deliverables — the files that deserve a result card in the conversation — on the same marker or on a later one: ${renderArtifactFocusMarkerExample(key, { show: ['index.html', 'report.md'] })}`,
+    'Only the deliverables. A page plus its stylesheet, its scripts, and a dozen images is ONE deliverable: name the page.',
+    '`show` is the complete list, and it is the only thing that puts result cards in the conversation: a turn that declares no `show` shows no cards at all. Nothing becomes unreachable — every file stays in the project file list — but if this turn made something the user should look at, say so.',
+    'Paths are relative to the project root, and `open` must be a file this turn wrote. Emit the marker again to change your mind: the last value of each attribute wins, and `open` and `show` are independent of each other.',
+    `This turn's key is ${key}: copy it verbatim, never reuse an earlier one, and never invent one.`,
+    'The marker is protocol, not prose: do not mention it, do not explain it, and do not wrap it in a code fence.',
+  ].join('\n');
+}
+
 /** The payload the daemon hands the client once a marker is accepted. */
 export interface ArtifactFocusSelection {
   /** Project-relative path the preview should open, when the turn declared one. */
@@ -277,30 +329,15 @@ function focusMatchKeys(file: FocusCandidateFile): string[] {
 }
 
 /**
- * Narrow a turn's produced-file list to the ones the agent declared.
+ * The declared paths as a match set: full project-relative path AND bare
+ * basename for each, because agents write `index.html` about as often as
+ * `site/index.html`.
  *
- * Three rules, all of them load-bearing:
- *
- *  1. **No declaration → no change.** A turn without a marker keeps exactly the
- *     list the host inferred. "No marker" must never mean "show nothing";
- *     every conversation recorded before this marker existed is in that state.
- *  2. **Narrow only, never widen.** A declared path that is not in the list is
- *     ignored rather than added, so the marker cannot conjure a card for a file
- *     the turn did not produce.
- *  3. **An empty intersection is a no-op, not an empty panel.** If the agent
- *     names only files the host did not attribute to this turn, we keep the
- *     inferred list. Hiding every card because the agent mis-typed a path is a
- *     strictly worse outcome than showing one card too many.
- *
- * Matching accepts a full project-relative path or a bare basename on either
- * side, because agents write `index.html` about as often as `site/index.html`.
- * Original order is preserved — the panel's ordering is not the agent's call.
+ * Empty when nothing usable was declared — no marker, an empty `show`, or a
+ * `show` whose every entry the path boundary refused. Those three are one case
+ * on purpose: "the agent told us nothing we can act on".
  */
-export function narrowProducedFilesToFocus<T extends FocusCandidateFile>(
-  files: readonly T[],
-  show: readonly string[] | null | undefined,
-): readonly T[] {
-  if (files.length === 0) return files;
+function declaredMatchKeys(show: readonly string[] | null | undefined): Set<string> {
   const wanted = new Set<string>();
   for (const entry of Array.isArray(show) ? show : []) {
     const normalized = normalizeArtifactFocusPath(entry);
@@ -309,6 +346,81 @@ export function narrowProducedFilesToFocus<T extends FocusCandidateFile>(
     const basename = normalized.split('/').pop();
     if (basename) wanted.add(basename);
   }
+  return wanted;
+}
+
+/**
+ * The files the conversation lists as this turn's result cards.
+ *
+ * **Cards are declared, not inferred.** The product ruling, verbatim:
+ *
+ *   「一张都不显示那就不显示呗, 如果有重要的新创建的没给用户展示那是问题, 但如果
+ *     没什么重要的或者要让用户看的, 那就不展示呗没啥问题吧?」
+ *
+ * So a turn that declares no `show` lists nothing, and a declaration that names
+ * only files this turn did not produce lists nothing either — a typo must not
+ * be the one input that brings back the full six-card panel the marker exists
+ * to shrink. Nothing becomes unreachable: the files are still in the project's
+ * file list, the conversation simply stops enumerating them.
+ *
+ * It still cannot WIDEN: it filters a list the host built from files it saw for
+ * itself, so a declared path that is not in that list matches nothing rather
+ * than conjuring a card. Original order is preserved — the panel's ordering is
+ * not the agent's call.
+ *
+ * Deliberately NOT the same function as `narrowProducedFilesToFocus` below.
+ * That one answers "what did this turn deliver" for the Share / Download /
+ * next-step anchor, where an undeclared turn must keep its inferred list or
+ * those affordances lose their target. This one answers "what does the
+ * conversation list". The two answers now differ for an undeclared turn, which
+ * is exactly why they are two functions.
+ */
+export function declaredArtifactCards<T extends FocusCandidateFile>(
+  files: readonly T[],
+  show: readonly string[] | null | undefined,
+): readonly T[] {
+  const wanted = declaredMatchKeys(show);
+  /*
+   * No `wanted.size === 0` guard, and no `files.length === 0` guard. Both are
+   * unreachable-by-observation: an empty `wanted` matches nothing and an empty
+   * `files` filters to nothing, so either guard could be deleted with every
+   * test still green — the signature of a branch no test is really covering.
+   * One mechanism, one line.
+   */
+  return files.filter((file) => focusMatchKeys(file).some((key) => wanted.has(key)));
+}
+
+/**
+ * Narrow a turn's produced-file list to the ones the agent declared.
+ *
+ * This is the DELIVERY list, not the card list: it feeds the Share / Download /
+ * next-step anchor and the plugin-folder scan. `declaredArtifactCards` above
+ * owns what the conversation actually lists, and the two deliberately disagree
+ * about an undeclared turn.
+ *
+ * Three rules, all of them load-bearing:
+ *
+ *  1. **No declaration → no change.** A turn without a marker keeps exactly the
+ *     list the host inferred, so Share and Download still have something to
+ *     point at. (This is NOT the card rule; cards went the other way — see
+ *     `declaredArtifactCards`.)
+ *  2. **Narrow only, never widen.** A declared path that is not in the list is
+ *     ignored rather than added, so the marker cannot conjure an anchor for a
+ *     file the turn did not produce.
+ *  3. **An empty intersection is a no-op.** If the agent names only files the
+ *     host did not attribute to this turn, we keep the inferred list rather
+ *     than leaving those affordances with no target at all.
+ *
+ * Matching accepts a full project-relative path or a bare basename on either
+ * side, because agents write `index.html` about as often as `site/index.html`.
+ * Original order is preserved.
+ */
+export function narrowProducedFilesToFocus<T extends FocusCandidateFile>(
+  files: readonly T[],
+  show: readonly string[] | null | undefined,
+): readonly T[] {
+  if (files.length === 0) return files;
+  const wanted = declaredMatchKeys(show);
   /*
    * Rules 1 and 3 are the SAME line, deliberately.
    *

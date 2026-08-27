@@ -35,7 +35,7 @@ afterEach(() => {
 });
 
 function baseMessage(overrides: Partial<ChatMessage> = {}): ChatMessage {
-  return {
+  const message = {
     id: 'msg-1',
     role: 'assistant',
     content: 'Done.',
@@ -46,6 +46,22 @@ function baseMessage(overrides: Partial<ChatMessage> = {}): ChatMessage {
     producedFiles: [],
     ...overrides,
   } as ChatMessage;
+  /*
+   * 产物卡是 agent **声明**出来的(`<od-focus show="…">`),不再从产出清单推断。
+   * 这一组用例讲的是「下一步」那一块,不是声明协议本身,所以夹具替这一轮把它的
+   * 产出声明出来,让用例继续论证它原本要论证的事。产出为空的那几条不受影响 ——
+   * 没有产出就没有可声明的东西,和今天一样。
+   */
+  const produced = message.producedFiles ?? [];
+  if (produced.length > 0) {
+    message.events = [
+      ...(message.events ?? []),
+      { kind: 'artifact_focus', show: produced.map((file) => file.name) } as NonNullable<
+        ChatMessage['events']
+      >[number],
+    ];
+  }
+  return message;
 }
 
 function producedFile(name: string, kind: ProjectFile['kind'] = 'html'): ProjectFile {
