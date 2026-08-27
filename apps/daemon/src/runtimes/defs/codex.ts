@@ -177,6 +177,33 @@ export function codexOpenDesignShellEnvironmentArgs(): string[] {
   ];
 }
 
+// Codex asks the API for a reasoning summary only when `model_reasoning_summary`
+// resolves to something other than `none`, and its own embedded model catalog
+// ships `"default_reasoning_summary": "none"` for the current frontier models
+// (verbatim from the `gpt-5.6-sol` entry in codex-cli 0.149.1). The result is a
+// turn that provably reasons — `turn.completed` reports the reasoning tokens —
+// while the JSON stream carries no reasoning item at all.
+//
+// Measured on codex-cli 0.149.1, one prompt, two invocations differing only in
+// this override:
+//
+//   without → {"type":"item.completed","item":{"type":"agent_message",…}}
+//             and nothing else, on a turn billed 516 reasoning tokens
+//   with    → {"type":"item.completed","item":{"id":"item_1","type":"reasoning",
+//               "text":"**Calculating favorable combinations ratio**"}}
+//
+// `emitCodexReasoningItem` in json-event-stream.ts already turns exactly that
+// item into `thinking_delta`, so asking for the summary is the whole fix.
+//
+// This is deliberately unconditional rather than "only when the user has not
+// set it": codex hashes the per-turn `turn_context` block, so an override that
+// appears on some turns and not others would break the prefix cache that
+// `exec resume` exists to reuse. Both the create and the resume turn get the
+// identical pair.
+export function codexReasoningSummaryArgs(): string[] {
+  return ['-c', 'model_reasoning_summary="detailed"'];
+}
+
 export function codexNeedsDangerFullAccessSandbox(
   platform: NodeJS.Platform = process.platform,
   env: NodeJS.ProcessEnv = process.env,
@@ -299,6 +326,7 @@ export const codexAgentDef = {
         args.push('--disable', 'plugins');
       }
       args.push(...codexOpenDesignShellEnvironmentArgs());
+      args.push(...codexReasoningSummaryArgs());
       // `-C <cwd>` and `--add-dir <dir>` are CREATE-only flags: `codex exec
       // resume` rejects both (`error: unexpected argument '-C' found`), so
       // appending them on a resume turn would make the follow-up turn die
