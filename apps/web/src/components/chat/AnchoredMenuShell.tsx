@@ -34,6 +34,31 @@
  *
  * 往上翻的那一档由 `[data-placement="above"]` 覆写(见 `AnchoredMenuShell.module.css`)。
  *
+ * ## 两条路都要夹,不是只夹搬走的那一份
+ *
+ * 2026-08-27 用户第二次报「这个会超出去的问题怎么还没修好?」,配图是**预览区
+ * 工具栏**上那枚「发布」点开的菜单被切掉一截。原因就在这层壳里:`anchorId`
+ * 为空时它**直接 `return menu`**,既不 portal 也不量任何东西 —— 横向修正只
+ * 覆盖了产物卡那条路,工具栏那条路从来没被修过。
+ *
+ * 现在两条路都过同一套测量,只是**修正落在不同的盒子上**:
+ *  · 搬走那份:加在**包裹盒**的 `left` 上(包裹盒不可见也不吃事件,整体平移,
+ *    菜单自己的 `right: 0` 一个字不用改)。
+ *  · 原地那份:没有包裹盒可挪,加在**菜单自己**的 `transform: translateX()` 上。
+ *    `.share-menu-popover` / `.chrome-unified-popover` 上没有任何 transform 或
+ *    动画(查过),不会打架。
+ *
+ * **放得下就一个字节都不写。** 产品当初要求工具栏这条路「和搬动之前逐字一致」,
+ * 所以修正是按需的:不越界时既不加 `transform` 也不加 `max-*`,DOM 和以前一样。
+ *
+ * ## 锚点看不见了就收起来
+ *
+ * 产品 2026-08-27:「在界面中如果原 button 不可见, 就自动收起来 下拉框吧?」
+ * 壳这一层只做**可逆的那一半** —— `visibility: hidden` + `pointer-events: none`
+ * (Floating UI 的 `hide` 和 Radix 的 `hideWhenDetached` 都是这么落的:留在
+ * DOM 里,滚回来自己就回来了)。真要**关掉**是调用方的决定,走 `onAnchorHidden`。
+ * 两者不冲突:先视觉隐藏,同一帧把信号交给调用方,由它决定关不关。
+ *
  * ## 层位
  *
  * portal 到 body 之后,菜单不再被 `.artifact-card-acts`(`position:absolute;
@@ -41,7 +66,7 @@
  * 同一档,在提示层 `--z-hint` 之上 —— 人主动打开的面板不该被一条没人要求的
  * 提示盖住(2026-08-27 用户截图)。
  */
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 
 import { useAnchoredPopover } from '../../hooks/useAnchoredPopover';
@@ -67,9 +92,10 @@ export function AnchoredMenuShell({
   wrapperClassName,
   testId,
   portalRef,
+  onAnchorHidden,
   children,
 }: {
-  /** null = 原地渲染(工具栏点开的那一条路,和搬动之前完全一样)。 */
+  /** null = 原地渲染(工具栏点开的那一条路)。位置修正**两条路都做**。 */
   anchorId: string | null;
   /** 菜单本体的类名 —— 原样照抄调用处,一个字都不改。 */
   className: string;
@@ -78,6 +104,11 @@ export function AnchoredMenuShell({
   testId?: string;
   /** portal 出去那一份的引用 —— 调用方的「点在外面就关」要认它作「里面」。 */
   portalRef?: { current: HTMLDivElement | null };
+  /**
+   * 锚点已经看不见了(滚出裁剪框,或从 DOM 里没了)。壳自己已经把菜单视觉隐藏,
+   * 这里是给调用方的信号 —— **要不要真的关掉是调用方的决定**,不是这层的。
+   */
+  onAnchorHidden?: () => void;
   children: ReactNode;
 }) {
   /*
@@ -95,24 +126,94 @@ export function AnchoredMenuShell({
    * 「Maximum update depth exceeded」撞出来(写这段时踩过一次)。
    */
   const anchorRef = useRef<HTMLElement | null>(anchor);
-  anchorRef.current = anchor;
-  // 包裹盒盖在按钮上,所以它的尺寸就是按钮的尺寸;菜单相对它排。
-  const rect = anchor?.getBoundingClientRect?.();
   // 菜单本体的引用:横向修正要量它**真实的盒子**,因为它的横向位置来自既有 CSS
   // (`.chrome-share-menu .share-menu-popover { right: 0 }`),不是这里算出来的。
   const menuRef = useRef<HTMLDivElement | null>(null);
-  const { placement, inlineShift } = useAnchoredPopover(Boolean(anchor), anchorRef, menuRef, {
-    // 分享面板最高,导出面板矮一些;只用来判上/下,不必精确。
-    estimatedHeight: 320,
-  });
+  /*
+   * 原地那条路没有「锚点按钮」可查 —— 它的定位参照就是菜单自己的**定位父级**
+   * (`.share-menu`,`position: relative`),既有 CSS 本来就是相对它排的。
+   * 用 ref 回调而不是渲染期赋值:节点挂上的那一刻就能拿到,赶得上同一帧的
+   * `useLayoutEffect`;渲染期读 `menuRef.current` 第一帧永远是 null。
+   */
+  const attachMenu = useCallback((el: HTMLDivElement | null) => {
+    menuRef.current = el;
+    if (!anchorId) anchorRef.current = el?.parentElement ?? null;
+  }, [anchorId]);
+  if (anchorId) anchorRef.current = anchor;
+  // 包裹盒盖在按钮上,所以它的尺寸就是按钮的尺寸;菜单相对它排。
+  const rect = anchor?.getBoundingClientRect?.();
+  const open = anchorId ? Boolean(anchor) : true;
+  const { placement, inlineShift, maxInlineSize, maxBlockSize, anchorHidden } = useAnchoredPopover(
+    open,
+    anchorRef,
+    menuRef,
+    {
+      // 分享面板最高,导出面板矮一些;只用来判上/下,不必精确。
+      estimatedHeight: 320,
+    },
+  );
+
+  /*
+   * 信号交给调用方 —— 在 effect 里发,不在渲染里发:渲染期 setState 别人的
+   * 状态会撞 React 的「Cannot update a component while rendering a different
+   * component」。`anchorHidden` 翻真时发一次,翻假时不发。
+   */
+  useEffect(() => {
+    if (anchorHidden) onAnchorHidden?.();
+  }, [anchorHidden, onAnchorHidden]);
+
+  /*
+   * 尺寸限制两条路都加在**菜单自己**身上(包裹盒是按钮那么大的,限它没意义)。
+   * 限了宽/高就必须给滚动,否则等于把内容裁掉 —— 那正是这次要修的毛病。
+   * 放得下时 `maxInlineSize` / `maxBlockSize` 是 null,这里一个字节都不写。
+   */
+  const sizeStyle: CSSProperties = {};
+  if (maxInlineSize != null) {
+    sizeStyle.maxWidth = maxInlineSize;
+    /*
+     * `min-width` **压得过** `max-width` —— CSS 的最终宽度是
+     * `max(min-width, min(max-width, width))`,下限永远最后生效。
+     *
+     * 而既有样式表里正好有一条下限:
+     *     .chrome-share-menu--unified .chrome-unified-popover { min-width: min(248px, …) }
+     * 于是只写 `max-width` 完全没有效果 —— 在无头 Chrome 里实测过:限到 244px,
+     * 量出来仍旧是 248px,一个像素没动。光读 CSS 文本看不出来这条反转。
+     *
+     * 所以限宽时必须同时把下限降到实际可用宽度。不限宽时一个字都不写,
+     * 既有的 248px 下限继续管事(窄菜单不至于显得局促,那是它原本的用意)。
+     */
+    sizeStyle.minWidth = maxInlineSize;
+    sizeStyle.overflowX = 'auto';
+  }
+  if (maxBlockSize != null) {
+    sizeStyle.maxHeight = maxBlockSize;
+    sizeStyle.overflowY = 'auto';
+  }
+  if (anchorHidden) {
+    // 可逆的隐藏,不是卸载 —— 滚回来自己就回来了。`pointer-events` 一起关掉,
+    // 免得子元素重新声明 `visibility: visible` 时它还在吃点击(Radix 同款)。
+    sizeStyle.visibility = 'hidden';
+    sizeStyle.pointerEvents = 'none';
+  }
 
   const menu = (
     <div
-      ref={anchorId ? menuRef : undefined}
+      ref={attachMenu}
       className={className}
       role="menu"
       {...(anchorId ? { 'data-placement': placement } : {})}
       {...(testId ? { 'data-testid': testId } : {})}
+      {...(anchorId
+        ? Object.keys(sizeStyle).length > 0
+          ? { style: sizeStyle }
+          : {}
+        : /*
+           * 原地那条路没有包裹盒可挪,横向修正只能落在菜单自己的 `transform` 上。
+           * 放得下(shift 0、无尺寸限制)时不写 `style`,DOM 与搬动之前逐字一致。
+           */
+          inlineShift !== 0 || Object.keys(sizeStyle).length > 0
+          ? { style: { ...sizeStyle, transform: `translateX(${inlineShift}px)` } }
+          : {})}
     >
       {children}
     </div>
