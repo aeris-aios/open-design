@@ -512,6 +512,41 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
           + '<main id="slot">real</main></body></html>',
       ),
     );
+    // A stray end tag inside foreign content is usually ignored, but `</p>`
+    // and `</br>` each have an "in body" rule that synthesises the element and
+    // closes it, popping the foreign element on the way. The scan does not
+    // model that, so it refuses rather than keeping a frame the parser dropped.
+    await writeFile(
+      path.join(dir, 'foreign-stray-p.html'),
+      Buffer.from(
+        '<!doctype html><html><head></head><body>'
+          + '<svg></p><script>const x = "<body>slip</body>";<\/script>'
+          + '<main id="slot">real</main></body></html>',
+      ),
+    );
+    // Every other stray end tag leaves the foreign element open, so this one
+    // still resolves precisely — the refusal above must not widen to it.
+    await writeFile(
+      path.join(dir, 'foreign-stray-div.html'),
+      Buffer.from(
+        '<!doctype html><html><head></head><body>'
+          + '<svg></div><![CDATA[q > <\/body>]]></svg>'
+          + '<main id="slot">real</main></body></html>',
+      ),
+    );
+    // A nested template's contents get a fresh insertion mode and the outer one
+    // is restored at its close, so the inner `<svg>` is real foreign content
+    // even though the outer fragment is in select mode.
+    await writeFile(
+      path.join(dir, 'nested-template-select.html'),
+      Buffer.from(
+        '<!doctype html><html><head></head><body>'
+          + '<template><select><template><svg>'
+          + '<![CDATA[x > </template></template><body>slip</body>]]>'
+          + '</svg></template></select></template>'
+          + '<main id="slot">real</main></body></html>',
+      ),
+    );
     // A leading BOM is the encoding signature and only counts at byte zero, so
     // the no-boundary fallback has to insert after it rather than in front of
     // it — otherwise the doctype stops applying and the artifact silently
@@ -1266,6 +1301,36 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
     const html = await bridged.text();
     expect(html).not.toContain('data-od-project-preview-base');
     expect(html).toContain('href="https://author.example/assets/"');
+  });
+
+  it('refuses a boundary past a stray end tag that reprocessing acts on', async () => {
+    const bridged = await fetch(`${rawUrl('foreign-stray-p.html')}?odPreviewBridge=scroll`);
+    expect(bridged.status).toBe(200);
+    const html = await bridged.text();
+    const page = load(html);
+    expect(page('[data-od-url-scroll-bridge]').length).toBe(1);
+    expect(page('#slot').text()).toBe('real');
+    expect(html).toContain('const x = "<body>slip</body>";');
+  });
+
+  it('keeps precise placement past a stray end tag that is ignored', async () => {
+    const bridged = await fetch(`${rawUrl('foreign-stray-div.html')}?odPreviewBridge=scroll`);
+    expect(bridged.status).toBe(200);
+    const html = await bridged.text();
+    const page = load(html);
+    expect(page('body > [data-od-url-scroll-bridge]').length).toBe(1);
+    expect(page('#slot').text()).toBe('real');
+    expect(html).toContain('<![CDATA[q > </body>]]>');
+  });
+
+  it('gives a nested template its own insertion mode', async () => {
+    const bridged = await fetch(`${rawUrl('nested-template-select.html')}?odPreviewBridge=scroll`);
+    expect(bridged.status).toBe(200);
+    const html = await bridged.text();
+    const page = load(html);
+    expect(page('body > [data-od-url-scroll-bridge]').length).toBe(1);
+    expect(page('#slot').text()).toBe('real');
+    expect(html).toContain('<![CDATA[x > </template></template><body>slip</body>]]>');
   });
 
   it('keeps a leading BOM at byte zero when there is no boundary', async () => {

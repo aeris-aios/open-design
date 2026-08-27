@@ -1792,11 +1792,15 @@ function findScriptClose(lowerHtml: string, from: number): number {
  * would end the template early and drop the scan back into author text.
  */
 function skipTemplateContent(html: string, lowerHtml: string, from: number): number {
-  const selectMode = newSelectModeState();
   const tagOpen = /<(\/?)([a-z][^\t\n\f\r \/>]*)/iy;
-  let depth = 1;
+  // One insertion-mode state per open template, and the stack is the depth. A
+  // nested template's contents are processed through the template rules, which
+  // start it in a fresh mode and restore the outer one at its close — carrying
+  // a single `inSelect` straight through made the walker ignore a real `<svg>`
+  // inside the inner fragment.
+  const modes: SelectModeState[] = [newSelectModeState()];
   let i = from;
-  while (i < html.length && depth > 0) {
+  while (i < html.length && modes.length > 0) {
     if (html.charCodeAt(i) !== 60 /* < */) { i += 1; continue; }
     if (html.startsWith('<!--', i)) {
       const end = endOfComment(html, i);
@@ -1823,6 +1827,7 @@ function skipTemplateContent(html: string, lowerHtml: string, from: number): num
     const tagEnd = tag.end;
     if (tagEnd < 0) return -1;
     const tagName = (open[2] ?? '').toLowerCase();
+    const selectMode = modes[modes.length - 1]!;
     if (!observeSelectMode(selectMode, tagName, !!open[1], tag.selfClosing)) return -1;
     if (!open[1] && (PREVIEW_RAW_TEXT_ELEMENTS as readonly string[]).includes(tagName)) {
       const contentEnd = findRawTextClose(lowerHtml, tagName, tagEnd + 1);
@@ -1839,10 +1844,17 @@ function skipTemplateContent(html: string, lowerHtml: string, from: number): num
       i = contentEnd;
       continue;
     }
-    if (tagName === 'template') depth += open[1] ? -1 : 1;
+    if (tagName === 'template') {
+      if (open[1]) {
+        modes.pop();
+        if (modes.length === 0) return tagEnd + 1;
+      } else if (!tag.selfClosing) {
+        modes.push(newSelectModeState());
+      }
+    }
     i = tagEnd + 1;
   }
-  return depth === 0 ? i : -1;
+  return -1;
 }
 
 // Void elements never have contents, so they never open a namespace frame and
@@ -1897,6 +1909,11 @@ function observeSelectMode(
 // Start tags that close an open `<select>` and are then reprocessed, in every
 // select context.
 const HTML_NAMESPACE = 'http://www.w3.org/1999/xhtml';
+
+// End tags whose "in body" rule synthesises the element and then closes it,
+// popping whatever is open above — including a foreign element. Every other
+// stray end tag meets a `special` element and is ignored.
+const REPROCESSED_END_TAGS: readonly string[] = ['p', 'br'];
 
 const SELECT_CLOSING_START_TAGS: readonly string[] = ['input', 'keygen', 'textarea'];
 // Tags that close it only in "in select in table" — outside a table the
@@ -2097,16 +2114,24 @@ function skipForeignContent(html: string, lowerHtml: string, rootName: string, f
     const tagName = (open[2] ?? '').toLowerCase();
     if (open[1]) {
       // Unwind to the matching open element, frame 0 included: an end tag that
-      // matches the root closes the subtree. An end tag that matches nothing is
-      // walked down to the first HTML-namespace ancestor and reprocessed in the
-      // current insertion mode, where it meets a `special` element and is
-      // ignored — so it closes nothing here either.
+      // matches the root closes the subtree.
+      let matched = false;
       for (let frame = nsStack.length - 1; frame >= 0; frame -= 1) {
         if (nsStack[frame]?.name === tagName) {
           nsStack.length = frame;
+          matched = true;
           break;
         }
       }
+      // An end tag that matches nothing is walked down to the first
+      // HTML-namespace ancestor and reprocessed in the current insertion mode.
+      // Usually it meets a `special` element there and is ignored, so it closes
+      // nothing here either — measured against a real parser, 33 of 35 stray
+      // end tags leave the foreign element open. `</p>` and `</br>` are the
+      // exceptions: "in body" gives both a rule that synthesises the element
+      // and then closes it, which pops the foreign element on the way. Those
+      // two are stateful in a way this scan does not model, so refuse.
+      if (!matched && REPROCESSED_END_TAGS.includes(tagName)) return -1;
       i = tagEnd + 1;
       if (nsStack.length === 0) return i;
       continue;
