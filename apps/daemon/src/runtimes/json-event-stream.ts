@@ -838,6 +838,116 @@ function emitCodexFileChangeToolUses(
   }
 }
 
+/**
+ * Codex reports a call to a connected MCP server as an `mcp_tool_call` ITEM.
+ * Recorded shape, verbatim (codex-cli 0.149.1):
+ *
+ *   {"type":"item.started","item":{"id":"item_2","type":"mcp_tool_call",
+ *     "server":"echofacts","tool":"echo_fact","arguments":{"topic":"…"},
+ *     "result":null,"error":null,"status":"in_progress"}}
+ *   {"type":"item.completed","item":{…,"error":{"message":"…"},"status":"failed"}}
+ *
+ * This is a live surface, not a hypothetical: `mcp-agent-install.ts` registers
+ * every connected MCP server into codex with `codex mcp add`, so any user with
+ * a connector sees these frames. Until this branch existed both lifecycle
+ * events fell through to `raw`, and `build-turn-blocks.ts` skips `raw`
+ * outright — so a codex turn that called a connector showed NO row at all,
+ * success or failure alike.
+ *
+ * `mcp__<server>__<tool>` is the repository's existing name shape for an
+ * MCP-provided tool (`tool-kind.ts` documents `mcp__*__todo_write`, and the
+ * canonical `isTodoWriteToolName` matches on the `__` boundary), so a snapshot
+ * tool injected over MCP keeps being recognised as one. Returns null when the
+ * item is not a fully named MCP call — a partially known frame stays `raw`
+ * rather than becoming a row labelled with a blank server or tool.
+ */
+function codexMcpToolName(item: JsonObject): string | null {
+  if (item.type !== 'mcp_tool_call') return null;
+  const server = typeof item.server === 'string' ? item.server : '';
+  const tool = typeof item.tool === 'string' ? item.tool : '';
+  if (!server || !tool) return null;
+  return `mcp__${server}__${tool}`;
+}
+
+/**
+ * Emit the `tool_use` half of an MCP call, once per item id.
+ *
+ * Called from `item.started` because every field the row needs (server, tool,
+ * arguments) is already present there — holding it back to `item.completed`
+ * would cost the row its duration for nothing (`tool-timing.ts` stamps
+ * `startedAt` at the single event exit). The `codexToolUses` guard makes the
+ * later `item.completed` a no-op, and equally makes `item.completed`
+ * self-sufficient when the started event never arrived.
+ */
+function emitCodexMcpToolUse(
+  item: JsonObject,
+  id: string,
+  name: string,
+  onEvent: StreamEventHandler,
+  state: ParserState,
+): void {
+  if (state.codexToolUses.has(id)) return;
+  state.codexToolUses.add(id);
+  onEvent({
+    type: 'tool_use',
+    id,
+    name,
+    input: isRecord(item.arguments) ? item.arguments : {},
+  });
+}
+
+/**
+ * An MCP call reports failure through BOTH `status: 'failed'` and a populated
+ * `error` object; either alone is enough to mark the row failed. The message is
+ * the only thing the failure case carries (`result` stays null), and during a
+ * denied call it is the sole explanation the user would ever get.
+ *
+ * NOT VERIFIED: the payload shape of a SUCCESSFUL `result`. `codex exec` runs
+ * with approval policy `never` and refuses every MCP call before it reaches the
+ * server, so no successful frame could be captured. `stringifyContent` is the
+ * deliberate generic fallback rather than a guessed field path.
+ */
+function codexMcpToolResult(item: JsonObject): { content: string; isError: boolean } {
+  const error = isRecord(item.error) ? item.error : null;
+  const isError = item.status === 'failed' || error !== null;
+  const message = error && typeof error.message === 'string' ? error.message : '';
+  return { content: message || stringifyContent(item.result ?? ''), isError };
+}
+
+/**
+ * Read a codex `web_search` item into the query it actually searched for, or
+ * null when the frame carries no search we can render honestly.
+ *
+ * Recorded shape, verbatim (codex-cli 0.149.1 — web search is ON by default,
+ * no flag needed, so this reaches every codex user):
+ *
+ *   {"type":"item.started","item":{"id":"item_2","type":"web_search",
+ *     "id":"exec-9fb8985e-…","query":"","action":{"type":"other"}}}
+ *   {"type":"item.completed","item":{"id":"item_2","type":"web_search",
+ *     "id":"exec-9fb8985e-…","query":"OpenAI Codex CLI release notes",
+ *     "action":{"type":"search","query":"OpenAI Codex CLI release notes"}}}
+ *
+ * Two codex oddities are load-bearing here. First, `id` is serialised TWICE;
+ * `JSON.parse` keeps the last, so the tool id is the `exec-…` value. It is
+ * stable across the pair, so the pairing still holds. Second, the started
+ * frame's `query` is EMPTY — the query only exists at completion, and the query
+ * IS the row (`toolTitle` and `searchPattern` both read it). That is why the
+ * pair is emitted at `item.completed` and the started frame emits nothing.
+ *
+ * Only `action.type === 'search'` is recognised. codex's action taxonomy has
+ * more members (the started frame shows `other`) and we have captured only this
+ * one; calling a page fetch a 「搜索」 is the same class of lie as calling a file
+ * deletion 「新建」, so anything else stays `raw` — the visible signal that a
+ * shape is still unhandled.
+ */
+function codexWebSearchQuery(item: JsonObject): string | null {
+  if (item.type !== 'web_search') return null;
+  const action = isRecord(item.action) ? item.action : null;
+  if (!action || action.type !== 'search') return null;
+  const query = typeof item.query === 'string' ? item.query : '';
+  return query.length > 0 ? query : null;
+}
+
 function handleCodexEvent(obj: unknown, onEvent: StreamEventHandler, state: ParserState): boolean {
   if (!isRecord(obj)) return false;
 
@@ -924,6 +1034,21 @@ function handleCodexEvent(obj: unknown, onEvent: StreamEventHandler, state: Pars
       emitCodexFileChangeToolUses(startedFileChanges, onEvent, state);
       return true;
     }
+    const startedMcpToolName = codexMcpToolName(item);
+    if (startedMcpToolName && typeof item.id === 'string' && item.id) {
+      state.codexPreviousEventWasAgentMessage = false;
+      state.codexLastAgentMessageEndedWithNewline = false;
+      emitCodexMcpToolUse(item, item.id, startedMcpToolName, onEvent, state);
+      return true;
+    }
+    if (item.type === 'web_search') {
+      // Consumed on purpose, emitting nothing: the started frame's `query` is
+      // always empty, and a 「搜索」 row with no term is worse than no row. The
+      // pair comes from `item.completed`, where the query exists. Boundary
+      // state is deliberately NOT cleared here — it is cleared where the row is
+      // actually emitted, so an unrecognised action still reads as no tool row.
+      return true;
+    }
   }
 
   if (obj.type === 'item.updated' && isRecord(obj.item)) {
@@ -991,6 +1116,34 @@ function handleCodexEvent(obj: unknown, onEvent: StreamEventHandler, state: Pars
       for (const change of completedFileChanges) {
         onEvent({ type: 'tool_result', toolUseId: change.id, content: '', isError });
       }
+      return true;
+    }
+    const completedMcpToolName = codexMcpToolName(item);
+    if (completedMcpToolName && typeof item.id === 'string' && item.id) {
+      state.codexPreviousEventWasAgentMessage = false;
+      state.codexLastAgentMessageEndedWithNewline = false;
+      emitCodexMcpToolUse(item, item.id, completedMcpToolName, onEvent, state);
+      const { content, isError } = codexMcpToolResult(item);
+      onEvent({ type: 'tool_result', toolUseId: item.id, content, isError });
+      return true;
+    }
+    const completedSearchQuery = codexWebSearchQuery(item);
+    if (completedSearchQuery && typeof item.id === 'string' && item.id) {
+      state.codexPreviousEventWasAgentMessage = false;
+      state.codexLastAgentMessageEndedWithNewline = false;
+      if (!state.codexToolUses.has(item.id)) {
+        state.codexToolUses.add(item.id);
+        onEvent({
+          type: 'tool_use',
+          id: item.id,
+          name: 'web_search',
+          input: { query: completedSearchQuery },
+        });
+      }
+      // Codex reports no hit count or result body for a search, so the result
+      // carries no content; the row shows 「搜索 <query>」 without a fabricated
+      // 「N 处」. There is no failure field on the captured shape either.
+      onEvent({ type: 'tool_result', toolUseId: item.id, content: '', isError: false });
       return true;
     }
   }
