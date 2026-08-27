@@ -454,12 +454,16 @@
   flex: 0 0 auto;
   min-height: 100%;
 }
+/* 虚拟化那条路(消息数超过阈值时)。行是**绝对定位**的,`.chat-log` 的 flex gap
+   在这儿一点都不生效 —— 行距只由这条 padding 给。所以它必须等于轮次**内部**
+   那一档(12);换人说话时多出来的那 12 由行里 `.msg` 自己的上外距补,
+   见 `viewer/routines.css` 的「换人说话 = 24」一段。两条路因此算出同一个数。 */
 .chat-virtual-row {
   position: absolute;
   left: 0;
   right: 0;
   top: 0;
-  padding-bottom: 14px;
+  padding-bottom: 12px;
   display: flex;
   flex-direction: column;
   min-width: 0;

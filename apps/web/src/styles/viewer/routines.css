@@ -1663,19 +1663,81 @@
   height: 28px;
   border-radius: var(--radius);
 }
+/*
+ * 流水的**基础**间距 = 轮次内部那一档。
+ *
+ * 稿子 `docs/design/chat-panel/src/scene-shell.css`(修订 `1bbdce0b06`)把这一层
+ * 分成了两档。稿子里那段注释原话是:
+ *
+ *     「24 只留给『换人说话』,同一个人连着说的几块之间是 12。
+ *       原来一律 24,结果 Thinking / 开场白 / 已确认 / 计划 / 记忆 / 步骤 这一串
+ *       明明是同一轮里连着出来的,却被拆成六件互不相干的事。」
+ *
+ * 对应三条声明:
+ *
+ *     .flow { gap: 12px }
+ *     .flow > .msg-me:not(:first-child) { margin-top: 12px }   → 12 + 12 = 24
+ *     .flow > .msg-me + *               { margin-top: 12px }   → 12 + 12 = 24
+ *
+ * 我们原来两档都写 14 —— 层级被压平,轮次边界淹在内容里(用户 2026-08-27 真机指认:
+ * 「为啥上面那边间距那么大,下面那边间距那么小,明明下面那边才是两轮的中间呢」;
+ * CDP 量到两处都是 14px,「一大一小」是错觉,但「层级没了」是真的)。
+ */
 .app .chat-log,
 .chat-skin .chat-log {
-  gap: 14px;
+  gap: 12px;
   padding: 18px 18px 20px;
   /* Let the pane's clear glass show — the card material stays uniform with
      the tab strip instead of re-painting an opaque transcript slab. */
   background: transparent;
 }
-/* Cancel the 14px flex gap so the idle spacer adds no trailing space. */
+/* Cancel the 12px flex gap so the idle spacer adds no trailing space. */
 .app .chat-log-tail-spacer,
 .chat-skin .chat-log-tail-spacer {
-  margin-top: -14px;
+  margin-top: -12px;
 }
+
+/*
+ * 换人说话 = 24(基础 12 + 这一条的 12)。
+ *
+ * ── 判据为什么是「有没有报名字」,而不是 `.msg.user` ────────────────────
+ * 稿子按 `.msg-me`(用户气泡)判「换人」,因为稿子的流水里说话人是交替的。
+ * 我们的 DOM 不是:意图澄清表单的答案那条用户消息被 `buildChatRenderItems` 收走了
+ * (`^[form answers` 开头的那条),于是**两轮之间根本没有 `.msg.user`** ——
+ * 用户截图里那处正是 `.msg.assistant` 紧挨着 `.msg.assistant`。
+ * 真正的判据是头像行在不在:`AssistantMessage` 只在换了说话人时才渲染 `.role`,
+ * 接着上一条说的那种给自己打上 `assistant-continuation`。
+ *
+ * ── 为什么补在 `.msg` 身上,而不是把 `.chat-log` 的 gap 拆开 ─────────────
+ * 消息数过阈值之后走虚拟化,每一行是**绝对定位**的 `.chat-virtual-row`,
+ * flex gap 在那条路上完全不生效。把这 12 挂在 `.msg` 自己的上外距上,
+ * 两条路(直排 / 虚拟化)算出来的就是同一个 24。
+ */
+.app .chat-log > .msg.user:not(:first-child),
+.chat-skin .chat-log > .msg.user:not(:first-child),
+.app .chat-log > .msg.assistant:not(.assistant-continuation):not(:first-child),
+.chat-skin .chat-log > .msg.assistant:not(.assistant-continuation):not(:first-child),
+.app .chat-virtual-row > .msg.user,
+.chat-skin .chat-virtual-row > .msg.user,
+.app .chat-virtual-row > .msg.assistant:not(.assistant-continuation),
+.chat-skin .chat-virtual-row > .msg.assistant:not(.assistant-continuation) {
+  margin-top: 12px;
+}
+/*
+ * ⚠️ 上面那两个 `:not(...)` 不是顺手加的守卫,各钉着一条行为:
+ *
+ *  · `:not(.assistant-continuation)` —— 接着上一条说的续写块不是新的一轮,
+ *    补了就把「同一个人连着说」也撑成 24。
+ *  · `:not(:first-child)` —— 配平态(内容不满一屏时整段贴底)靠首条消息的
+ *    `margin-top: auto`(`chat.css` 的
+ *    `.chat-log.is-balanced-transcript > .msg:first-of-type`)。这条规则的特异性
+ *    是 (0,5,0),压得过它的 (0,4,0);少了这个守卫,auto 当场被 12px 顶掉,
+ *    短会话就不再贴底了。
+ *
+ *    这里**不**再写一条 `margin-top: auto` 兜底:`.chat-log` 的子元素全是 div,
+ *    所以「`.msg` 是首个 div」和「`.msg` 是首个子元素」是同一件事 ——
+ *    `:not(:first-child)` 已经完整覆盖,兜底那条撤掉之后测试全绿,是死码。
+ */
 .app .msg,
 .chat-skin .msg {
   max-width: 100%;
@@ -1759,9 +1821,11 @@
   background: var(--bg-subtle);
   color: var(--text);
 }
+/* 轮次**内部**那一档,和 `code.css` 的 `.assistant-flow` 基底同值(稿子 `.flow` 的 12)。
+   这一条只是把皮肤那层的取值对齐,不是另一套刻度。 */
 .app .msg.assistant .assistant-flow,
 .chat-skin .msg.assistant .assistant-flow {
-  gap: 14px;
+  gap: 12px;
 }
 .app .msg.assistant .prose-block,
 .chat-skin .msg.assistant .prose-block {
