@@ -659,7 +659,17 @@ describe('AssistantMessage 执行记录', () => {
     expect(container.querySelector('[data-testid="status-pill"]')).toBeNull();
   });
 
-  it('still renders lifecycle and model status rows that carry a displayable detail', () => {
+  /*
+   * `model` 这一档 2026-08-27 起不再渲染(用户:「这个模型的标识可以去掉」)——
+   * 它是 AMR/ACP 独有的运行时标记,由 `acp/session.ts` 在 session/new 和
+   * set_model 完成时各发一次,内容是模型 id,而输入区的模型芯片上已经写着了。
+   * 详见 `tests/components/AssistantMessage.amr-model-status.test.tsx`。
+   *
+   * 这条用例原来把 `model` 和生命周期状态行捆在一起断言,于是跟着变红。
+   * 保留生命周期那两档(它们照常渲染),把 `model` 那半改成**反向断言** ——
+   * 这样它从「跟着别人一起红」变成「替那条裁决站岗」。
+   */
+  it('lifecycle 状态行照常渲染,而 model 那一档不再出现', () => {
     const { container } = render(
       <AssistantMessage
         projectKind="prototype"
@@ -678,9 +688,9 @@ describe('AssistantMessage 执行记录', () => {
     expect(container.querySelector('[data-status="done"]')).not.toBeNull();
     expect(container.textContent).toContain('Publishing plugin');
     expect(container.textContent).toContain('CLI command finished');
-    const modelStatus = container.querySelector('[data-status="model"]');
-    expect(modelStatus).not.toBeNull();
-    expect(modelStatus?.querySelector('[data-testid="status-detail"]')?.textContent).toContain('claude-opus-4-7-high');
+    // 反向断言:model 那一行整个不画,detail 里的模型 id 也不出现在任何地方
+    expect(container.querySelector('[data-status="model"]')).toBeNull();
+    expect(container.textContent).not.toContain('claude-opus-4-7-high');
   });
 
   it('renders URLs in JSON-like status details without trailing structural characters', () => {
