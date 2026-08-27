@@ -33,7 +33,6 @@ const translations: Record<string, string> = {
   'chat.queuedMore': 'more queued',
   'chat.queuedFollowUpFallback': 'Queued follow-up',
   'avatar.useLocal': 'Use Local CLI',
-  'chat.copyErrorDiagnostic': 'Copy error diagnostics',
   'chat.copyDone': 'Copied!',
 };
 
@@ -553,62 +552,6 @@ describe('ChatPane streaming state', () => {
     },
   );
 
-  it('copies failed-run diagnostics with the trace id from the error card', async () => {
-    const messages: ChatMessage[] = [
-      { id: 'user-1', role: 'user', content: 'Create a login page', createdAt: 0 },
-      {
-        id: 'assistant-1',
-        role: 'assistant',
-        content: 'Generation failed',
-        agentId: 'amr',
-        createdAt: 1,
-        runId: 'run-trace-123',
-        runStatus: 'failed',
-        events: [
-          {
-            kind: 'status',
-            label: 'error',
-            detail: 'json-rpc id 4: Connection reset by server',
-            code: 'AGENT_EXECUTION_FAILED',
-          },
-        ],
-      },
-    ];
-
-    render(
-      <ChatPane
-        projectKindForTracking="prototype"
-        messages={messages}
-        streaming={false}
-        error={null}
-        projectId="project-1"
-        projectFiles={[]}
-        onEnsureProject={async () => 'project-1'}
-        onSend={vi.fn()}
-        onStop={vi.fn()}
-        conversations={conversations}
-        activeConversationId="conv-1"
-        onSelectConversation={vi.fn()}
-        onDeleteConversation={vi.fn()}
-        projectMetadata={projectMetadata}
-    />,
-    );
-
-    fireEvent.click(screen.getByRole('button', { name: 'brand.viewDetails' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Copy error diagnostics' }));
-
-    await waitFor(() => expect(clipboardMocks.copyToClipboard).toHaveBeenCalledTimes(1));
-    const copied = clipboardMocks.copyToClipboard.mock.calls[0]?.[0] ?? '';
-    expect(copied).toContain('trace_id: run-trace-123');
-    expect(copied).toContain('run_id: run-trace-123');
-    expect(copied).toContain('error_code: AGENT_EXECUTION_FAILED');
-    expect(copied).toContain('project_id: project-1');
-    expect(copied).toContain('conversation_id: conv-1');
-    expect(copied).toMatch(/^json-rpc id 4: Connection reset by server\n\nOpenDesign run error diagnostics/);
-    expect(copied).not.toContain('raw_error:');
-    expect(copied).not.toContain('\nerror:\n');
-  });
-
   it('formats run error diagnostics with a raw error when guidance copy differs', () => {
     const text = buildRunErrorDiagnosticText({
       message: 'Service unavailable. Try again.',
@@ -645,11 +588,13 @@ describe('ChatPane streaming state', () => {
     expect(text).not.toContain('\nerror:\n');
   });
 
-  // The card's copy promises the reader "the original error is collected under
-  // 「view details」". Before this, the details body held only the daemon's
-  // generic sentence and a pile of ids, while the agent's own stderr — captured,
-  // persisted, and carrying the actual cause — was surfaced nowhere at all.
+  // The diagnostics body used to hold only the daemon's generic sentence and a
+  // pile of ids, while the agent's own stderr — captured, persisted, and
+  // carrying the actual cause — was surfaced nowhere at all.
   // Shapes below are lifted from a real failed run's persisted error event.
+  // NOTE: the failure card no longer renders this string anywhere (the
+  // 「view details」 disclosure was removed on 2026-08-27); these cases now
+  // pin the builder only.
   it('puts the captured agent stderr in the diagnostics body', () => {
     const text = buildRunErrorDiagnosticText({
       message: 'DeepSeek Harness profile exited without a terminal result.',
@@ -703,56 +648,6 @@ describe('ChatPane streaming state', () => {
     });
 
     expect(text).not.toContain('agent_stderr_tail');
-  });
-
-  it('shows the captured stderr under 「view details」 on the failure card', async () => {
-    const messages: ChatMessage[] = [
-      { id: 'user-1', role: 'user', content: 'Create a login page', createdAt: 0 },
-      {
-        id: 'assistant-1',
-        role: 'assistant',
-        content: '',
-        agentId: 'deepseek-harness',
-        createdAt: 1,
-        runId: '60d39320-f154-4974-855b-47cf9da2ef47',
-        runStatus: 'failed',
-        events: [
-          {
-            kind: 'status',
-            label: 'error',
-            detail: 'DeepSeek Harness profile exited without a terminal result.',
-            code: 'DSH_PROFILE_MISSING_RESULT',
-            stderrTail: DSH_STDERR_TAIL,
-          },
-        ],
-      },
-    ];
-
-    render(
-      <ChatPane
-        projectKindForTracking="prototype"
-        messages={messages}
-        streaming={false}
-        error={null}
-        projectId="project-1"
-        projectFiles={[]}
-        onEnsureProject={async () => 'project-1'}
-        onSend={vi.fn()}
-        onStop={vi.fn()}
-        conversations={conversations}
-        activeConversationId="conv-1"
-        onSelectConversation={vi.fn()}
-        onDeleteConversation={vi.fn()}
-        projectMetadata={projectMetadata}
-      />,
-    );
-
-    fireEvent.click(screen.getByRole('button', { name: 'brand.viewDetails' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Copy error diagnostics' }));
-
-    await waitFor(() => expect(clipboardMocks.copyToClipboard).toHaveBeenCalledTimes(1));
-    const copied = clipboardMocks.copyToClipboard.mock.calls[0]?.[0] ?? '';
-    expect(copied).toContain(DSH_REAL_CAUSE);
   });
 
   it('renders user turns with the chat bubble styling hook', () => {

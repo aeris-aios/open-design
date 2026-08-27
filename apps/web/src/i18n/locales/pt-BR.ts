@@ -156,7 +156,7 @@ export const ptBR: Dict = {
   'chat.runError.agentCrashedMessage': '{agent} encerrou sem dizer por quê. Tentar de novo costuma resolver; se continuar acontecendo, envie os logs para nós.',
   'chat.runError.title.accountSuspended': 'Conta temporariamente suspensa',
   'chat.runError.accountSuspendedMessage': 'Detectamos um risco de pagamento fora do comum nesta conta. Se você acha que é engano, fale com a gente que nós verificamos.',
-  'chat.runError.fallbackMessage': 'Desta vez não deu certo. O erro original está abaixo em “Ver detalhes”; se continuar acontecendo, envie os logs para nós.',
+  'chat.runError.fallbackMessage': 'Desta vez não deu certo. Se continuar acontecendo, envie os logs para nós.',
   'common.cancel': 'Cancelar',
   'chat.selectFromLibrary': 'Importar da biblioteca',
   'chat.importFigma': 'Importar do Figma',

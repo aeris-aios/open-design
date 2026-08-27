@@ -156,7 +156,7 @@ export const id: Dict = {
   'chat.runError.agentCrashedMessage': '{agent} berhenti tanpa menjelaskan alasannya. Mencoba lagi biasanya berhasil; kalau terus terjadi, kirimkan lognya ke kami.',
   'chat.runError.title.accountSuspended': 'Akun ditangguhkan sementara',
   'chat.runError.accountSuspendedMessage': 'Kami mendeteksi risiko pembayaran yang tidak wajar pada akun ini. Kalau menurutmu ini keliru, hubungi kami dan akan kami periksa.',
-  'chat.runError.fallbackMessage': 'Kali ini tidak berhasil. Error aslinya ada di bagian “Lihat detail” di bawah; kalau terus terjadi, kirimkan lognya ke kami.',
+  'chat.runError.fallbackMessage': 'Kali ini tidak berhasil. Kalau terus terjadi, kirimkan lognya ke kami.',
   'common.cancel': 'Batal',
   'chat.selectFromLibrary': 'Impor dari pustaka',
   'chat.importFigma': 'Impor dari Figma',

@@ -156,7 +156,7 @@ export const it: Dict = {
   'chat.runError.agentCrashedMessage': '{agent} si è chiuso senza dire perché. Riprovare di solito risolve; se continua a succedere, inviaci i log.',
   'chat.runError.title.accountSuspended': 'Account sospeso temporaneamente',
   'chat.runError.accountSuspendedMessage': 'Abbiamo rilevato un rischio di pagamento anomalo su questo account. Se pensi sia un errore, contattaci e verificheremo.',
-  "chat.runError.fallbackMessage": "Questa volta non è andata a buon fine. L'errore originale è sotto, in «Vedi dettagli»; se continua a succedere, inviaci i log.",
+  "chat.runError.fallbackMessage": "Questa volta non è andata a buon fine. Se continua a succedere, inviaci i log.",
   'common.cancel': 'Annulla',
   'chat.selectFromLibrary': 'Importa dalla libreria',
   'chat.importFigma': 'Importa da Figma',

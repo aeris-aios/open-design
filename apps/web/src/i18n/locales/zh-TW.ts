@@ -162,7 +162,7 @@ export const zhTW: Dict = {
   "chat.runError.agentCrashedMessage": "{agent} 意外結束了，它沒說為什麼。重試通常就能恢復；反覆出現的話，把日誌傳給我們。",
   "chat.runError.title.accountSuspended": "帳號暫時被停用",
   "chat.runError.accountSuspendedMessage": "偵測到異常的付款風險。如果你覺得是誤判，聯絡我們，我們來查。",
-  "chat.runError.fallbackMessage": "這次沒能順利完成。原始錯誤收在下面的「查看詳情」裡；反覆出現的話，把日誌傳給我們。",
+  "chat.runError.fallbackMessage": "這次沒能順利完成。反覆出現的話，把日誌傳給我們。",
   "common.cancel": "取消",
   "chat.selectFromLibrary": "從資源庫匯入",
   "chat.importFigma": "從 Figma 匯入",

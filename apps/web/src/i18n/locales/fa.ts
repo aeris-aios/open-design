@@ -156,7 +156,7 @@ export const fa: Dict = {
   'chat.runError.agentCrashedMessage': '{agent} بدون بیان دلیل بسته شد. معمولاً تلاش دوباره کارساز است؛ اگر تکرار شد، گزارش‌ها را برای ما بفرستید.',
   'chat.runError.title.accountSuspended': 'حساب موقتاً تعلیق شده است',
   'chat.runError.accountSuspendedMessage': 'ریسک پرداخت غیرعادی روی این حساب شناسایی شد. اگر فکر می‌کنید اشتباه است، با ما تماس بگیرید تا بررسی کنیم.',
-  'chat.runError.fallbackMessage': 'این بار کامل نشد. خطای اصلی در بخش «مشاهده جزئیات» پایین آمده است؛ اگر تکرار شد، گزارش‌ها را برای ما بفرستید.',
+  'chat.runError.fallbackMessage': 'این بار کامل نشد. اگر تکرار شد، گزارش‌ها را برای ما بفرستید.',
   'common.cancel': 'لغو',
   'chat.selectFromLibrary': 'وارد کردن از کتابخانه',
   'chat.importFigma': 'وارد کردن از Figma',

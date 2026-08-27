@@ -156,7 +156,7 @@ export const tr: Dict = {
   'chat.runError.agentCrashedMessage': '{agent} nedenini söylemeden kapandı. Yeniden denemek genelde işe yarar; sürekli oluyorsa günlükleri bize gönderin.',
   'chat.runError.title.accountSuspended': 'Hesap geçici olarak askıya alındı',
   'chat.runError.accountSuspendedMessage': 'Bu hesapta olağan dışı bir ödeme riski tespit ettik. Yanlışlık olduğunu düşünüyorsanız bize ulaşın, inceleyelim.',
-  'chat.runError.fallbackMessage': 'Bu sefer tamamlanamadı. Özgün hata aşağıda “Ayrıntıları gör” bölümünde; sürekli oluyorsa günlükleri bize gönderin.',
+  'chat.runError.fallbackMessage': 'Bu sefer tamamlanamadı. Sürekli oluyorsa günlükleri bize gönderin.',
   'common.cancel': 'İptal et',
   'chat.selectFromLibrary': 'Kitaplıktan içe aktar',
   'chat.importFigma': 'Figma\'dan içe aktar',

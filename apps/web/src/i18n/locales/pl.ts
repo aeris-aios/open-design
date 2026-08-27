@@ -156,7 +156,7 @@ export const pl: Dict = {
   'chat.runError.agentCrashedMessage': '{agent} zakończył działanie bez podania powodu. Ponowna próba zwykle pomaga; jeśli powtarza się to często, prześlij nam logi.',
   'chat.runError.title.accountSuspended': 'Konto tymczasowo zawieszone',
   'chat.runError.accountSuspendedMessage': 'Wykryliśmy nietypowe ryzyko płatnicze na tym koncie. Jeśli to pomyłka, skontaktuj się z nami — sprawdzimy to.',
-  'chat.runError.fallbackMessage': 'Tym razem się nie udało. Oryginalny błąd znajdziesz poniżej w „Zobacz szczegóły”; jeśli powtarza się to często, prześlij nam logi.',
+  'chat.runError.fallbackMessage': 'Tym razem się nie udało. Jeśli powtarza się to często, prześlij nam logi.',
   'common.cancel': 'Anuluj',
   'chat.selectFromLibrary': 'Importuj z biblioteki',
   'chat.importFigma': 'Importuj z Figmy',

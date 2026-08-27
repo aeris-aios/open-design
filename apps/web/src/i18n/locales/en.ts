@@ -156,7 +156,7 @@ export const en: Dict = {
   "chat.runError.agentCrashedMessage": "{agent} exited unexpectedly and didn't say why. Retrying usually recovers; if it keeps happening, send us the logs.",
   'chat.runError.title.accountSuspended': 'Account temporarily suspended',
   "chat.runError.accountSuspendedMessage": "We detected unusual payment risk on this account. If you think this is a mistake, contact us and we'll look into it.",
-  "chat.runError.fallbackMessage": "This one didn't get through. The original error is under “View details” below; if it keeps happening, send us the logs.",
+  "chat.runError.fallbackMessage": "This one didn't get through. If it keeps happening, send us the logs.",
   'common.cancel': 'Cancel',
   'chat.selectFromLibrary': 'Import from library',
   'chat.importFigma': 'Import from Figma',

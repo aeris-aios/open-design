@@ -125,13 +125,9 @@ describe('报错卡兜底文案(E2)', () => {
     expect(description!.textContent).not.toContain('spawn ENOENT');
   });
 
-  it('上游原文仍然收在折叠的诊断区里,一个字都没丢', () => {
-    const { container } = renderChat(failedMessage());
-    const diagnostic = container.querySelector('.run-error__diagnostic pre');
-    expect(diagnostic).toBeTruthy();
-    expect(diagnostic!.textContent).toContain('spawn ENOENT');
-    expect(diagnostic!.textContent).toContain('error_code: AGENT_EXECUTION_FAILED');
-  });
+  // 「原文收在折叠里」那条用例已随折叠一起删掉(用户 2026-08-27)。
+  // 「卡上没有折叠、也没有原文」现在钉在
+  // `ChatPane.error-card-no-details.test.tsx`。
 
   it('命中了映射表的失败,照旧用它自己的文案(兜底不许盖掉专属文案)', () => {
     const { container } = renderChat(

@@ -156,7 +156,7 @@ export const de: Dict = {
   'chat.runError.agentCrashedMessage': '{agent} wurde unerwartet beendet, ohne einen Grund zu nennen. Ein erneuter Versuch hilft meistens; wenn es immer wieder passiert, schick uns die Logs.',
   'chat.runError.title.accountSuspended': 'Konto vorübergehend gesperrt',
   'chat.runError.accountSuspendedMessage': 'Wir haben ein ungewöhnliches Zahlungsrisiko bei diesem Konto festgestellt. Wenn das ein Irrtum ist, melde dich bei uns — wir sehen es uns an.',
-  'chat.runError.fallbackMessage': 'Das hat diesmal nicht geklappt. Die ursprüngliche Fehlermeldung steht unten unter „Details anzeigen“; wenn es immer wieder passiert, schick uns die Logs.',
+  'chat.runError.fallbackMessage': 'Das hat diesmal nicht geklappt. Wenn es immer wieder passiert, schick uns die Logs.',
   'common.cancel': 'Abbrechen',
   'chat.selectFromLibrary': 'Aus Bibliothek importieren',
   'chat.importFigma': 'Aus Figma importieren',

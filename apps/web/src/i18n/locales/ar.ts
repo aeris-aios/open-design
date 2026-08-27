@@ -156,7 +156,7 @@ export const ar: Dict = {
   'chat.runError.agentCrashedMessage': 'أُغلق {agent} دون توضيح السبب. غالبًا ما تنجح إعادة المحاولة؛ وإذا تكرّر الأمر فأرسل لنا السجلات.',
   'chat.runError.title.accountSuspended': 'تم تعليق الحساب مؤقتًا',
   'chat.runError.accountSuspendedMessage': 'رصدنا مخاطر دفع غير معتادة على هذا الحساب. إذا كنت ترى أن هذا خطأ، تواصل معنا وسنتحقق من الأمر.',
-  'chat.runError.fallbackMessage': 'لم تكتمل هذه المحاولة. الخطأ الأصلي موجود بالأسفل ضمن “عرض التفاصيل”؛ وإذا تكرّر الأمر فأرسل لنا السجلات.',
+  'chat.runError.fallbackMessage': 'لم تكتمل هذه المحاولة. إذا تكرّر الأمر فأرسل لنا السجلات.',
   'common.cancel': 'إلغاء',
   'chat.selectFromLibrary': 'استيراد من المكتبة',
   'chat.importFigma': 'استيراد من Figma',
