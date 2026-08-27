@@ -336,8 +336,8 @@ export function posthogHeadHtml(
     persistence: 'localStorage+cookie',
     before_send: function (event) {
       if (!event || !event.properties || !odLocaleAttribution) return event;
-      event.properties.$referrer = odLocaleAttribution.referrer;
-      event.properties.$referring_domain = odLocaleAttribution.referringDomain;
+      event.properties.$referrer = odLocaleAttribution.referrer || '$direct';
+      event.properties.$referring_domain = odLocaleAttribution.referringDomain || '$direct';
       event.properties.od_locale_redirect = true;
       event.properties.od_entry_path = odLocaleAttribution.entryPath;
       event.properties.original_landing_url = odLocaleAttribution.originalLandingUrl;
