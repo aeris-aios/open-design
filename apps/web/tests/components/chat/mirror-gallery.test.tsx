@@ -403,6 +403,11 @@ const EXECUTION: Cell[] = [
  * CSS Module 的类名在构建里是带哈希的(`_fold_09d9ab`),而陈列页内联的是**源文件**,
  * 里面写的是 `.fold`。所以把哈希摘掉,让页面里的类名与源码里的选择器对上。
  * 顺带一个好处:设计师看到的是 `class="fold flat"`,能直接和稿子里的 `fold mod-flat` 对照。
+ *
+ * 注:下面几处匹配写成 `class="fold flat[ "]` 而不是精确闭合的 `class="fold flat"` ——
+ * 带清单的壳会再追一个 `hasTodo` 标记类(见 `record.module.css` 的 `:not(.hasTodo)`,
+ * 它决定夹心正文对不对齐那条竖线)。这几条断言问的是「有几张平铺壳」,
+ * 不是「class 属性一字不差等于什么」,所以认到词边界为止。
  */
 const dehash = (html: string): string => html.replace(/\b_([A-Za-z0-9]+)_[a-z0-9]{5,8}\b/g, '$1');
 
@@ -2048,7 +2053,7 @@ describe('镜像陈列页', () => {
 
   it('类名摘掉了哈希 —— 不摘的话内联的源样式一条都命中不了,页面会是一堆裸标签', () => {
     const html = renderCell(CELLS[0] as Cell);
-    expect(html).toMatch(/class="fold flat"/);
+    expect(html).toMatch(/class="fold flat[ "]/);
     expect(html).not.toMatch(/_fold_/);
   });
 
@@ -2102,7 +2107,7 @@ describe('镜像陈列页', () => {
      * 这一格原本是拿来照「分张」的,裁决之后它照的变成了「不分张」—— 断言跟着改,
      * 因为它现在守的正是那条裁决:先散活、后清单,前后都在同一张卡里。
      */
-    const shells = html('E2E-4').match(/class="fold flat"/g) ?? [];
+    const shells = html('E2E-4').match(/class="fold flat[ "]/g) ?? [];
     expect(shells, '先散活、后清单应当在同一张卡里').toHaveLength(1);
 
     // 失败轮 + 报错卡;`errorCardOwnerId` 命中时消息内那枚错误药丸不出
@@ -2139,8 +2144,8 @@ describe('镜像陈列页', () => {
     expect(shellsOf(PLAN_DONE)).toBe(1);
     const cell2 = CELLS[1] as Cell;
     expect(cell2.gid).toBe(2);
-    expect(renderCell(cell2).match(/class="fold flat"/g) ?? []).toHaveLength(1);
-    expect(renderLive(LIVE[0] as LiveCell).match(/class="fold flat"/g) ?? []).toHaveLength(1);
+    expect(renderCell(cell2).match(/class="fold flat[ "]/g) ?? []).toHaveLength(1);
+    expect(renderLive(LIVE[0] as LiveCell).match(/class="fold flat[ "]/g) ?? []).toHaveLength(1);
   });
 
   /**
