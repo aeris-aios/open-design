@@ -13945,7 +13945,13 @@ export async function startServer({
     function emitGuardedTextDelta(delta: string) {
       const safe = guardTextDelta(delta);
       if (safe.length > 0) {
+        const wasAwaitingFirstOutput = firstOutputTimeoutMs > 0 && !firstOutputSeen;
         noteFirstOutputEvent({ type: 'text_delta' });
+        // ACP raw activity was observed before title/role filtering, while the
+        // absolute first-output phase intentionally suppresses inactivity. Arm
+        // the sliding watchdog exactly when guarded visible text completes the
+        // phase transition, so a post-output stall remains bounded.
+        if (wasAwaitingFirstOutput && firstOutputSeen) noteAgentActivity();
         send('agent', { type: 'text_delta', delta: safe });
       }
       if (runGuard.contaminated && !runWarned) {

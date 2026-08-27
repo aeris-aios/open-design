@@ -21,7 +21,7 @@ import { startServer } from '../src/server.js';
  *
  * 《Open Design 报错体验设计方案》 settles both halves:
  *   §1 五条原则 3: 「等待要有回音 … 不到超时不报错」
- *   §3 统一规则:   「10 分钟（Cloud 30 分钟）没输出才报超时」
+ *   Operational decision: AMR first output is bounded by the 15-minute Link request ceiling.
  *   §5 场景卡:     「等了 10 分钟没有新的输出，先停下来了 —— 已做的部分都保留着」
  *
  * These specs drive the wiring end-to-end (real `startServer`, real child
@@ -31,8 +31,8 @@ import { startServer } from '../src/server.js';
  * The fake vela stalls the way production does — it keeps emitting protocol
  * heartbeats forever without ever producing text, thinking, a tool call, or a
  * terminal prompt result. That deliberately feeds the sliding inactivity
- * watchdog and the ACP stage watchdog, so the ONLY watchdog that can end these
- * runs is the absolute first-output budget under test.
+ * watchdog. ACP transfers ownership after prompt dispatch, so the ONLY watchdog
+ * that can end these runs is the absolute first-output budget under test.
  *
  * The budget itself is injected through `OD_CHAT_RUN_FIRST_OUTPUT_TIMEOUT_MS`
  * (the operator escape hatch `resolveChatRunFirstOutputTimeoutMs` already
@@ -168,6 +168,28 @@ describe('AMR first-output budget — full server cycle', () => {
       expect(run.error).toContain('without emitting a first output');
     },
   );
+
+  it(
+    'transitions from first-output ownership to inactivity after visible ACP text',
+    { timeout: 60_000 },
+    async () => {
+      binDir = await mkdtemp(path.join(os.tmpdir(), 'od-amr-post-output-stall-'));
+      const fakeVela = await writeTextThenStallingVela(binDir, 'vela-post-output-stall');
+      configureAmrEnv(String(FIRST_OUTPUT_BUDGET_MS), OUT_OF_REACH_MS, '1000');
+
+      started = (await startServer({ port: 0, returnServer: true })) as StartedServer;
+      await putConfig(started.url, fakeVela);
+      const { runId, headers } = await startAmrRun(started.url);
+      const run = await waitForRun(started.url, runId, headers);
+
+      expect(run.status).toBe('failed');
+      expect(run.terminalTrigger).toBe('inactivity_watchdog');
+      expect(run.error).toContain('without emitting any new output');
+      const events = await readRunEvents(run.eventsLogPath);
+      expect(events.filter((event) => event.event === 'start')).toHaveLength(1);
+      expect(events.filter((event) => event.event === 'run_retry_attempted')).toHaveLength(0);
+    },
+  );
 });
 
 /**
@@ -176,6 +198,27 @@ describe('AMR first-output budget — full server cycle', () => {
  * in the resume specs bakes knobs into the wrapper's own env for the same
  * reason: the daemon's `agentCliEnv` allowlist only lets `VELA_BIN` through.
  */
+async function writeTextThenStallingVela(dir: string, name: string): Promise<string> {
+  const bin = path.join(dir, name);
+  await writeFile(
+    bin,
+    [
+      '#!/bin/sh',
+      'export FAKE_VELA_REQUIRE_SET_MODEL=0',
+      'if [ "$1" = "agent" ] && [ "$2" = "run" ]; then',
+      '  export FAKE_VELA_STALL_AFTER_PROMPT=1',
+      '  export FAKE_VELA_TEXT_BEFORE_STALL=1',
+      '  export FAKE_VELA_STALL_HEARTBEAT_MS=0',
+      'fi',
+      `exec ${JSON.stringify(process.execPath)} ${JSON.stringify(FAKE_VELA)} "$@"`,
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+  await chmod(bin, 0o755);
+  return bin;
+}
+
 async function writeAlwaysStallingVela(dir: string, name: string): Promise<string> {
   const bin = path.join(dir, name);
   await writeFile(
