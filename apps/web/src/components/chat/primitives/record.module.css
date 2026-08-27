@@ -152,8 +152,11 @@
  * 展开的那一条即使排在第一位也要画(它下面接着的是自己的内容)。
  * 我们原来一条都没有 —— 用户 2026-08-26 逐格指出。
  */
-.fold.flat > .body.stack > .fold:not(:last-of-type)::before,
-.fold.flat > .body.stack > .fold[open]:not(:first-of-type)::before {
+/* `:not(.thoughts)` —— 思考那一格是**工具行**不是步骤(2026-08-27 用户裁决),
+   它缩进到 22px 之后,这条按「折叠头贴左」算的线会孤零零落在图标左边 14.5px。
+   工具行本来就不画这条线,思考跟着工具行走。量到的坐标见上面 `.fold.thoughts` 那条注释。 */
+.fold.flat > .body.stack > .fold:not(.thoughts):not(:last-of-type)::before,
+.fold.flat > .body.stack > .fold:not(.thoughts)[open]:not(:first-of-type)::before {
   content: '';
   position: absolute;
   inset-inline-start: 14.5px;
@@ -213,6 +216,24 @@
 .fold.flat > .body.stack:has(> .fold) > .think { color: var(--chat-text-muted); }
 /* 没有清单的平铺形态里,工具行直接挂在壳下,缩进对齐步骤名(S7 的临时做法) */
 .fold.flat > .body.stack > .tool { margin-inline: -7px; padding: 5px 7px 5px 29px; }
+/*
+ * 思考那一格跟着**工具行**缩进,不跟着步骤缩进。
+ *
+ * 用户裁决 2026-08-27:「就变成普通的这个搜索一样的东西, 只不过可以下拉展开」
+ * 「思考中动画啥的, 这些都是和 toolrow 所在地方同样的缩进逻辑」。
+ *
+ * 为什么要单补一条:同样是「壳下面的一行」,工具行有两种 DOM,缩进却不一样 ——
+ * `div.tool` 走上面那条(-7 + 29,图标落在 22px),而**折叠头**走
+ * `.fold.flat > .body.stack > .fold > summary` 的 7px(图标落在 0)。
+ * 思考这一格是可折叠的,天然掉进后一档,于是比它要对齐的那种工具行左偏 22px。
+ * 在 Chrome 里量过(harness 见 `specs/current/chat-panel-feedback.md` §F-15):
+ * 补之前工具行图标 x=22、思考过程 x=0;补之后两者都是 22。
+ *
+ * **只补顶层这一档。** 嵌进 todo 抽屉的那一层本来就齐:
+ * `.fold.flat .body.stack .body.stack > .fold > summary` 和同层工具行同为 29px,
+ * 量到的两个 x 都是 22。多补一次反而会把抽屉里那一行推出去。
+ */
+.fold.flat > .body.stack > .fold.thoughts > summary { padding-inline-start: 29px; }
 /*
  * 嵌套一层之后的行缩进。稿子这两条各有**两个逗号段**:
  *   `.fold .body.mod-stack .body.mod-stack > *,

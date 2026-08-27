@@ -59,11 +59,23 @@ describe('壳头', () => {
     expect(document.querySelector('details')?.open).toBe(true);
   });
 
-  it('收到 thinking 就换成「思考中」并带三个点 —— 即使一个字都没有(S21)', () => {
+  /**
+   * S21 的「即使一个字都没有」不变;**变的是它出现在哪**(2026-08-27 用户裁决):
+   * 「思考中」从壳头搬进壳里那一格思考(`ThoughtsRow` 的 live 形态),壳头留给「进行中」。
+   *
+   * `getByText` 在命中多个时会抛 —— 这条因此**同时是一道防重复的闸**:
+   * 谁把「思考中」在壳头再画一遍,这里当场红。
+   */
+  it('收到 thinking 就出「思考中」并带三个点 —— 即使一个字都没有(S21)', () => {
     const [shell] = shellsOf([{ kind: 'thinking', text: '' }], 'running');
     render(<ExecutionShell shell={shell as ShellData} />);
-    expect(screen.getByText(/思考中/)).toBeTruthy();
+    const label = screen.getByText(/思考中/);
+    expect(label).toBeTruthy();
     expect(document.querySelector('[data-orb="composing"]')).not.toBeNull();
+    // 它住在壳头之外:壳头此刻说的是「进行中」
+    expect(label.closest('details[class*="flat"] > summary')).toBeNull();
+    expect(document.querySelector('details[class*="flat"] > summary')?.textContent)
+      .toContain('进行中');
   });
 
   it('结束:纯文本「已完成」,默认收起,球撤掉', () => {
@@ -169,13 +181,24 @@ describe('没有清单:平铺', () => {
   });
 });
 
+/**
+ * D46'(2026-08-27 用户裁决改写):限高滚动窗**落在壳内的思考正文区**,不是整只壳 body。
+ * 规格原文本来就写的是「壳内的思考正文区」;实现读成了「壳 body」,于是壳里原有的
+ * 工具行和清单被一起塞进 96px 里滚走。裁决与理由:`specs/current/chat-panel-feedback.md` §F-15。
+ */
 describe('思考流(D46)', () => {
-  it('思考中:正文走流式形态(限高 + 自己往上走)', () => {
+  it('思考中:限高滚动窗挂在思考那一格上,壳 body 不动', () => {
     const [shell] = shellsOf([{ kind: 'thinking', text: '两张图的栅格看着是同一套。' }], 'running');
     render(<ExecutionShell shell={shell as ShellData} />);
+    // 壳 body 永远是 `.stack` —— 思考不改变壳的形态
     const body = document.querySelector('details > div[class*="body"]');
-    expect(body?.className).toMatch(/stream/);
-    expect(body?.className).not.toMatch(/stack/);
+    expect(body?.className).toMatch(/stack/);
+    expect(body?.className).not.toMatch(/stream/);
+    // 窗子在思考那一格自己身上,而且推理正文确实在窗里
+    const stream = document.querySelector('div[class*="stream"]');
+    expect(stream).not.toBeNull();
+    expect(stream).not.toBe(body);
+    expect(stream?.textContent).toContain('两张图的栅格看着是同一套。');
   });
 
   it('一有工具行落下来就回到普通文本流 —— 它不是日志窗', () => {
