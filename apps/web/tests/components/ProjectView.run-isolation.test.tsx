@@ -51,6 +51,8 @@ const saveTabs = vi.fn();
 const playSound = vi.fn();
 const showCompletionNotification = vi.fn();
 const analyticsTrackMock = vi.fn();
+/** What the inline question form was told about each answer it handed over. */
+const questionFormSubmitOutcomes: Array<boolean | void> = [];
 const useProjectFileEvents = vi.fn();
 const workspaceScopeMocks = vi.hoisted(() => {
   const personalContext = (): WorkspaceCollabContext & {
@@ -412,6 +414,7 @@ vi.mock('../../src/components/ChatPane', () => ({
     onNewConversation,
     error,
     onRetry,
+    onSubmitQuestionForm,
   }: {
     activeConversationId: string | null;
     conversations: Conversation[];
@@ -438,6 +441,12 @@ vi.mock('../../src/components/ChatPane', () => ({
     onSendQueuedNow?: (id: string) => void;
     onNewConversation: () => void;
     onRetry?: (message: ChatMessage) => void;
+    onSubmitQuestionForm?: (
+      text: string,
+      attachments?: unknown[],
+      context?: unknown,
+      sourceAssistantMessageId?: string,
+    ) => boolean | void | Promise<boolean | void>;
   }) => {
     const attached = attachedComments ?? [];
     const retryTarget = [...(messages ?? [])]
@@ -632,6 +641,19 @@ vi.mock('../../src/components/ChatPane', () => ({
           disabled={sendDisabled}
         >
           send stable request
+        </button>
+        <button
+          type="button"
+          data-testid="submit-question-form"
+          onClick={() => {
+            void Promise.resolve(
+              onSubmitQuestionForm?.('Audience: Designers', [], undefined, undefined),
+            ).then((accepted) => {
+              questionFormSubmitOutcomes.push(accepted);
+            });
+          }}
+        >
+          submit question form
         </button>
         <button type="button" data-testid="new-conversation" onClick={onNewConversation}>
           new
@@ -856,6 +878,7 @@ describe('ProjectView conversation run isolation', () => {
     projectCollabMocks.writerAuthority = 'allowed';
     resolveConversationBMessages = null;
     conversationAMessages = [runningAssistant];
+    questionFormSubmitOutcomes.length = 0;
     listConversations.mockResolvedValue(conversations);
     listMessages.mockImplementation(async (_projectId: string, conversationId: string) => {
       if (conversationId === 'conv-a') return conversationAMessages;
@@ -1636,6 +1659,81 @@ describe('ProjectView conversation run isolation', () => {
         }),
       ]);
     });
+    expect(streamViaDaemon).not.toHaveBeenCalled();
+  });
+
+  it('reports a question-form answer parked in the queue as accepted', async () => {
+    // The inline form holds the only copy of its answer. Leaving the project
+    // while the pre-run gate is still deciding parks that answer in the
+    // conversation queue — a durable acceptance, not a refusal. Reporting a
+    // refusal instead re-opens the form (and rolls back any file it uploaded
+    // for a send the queue still points at), so the user answers a second
+    // time and the drain sends the same brief twice.
+    conversationAMessages = [];
+    let resolveWallet: (snapshot: unknown) => void = () => {};
+    fetchAmrWalletSnapshot.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveWallet = resolve;
+        }),
+    );
+    renderProjectView(
+      { ...config, agentId: 'amr' },
+      project,
+      [
+        {
+          id: 'amr',
+          name: 'AMR',
+          bin: 'amr',
+          available: true,
+          models: [{ id: 'glm-5', label: 'GLM 5' }],
+        },
+      ],
+    );
+
+    await waitFor(() => expect(screen.getByTestId('active-conversation').textContent).toBe('conv-a'));
+    await waitFor(() => expect(screen.getByTestId('send-message')).toHaveProperty('disabled', false));
+
+    fireEvent.click(screen.getByTestId('submit-question-form'));
+    await waitFor(() => expect(fetchAmrWalletSnapshot).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByTestId('conversation-select-conv-b'));
+    await waitFor(() => expect(screen.getByTestId('active-conversation').textContent).toBe('conv-b'));
+    await waitFor(() => {
+      if (!resolveConversationBMessages) throw new Error('Expected conv-b message load to be pending');
+    });
+    await act(async () => {
+      resolveConversationBMessages?.([]);
+    });
+
+    await act(async () => {
+      resolveWallet({
+        status: 'available',
+        profile: 'prod',
+        user: null,
+        balanceUsd: '10.00',
+        updatedAt: null,
+        fetchedAt: '2026-07-02T00:00:00.000Z',
+        stale: false,
+        source: 'vela_api',
+      });
+    });
+
+    await waitFor(() => {
+      const raw = window.localStorage.getItem('od:chat-queued-sends:project-1:v1');
+      expect(raw).toBeTruthy();
+      const queued = JSON.parse(raw ?? '[]') as Array<{
+        conversationId?: string;
+        prompt?: string;
+      }>;
+      expect(queued).toEqual([
+        expect.objectContaining({
+          conversationId: 'conv-a',
+          prompt: 'Audience: Designers',
+        }),
+      ]);
+    });
+    await waitFor(() => expect(questionFormSubmitOutcomes).toEqual([true]));
     expect(streamViaDaemon).not.toHaveBeenCalled();
   });
 

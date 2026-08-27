@@ -121,6 +121,8 @@ export type QuestionFormSubmitHandler = (
 const DISCORD_INVITE_URL = "https://discord.gg/mHAjSMV6gz";
 const viewedInlineQuestionForms = new Set<string>();
 const QUESTION_FORM_DRAFT_STORAGE_PREFIX = "open-design:question-form-draft:";
+const QUESTION_FORM_SUBMITTED_STORAGE_PREFIX =
+  "open-design:question-form-submitted:";
 
 interface ActionNotice {
   message: string;
@@ -2763,8 +2765,10 @@ function FormBlock({
     Record<string, string | string[]> | undefined
   >(() => readInlineQuestionFormDraft(formKey));
   const [uploadError, setUploadError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
-  const submittingRef = useRef(false);
+  const [submitting, setSubmitting] = useState(() =>
+    readInlineQuestionFormSubmitted(formKey),
+  );
+  const submittingRef = useRef(submitting);
   const pendingUploadCleanupRef = useRef<ChatAttachment[]>([]);
   const submittedFromHistory = useMemo(
     () => (nextUserContent ? parseSubmittedAnswers(form, nextUserContent) : null),
@@ -2827,22 +2831,27 @@ function FormBlock({
     return { items, visualItems };
   }, [form, submittedFromHistory, visualStyleContext]);
   useEffect(() => {
+    const outstanding = readInlineQuestionFormSubmitted(formKey);
     setDraftAnswers(readInlineQuestionFormDraft(formKey));
     setUploadError(null);
-    submittingRef.current = false;
-    setSubmitting(false);
+    submittingRef.current = outstanding;
+    setSubmitting(outstanding);
     pendingUploadCleanupRef.current = [];
   }, [formKey]);
   useEffect(() => {
     if (!submittedFromHistory) return;
     clearInlineQuestionFormDraft(formKey);
+    clearInlineQuestionFormSubmitted(formKey);
     setDraftAnswers(undefined);
   }, [formKey, submittedFromHistory]);
+  // The answer landing in history is what ends the submission; a busy
+  // conversation only hides the form for as long as it stays busy, so it must
+  // not be mistaken for the send having been consumed.
   useEffect(() => {
-    if (!submitting || (!submitDisabled && !submittedFromHistory)) return;
+    if (!submitting || !submittedFromHistory) return;
     submittingRef.current = false;
     setSubmitting(false);
-  }, [submitDisabled, submittedFromHistory, submitting]);
+  }, [submittedFromHistory, submitting]);
   const updateDraftAnswers = useCallback(
     (answers: Record<string, string | string[]>) => {
       setUploadError(null);
@@ -3028,6 +3037,7 @@ function FormBlock({
         });
       }
       const releaseSubmitLock = () => {
+        clearInlineQuestionFormSubmitted(formKey);
         submittingRef.current = false;
         setSubmitting(false);
       };
@@ -3045,6 +3055,7 @@ function FormBlock({
         releaseSubmitLock();
       };
       const acceptSubmission = () => {
+        markInlineQuestionFormSubmitted(formKey);
         clearInlineQuestionFormDraft(formKey);
         setDraftAnswers(undefined);
       };
@@ -3241,6 +3252,54 @@ function clearInlineQuestionFormDraft(formKey: string | null): void {
     window.sessionStorage.removeItem(key);
   } catch {
     // The submitted answer message remains authoritative.
+  }
+}
+
+function inlineQuestionFormSubmittedStorageKey(
+  formKey: string | null,
+): string | null {
+  return formKey ? `${QUESTION_FORM_SUBMITTED_STORAGE_PREFIX}${formKey}` : null;
+}
+
+/**
+ * One form occurrence answers exactly once.
+ *
+ * A submit lock that lives only in the mounted component is not a lock: every
+ * remount — leaving and re-entering the project, a reload, a conversation
+ * switch, a virtualized row recycling — rebuilds it as "never submitted" while
+ * the first answer is still being persisted or is still parked in the busy
+ * conversation's queue. The occurrence key (project + conversation + assistant
+ * message + form id) is the identity the lock belongs to, so it is recorded
+ * next to the draft and outlives the component. Only an explicit submit
+ * failure, or the answer surfacing in history, releases it.
+ */
+function readInlineQuestionFormSubmitted(formKey: string | null): boolean {
+  const key = inlineQuestionFormSubmittedStorageKey(formKey);
+  if (!key || typeof window === "undefined") return false;
+  try {
+    return window.sessionStorage.getItem(key) !== null;
+  } catch {
+    return false;
+  }
+}
+
+function markInlineQuestionFormSubmitted(formKey: string | null): void {
+  const key = inlineQuestionFormSubmittedStorageKey(formKey);
+  if (!key || typeof window === "undefined") return;
+  try {
+    window.sessionStorage.setItem(key, "1");
+  } catch {
+    // Without storage the lock degrades to this mount, as it was before.
+  }
+}
+
+function clearInlineQuestionFormSubmitted(formKey: string | null): void {
+  const key = inlineQuestionFormSubmittedStorageKey(formKey);
+  if (!key || typeof window === "undefined") return;
+  try {
+    window.sessionStorage.removeItem(key);
+  } catch {
+    // A stale lock only blocks re-answering one already-sent form.
   }
 }
 
