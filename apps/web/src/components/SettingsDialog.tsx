@@ -60,9 +60,14 @@ import {
 } from '../providers/daemon';
 import { installDeepSeekHarnessCompanion } from '../providers/agent-companion';
 import { amrProfileBadgeLabel } from '../runtime/amr-guidance';
-import { deepSeekHarnessNeedsSetup, isVisibleLocalCliAgent } from '../utils/visibleAgents';
+import {
+  availableVisibleAgentCount,
+  deepSeekHarnessNeedsSetup,
+  isVisibleLocalCliAgent,
+} from '../utils/visibleAgents';
 import { ExportDiagnosticsRow } from './ExportDiagnosticsButton';
 import { Icon } from './Icon';
+import { LabsSection } from './LabsSection';
 import { defaultAgentModelId, effectiveAgentModelChoice } from './agentModelSelection';
 import {
   CUSTOM_MODEL_SENTINEL,
@@ -166,6 +171,7 @@ import { SettingsWorkspaceSection } from './SettingsWorkspaceSection';
 import {
   useWorkspaceBillingResponse,
   useWorkspaceContext,
+  workspaceBillingBalanceUsd,
   workspaceBillingSummaryForContext,
 } from '../collab/useWorkspaceContext';
 import { canUpgradeFromPlanTier, resolvePlanTier } from '../collab/team-plan';
@@ -216,6 +222,7 @@ import {
 
 export type SettingsSection =
   | 'general'
+  | 'labs'
   | 'execution'
   | 'workspace'
   | 'instructions'
@@ -1640,9 +1647,10 @@ export function SettingsDialog({
     context: workspaceContext,
     loading: workspaceContextLoading,
   } = useWorkspaceContext();
-  // Workspace billing remains available for workspace plan/upgrade decisions.
-  // The local-CLI card itself describes the selected CLI login and profile, so
-  // its email, account plan and balance must stay on one account-scoped source.
+  // Workspace billing drives both the plan and the money shown beside it. The
+  // CLI identity remains account-scoped, but a Team badge must never be paired
+  // with that account's personal wallet: the entry chrome and Settings must
+  // describe the same selected environment + workspace.
   const workspaceBillingResponse = useWorkspaceBillingResponse();
   // Same partition for the plan half: `response.summary` is an ACCOUNT read, so
   // the AMR card's plan badge and both upgrade routes must consume it projected
@@ -1700,11 +1708,19 @@ export function SettingsDialog({
   }, [amrCardStatus, onAmrLoginStatusChange]);
 
   const refreshAmrWalletSnapshot = useCallback(async (options: { refresh?: boolean } = {}) => {
+    // The wallet endpoint is account-scoped. Until the selected workspace is
+    // known, fetching it can race a Team context read and briefly put personal
+    // money (or a personal auth error) on the Team card.
+    if (workspaceContextLoading || workspaceContext?.workspaceType === 'team') {
+      setAmrWalletSnapshot(null);
+      setAmrWalletReady(false);
+      return;
+    }
     setAmrWalletReady(false);
     const next = await fetchAmrWalletSnapshot(options);
     setAmrWalletSnapshot(next);
     setAmrWalletReady(true);
-  }, []);
+  }, [workspaceContext?.workspaceType, workspaceContextLoading]);
 
   useEffect(() => {
     const hasAmrAgent = agents.some((agent) => agent.id === 'amr' && agent.available);
@@ -1735,7 +1751,12 @@ export function SettingsDialog({
 
   useEffect(() => {
     const hasAmrAgent = agents.some((agent) => agent.id === 'amr' && agent.available);
-    if (!hasAmrAgent || !amrCardSignedIn) {
+    if (
+      !hasAmrAgent ||
+      !amrCardSignedIn ||
+      workspaceContextLoading ||
+      workspaceContext?.workspaceType === 'team'
+    ) {
       setAmrWalletSnapshot(null);
       setAmrWalletReady(false);
       return;
@@ -1756,6 +1777,8 @@ export function SettingsDialog({
     amrCardStatus?.profile,
     amrCardStatus?.user?.id,
     amrCardStatus?.user?.email,
+    workspaceContext?.workspaceType,
+    workspaceContextLoading,
   ]);
 
   // Reconcile AMR sign-in state whenever the user returns to the window. The
@@ -2326,7 +2349,7 @@ export function SettingsDialog({
       const nextAgents = Array.isArray(refreshed) ? refreshed : agents;
       setAgentRescanNotice({
         kind: 'success',
-        count: nextAgents.filter((a) => a.available).length,
+        count: availableVisibleAgentCount(nextAgents),
       });
     } catch {
       setAgentRescanNotice({ kind: 'error' });
@@ -3827,6 +3850,7 @@ export function SettingsDialog({
   // not twice (heading + tab).
   const sectionHeader: Record<SettingsSection, { title: string; subtitle: string }> = {
     general: { title: t('settings.general'), subtitle: t('settings.generalHint') },
+    labs: { title: t('labs.title'), subtitle: t('labs.navHint') },
     execution: { title: t('settings.title'), subtitle: t('settings.subtitle') },
     workspace: { title: t('settings.workspace'), subtitle: t('settings.workspaceHint') },
     instructions: {
@@ -4186,22 +4210,11 @@ export function SettingsDialog({
         aria-labelledby="settings-dialog-title"
         onClick={pageMode ? undefined : (e) => e.stopPropagation()}
       >
-        {/* Top-right chrome strip — anchored to the modal corner so the
-            autosave indicator and the close button float above the
-            sidebar/content rhythm without competing with the title.
-            We use `position: absolute` instead of putting these inside
-            `.modal-head` so the welcome variant's tall hero (kicker /
-            title / subtitle / pet teaser) keeps its centred reading
-            measure, and the close button always lands at the same
-            optical location regardless of how much copy the header
-            renders. */}
-        <div className="settings-chrome" aria-hidden={false}>
-          {/* Autosave status pill. Only renders something while a save
-              is in flight or has just completed — idle = invisible so
-              first-open feels calm. The chrome strip itself stays
-              mounted so the close button never shifts when the pill
-              appears, and the pill is announced via aria-live for
-              assistive tech. */}
+        {/* Autosave feedback is viewport-level rather than part of the
+            top-right dialog chrome: it rides the app's own top chrome row, so
+            a passive status never covers the Local CLI pickers that occupy the
+            panel's upper band (OPEND-2148). */}
+        <div className="settings-autosave-layer">
           <div
             className={`settings-autosave is-${autosaveStatus}`}
             role="status"
@@ -4224,6 +4237,11 @@ export function SettingsDialog({
               </>
             ) : null}
           </div>
+        </div>
+        {/* Top-right chrome strip — anchored to the modal corner so the
+            close and fullscreen controls stay at a stable optical location
+            regardless of the header copy. */}
+        <div className="settings-chrome" aria-hidden={false}>
           {pageMode ? null : (
             <button
               type="button"
@@ -4323,6 +4341,17 @@ export function SettingsDialog({
               <span>
                 <strong>{t('settings.general')}</strong>
                 <small>{t('settings.generalHint')}</small>
+              </span>
+            </button>
+            <button
+              type="button"
+              className={`settings-nav-item${activeSection === 'labs' ? ' active' : ''}`}
+              onClick={() => setActiveSection('labs')}
+            >
+              <Icon name="sparkles" size={18} />
+              <span>
+                <strong>{t('labs.title')}</strong>
+                <small>{t('labs.navHint')}</small>
               </span>
             </button>
             <button
@@ -4671,10 +4700,30 @@ export function SettingsDialog({
                           // credits count as a dollar amount is what put
                           // "Balance $388307.00" on a workspace whose real
                           // balance was under $39.
-                          const amrCardBalanceLabel =
-                            isAmrAgent && active && amrCardSignedIn
-                              ? amrStatusBalance ?? amrWalletBalance
+                          const workspaceBalanceUsd = workspaceBillingBalanceUsd(
+                            workspaceBillingResponse,
+                            workspaceContext,
+                          );
+                          const amrWorkspaceBalance =
+                            amrWalletVisible && workspaceBalanceUsd
+                              ? formatVelaBalanceUsd(workspaceBalanceUsd)
                               : null;
+                          const amrCardIsTeam =
+                            workspaceContext?.workspaceType === 'team';
+                          const amrCardBalanceLabel =
+                            isAmrAgent &&
+                            active &&
+                            amrCardSignedIn &&
+                            !workspaceContextLoading
+                              ? amrCardIsTeam
+                                ? amrWorkspaceBalance
+                                : amrWorkspaceBalance ?? amrStatusBalance ?? amrWalletBalance
+                              : null;
+                          const amrCardBalanceReady =
+                            !workspaceContextLoading &&
+                            (amrCardIsTeam
+                              ? Boolean(workspaceBillingResponse) || Boolean(amrWorkspaceBalance)
+                              : amrWalletReady || Boolean(amrCardBalanceLabel));
                           // vela's `account.plan` is ACCOUNT-scoped, so a member
                           // whose plan is held by the team workspace reads
                           // `free` there — the workspace context wins.
@@ -4875,8 +4924,8 @@ export function SettingsDialog({
                                                 {amrWalletValueLabel({
                                                   balance: amrCardBalanceLabel,
                                                   loadingLabel: t('common.loading'),
-                                                  ready: amrWalletReady || Boolean(amrCardBalanceLabel),
-                                                  snapshot: amrWalletSnapshot,
+                                                  ready: amrCardBalanceReady,
+                                                  snapshot: amrCardIsTeam ? null : amrWalletSnapshot,
                                                   unavailableLabel: t('settings.amrWalletUnavailable'),
                                                 })}
                                               </span>
@@ -5917,6 +5966,10 @@ export function SettingsDialog({
                 />
               </div>
             </section>
+          ) : null}
+
+          {activeSection === 'labs' ? (
+            <LabsSection onAutosaveStatus={setAutosaveStatus} />
           ) : null}
 
           {activeSection === 'designSystems' ? (

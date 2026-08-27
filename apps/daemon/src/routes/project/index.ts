@@ -10,6 +10,21 @@ import {
   buildPreviewObservabilityBridge,
 } from '@open-design/contracts/runtime/preview-observability';
 import {
+  buildPreviewFocusGuard,
+  buildPreviewRedirectGuard,
+  buildPreviewSandboxShim,
+  PREVIEW_URL_GUARD_MAX_HTML_BYTES,
+  previewHtmlHasLoadTimeLocationNavigation,
+} from '@open-design/contracts/runtime/preview-guards';
+import {
+  endOfTag,
+  findRealElementRange,
+  findRealTagEnd,
+  findRealTagOffset,
+  HTML_TAG_PATTERNS,
+  prependAfterDoctype,
+} from '@open-design/contracts/runtime/html-injection-points';
+import {
   automaticStrategyTaskProfileForProjectMetadata,
   defaultScenarioPluginIdForProjectMetadata,
   type ChatSessionMode,
@@ -1424,27 +1439,77 @@ function wantsUrlPreviewObservabilityBridge(value: unknown): boolean {
   return previewBridgeTokens(value).some((token) => token === 'observability' || token === 'errors' || token === 'diagnostics');
 }
 
+function wantsUrlPreviewSandboxGuard(value: unknown): boolean {
+  return previewBridgeTokens(value).some((token) => token === 'sandbox' || token === 'storage');
+}
+
+function wantsUrlPreviewFocusGuard(value: unknown): boolean {
+  return previewBridgeTokens(value).some((token) => token === 'focus');
+}
+
+function wantsUrlPreviewRedirectGuard(value: unknown): boolean {
+  return previewBridgeTokens(value).some((token) => token === 'redirect');
+}
+
 function injectBeforeBodyClose(html: string, marker: string, injection: string): string {
   if (html.includes(marker)) return html;
-  const bodyCloseIndex = html.search(/<\/body\s*>/i);
+  const bodyCloseIndex = findRealTagOffset(html, /<\/body(?=[\t\n\f\r >])/i);
   if (bodyCloseIndex >= 0) {
     return `${html.slice(0, bodyCloseIndex)}${injection}${html.slice(bodyCloseIndex)}`;
   }
-  return `${html}${injection}`;
+  // No boundary: appending is not a safe fallback, because the reason there is
+  // no boundary is often that the document ends inside a construct that
+  // swallows whatever follows — `<plaintext>` never leaves PLAINTEXT, an
+  // unterminated comment or script runs to EOF. Appended markup would become
+  // text there and the bridge would never run. Going in near the top instead
+  // costs the "end of body" placement but keeps the bridge live.
+  const headStart = findRealTagOffset(html, /<head(?=[\t\n\f\r />])/i);
+  const headEnd = headStart >= 0 ? endOfTag(html, headStart) : -1;
+  if (headEnd >= 0) return `${html.slice(0, headEnd + 1)}${injection}${html.slice(headEnd + 1)}`;
+  const htmlStart = findRealTagOffset(html, /<html(?=[\t\n\f\r />])/i);
+  const htmlEnd = htmlStart >= 0 ? endOfTag(html, htmlStart) : -1;
+  if (htmlEnd >= 0) return `${html.slice(0, htmlEnd + 1)}<head>${injection}</head>${html.slice(htmlEnd + 1)}`;
+  return prependAfterDoctype(html, injection);
 }
 
 function injectAfterHeadOpen(html: string, marker: string, injection: string): string {
   if (html.includes(marker)) return html;
-  if (/<head[^>]*>/i.test(html)) {
-    return html.replace(/<head[^>]*>/i, (match) => `${match}${injection}`);
+  const headOpenIndex = findRealTagOffset(html, /<head(?=[\t\n\f\r />])/i);
+  if (headOpenIndex >= 0) {
+    const openTagEnd = endOfTag(html, headOpenIndex);
+    if (openTagEnd >= 0) {
+      return `${html.slice(0, openTagEnd + 1)}${injection}${html.slice(openTagEnd + 1)}`;
+    }
   }
-  if (/<html[^>]*>/i.test(html)) {
-    return html.replace(/<html[^>]*>/i, (match) => `${match}<head>${injection}</head>`);
+  const htmlOpenIndex = findRealTagOffset(html, /<html(?=[\t\n\f\r />])/i);
+  if (htmlOpenIndex >= 0) {
+    const openTagEnd = endOfTag(html, htmlOpenIndex);
+    if (openTagEnd >= 0) {
+      return `${html.slice(0, openTagEnd + 1)}<head>${injection}</head>${html.slice(openTagEnd + 1)}`;
+    }
   }
-  return `${injection}${html}`;
+  return prependAfterDoctype(html, injection);
 }
 
-function injectUrlPreviewBridge(html: string, bridge: 'scroll' | 'selection' | 'snapshot' | 'observability'): string {
+function injectUrlPreviewBridge(
+  html: string,
+  bridge: 'scroll' | 'selection' | 'snapshot' | 'observability' | 'sandbox' | 'focus' | 'redirect',
+): string {
+  if (bridge === 'sandbox') {
+    return injectAfterHeadOpen(html, 'data-od-sandbox-shim', buildPreviewSandboxShim());
+  }
+  if (bridge === 'focus') {
+    return injectAfterHeadOpen(html, 'data-od-preview-focus-guard', buildPreviewFocusGuard());
+  }
+  if (bridge === 'redirect') {
+    return injectAfterHeadOpen(
+      html,
+      'data-od-preview-redirect-guard',
+      buildPreviewRedirectGuard({
+        blockLoadTimeScriptRedirect: previewHtmlHasLoadTimeLocationNavigation(html),
+      }),
+    );
+  }
   if (bridge === 'observability') {
     return injectAfterHeadOpen(
       html,
@@ -1471,7 +1536,10 @@ function applyUrlPreviewBridgesToHtml(
       wantsUrlPreviewScrollBridge(requestedBridge) ||
       wantsUrlPreviewSelectionBridge(requestedBridge) ||
       wantsUrlPreviewSnapshotBridge(requestedBridge) ||
-      wantsUrlPreviewObservabilityBridge(requestedBridge)
+      wantsUrlPreviewObservabilityBridge(requestedBridge) ||
+      wantsUrlPreviewSandboxGuard(requestedBridge) ||
+      wantsUrlPreviewFocusGuard(requestedBridge) ||
+      wantsUrlPreviewRedirectGuard(requestedBridge)
     ) ||
     !/^text\/html(?:;|$)/i.test(mime)
   ) {
@@ -1483,8 +1551,20 @@ function applyUrlPreviewBridgesToHtml(
   // filename. URL-load iframes cannot rely on the host rewriting the document
   // title after load, and powered previews are intentionally cross-origin.
   html = daemonSanitizeTitleInDoc(html);
+  // Guards must run before authored scripts. injectAfterHeadOpen prepends at
+  // the start of <head>; apply in reverse runtime order so the final document
+  // executes sandbox -> redirect -> observability -> focus.
+  if (wantsUrlPreviewFocusGuard(requestedBridge)) {
+    html = injectUrlPreviewBridge(html, 'focus');
+  }
   if (wantsUrlPreviewObservabilityBridge(requestedBridge)) {
     html = injectUrlPreviewBridge(html, 'observability');
+  }
+  if (wantsUrlPreviewRedirectGuard(requestedBridge)) {
+    html = injectUrlPreviewBridge(html, 'redirect');
+  }
+  if (wantsUrlPreviewSandboxGuard(requestedBridge)) {
+    html = injectUrlPreviewBridge(html, 'sandbox');
   }
   if (wantsUrlPreviewScrollBridge(requestedBridge)) {
     html = injectUrlPreviewBridge(html, 'scroll');
@@ -1611,31 +1691,29 @@ function daemonFindRealTitleOffset(html: string, searchLimit: number): number {
  *
  * Exported for unit testing; not part of the public API surface.
  */
+const HTML_NAMESPACE = 'http://www.w3.org/1999/xhtml';
+
 export function daemonSanitizeTitleInDoc(html: string): string {
-  const lower = html.toLowerCase();
-  const bodyStart = lower.indexOf('<body');
-  const headEnd = lower.lastIndexOf('</head>', bodyStart >= 0 ? bodyStart - 1 : lower.length - 1);
-  const searchLimit = headEnd >= 0
-    ? headEnd + 7
-    : bodyStart >= 0
-      ? bodyStart
-      : html.length;
+  // Only the head's own <title> names the document; an <svg><title> in the body
+  // is an accessible label for that graphic. Both boundaries are located
+  // structurally, so a `</head>` or `<body>` an author wrote into a script
+  // string cannot move the limit.
+  const headClose = findRealTagOffset(html, HTML_TAG_PATTERNS.headClose);
+  const bodyOpen = findRealTagOffset(html, HTML_TAG_PATTERNS.bodyOpen);
+  const searchLimit = headClose >= 0 ? headClose : bodyOpen >= 0 ? bodyOpen : html.length;
 
-  const titleStart = daemonFindRealTitleOffset(html, searchLimit);
-  if (titleStart < 0) return html;
+  // Both ends of the element by the parser's rules: the open tag through
+  // `endOfTag`, so a `>` inside a quoted attribute cannot cut it short, and the
+  // close by the raw-text rule, so `</title >` closes it while `</title-page>`
+  // does not. A plain `indexOf('</title>')` accepted only one spelling.
+  const range = findRealElementRange(html, HTML_TAG_PATTERNS.titleOpen, 'title');
+  if (!range || range.start >= searchLimit) return html;
 
-  const openTagEnd = html.indexOf('>', titleStart);
-  if (openTagEnd < 0) return html;
-
-  const closingTagStart = html.toLowerCase().indexOf('</title>', openTagEnd + 1);
-  if (closingTagStart < 0) return html;
-
-  const closingTagEnd = html.indexOf('>', closingTagStart);
-  if (closingTagEnd < 0) return html;
-
-  const openTag = html.slice(titleStart, openTagEnd + 1);
-  const rawContent = html.slice(openTagEnd + 1, closingTagStart);
-  const closeTag = html.slice(closingTagStart, closingTagEnd + 1);
+  const titleStart = range.start;
+  const closingTagEnd = range.end - 1;
+  const openTag = html.slice(range.start, range.contentStart);
+  const rawContent = html.slice(range.contentStart, range.contentEnd);
+  const closeTag = html.slice(range.contentEnd, range.end);
 
   const decoded = daemonDecodeHtmlEntitiesForTitle(rawContent);
   const safe = daemonSanitizePreviewTitle(decoded);
@@ -5390,7 +5468,6 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
   const { validateArtifactManifestInput } = ctx.artifacts;
   const { projectPreviewScopes } = ctx;
   const projectPreviewIframeSandbox = 'allow-scripts allow-forms';
-  const HTML_PREVIEW_BRIDGE_MAX_BYTES = 2 * 1024 * 1024;
   const HTML_POWERED_PREVIEW_HINT_SCAN_MAX_BYTES = 128 * 1024 * 1024;
   const projectPreviewCsp = [
     `sandbox ${projectPreviewIframeSandbox}`,
@@ -5870,6 +5947,31 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
     return filePath.split('/').map((segment) => encodeURIComponent(segment)).join('/');
   }
 
+  /**
+   * Whether the document contains a `<base>` the browser would actually honour.
+   *
+   * Parsed rather than scanned, because the answer depends on namespace and on
+   * template content: a `<base>` directly under `<svg>` is an SVG element and
+   * inert, and one inside an HTML `<template>` belongs to an inert fragment.
+   * Both look identical to a linear scan.
+   *
+   * The template test is by namespace as well as name. A foreign element may
+   * also be called `template` — `<svg><template><foreignObject><base>` — and it
+   * creates no inert fragment, so the base under it is live and a name-only
+   * test would wrongly discard it.
+   */
+  function hasAuthoredHtmlBase(html: string): boolean {
+    const $ = load(html);
+    return $('base').toArray().some((element) => {
+      if (element.namespace !== HTML_NAMESPACE) return false;
+      for (let node: typeof element.parent = element.parent; node; node = node.parent) {
+        const candidate = node as { name?: string; namespace?: string };
+        if (candidate.name === 'template' && candidate.namespace === HTML_NAMESPACE) return false;
+      }
+      return true;
+    });
+  }
+
   function injectProjectPreviewBase(
     html: string,
     projectId: string,
@@ -5879,8 +5981,20 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
   ): string {
     // Respect an artifact-authored base URL. Only generated documents without
     // one need the containment base that keeps runtime-created relative URLs
-    // (for example `img.src = payload.logo`) on the minted preview scope.
-    if (/<base\b/i.test(html)) return html;
+    // (for example `img.src = payload.logo`) on the minted preview scope. A
+    // `<base>` an author merely wrote into a string does not govern this
+    // document, so it must not suppress containment.
+    if (findRealTagOffset(html, /<base(?=[\t\n\f\r />])/i) >= 0) return html;
+    // A `<base>` can also sit inside an HTML integration point — under
+    // `<foreignObject>`, `<desc>`, or an `annotation-xml` that names an HTML
+    // encoding — where the structural scan deliberately does not go, because
+    // for its own purpose the whole foreign subtree is skippable. Such a base
+    // is an HTML-namespace element and governs the document; the generated one
+    // would land in `<head>` ahead of it and win, silently repointing every
+    // authored relative URL. Only foreign content can hide one, so the parse
+    // below is gated on the document having some — 10% of this repository's
+    // HTML files reach it, at a few milliseconds each.
+    if (/<(svg|math)[\t\n\f\r />]/i.test(html) && hasAuthoredHtmlBase(html)) return html;
     const ownerDir = path.posix.dirname(ownerFilePath);
     const dirSuffix = ownerDir === '.'
       ? ''
@@ -5890,9 +6004,16 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
     const baseHref = `/api/projects/${encodeURIComponent(projectId)}`
       + `/preview/${encodeURIComponent(scope)}/${dirSuffix}`;
     const bridge = buildPreviewBaseHrefBridge({ href: baseHref, expiresAt });
-    const head = /<head\b[^>]*>/i;
-    if (head.test(html)) return html.replace(head, (tag) => `${tag}${baseTag}${bridge}`);
-    return `${baseTag}${bridge}${html}`;
+    // Same structural rule as the bridge injectors above: a `<head>` inside a
+    // script string is text, not this document's head.
+    const headOpenIndex = findRealTagOffset(html, /<head(?=[\t\n\f\r />])/i);
+    if (headOpenIndex >= 0) {
+      const openTagEnd = endOfTag(html, headOpenIndex);
+      if (openTagEnd >= 0) {
+        return `${html.slice(0, openTagEnd + 1)}${baseTag}${bridge}${html.slice(openTagEnd + 1)}`;
+      }
+    }
+    return prependAfterDoctype(html, `${baseTag}${bridge}`);
   }
 
   function rewriteWorkspaceScopedHtmlAssetUrls(
@@ -6520,7 +6641,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
         project?.metadata,
       );
       const skipHtmlPreviewBridge =
-        /^text\/html(?:;|$)/i.test(meta.mime) && meta.size > HTML_PREVIEW_BRIDGE_MAX_BYTES;
+        /^text\/html(?:;|$)/i.test(meta.mime) && meta.size > PREVIEW_URL_GUARD_MAX_HTML_BYTES;
 
       await sendProjectFile(
         req,
@@ -6635,7 +6756,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
         project?.metadata,
       );
       const skipPoweredTransform =
-        /^text\/html(?:;|$)/i.test(meta.mime) && meta.size > HTML_PREVIEW_BRIDGE_MAX_BYTES;
+        /^text\/html(?:;|$)/i.test(meta.mime) && meta.size > PREVIEW_URL_GUARD_MAX_HTML_BYTES;
       await sendProjectFile(
         req,
         res,

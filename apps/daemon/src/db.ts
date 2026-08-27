@@ -18,6 +18,7 @@ import { eventsEndedWithUnfinishedWork } from '@open-design/contracts';
 import { migrateCollabSyncSnapshots } from './collab/sync-snapshot-store.js';
 import { migrateCommentRelayOutbox } from './collab/comment-relay-outbox.js';
 import { migratePublicFilePublications } from './collab/public-file-publication-store.js';
+import { migrateAmrTerminalReportOutbox } from './storage/amr-terminal-report-outbox.js';
 import {
   collapseWorkspaceProjectHomes,
   type WorkspaceProjectHomeRow,
@@ -568,6 +569,7 @@ function migrate(db: SqliteDb): void {
   migrateOdNextRolloutStore(db);
   migrateCollabSyncSnapshots(db);
   migrateCommentRelayOutbox(db);
+  migrateAmrTerminalReportOutbox(db);
   migratePublicFilePublications(db);
 }
 

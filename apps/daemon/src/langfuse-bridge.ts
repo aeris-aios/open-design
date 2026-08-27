@@ -144,6 +144,7 @@ export interface BuildSafeRunQualityProjectionFromDaemonOpts {
   run: SafeRunQualityDaemonRunRecord;
   prefs: TelemetryPrefs;
   installationId?: string | null;
+  env?: NodeJS.ProcessEnv;
   fetchImpl?: typeof fetch;
 }
 
@@ -1101,6 +1102,7 @@ export async function buildSafeRunQualityProjectionFromDaemon(
     artifacts: buildTraceObjectArtifactSources(traceObjectFilesRaw),
     prompt: run.userPrompt ?? '',
     prefs: opts.prefs,
+    ...(opts.env ? { env: opts.env } : {}),
     ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
     uploadMode: 'manifest-only',
   });

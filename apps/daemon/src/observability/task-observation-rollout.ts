@@ -507,6 +507,7 @@ async function taskAggregate(
           ...(telemetry.installationId !== undefined
             ? { installationId: telemetry.installationId }
             : {}),
+          ...(options.env ? { env: options.env } : {}),
           ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
         })
       : undefined;

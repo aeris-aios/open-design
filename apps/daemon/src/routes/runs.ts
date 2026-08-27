@@ -20,6 +20,7 @@ import {
   buildRunCreatedV4Aliases,
   buildRunFinishedV4Aliases,
   deriveConfigureGlobals,
+  harnessAnalyticsFromRolloutDecision,
   modelIdForTracking,
   sessionModeToTracking,
   type TrackingDesignSystemSource,
@@ -403,6 +404,8 @@ interface ChatRun {
     entryFile: string;
     shellPresent: boolean;
   };
+  /** Run-finish observation: how the delivered entry carries the staged layout primitives. */
+  odNextLayoutPrimitives?: 'verbatim' | 'modified' | 'linked' | 'absent';
   analyticsTelemetry?: RunTelemetryTimestamps;
   resolvedModelId?: string | null;
   preflightAgentCliVersion?: string | null;
@@ -1445,6 +1448,19 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
       sourceRunId,
       taskRunIndex,
     };
+    // A continuation is a second physical Run of the same logical task, and the
+    // rollout is only evaluated on the branch that resolves a project — which
+    // this path skips. Without inheriting, every answered clarification would
+    // report no harness at all, quietly dropping the OD Next runs that asked a
+    // question from the comparison the dimension exists for.
+    //
+    // Inherited from the source Run rather than re-read from settings on
+    // purpose: the user may have flipped the switch while the question was on
+    // screen, and this Run belongs to the decision its task started under.
+    // `resolveClarificationContinuation` already verified that source against
+    // the locked task, so it is the trustworthy copy.
+    const sourceDecision = design.runs.get(sourceRunId)?.strategyRolloutDecision;
+    if (sourceDecision) meta.strategyRolloutDecision = sourceDecision;
   }
 
   /** Authorize every bound run mutation before plugin or snapshot resolution. */
@@ -1972,7 +1988,18 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
         explicitExecutablePlugin
         || suppliedContextPluginWasNamed
       );
-      const rolloutPolicy = readOdNextRolloutPolicy();
+      // Read per request, not at boot: `odNextStrategyMode` is how a user opts
+      // this installation into OD Next, and "configure it and it takes effect"
+      // has to mean the next run, not the next daemon restart.
+      //
+      // Deliberately uncaught. `readAppConfig` already answers `{}` for the
+      // states that mean "nothing configured" — no file, unparseable file — and
+      // only throws when the daemon genuinely cannot read its own config. That
+      // is not the same as an opt-out, and swallowing it would silently run the
+      // ordinary route (with no `agentCliEnv` either) while telling the
+      // operator the installation was never opted in.
+      const rolloutAppConfig = await readAppConfig(RUNTIME_DATA_DIR);
+      const rolloutPolicy = readOdNextRolloutPolicy(process.env, rolloutAppConfig);
       const rolloutTaskType = odNextTaskTypeForProjectScenarioBinding(
         verifiedStrategyBinding ?? verifiedScenarioBinding,
       );
@@ -2011,9 +2038,8 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
       if (routeApplicability === 'eligible' && rolloutPlugin) {
         try {
           if (effectiveAgentId) {
-            const appCfg = await readAppConfig(RUNTIME_DATA_DIR).catch(() => ({}));
             const agentCliEnv = agentCliEnvForAgent(
-              (appCfg as { agentCliEnv?: AgentCliEnv }).agentCliEnv,
+              (rolloutAppConfig as { agentCliEnv?: AgentCliEnv }).agentCliEnv,
               effectiveAgentId,
             );
             // Both probes read the same resolved launch path. The `--version`
@@ -2265,6 +2291,11 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
       meta.odNextTaskInputSnapshot = design.runs.get(
         clarificationContinuation.sourceRunId,
       )?.odNextTaskInputSnapshot ?? null;
+    } else if (idempotentStrategyRetry?.strategyRolloutDecision) {
+      // Same skipped-evaluation shape as the continuation above. A retry is the
+      // same logical request, so it reports the decision that request already
+      // made rather than making a fresh one.
+      meta.strategyRolloutDecision = idempotentStrategyRetry.strategyRolloutDecision;
     }
     let runProject: ProjectRecord | null = null;
     if (typeof meta.projectId === 'string' && meta.projectId) {
@@ -3431,13 +3462,6 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
         area: isDesignSystemRun ? 'design_system_generation' : 'chat_composer',
         ...configureGlobals,
         ...odNextRolloutAnalyticsProperties(strategyRolloutDecision),
-        ...(run.odNextDeviceShell
-          ? {
-              od_next_device_platform: run.odNextDeviceShell.platform,
-              od_next_device_platform_source: run.odNextDeviceShell.resolvedFrom,
-              od_next_device_shell_present: run.odNextDeviceShell.shellPresent,
-            }
-          : {}),
         runtime_type: runtimeTypeForRunAnalytics({
           derived: configureGlobals.runtime_type,
           hint: analyticsHints.runtimeType,
@@ -3544,6 +3568,10 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
             }
           : {}),
       };
+      // Read off the run rather than the local decision variable: the run is
+      // what `run_finished` and the crash-recovery replay both see, so stamping
+      // it here is the only place this dimension has to be added.
+      Object.assign(baseProps, harnessAnalyticsFromRolloutDecision(run.strategyRolloutDecision));
       Object.assign(baseProps, buildRunCreatedV4Aliases(baseProps, taskLineage));
       design.runs.setAnalyticsRecovery?.(run, {
         context: analyticsContext,
@@ -3832,6 +3860,19 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
             ...(activationMilestones ? { $set_once: activationMilestones } : {}),
             model_id: finishedModelId,
             artifact_count: artifactCount,
+            // Finish-time observations live on the run object only after the
+            // physical run resolved; baseProps was frozen at creation, so
+            // these must be read live here or they never reach analytics.
+            ...(run.odNextDeviceShell
+              ? {
+                  od_next_device_platform: run.odNextDeviceShell.platform,
+                  od_next_device_platform_source: run.odNextDeviceShell.resolvedFrom,
+                  od_next_device_shell_present: run.odNextDeviceShell.shellPresent,
+                }
+              : {}),
+            ...(run.odNextLayoutPrimitives
+              ? { od_next_layout_primitives: run.odNextLayoutPrimitives }
+              : {}),
             ...(run.externalPluginAnalytics
               ? {
                   deliverable_valid: deliverable?.valid === true,

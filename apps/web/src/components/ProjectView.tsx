@@ -78,6 +78,7 @@ import {
   byokProtocolToTracking,
   executionModeToTracking,
   projectKindFromMetadataToTracking,
+  projectKindFromMetadataToTrackingOrLegacyDefault,
   projectKindToTracking,
   sessionModeToTracking,
 } from '@open-design/contracts/analytics';
@@ -3280,12 +3281,11 @@ export function ProjectView({
     }
 
     if (cfg.desktopEnabled) {
-      // Successes only interrupt when the user is on another tab/window.
-      // Failures alert regardless — losing a long agent run silently is
-      // worse than a small interruption when the page is in focus.
+      // System notifications are useful only when the task is not already in
+      // front of the user. Sounds remain independent feedback for both states.
       const isHidden = typeof document !== 'undefined' && document.hidden;
       const isFocused = typeof document === 'undefined' ? true : document.hasFocus();
-      if (status === 'failed' || isHidden || !isFocused) {
+      if (isHidden || !isFocused) {
         const title = status === 'succeeded'
           ? t('notify.successTitle')
           : t('notify.failureTitle');
@@ -11765,7 +11765,7 @@ export function ProjectView({
               : readonlyNoticeText
           }
           fileSyncBadge={fileSyncBadge}
-          projectKind={projectKindFromMetadataToTracking(currentProject.metadata) ?? 'prototype'}
+          projectKind={projectKindFromMetadataToTrackingOrLegacyDefault(currentProject.metadata)}
           rootDirName={(() => {
             const baseDir = currentProject.metadata?.baseDir;
             return typeof baseDir === 'string'

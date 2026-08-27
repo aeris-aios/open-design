@@ -37,11 +37,13 @@ import {
   detectOdNextDevicePlatformFromText,
   resolveOdNextDevicePlatform,
   selectOdNextDeviceFrameContextV2,
+  selectOdNextLayoutPrimitivesCss,
 } from '@open-design/contracts';
 import {
   loadOdNextTaskResourcesForSnapshot,
   materializeOdNextDeviceFrames,
   observeOdNextDeviceShell,
+  observeOdNextLayoutPrimitives,
 } from './strategies/od-next/device-frames.js';
 import {
   composeSystemPrompt,
@@ -136,6 +138,7 @@ import {
   resolveChatRunArtifactQuietPeriodMs,
   resolveChatRunFirstOutputTimeoutMs,
   resolveChatRunInactivityTimeoutMs,
+  runtimeEmissionCountsAsAgentProgress,
   resolveChatRunShutdownGraceMs,
 } from './runtimes/chat-run-lifecycle.js';
 import { assertOdNextSemanticRequestFactProducerCoverage } from './runtimes/od-next-exact-input.js';
@@ -194,6 +197,7 @@ export {
   resolveChatRunArtifactQuietPeriodMs,
   resolveChatRunFirstOutputTimeoutMs,
   resolveChatRunInactivityTimeoutMs,
+  runtimeEmissionCountsAsAgentProgress,
 } from './runtimes/chat-run-lifecycle.js';
 export {
   renderRunContextPrompt,
@@ -246,6 +250,7 @@ import {
   evaluateModelContextBudget,
 } from './runtimes/model-context-budget.js';
 import { loadMmdRouteLaunchEnv } from './runtimes/mmd-routes.js';
+import { withAcpHandshakeFailureGuidance } from './runtimes/acp-handshake-failure.js';
 import { preflightCodexDefaultModel } from './runtimes/codex-model-preflight.js';
 import { preparePromptFileForAgent } from './runtimes/prompt-file.js';
 import { TerminalControlSequenceStripper } from './runtimes/terminal-control.js';
@@ -262,6 +267,7 @@ import {
   readVelaLoginStatus,
   resolveAmrProfile,
 } from './integrations/vela.js';
+import { isAbortedOperationError } from './integrations/aborted-error.js';
 import { projectResourceIdFor } from './integrations/vela-team-projects.js';
 import {
   getTeamProjectMaterialization,
@@ -496,6 +502,12 @@ import { importFigmaFromBytes } from './figma/figma-import.js';
 import { renderDesignSystemPreview } from './design-systems/preview.js';
 import { renderDesignSystemShowcase } from './design-systems/showcase.js';
 import { createChatRunService } from './runtimes/runs.js';
+import {
+  createAmrTerminalReportDeliveryService,
+  createAmrTerminalReportFinalizer,
+  createAmrTerminalReportOutboxStore,
+  type AmrTerminalReportDeliveryService,
+} from './storage/amr-terminal-report-outbox.js';
 import { createInternalRunCreationService } from './services/internal-run-service.js';
 import {
   createOdNextRunInputProjection,
@@ -534,6 +546,7 @@ import { runtimeResumesSessionById } from './runtimes/types.js';
 import {
   createRunLifecycleTracer,
   runLifecycleMarkersForStreamEvent,
+  type RunLifecycleStreamEventMarkers,
 } from './run-lifecycle-tracer.js';
 import { deriveRunErrorCode, runResultFromStatus } from './run-result.js';
 import { classifyRunFailure, isResumableFailure } from './run-failure-classification.js';
@@ -927,6 +940,7 @@ import {
 } from './collab/proactive-content-pull.js';
 import {
   backgroundPullMaxEntriesFromEnv,
+  backgroundPullMaxCumulativeEntriesFromEnv,
   createBackgroundPullSizeGuard,
 } from './collab/background-pull-size-guard.js';
 import {
@@ -2502,7 +2516,29 @@ function rewriteKnownAgentStreamError(agentId, message, failureText = '') {
   ) {
     return 'The run failed due to an unknown upstream streaming error. Please retry.';
   }
+  // An ACP handshake refusal that reaches one of the stderr-tail fallbacks is
+  // deliberately NOT reworded here. The daemon has no locale, so a sentence
+  // composed at this layer lands in `run.error` untranslated and the chat
+  // renders it verbatim. The failure is NAMED instead: each `send('error', …)`
+  // below wraps its payload in `withAcpHandshakeFailureGuidance`, which stamps
+  // `AGENT_CLI_SESSION_REFUSED` plus the runtime identity and leaves the
+  // agent's own line alone.
   return rawMessage;
+}
+
+/**
+ * The runtime identity a failure ships as structured data: the runtime's
+ * display name, which is the one fact the localized copy interpolates.
+ *
+ * Read straight off the already-resolved `RuntimeAgentDef` — a pure lookup on
+ * a value this run resolved before it spawned, so naming the failure adds no
+ * work and no waiting to the failure path.
+ *
+ * @param def - The resolved `RuntimeAgentDef` for this run.
+ * @returns An `AcpAgentIdentity`, with `null` when the runtime is unknown.
+ */
+function agentFailureIdentity(def) {
+  return { agentName: def?.name ?? null };
 }
 
 function createAmrModelUnavailablePayload(model, init = {}) {
@@ -2798,6 +2834,15 @@ export interface StartServerOptions {
    * boundary; HTTP bodies, assistant prose, and raw stdout are never inputs.
    */
   odNextComplexProductionResolver?: OdNextComplexProductionResolver | null;
+}
+
+export function startAmrTerminalReportDeliveryAfterBind(
+  delivery: Pick<AmrTerminalReportDeliveryService, 'start'>,
+  boundPort: number | null,
+): boolean {
+  if (!Number.isInteger(boundPort) || Number(boundPort) <= 0) return false;
+  delivery.start();
+  return true;
 }
 
 export interface StartServerResult {
@@ -3131,6 +3176,11 @@ export async function startServer({
     next();
   });
   const db = openDatabase(PROJECT_ROOT, { dataDir: RUNTIME_DATA_DIR });
+  const amrTerminalReportOutbox = createAmrTerminalReportOutboxStore(db);
+  const amrTerminalReportDelivery = createAmrTerminalReportDeliveryService({
+    store: amrTerminalReportOutbox,
+    env: { ...process.env, OD_DATA_DIR: RUNTIME_DATA_DIR },
+  });
   const commentAnchorRepair = repairTeamProjectCommentAnchorConversations(db);
   if (commentAnchorRepair.created > 0) {
     console.warn(
@@ -4278,16 +4328,6 @@ export async function startServer({
       scope,
     );
   };
-  const teamProjectsForRequest = async (
-    context: WorkspaceCollabContext,
-  ): Promise<TeamProject[]> =>
-    withoutLocallyUnsharedProjects(
-      await teamProjectsLister(context.workspaceId),
-      {
-        workspaceId: context.workspaceId,
-        workspaceMemberId: context.workspaceMemberId,
-      },
-    );
   /**
    * Non-destructive quarantine marker for a pulled Team mirror. The binding
    * state is the central data-plane gate; the project metadata marker also
@@ -5018,6 +5058,7 @@ export async function startServer({
   // behavior. See collab/background-pull-size-guard.ts.
   const backgroundPullSizeGuard = createBackgroundPullSizeGuard({
     maxEntries: backgroundPullMaxEntriesFromEnv(),
+    maxCumulativeEntries: backgroundPullMaxCumulativeEntriesFromEnv(),
     inspect: (scope, version) =>
       inspectAuthorizedTeamProjectPull({
         projectId: scope.projectId,
@@ -5031,7 +5072,7 @@ export async function startServer({
       }),
     onDeferred: (info) => {
       console.info(
-        '[od] background shared-project pull deferred (oversized): ' +
+        `[od] background shared-project pull deferred (${info.reason}): ` +
           `projectId=${info.projectId} workspaceId=${info.workspaceId} ` +
           `version=${info.version} entries=${info.entryCount} ` +
           `maxEntries=${info.maxEntries}; opening the project pulls it on demand`,
@@ -5161,8 +5202,16 @@ export async function startServer({
           onTiming: emitSharedProjectPullTiming,
         }
       : {}),
-    onError: (error) =>
-      console.warn('[od] proactive shared-project pull failed (web polling remains the fallback):', String(error)),
+    // A cancelled `vela` child is this scheduler's own doing, not a fault: it
+    // aborts the in-flight pull when a higher published version supersedes it
+    // (`mergeIntentUpdate`) or when the intent is cleared (`clearIntent`).
+    // Reporting those as failures put a fault-shaped warning in the log on
+    // ordinary version churn. `proactive-content-pull.ts` stays dependency-free
+    // by design, so the distinction is drawn here, at its only error sink.
+    onError: (error) => {
+      if (isAbortedOperationError(error)) return;
+      console.warn('[od] proactive shared-project pull failed (web polling remains the fallback):', String(error));
+    },
     onCatchUp: (event) => {
       if (
         event.phase === 'retry-scheduled' ||
@@ -5188,12 +5237,23 @@ export async function startServer({
         );
         return;
       }
+      // `candidates` counts projects CONSIDERED, which is not what the
+      // background lanes cost a member: a sweep with candidates=25 says
+      // nothing about whether 25 files or 25,000 landed on their disk. The
+      // `process*` fields below are this daemon process's running totals (not
+      // this sweep's), and they are the reading that makes
+      // OD_COLLAB_BACKGROUND_PULL_MAX_CUMULATIVE_ENTRIES choosable from a
+      // diagnostics bundle instead of from a synthetic workspace.
+      const backgroundVolume = backgroundPullSizeGuard.volume();
       console.info(
         `[od] shared-project content catch-up completed mode=${event.mode} lane=${event.lane} ` +
           `workspaceId=${event.workspaceId ?? 'unknown'} scanned=${event.scanned ?? 0} ` +
           `candidates=${event.candidates ?? 0} headChecks=${event.headChecks ?? 0} ` +
           `heads=${event.heads ?? 0} ` +
-          `suppressed=${event.suppressed ?? 0} complete=${event.complete === true}`,
+          `suppressed=${event.suppressed ?? 0} complete=${event.complete === true} ` +
+          `processEntries=${backgroundVolume.entries} ` +
+          `processProjects=${backgroundVolume.countedProjects} ` +
+          `processUncounted=${backgroundVolume.uncountedProjects}`,
       );
     },
   });
@@ -5399,7 +5459,29 @@ export async function startServer({
     // request and re-ran the one-off `vela team-projects --help` capability
     // probe — an extra CLI spawn (and, on the current CLI, a blocking analytics
     // POST) on every workspace projects load.
-    listTeamProjects: teamProjectsForRequest,
+    //
+    // Use the DISPLAY cache, not the uncached exact lookup. This is the read
+    // behind the Home team-project grid and the deep-link "is this shared to my
+    // team?" check, and `teamProjectsDisplayCache` was built for exactly this
+    // route — see its doc comment, which names it. Wired to the uncached lister
+    // instead, every call spawned `vela team-projects list`: measured at ~1.1s
+    // per request against a live workspace, cold and warm alike, on a path the
+    // UI hits on every launch and every deep link.
+    //
+    // These routes are display reads: the Home team-project grid and the
+    // deep-link "is this shared to my team?" check. Nothing here gates data
+    // access — the pull gate and the comment/presence relays reach
+    // `teamProjectsLister` on their own and still observe an unshare
+    // immediately.
+    //
+    // Display freshness does not rest on the 3s TTL alone: share, unshare and
+    // workspace-change invalidate this cache explicitly, via
+    // `invalidateTeamProjectCatalog` (collab-sync and the project routes) and
+    // the per-scope invalidations beside the cache itself.
+    //
+    // This was the last caller of the uncached `teamProjectsForRequest`
+    // wrapper, so that helper is removed with it rather than left orphaned.
+    listTeamProjects: teamProjectsForDisplay,
     // Expose the collab-cloud member directory so the web client can resolve
     // comment authors + owner names to a name + role.
     ...(teamMembersCache ? { listMembers: teamMembersForDisplay } : {}),
@@ -7388,6 +7470,9 @@ export async function startServer({
     analytics: analyticsService,
     getAppVersion: () => telemetry.getCachedAppVersion()?.version ?? '0.0.0',
     requireLocalDaemonRequest,
+    // Uncaught on purpose: an operator asking which mode is in effect must get
+    // an error when the config cannot be read, never `off` / `default`.
+    readOdNextPreference: () => readAppConfig(RUNTIME_DATA_DIR),
   });
   const latchOdNextRolloutForRun = (run, mode, reasonCode) => {
     latchOdNextRolloutStopOperationally({
@@ -7397,6 +7482,11 @@ export async function startServer({
       appVersion: telemetry.getCachedAppVersion()?.version ?? '0.0.0',
       mode,
       reasonCode,
+      // A thunk, not a value: the latch is the safety action and must land
+      // even if this read fails. Sync because run-terminal bookkeeping cannot
+      // await, and read at all so the reported effective mode matches the mode
+      // the run was admitted under.
+      readAppConfig: () => readAppConfigSync(RUNTIME_DATA_DIR),
     });
   };
   workspaceAnalyticsService = analyticsService;
@@ -7419,6 +7509,7 @@ export async function startServer({
         if (!run.sideEffectLedger) run.sideEffectLedger = createRunSideEffectLedger();
         foldEventIntoRunSideEffectLedger(run.sideEffectLedger, record);
       },
+      onTerminal: createAmrTerminalReportFinalizer(amrTerminalReportOutbox),
       beforeFinish: (run, status) => {
         if (status !== 'failed' && status !== 'canceled') return;
         try {
@@ -7481,6 +7572,7 @@ export async function startServer({
     appVersionInfo: telemetry.getCachedAppVersion(),
     db,
     reportLangfuse: reportRunCompletedFromDaemon,
+    finalizeTerminalLocally: createAmrTerminalReportFinalizer(amrTerminalReportOutbox),
     taskObservationModeForRun: (runId) => taskObservationRollout.modeForRun(runId),
     taskObservationRepresentationForRun: (runId) =>
       taskObservationRollout.representationForRun(runId),
@@ -7622,7 +7714,26 @@ export async function startServer({
 
   app.get('/api/health', async (_req, res) => {
     const versionInfo = await readCurrentAppVersionInfo();
-    res.json({ ok: true, version: versionInfo.version });
+    const {
+      pending,
+      delivered,
+      unsupported,
+      terminalFailed,
+      oldestPendingAgeMs,
+    } = amrTerminalReportOutbox.diagnostics();
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({
+      ok: true,
+      version: versionInfo.version,
+      amrTerminalReporter: {
+        status: 'active',
+        pending,
+        delivered,
+        unsupported,
+        terminalFailed,
+        oldestPendingAgeMs,
+      },
+    });
   });
 
   app.get('/api/ready', async (_req, res) => {
@@ -7719,6 +7830,13 @@ export async function startServer({
     requireLocalDaemonRequest,
     composio: composioConnectorProvider,
   });
+
+  // Detailed terminal-report activity is local diagnostics, not public health.
+  app.get(
+    '/api/diagnostics/amr-terminal-reports',
+    requireLocalDaemonRequest,
+    (_req, res) => res.json(amrTerminalReportOutbox.diagnostics()),
+  );
 
   // Gate the diagnostics export behind requireLocalDaemonRequest so it stays
   // unreachable when daemon binds to a non-loopback address (Tailscale,
@@ -9934,6 +10052,12 @@ export async function startServer({
           taskResources: odNextStrategyRecipe.taskResources,
         })
       : null;
+    // Structure-only layout primitives travel with every prototype run as a
+    // fact, so stacked text, truncation, rails, and screen chrome are composed
+    // from classes that already behave instead of re-derived per component.
+    const odNextLayoutPrimitivesCss = odNextStrategyRecipe?.taskType === 'prototype'
+      ? selectOdNextLayoutPrimitivesCss(odNextStrategyRecipe.taskResources)
+      : null;
     const odNextStableRequestContext = odNextStrategyRecipe
       ? {
           agentId,
@@ -9943,6 +10067,7 @@ export async function startServer({
           template,
           exampleReference: odNextExampleReference,
           ...(odNextDeviceFrame ? { deviceFrame: odNextDeviceFrame } : {}),
+          ...(odNextLayoutPrimitivesCss ? { layoutPrimitivesCss: odNextLayoutPrimitivesCss } : {}),
           designSystemBody,
           designSystemTitle,
           designSystemUsageMd,
@@ -9976,6 +10101,7 @@ export async function startServer({
           template,
           exampleReference: odNextExampleReference,
           deviceFrame: odNextDeviceFrame,
+          layoutPrimitivesCss: odNextLayoutPrimitivesCss,
           designSystemBody,
           designSystemTitle,
           craftBody,
@@ -11574,6 +11700,50 @@ export async function startServer({
     // by the artifact finalizer (see the emit handler below). 8 MiB comfortably
     // covers realistic artifact-bearing runs while bounding per-run memory.
     const PLAIN_ARTIFACT_STDOUT_CAP = 8 * 1024 * 1024;
+    // Run instrumentation sits ON the path the model's bytes travel: `send`
+    // is the single choke point every stream event passes through on its way
+    // to the user, and the strategy's close-time tail is broadcast from the
+    // child-close handler. A throw from instrumentation there does not cost an
+    // analytics field, it costs the user the entire reply — so every mark goes
+    // through here and its failures are contained to itself. The guard is
+    // scoped to the marks alone; nothing that decides what the user receives
+    // is inside it.
+    let lifecycleTelemetryFaultWarned = false;
+    const recordRunTelemetry = (label: string, record: () => void): void => {
+      try {
+        record();
+      } catch (error) {
+        // One line per run, not per event: a broken classifier would otherwise
+        // log once per delta and bury the runs around it.
+        if (lifecycleTelemetryFaultWarned) return;
+        lifecycleTelemetryFaultWarned = true;
+        console.warn(
+          `[telemetry] run lifecycle instrumentation failed (${label}); run timing will be incomplete`,
+          error,
+        );
+      }
+    };
+    // The single rule for "did the user actually receive something". Both
+    // emission paths apply it: `send` for the live stream, and the strategy's
+    // close-time tail, which cannot re-enter `send` because the protocol is
+    // already finished. Keeping one rule is what stops the two paths from
+    // disagreeing about what counts as visible output.
+    const applyVisibleOutputMarks = (
+      markers: RunLifecycleStreamEventMarkers,
+    ): void => {
+      // Sole owner of `first_visible_output`. A mark here means the bytes
+      // really did leave the daemon — past the title-marker stripper, past the
+      // role-marker guard, past the strategy protocol, past close-time
+      // buffering. Do not stamp this mark from a decode site: doing so is what
+      // made `time_to_first_visible_output_ms` identical to
+      // `time_to_first_token_ms` on every run.
+      if (markers.firstVisibleOutput) {
+        lifecycle.mark('first_visible_output');
+      }
+      if (markers.firstArtifactWrite) {
+        lifecycle.mark('first_artifact_write');
+      }
+    };
     const send = (event, data) => {
       if (strategyProtocol && event === 'agent' && data?.type === 'tool_use') {
         strategyToolUseCount += 1;
@@ -11598,23 +11768,25 @@ export async function startServer({
         strategyVisibleEmitted += chunk;
         data = { ...data, chunk };
       }
-      const lifecycleMarkers = runLifecycleMarkersForStreamEvent(event, data);
-      if (lifecycleMarkers.firstModelEventType) {
-        // Second argument is the PRODUCER's start, used only for the phase
-        // anchor. ACP emits `tool_use` at terminal status, so without it the
-        // anchor lands at tool completion. `time_to_first_model_event_ms`
-        // still measures to arrival and is unaffected.
-        lifecycle.markFirstModelEvent(
-          lifecycleMarkers.firstModelEventType,
-          lifecycleMarkers.firstModelEventAt,
-        );
-      }
-      if (lifecycleMarkers.firstVisibleOutput) {
-        lifecycle.mark('first_visible_output');
-      }
-      if (lifecycleMarkers.firstArtifactWrite) {
-        lifecycle.mark('first_artifact_write');
-      }
+      recordRunTelemetry(`stream event ${event}`, () => {
+        const lifecycleMarkers = runLifecycleMarkersForStreamEvent(event, data);
+        if (lifecycleMarkers.firstModelEventType) {
+          // Second argument is the PRODUCER's start, used only for the phase
+          // anchor. ACP emits `tool_use` at terminal status, so without it the
+          // anchor lands at tool completion. `time_to_first_model_event_ms`
+          // still measures to arrival and is unaffected.
+          //
+          // Stamped only from this live path. It records when the daemon SAW
+          // the model respond, so the close-time tail below — a re-emission of
+          // something seen long before — must not claim it, or a withheld
+          // reply would drag every phase boundary to the end of the run.
+          lifecycle.markFirstModelEvent(
+            lifecycleMarkers.firstModelEventType,
+            lifecycleMarkers.firstModelEventAt,
+          );
+        }
+        applyVisibleOutputMarks(lifecycleMarkers);
+      });
       if (
         event === 'agent' &&
         data &&
@@ -11744,16 +11916,12 @@ export async function startServer({
       // the CAPTURED pgid — the SIGKILL escalation is bound to it, so it can
       // never hit the next attempt's group (the cross-generation kill fixed in
       // #5202). On win32 / no pgid, fall back to signalling the direct child.
-      const reaped = design.runs.reapProcessGroup(priorProcessGroupId);
-      if (
-        !reaped &&
-        priorChild &&
-        typeof priorChild.kill === 'function' &&
-        priorChild.exitCode === null &&
-        !priorChild.killed
-      ) {
-        try { priorChild.kill('SIGTERM'); } catch {}
-      }
+      const termination = design.runs.terminateProcessTree(
+        run,
+        priorChild,
+        priorProcessGroupId,
+        { reason: 'retry_generation_replaced' },
+      );
       run.status = 'queued';
       run.updatedAt = Date.now();
       run.child = null;
@@ -11782,6 +11950,7 @@ export async function startServer({
         ...run.analyticsTelemetry,
         startRequestedAt: run.analyticsTelemetry?.startRequestedAt ?? run.createdAt,
       };
+      return termination;
     };
     const spawnRetryAttempt = (retryChatBody = chatBody) => {
       void startChatRun(retryChatBody, run).catch((err) => {
@@ -11807,16 +11976,31 @@ export async function startServer({
     // and finalizes the queued run, and the callback re-checks cancel/terminal
     // state in case it fires first.
     const scheduleRetryRestart = (delayMs, retryChatBody = chatBody) => {
-      tearDownAttemptForRetry();
+      const termination = tearDownAttemptForRetry();
       const wait = Number.isFinite(delayMs) && delayMs > 0 ? delayMs : 0;
+      const spawnWhenQuiescent = () => {
+        void Promise.resolve(termination).then((result) => {
+          if (run.cancelRequested || design.runs.isTerminal(run.status)) return;
+          if (!result?.quiescent) {
+            send('error', createSseErrorPayload(
+              'AGENT_EXECUTION_FAILED',
+              'The previous agent process tree could not be terminated; the retry was stopped before another model request was started.',
+              { retryable: false },
+            ));
+            finishWithRetryDecision('failed', 1, null, { allowRetry: false });
+            return;
+          }
+          spawnRetryAttempt(retryChatBody);
+        });
+      };
       if (wait <= 0) {
-        spawnRetryAttempt(retryChatBody);
+        spawnWhenQuiescent();
         return;
       }
       run.retryRestartTimer = setTimeout(() => {
         run.retryRestartTimer = null;
         if (run.cancelRequested || design.runs.isTerminal(run.status)) return;
-        spawnRetryAttempt(retryChatBody);
+        spawnWhenQuiescent();
       }, wait);
     };
     const finalizeRetryTelemetry = (status, decision, failure, errorCode) => {
@@ -11901,7 +12085,12 @@ export async function startServer({
       const finished = finishRun(status, code, signal);
       return finished;
     };
-    const finishWithRetryDecision = (status, code = null, signal = null) => {
+    const finishWithRetryDecision = (
+      status,
+      code = null,
+      signal = null,
+      { allowRetry = true } = {},
+    ) => {
       lifecycle.mark('finalize_start');
       flushRunMessageEvents(run);
       // Persist the transport-level close mechanism before classifying this
@@ -11978,6 +12167,7 @@ export async function startServer({
         hasNativeSession: !!run.conversationId && !!liveSessionId,
       });
       if (
+        allowRetry &&
         postToolResumeDecision?.shouldRetry &&
         !design.runs.isTerminal(run.status) &&
         run.conversationId &&
@@ -12034,7 +12224,7 @@ export async function startServer({
         attemptCount: run.retryAttemptCount ?? 0,
         sideEffects,
       });
-      if (decision.shouldRetry && !design.runs.isTerminal(run.status)) {
+      if (allowRetry && decision.shouldRetry && !design.runs.isTerminal(run.status)) {
         run.retryOriginalFailure ??= failure ?? undefined;
         if ((run.retryAttemptCount ?? 0) === 0) {
           run.retryOriginFailure = failure ? { ...failure } : null;
@@ -12923,6 +13113,25 @@ export async function startServer({
       }
     };
     let forcedChildShutdownTimers = [];
+    let acpAttemptTermination = null;
+    const beginAcpAttemptTermination = (
+      reason = 'acp_terminal',
+      { gracefulWaitMs = 0 } = {},
+    ) => {
+      if (acpAttemptTermination) return acpAttemptTermination;
+      acpAttemptTermination = design.runs.terminateProcessTree(
+        run,
+        child,
+        run.processGroupId,
+        {
+          gracefulWaitMs,
+          termGraceMs: inactivityKillGraceMs,
+          killGraceMs: inactivityKillGraceMs,
+          reason,
+        },
+      );
+      return acpAttemptTermination;
+    };
     const clearForcedChildShutdown = () => {
       for (const timer of forcedChildShutdownTimers) clearTimeout(timer);
       forcedChildShutdownTimers = [];
@@ -12967,10 +13176,15 @@ export async function startServer({
         // only signals from this watchdog branch should be.
         artifactQuietShutdownRequested = true;
         if (acpSession?.abort) {
+          beginAcpAttemptTermination(
+            'acp_artifact_quiet_timeout',
+            { gracefulWaitMs: 100 },
+          );
           acpSession.abort();
+        } else {
+          if (child && !child.killed) design.runs.signalChild(run, 'SIGTERM');
+          scheduleForcedChildShutdown();
         }
-        if (child && !child.killed) design.runs.signalChild(run, 'SIGTERM');
-        scheduleForcedChildShutdown();
         return;
       }
       // OpenCode retries a 429 usage-limit silently and emits nothing on
@@ -13012,6 +13226,13 @@ export async function startServer({
         ? 'first_output_deadline'
         : 'inactivity_watchdog';
       send('error', stallPayload);
+      if (acpSession?.abort) {
+        beginAcpAttemptTermination(
+          `acp_${reason}_timeout`,
+          { gracefulWaitMs: 100 },
+        );
+        acpSession.abort();
+      }
       // A silent first-token hang is one of the safe transient failure shapes
       // this run is allowed to recover: classifyRunFailure maps the stall text
       // to a retryable `timeout` at `first_token_wait`, and decideSafeRunRetry
@@ -13023,11 +13244,10 @@ export async function startServer({
       if (retried) {
         watchdogRetryRestarted = true;
       }
-      if (acpSession?.abort) {
-        acpSession.abort();
+      if (!acpSession?.abort) {
+        if (child && !child.killed) design.runs.signalChild(run, 'SIGTERM');
+        scheduleForcedChildShutdown();
       }
-      if (child && !child.killed) design.runs.signalChild(run, 'SIGTERM');
-      scheduleForcedChildShutdown();
     };
     const armFirstOutputWatchdog = () => {
       if (firstOutputSeen || firstOutputTimer || firstOutputTimeoutMs <= 0) return;
@@ -13062,7 +13282,57 @@ export async function startServer({
         artifactQuietPeriodMs,
         artifactRegistered,
       });
+    /**
+     * The progress clock (`run.lastAgentActivityAt` → `last_progress_age_ms`)
+     * stops at the moment the daemon gives up on this attempt.
+     *
+     * After a terminal verdict the agent is no longer making progress toward
+     * the user's task; whatever it emits next is a reaction to our teardown —
+     * a shutdown line on stderr, a late diagnostic promoted from that stderr,
+     * the bridge's own flushed bookkeeping. Letting any of it re-stamp the
+     * clock is what makes a run that sat silent for the whole timeout window
+     * report an age of a few hundred milliseconds, which is exactly the reading
+     * that sent the 2026-07-28 AMR incident's triage after the wrong window.
+     *
+     * Scoped to the attempt, not the run: a retry (or the resume-failed reseed)
+     * builds a fresh `startChatRun` closure, so the next attempt starts with an
+     * unfrozen clock and measures its own silence.
+     */
+    let progressClockFrozen = false;
+    const freezeProgressClock = () => {
+      progressClockFrozen = true;
+    };
+    /**
+     * The ACP bridge has reached a terminal verdict for this attempt. Hand the
+     * attempt over to the close handler under THAT verdict while the
+     * generation-bound process-tree terminator owns teardown.
+     *
+     * Retiring the outer chat inactivity watchdog is the point. Without that
+     * ownership transfer, a child that lingers past the ceiling lets
+     * `failForInactivity` overwrite `terminal_trigger` with
+     * `inactivity_watchdog` and emit a second failure.
+     *
+     * The terminator captures this attempt's child and process group, waits for
+     * quiescence, and escalates without ever consulting a retry's replacement
+     * `run.child`.
+     */
+    const retireAttemptOnAcpVerdict = () => {
+      freezeProgressClock();
+      clearInactivityWatchdog();
+      beginAcpAttemptTermination('acp_verdict');
+    };
     const noteAgentActivity = () => {
+      // Once this attempt has a terminal verdict, nothing the child says may
+      // restart any of its clocks — not the progress timestamp, and not the
+      // inactivity watchdog. Bailing here rather than only skipping the
+      // timestamp is load-bearing: the raw `child.stderr` handler routes every
+      // late byte through this helper, so a child that logs while ignoring
+      // SIGTERM would otherwise re-arm the very watchdog
+      // `retireAttemptOnAcpVerdict` just cleared, and that timer firing before
+      // forced shutdown reaps the child terminalizes the run a second time
+      // under `inactivity_watchdog`. The token TTL is moot for the same reason:
+      // this attempt is over, and a retry builds a fresh closure.
+      if (progressClockFrozen) return;
       // E-lite: stamp the last-activity clock BEFORE the disabled-watchdog bail
       // so `last_progress_age_ms` is recorded even when the watchdog is off.
       run.lastAgentActivityAt = Date.now();
@@ -13732,10 +14002,24 @@ export async function startServer({
       'text_delta',
       'thinking_delta',
     ]);
+    // Stamps ONLY `first_token`. `first_visible_output` deliberately does not
+    // ride along: it belongs to the single emission choke point in `send()`,
+    // which runs after the title-marker stripper and the fabricated-role-marker
+    // guard have decided whether these bytes reach the client at all. Stamping
+    // both here made `time_to_first_visible_output_ms` a byte-for-byte copy of
+    // `time_to_first_token_ms` — the mark is first-write-wins, so this call
+    // always won and the `send()` mark could never fire. The two are equal
+    // whenever output streams straight through (the common case, and correct);
+    // they diverge exactly when the daemon HOLDS bytes back, which is the
+    // window the metric exists to measure.
     const noteFirstTokenAt = (timestamp = Date.now()) => {
-      if (run.analyticsTelemetry?.firstTokenAt) return;
-      lifecycle.mark('first_token', timestamp);
-      lifecycle.mark('first_visible_output', timestamp);
+      // Telemetry-only, and every call site sits inside a live stream handler
+      // that is mid-way through delivering a delta. Same contract as the marks
+      // in `send`: a fault here costs a timing field, never the reply.
+      recordRunTelemetry('first token', () => {
+        if (run.analyticsTelemetry?.firstTokenAt) return;
+        lifecycle.mark('first_token', timestamp);
+      });
     };
     // Subsegment markers inside `processSpawnedAt -> firstTokenAt` (#3408 §4).
     // `cliReadyAt` is the first well-formed adapter output and is stamped for
@@ -13989,9 +14273,12 @@ export async function startServer({
           }));
           return;
         }
-        send('error', createSseErrorPayload('AGENT_EXECUTION_FAILED', agentStreamError, {
-          details: ev.raw ? { raw: ev.raw } : undefined,
-        }));
+        send('error', withAcpHandshakeFailureGuidance(
+          createSseErrorPayload('AGENT_EXECUTION_FAILED', agentStreamError, {
+            details: ev.raw ? { raw: ev.raw } : undefined,
+          }),
+          agentFailureIdentity(def),
+        ));
         return;
       }
       // First well-formed decoded stream event = CLI ready for the
@@ -14020,8 +14307,16 @@ export async function startServer({
       noteAgentActivity();
       // Role-marker guard for qoder / json-event-stream / pi-rpc (#3247).
       if (ev?.type === 'text_delta' && typeof ev.delta === 'string') {
+        // Decode time, captured BEFORE the emit. The gate has to run first to
+        // learn whether these bytes are a token at all, but the emit inside it
+        // fans the delta out to every SSE client and stamps
+        // `first_visible_output` on the way — reading the clock afterwards
+        // charges our own write latency to TTFT and can leave the visible-output
+        // mark a millisecond AHEAD of the token that produced it. See the
+        // matching sites in the Copilot and ACP handlers.
+        const decodedAt = Date.now();
         if (emitTitleFilteredGuardedTextDelta(ev.delta)) {
-          noteFirstTokenAt();
+          noteFirstTokenAt(decodedAt);
           agentProducedOutput = true;
         }
         return;
@@ -14145,16 +14440,19 @@ export async function startServer({
               ?? rewriteKnownAgentStreamError(agentId, message, failureText);
           agentStreamErrorObservedBeforeCancellation = true;
           run.runtimeFailureObservedBeforeCancellation = true;
-          send('error', createSseErrorPayload(
-            structuredCode ?? diagnostic?.code ?? serviceCode ?? 'AGENT_EXECUTION_FAILED',
-            agentStreamError,
-            {
-              retryable: structuredCode
-                ? false
-                : diagnostic?.retryable
-                  ?? (serviceCode === 'AGENT_AUTH_REQUIRED' || serviceCode === 'RATE_LIMITED'),
-              ...(diagnostic ? { details: { detail: diagnostic.detail } } : {}),
-            },
+          send('error', withAcpHandshakeFailureGuidance(
+            createSseErrorPayload(
+              structuredCode ?? diagnostic?.code ?? serviceCode ?? 'AGENT_EXECUTION_FAILED',
+              agentStreamError,
+              {
+                retryable: structuredCode
+                  ? false
+                  : diagnostic?.retryable
+                    ?? (serviceCode === 'AGENT_AUTH_REQUIRED' || serviceCode === 'RATE_LIMITED'),
+                ...(diagnostic ? { details: { detail: diagnostic.detail } } : {}),
+              },
+            ),
+            agentFailureIdentity(def),
           ));
           return;
         }
@@ -14240,8 +14538,10 @@ export async function startServer({
         lastAgentEventPhase = summarizeAgentEventForInactivity(ev);
         noteAgentActivity();
         if (ev?.type === 'text_delta' && typeof ev.delta === 'string') {
+          // Decode time, read before the emit — see `sendAgentEvent`.
+          const decodedAt = Date.now();
           if (emitTitleFilteredGuardedTextDelta(ev.delta)) {
-            noteFirstTokenAt();
+            noteFirstTokenAt(decodedAt);
           }
           return;
         }
@@ -14324,6 +14624,10 @@ export async function startServer({
         resourcePaths: odNextTaskInputSnapshot?.attachmentPaths ?? [],
         mcpServers,
         envFormat: def.acpMcpEnvFormat ?? 'array',
+        // Lets the session withhold stdio MCP servers from agent builds that
+        // reject them (Kimi 0.37.0+). Unset for every other runtime, which
+        // leaves their `session/new` payload exactly as it is today.
+        stdioMcpRemovedInVersion: def.acpStdioMcpRemovedInVersion ?? null,
         executionProfile,
         completePromptOnTurnEnd: def.acpTurnEndCompletesPrompt === true,
         ...(def.id === 'amr' ? { modelUnavailableErrorCode: 'AMR_MODEL_UNAVAILABLE' } : {}),
@@ -14335,7 +14639,11 @@ export async function startServer({
         onCliReady: () => noteCliReadyAt(),
         onSessionInit: () => noteSessionInitDoneAt(),
         onPromptComplete: () => clearFirstOutputWatchdog(),
-        send: (event, data) => {
+        onTerminal: (kind) => beginAcpAttemptTermination(
+          `acp_${kind}`,
+          { gracefulWaitMs: kind === 'completed' ? 500 : 0 },
+        ),
+        send: (event, data, meta) => {
           if (event === 'error') {
             clearFirstOutputWatchdog();
             if (run.cancelRequested) return;
@@ -14356,7 +14664,21 @@ export async function startServer({
               noteFirstOutputEvent(data);
             }
           }
-          noteAgentActivity();
+          // Only bytes the agent produced advance the progress clock. The ACP
+          // bridge's `hostSynthesized` pairs are the daemon closing tools the
+          // agent left open, emitted from `fail()` just BEFORE the verdict;
+          // the terminal `error` is the verdict itself. Stamping the clock
+          // from either is what made a 30-minute stall report
+          // `last_progress_age_ms = 664`.
+          if (runtimeEmissionCountsAsAgentProgress(event, meta)) {
+            noteAgentActivity();
+          }
+          // ...and everything the child emits AFTER the verdict — its shutdown
+          // line on stderr, the diagnostic promoted from that line — is a
+          // reaction to the SIGTERM this error is about to trigger, not
+          // progress. Freeze here so the recorded age keeps describing the
+          // silence rather than our own teardown.
+          if (event === 'error') retireAttemptOnAcpVerdict();
           if (event === 'error') flushVisibleAgentStderr();
           if (def.id === 'amr' && event === 'error') {
             const failure = classifyAmrAccountFailureSignal({
@@ -14406,17 +14728,31 @@ export async function startServer({
             return;
           }
           if (event === 'agent' && data?.type === 'text_delta' && typeof data.delta === 'string') {
+            // Decode time, read before the emit — see `sendAgentEvent`.
+            const decodedAt = Date.now();
             if (emitTitleFilteredGuardedTextDelta(data.delta)) {
-              noteFirstTokenAt();
+              noteFirstTokenAt(decodedAt);
             }
             return;
           }
           if (event === 'agent') {
             noteFirstTokenFromAgentEvent(data);
             emitAgentEvent(data);
-          } else {
-            send(event, data);
+            return;
           }
+          if (event === 'error') {
+            // This payload is the whole user-visible surface of an ACP failure:
+            // `send` streams it to SSE clients and `design.runs.emit` reads
+            // `run.error` out of it, and the close handler below returns on
+            // `hasFatalError()` before any later rewrite can run. Explain a
+            // handshake rejection here or nowhere.
+            send(event, withAcpHandshakeFailureGuidance(
+              data,
+              agentFailureIdentity(def),
+            ));
+            return;
+          }
+          send(event, data);
         },
         ...(acpStageTimeoutMs !== undefined ? { stageTimeoutMs: acpStageTimeoutMs } : {}),
       });
@@ -14608,7 +14944,9 @@ export async function startServer({
       revokeToolToken('child_exit');
       if (!attemptStillOwnsRun()) return;
       unregisterChatAgentEventSink();
+      if (run.pendingTerminalFinish) return;
       if (finishCanceledIfRequested(1, null)) return;
+      if (acpSession) beginAcpAttemptTermination('acp_child_error');
       send('error', createSseErrorPayload('AGENT_EXECUTION_FAILED', err.message));
       finishWithRetryDecision('failed', 1, null);
     });
@@ -14629,6 +14967,8 @@ export async function startServer({
       }
       revokeToolToken('child_exit');
       unregisterChatAgentEventSink();
+      if (run.pendingTerminalFinish) return;
+      if (acpSession) beginAcpAttemptTermination('acp_child_close');
       if (
         def.id === 'codex' &&
         strategyTaskAtStart &&
@@ -14852,7 +15192,7 @@ export async function startServer({
         markRpcCloseReason('empty_output');
         send('error', createSseErrorPayload(
           'AGENT_EXECUTION_FAILED',
-          'Agent completed without producing any output. The model or provider may have returned an empty response. Check the agent logs for upstream errors, then try re-authenticating the agent, checking quota, or switching models.',
+          'Agent completed without producing any output. The model or provider may have returned an empty response. Check the agent logs for upstream errors, then try re-authenticating the agent or switching models.',
           { retryable: true },
         ));
         return finishWithRetryDecision('failed', code, signal);
@@ -15054,10 +15394,13 @@ export async function startServer({
               `${agentStderrTail}\n${agentStdoutTail}`,
             );
             if (rewritten !== 'Agent stream error') {
-              send('error', createSseErrorPayload(
-                'AGENT_EXECUTION_FAILED',
-                rewritten,
-                { retryable: true },
+              send('error', withAcpHandshakeFailureGuidance(
+                createSseErrorPayload(
+                  'AGENT_EXECUTION_FAILED',
+                  rewritten,
+                  { retryable: true },
+                ),
+                agentFailureIdentity(def),
               ));
             }
           }
@@ -15269,6 +15612,21 @@ export async function startServer({
             const tailData = tailEvent === 'stdout'
               ? { chunk: tail }
               : { type: 'text_delta', delta: tail };
+            // The protocol withholds any text that might still turn out to be
+            // a reserved `<open-design-…>` block; `finish()` is what finally
+            // rules that out, so this tail is the first moment those bytes are
+            // user-visible. It cannot go back through `send` — `push` throws
+            // once the protocol is finished — so it applies the same visible
+            // output rule here. For a reply whose visible text was withheld in
+            // its entirety this is the ONLY thing the run ever puts on screen;
+            // without the mark the run reports no visible output at all and
+            // the analytics fallback collapses a real close-time wait back to
+            // `firstTokenAt`.
+            recordRunTelemetry('strategy close-time tail', () => {
+              applyVisibleOutputMarks(
+                runLifecycleMarkersForStreamEvent(tailEvent, tailData),
+              );
+            });
             persistRunEventToAssistantMessage(db, run, tailEvent, tailData);
             design.runs.emit(run, tailEvent, tailData);
             strategyVisibleEmitted += tail;
@@ -15359,6 +15717,24 @@ export async function startServer({
                   resolvedFrom: observation.resolvedFrom,
                   entryFile: observation.entryFile,
                   shellPresent: observation.shellPresent,
+                });
+              }
+              const primitives = await observeOdNextLayoutPrimitives({
+                projectRoot: resolveProjectDir(PROJECTS_DIR, run.projectId, projectRecord.metadata),
+                entryFile: deliverable.entryFile,
+                primitivesCss: typeof run.appliedPluginSnapshotId === 'string'
+                  ? selectOdNextLayoutPrimitivesCss(await loadOdNextTaskResourcesForSnapshot({
+                      bundledPluginsDir: BUNDLED_PLUGINS_DIR,
+                      snapshot: getSnapshot(db, run.appliedPluginSnapshotId),
+                    }))
+                  : null,
+              });
+              if (primitives) {
+                run.odNextLayoutPrimitives = primitives.presence;
+                console.info('[od-next-layout-primitives]', {
+                  runId: run.id,
+                  entryFile: primitives.entryFile,
+                  presence: primitives.presence,
                 });
               }
             } catch (err) {
@@ -16346,6 +16722,7 @@ export async function startServer({
     };
     const cleanupDaemonBackgroundWork = () => {
       clearTerminalTelemetryFallbackTimers();
+      amrTerminalReportDelivery.stop();
       telemetry.disposeFatalHandlers();
       composioConnectorProvider.stopCatalogRefreshLoop();
       orbitService.stop();
@@ -16362,6 +16739,7 @@ export async function startServer({
       if (daemonShutdownStarted) return;
       daemonShutdownStarted = true;
       daemonShuttingDown = true;
+      amrTerminalReportDelivery.stop();
       clearTerminalTelemetryFallbackTimers();
       await design.runs.shutdownActive({ graceMs: resolveChatRunShutdownGraceMs() });
       await terminalService.shutdownActive();
@@ -16412,6 +16790,7 @@ export async function startServer({
           return;
         }
         resolvedPort = boundPort;
+        startAmrTerminalReportDeliveryAfterBind(amrTerminalReportDelivery, boundPort);
         // When binding to all interfaces report localhost for local callers;
         // when binding to a specific address (e.g. a Tailscale IP) report that
         // address so remote callers and the sidecar use the correct URL.

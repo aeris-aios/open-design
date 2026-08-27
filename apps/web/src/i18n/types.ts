@@ -1261,6 +1261,7 @@ export interface Dict {
   'entry.authExpiredBody': string;
   'home.createFailed': string;
   'home.daemonRecovering': string;
+  'home.bundledScenarioMissing': string;
   'entry.cloudCalloutBody': string;
   'entry.cloudCalloutDismissAria': string;
   'entry.workspaceLockedNote': string;
@@ -2898,6 +2899,7 @@ export interface Dict {
   'chat.runError.title.signInRequired': string;
   'chat.runError.title.rateLimited': string;
   'chat.runError.title.modelWindowLimit': string;
+  'chat.runError.title.membershipConcurrencyLimit': string;
   'chat.runError.title.cliMissing': string;
   'chat.runError.title.promptTooLarge': string;
   'chat.runError.title.modelUnavailable': string;
@@ -2911,6 +2913,7 @@ export interface Dict {
   'chat.runError.title.sessionExpired': string;
   'chat.runError.title.gitBashMissing': string;
   'chat.runError.title.cpuUnsupported': string;
+  'chat.runError.title.cliSessionRefused': string;
   'chat.runError.title.strategyTaskHalted': string;
   'chat.runError.title.generic': string;
   'chat.runError.title.artifactMissing': string;
@@ -2922,6 +2925,8 @@ export interface Dict {
   'chat.runError.rateLimitedMessage': string;
   'chat.runError.modelWindowLimitMessage': string;
   'chat.runError.modelWindowLimitMessageNoTime': string;
+  'chat.runError.membershipConcurrencyLimitMessage': string;
+  'chat.runError.membershipConcurrencyLimitMessageNoTime': string;
   'chat.runError.upstreamUnavailableMessage': string;
   'chat.runError.toolLoopMessage': string;
   'chat.runError.outputInvalidMessage': string;
@@ -2934,6 +2939,7 @@ export interface Dict {
   'chat.runError.sessionExpiredMessage': string;
   'chat.runError.gitBashMissingMessage': string;
   'chat.runError.cpuUnsupportedMessage': string;
+  'chat.runError.cliSessionRefusedMessage': string;
   'chat.runError.strategyTaskStateMismatchMessage': string;
   'chat.runError.agentFallback': string;
   'chat.runError.sourceLabel': string;
@@ -5460,4 +5466,23 @@ export interface Dict {
   'experienceSurvey.skip': string;
   'experienceSurvey.thanksTitle': string;
   'experienceSurvey.thanksBody': string;
+  'labs.title': string;
+  'labs.itemAbout': string;
+  'labs.navHint': string;
+  'labs.pageDesc': string;
+  'labs.harnessName': string;
+  'labs.harnessHint': string;
+  'labs.harnessTooltip': string;
+  'labs.harnessScope': string;
+  'labs.envOverrideNotice': string;
+  'labs.latchedNotice': string;
+  'labs.loadFailedNotice': string;
+  'labs.optOutPrompt': string;
+  'labs.optOutWorseOutput': string;
+  'labs.optOutTooSlow': string;
+  'labs.optOutNotWhatIWanted': string;
+  'labs.optOutOther': string;
+  'labs.optOutSkip': string;
+  'labs.optOutOtherPlaceholder': string;
+  'labs.optOutSubmit': string;
 }
