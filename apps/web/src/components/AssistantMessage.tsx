@@ -678,16 +678,20 @@ function AssistantMessageImpl({
       // 所以 agent 不重发时它是纯空转,不会凭空造出任何一行。
       ...(previousTodos?.length ? { previousTodos } : {}),
       ...(nowMs != null ? { nowMs } : {}),
-      // 只为「一件事都还没发生」那一格服务(S12):没有它,卡在首个 token 的轮次
-      // 算不出静默时长,壳头就只能一直干写着「进行中」。
+      // 「一件事都还没发生」那一格(S12)靠它算静默时长;它同时也是壳头耗时的
+      // 兜底起点 —— 不发工具事件的那批 agent(plain-stream / qoder)整轮没有一个
+      // 带时刻的事件,没有这一对起止,壳头就只有一句光秃秃的「已完成」。
       ...(message.createdAt != null ? { startedAtMs: message.createdAt } : {}),
+      ...(message.endedAt != null ? { endedAtMs: message.endedAt } : {}),
     });
     return {
       shells: turn.filter((b): b is ExecutionShellData => b.kind === 'shell'),
       /** 壳【外】的结论(D43)—— done 之后的那几段 */
       prose: turn.filter((b) => b.kind === 'prose').map((b) => (b as { text: string }).text),
     };
-  }, [displayEvents, turnRunStatus, nowMs, previousTodos]);
+    // `message.endedAt` 从 undefined 变成时刻**就在轮次终止那一刻** —— 不进依赖的话
+    // 兜底耗时会停在「还没有终点」的那一版,壳头刚收起时秒数是空的。
+  }, [displayEvents, turnRunStatus, nowMs, previousTodos, message.endedAt]);
   /**
    * 执行记录里**真的有东西**。
    *
