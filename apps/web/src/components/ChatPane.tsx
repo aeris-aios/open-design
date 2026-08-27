@@ -2020,8 +2020,25 @@ export function ChatPane({
     setEditingQueuedSendId(null);
   }, [editingQueuedSendId, queuedItems]);
 
+  /**
+   * "Edit" on a queued row means TAKE THE TURN OUT of the queue and put it
+   * back into the composer with its whole payload — text, attachments, marks,
+   * and the staged plugin / skill / MCP / connector / context bindings in its
+   * meta. Leaving the row behind showed the same turn in two places at once,
+   * which reads as "sending now will send it twice".
+   *
+   * Product ruling (2026-08, provisional): when the composer already holds an
+   * unsent draft it is OVERWRITTEN. Not merged, not guarded by a confirm
+   * dialog, not refused. Do not "helpfully" turn this back into a merge.
+   *
+   * Dequeuing needs a host that owns the queue. When there is no
+   * `onRemoveQueuedSend` we keep the older in-place edit instead (the row
+   * stays, marked as editing, and Send updates it) — pulling the turn into the
+   * composer with no way to put it back would lose it outright.
+   */
   const restoreQueuedSendToComposer = (item: QueuedSendItem) => {
-    setEditingQueuedSendId(item.id);
+    setEditingQueuedSendId(onRemoveQueuedSend ? null : item.id);
+    onRemoveQueuedSend?.(item.id);
     composerRef.current?.restoreDraft({
       text: item.prompt,
       attachments: item.attachments ?? [],
@@ -4725,11 +4742,21 @@ function reorderQueuedSendIds(
   return item.prompt.replace(/\s+/g, ' ').trim() || t('chat.queuedFollowUpFallback');
   }
 
+/**
+ * The two dictionary keys that spell one counted chip. Which of the pair is
+ * used is the ONLY plural decision this component makes — the words themselves
+ * live in the dictionary, so a locale that has no plural form (zh / ja / ko)
+ * simply ships the same string twice, and one that has several (ru / pl / uk /
+ * ar) picks its own split. Appending an `s` here would be wrong in most of the
+ * 19 locales, which is why the noun never appears in this file.
+ */
+type CountedChipKeys = readonly [one: keyof Dict, many: keyof Dict];
+
 // Surfaces what a queued turn carries — attachments, visual marks, and the
 // staged plugin / skill / MCP / connector context from its meta — as compact
 // chips so the user can see (and trust) what will be sent without expanding it.
-// Counts use the same plain-English style as the rest of this strip.
 function QueuedSendMetaChips({ item }: { item: QueuedSendItem }) {
+  const t = useT();
   const ctx = item.meta?.context;
   const files = item.attachments?.length ?? 0;
   const marks = item.commentAttachments?.length ?? 0;
@@ -4737,16 +4764,32 @@ function QueuedSendMetaChips({ item }: { item: QueuedSendItem }) {
   const skills = ctx?.skillIds?.length ?? 0;
   const mcp = ctx?.mcpServerIds?.length ?? 0;
   const connectors = ctx?.connectorIds?.length ?? 0;
+  // `workspaceItems` is the wire field; to the user these are the things the
+  // "Add context" picker stages, so the copy calls them context items.
   const workspace = ctx?.workspaceItems?.length ?? 0;
-  const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+  const counted = (n: number, [one, many]: CountedChipKeys) => t(n === 1 ? one : many, { n });
   const chips: Array<{ key: string; label: string }> = [];
-  if (files > 0) chips.push({ key: 'files', label: plural(files, 'file') });
-  if (marks > 0) chips.push({ key: 'marks', label: plural(marks, 'mark') });
-  if (plugins > 0) chips.push({ key: 'plugins', label: plural(plugins, 'plugin') });
-  if (skills > 0) chips.push({ key: 'skills', label: plural(skills, 'skill') });
-  if (mcp > 0) chips.push({ key: 'mcp', label: `${mcp} MCP` });
-  if (connectors > 0) chips.push({ key: 'connectors', label: plural(connectors, 'connector') });
-  if (workspace > 0) chips.push({ key: 'workspace', label: plural(workspace, 'workspace context') });
+  if (files > 0) {
+    chips.push({ key: 'files', label: counted(files, ['chat.queuedChipFilesOne', 'chat.queuedChipFilesMany']) });
+  }
+  if (marks > 0) {
+    chips.push({ key: 'marks', label: counted(marks, ['chat.queuedChipMarksOne', 'chat.queuedChipMarksMany']) });
+  }
+  if (plugins > 0) {
+    chips.push({ key: 'plugins', label: counted(plugins, ['chat.queuedChipPluginsOne', 'chat.queuedChipPluginsMany']) });
+  }
+  if (skills > 0) {
+    chips.push({ key: 'skills', label: counted(skills, ['chat.queuedChipSkillsOne', 'chat.queuedChipSkillsMany']) });
+  }
+  if (mcp > 0) {
+    chips.push({ key: 'mcp', label: counted(mcp, ['chat.queuedChipMcpOne', 'chat.queuedChipMcpMany']) });
+  }
+  if (connectors > 0) {
+    chips.push({ key: 'connectors', label: counted(connectors, ['chat.queuedChipConnectorsOne', 'chat.queuedChipConnectorsMany']) });
+  }
+  if (workspace > 0) {
+    chips.push({ key: 'workspace', label: counted(workspace, ['chat.queuedChipContextOne', 'chat.queuedChipContextMany']) });
+  }
   if (chips.length === 0) return null;
   return (
     <div className="chat-queued-send-chips">
