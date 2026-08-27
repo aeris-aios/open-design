@@ -566,3 +566,80 @@ p.think │ div.tool ×4 │ details.fold ×2 │ div.tool │ details.fold ×5 
 **注意**:`Foldable.tsx` 的文件注释早写过这个坑 ——「`expandable === false` 时……仍然用
 `<details>` 而不是换成 div —— **结构一变,父层那些按嵌套层数算缩进的选择器就全部错位**」。
 `Foldable` 自己守住了,但 `ToolRow` 的简单形态压根没走 `Foldable`。
+
+## F-12 真机验收挖出来的四条(2026-08-27,已修/已定性)
+
+### ① claude 的推理被空 delta 吞掉(daemon,已修)
+
+用户:「关键它 thinking 界面没有任何反应或反馈啊」。
+
+Claude Code 发的 `thinking_delta` 帧里 `thinking` 是**空串**;**32 个录制里 1707 条
+thinking 事件、1508 条空的(88%)**,真正的推理只在消息结尾那个 `assistant` 帧的
+`block.thinking` 里。而 `claude-stream.ts:731` 收到 delta 就**无条件**把该消息记成
+「推理已经流过了」,于是消息结尾的兜底分支(`:557` 的 `!thinkingAlreadyStreamed`)
+被跳过 —— 一个字都没送出去。
+
+后果是设计稿组件 3 那扇 96px 的推理窗口对 claude **一直是空的**:壳头写「思考中」、
+底下什么都没有;过了 60 秒连「思考中」都被 S12 换成「上游响应慢」。
+
+修法:只有**真的带了字**的 delta 才算「流过了」。红测在
+`apps/daemon/tests/runtimes/claude-stream-thinking.test.ts`,另配两条守卫防止修成
+「流式和尾部各发一遍」。
+
+**只有 claude 中招。** 扫全部录制:claude 32 run / 1707 thinking / 1508 空;
+codex 11 run / **0 条 thinking**(它的推理走 `reasoning` item 另一条路)。
+两家的 `text_delta` 都是 0 空串 —— 坏的只有 thinking 这一条通道。
+
+### ② S12 的静默计时只认带时刻的事件(web,已修)
+
+用户:「这个是真的上游响应慢吗 还是我们的什么解析 bug 啊?」
+
+**判据是两个数相等**:截图上「已等 86 秒」和总耗时 `1m 26s` 是同一个数 ——
+说明整轮没有任何一条事件被打上时刻,静默起点只能退回轮次开头。
+
+真机 run `ab4779f8`:**119 条 agent 事件,只有 12 条带时刻**,其余 107 条是
+thinking / tool_input 增量。模型一路吐字,界面报「上游响应慢」。
+
+修法:`BuildTurnInput` 新增 `lastEventAtMs` —— 客户端自己观察到的**到达时刻**,
+是传输事实,不依赖任何 agent 填字段;带时刻的事件仍优先(更准),它只在更晚时接手。
+`AssistantMessage` 用事件条数当钥匙取时刻,且只在运行中传。
+
+**这条修的是全家**:规格点名 qwen / deepseek / grok-build / aider / antigravity /
+atomcode / qoder 都不发工具事件,原来它们全会误报。
+
+### ③ codex 写文件不落行(daemon,已修)
+
+codex 发的 `item.started` / `item.completed` 里 `type: "file_change"` **整条没被解析**,
+以 `raw` 丢掉 —— 所以 codex 写文件从来不出「新建 xxx.html」那一行,而同样的活
+claude 会出。39 个录制里 5 个中招;顺带确认 `file_change` 是**唯一**还没解析的 raw 形状。
+分支 `fix/codex-file-change-rows`。
+
+### ④ 三条 todo 划线且不能展开 —— **不是 bug,是如实反映**
+
+用户:「为啥这里 claude 的这几个 todo 都没法展开啊?好像啥内容没有就直接下一个了?」
+
+规格把划线定义成「这一条不是本轮新开的活」,三种情况之一是
+「③ 本轮开出来但**一次都没干过**(已关闭且名下无内容,D35)」。核对 `recalled=false`,
+走的就是③。
+
+数据完全对上 —— **claude 把活全在第一条 todo 底下干完,再 2 秒内把后三条从
+`pending` 直接翻成 `completed`,中间从没进过 `in_progress`**:
+
+```
+10:25:08  锁定 Swiss minimal → in_progress
+10:27:26 ~ 10:29:28   全部 Bash(内容因此都归到这一条,4m 34s + 箭头)
+10:29:31  锁定 → completed,同一秒 撰写正文 → completed
+10:29:32  构建页眉 → completed
+10:29:33  组装正文版式 → completed
+```
+
+所以「没内容 + 不能展开 + 划线」三个信号说的是同一件事:这三步没有单独做过。
+**要追的是 agent 为什么这么用 todo,不是前端。**
+
+### 顺带记一条工程判据
+
+`pnpm typecheck` 绿**不代表** `apps/daemon` 能构建 —— build 走的是另一份
+带 `noUncheckedIndexedAccess` 的 tsconfig。这一轮合完分支后 web 全量 7351 条全绿、
+根 typecheck 干净,而 `tools-dev` 起不来,因为 daemon build 挂了 6 条
+(正则捕获组解构成 `string | undefined`)。**改过 `apps/daemon/src/**` 必须单跑
+`pnpm --filter @open-design/daemon build`。**
