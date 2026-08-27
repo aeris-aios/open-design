@@ -400,17 +400,36 @@ export const codexAgentDef = {
 export const CODEX_APP_SERVER_STREAM_FORMAT = 'codex-app-server';
 
 /**
- * Lowest codex release whose app-server actually emits the notifications this
- * transport depends on.
+ * Lowest codex release `auto` mode will switch to.
  *
- * The floor is set by `item/agentMessage/delta`. The method NAME appears in the
- * protocol a release earlier than the code that emits it
- * (`app-server/src/bespoke_event_handling.rs` only began mapping
- * `AgentMessageContentDelta` onto it in `rust-v0.59.0`, PR #6559), which is why
- * this is a version floor rather than a "does the protocol mention it" probe:
- * a declared-but-unwired method looks supported and silently streams nothing.
+ * Three numbers matter, established by reading the codex source at each tag
+ * rather than by reading the protocol declarations — a method NAME routinely
+ * appears releases before anything emits it, and a declared-but-unwired method
+ * looks supported while streaming nothing:
+ *
+ *   rust-v0.56.0  `thread/start` / `thread/resume` / `turn/start` /
+ *                 `turn/interrupt` land wired; `ThreadStartParams.sandbox` and
+ *                 `TurnStartParams.summary` exist from day one.
+ *   rust-v0.59.0  first emit of `item/agentMessage/delta` (PR #6559) and of the
+ *                 reasoning summary deltas — i.e. the streaming this transport
+ *                 exists for. Also the first `turn/completed` emit.
+ *   rust-v0.64.0  first emit of `thread/tokenUsage/updated`. This is the
+ *                 CAPABILITY floor: below it the transport still works but
+ *                 reports no token usage, which would be a regression against
+ *                 `exec --json`.
+ *
+ * The constant is set higher still, at the release where `initialize` first
+ * accepts a `capabilities` object at all (PR #10231). Below it our handshake
+ * would be sending a field the server has no place to put, and we would be
+ * guessing at how its deserializer treats the extra key. Refusing to guess
+ * costs nothing real — codex ships roughly two stable releases a week, so
+ * everything below this floor is long superseded.
+ *
+ * Two notifications land later than this floor and degrade quietly when
+ * absent: `warning` (rust-v0.122.0) simply produces no warning pill, and
+ * `item/fileChange/patchUpdated` (rust-v0.123.0) is not consumed at all.
  */
-export const CODEX_APP_SERVER_MIN_VERSION = '0.59.0';
+export const CODEX_APP_SERVER_MIN_VERSION = '0.95.0';
 
 export type CodexTransport = 'exec-json' | 'app-server';
 export type CodexTransportPreference = CodexTransport | 'auto';

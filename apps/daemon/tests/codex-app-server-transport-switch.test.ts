@@ -51,8 +51,22 @@ describe('codex transport switch', () => {
     });
 
     it('rejects versions below the floor', () => {
+      // rust-v0.64.0 is where `thread/tokenUsage/updated` starts being emitted
+      // and rust-v0.59.0 where `item/agentMessage/delta` does, but the floor
+      // sits at the release where `initialize` first accepts a `capabilities`
+      // object — see CODEX_APP_SERVER_MIN_VERSION for why.
+      expect(codexAppServerSupportsVersion('0.94.0')).toBe(false);
+      expect(codexAppServerSupportsVersion('0.64.0')).toBe(false);
       expect(codexAppServerSupportsVersion('0.58.0')).toBe(false);
       expect(codexAppServerSupportsVersion('0.42.0')).toBe(false);
+    });
+
+    it('compares numerically, not lexically', () => {
+      // '0.100.0' sorts BEFORE '0.95.0' as a string; a naive comparison would
+      // reject every modern codex.
+      expect(codexAppServerSupportsVersion('0.100.0')).toBe(true);
+      expect(codexAppServerSupportsVersion('1.0.0')).toBe(true);
+      expect(codexAppServerSupportsVersion('0.9.0')).toBe(false);
     });
 
     it('rejects an unknown version rather than guessing', () => {
@@ -70,6 +84,7 @@ describe('codex transport switch', () => {
     it('auto upgrades only when the installed codex is new enough', () => {
       const env = { OD_CODEX_TRANSPORT: 'auto' };
       expect(resolveCodexTransport({ env, version: '0.149.1' })).toBe('app-server');
+      expect(resolveCodexTransport({ env, version: '0.64.0' })).toBe('exec-json');
       expect(resolveCodexTransport({ env, version: '0.58.0' })).toBe('exec-json');
       expect(resolveCodexTransport({ env, version: null })).toBe('exec-json');
     });
