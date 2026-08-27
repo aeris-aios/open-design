@@ -232,9 +232,9 @@ interface Props {
    * The update-ready host (`UpdaterPopup`), which renders nothing until the
    * updater reports a downloaded, unopened installer.
    *
-   * It is an independent control immediately after the floating credits/avatar
-   * capsule (`.entry-nav-rail__account-updater`). The footer stays as the
-   * fallback home for the signed-out shell, which has no account capsule.
+   * It is an independent control in the floating top-right cluster
+   * (`.entry-nav-rail__account-updater`), immediately after the account capsule
+   * when one is present.
    */
   updaterSlot?: ReactNode;
   /** Optional notice shown above the footer controls. */
@@ -767,7 +767,7 @@ export function EntryTopRightCluster({
     });
   }
 
-  if ((!leadingSlot && !context) || typeof document === 'undefined') return null;
+  if ((!leadingSlot && !context && !updaterSlot) || typeof document === 'undefined') return null;
 
   return (
     <>
@@ -1020,15 +1020,16 @@ export function EntryTopRightCluster({
               ) : null}
               </div>
               </div>
-              {/* Update-ready rocket: an independent control immediately after
-                  the credits/avatar capsule. The slot stays mounted so
-                  `:empty { display: none }` can remove it from cluster layout
-                  until an installer has downloaded. */}
-              <div className="entry-nav-rail__account-updater" data-testid="entry-nav-account-updater">
-                {updaterSlot}
-              </div>
             </>
           ) : null}
+          {/* Update-ready rocket: an independent top-right control. With an
+              account it follows the credits/avatar capsule; signed-out keeps
+              the same position without inventing an empty account shell. The
+              slot stays mounted so `:empty { display: none }` can remove it
+              until an installer has downloaded. */}
+          <div className="entry-nav-rail__account-updater" data-testid="entry-nav-account-updater">
+            {updaterSlot}
+          </div>
         </div>,
         document.body,
       )}
@@ -1240,13 +1241,6 @@ export function EntryNavRail({
   const canInviteMembers = Boolean(permissions?.canInviteMembers);
   const canAccessInviteFlow = canAccessWorkspaceInviteFlow(context);
   const workspaceSettingsUrl = context?.workspaceSettingsUrl?.trim() || null;
-
-  // The updater host has exactly one home on screen at a time. The floating
-  // account row is the preferred one; the footer only takes it when there is
-  // no cloud identity, because the whole account module is absent then.
-  // Deriving both from one expression is what keeps "exactly one" true — two
-  // independent renders would double the rocket.
-  const footerUpdaterSlot = context ? null : updaterSlot;
 
   // Message-center panel for the SIGNED-OUT shell only (its rail item under
   // 设置 is the one opener there). The signed-in panel — plus the unread badge
@@ -1846,15 +1840,10 @@ export function EntryNavRail({
         )}
       </div>
       {/* The footer always has the social row to show now, so it no longer
-          collapses to nothing. `footerUpdaterSlot` is only ever set in the
-          signed-out shell: with a cloud identity the updater host rides the
-          account row instead (see `updaterSlot`), so the footer must not
-          render a second host. */}
+          collapses to nothing. The updater has one shared home in the
+          top-right cluster for both signed-in and signed-out shells. */}
       <div className="entry-nav-rail__footer">
         {footerNotice}
-        {footerUpdaterSlot ? (
-          <div className="entry-rail-actions">{footerUpdaterSlot}</div>
-        ) : null}
         <RailSocialRow page={analyticsPage} dimensions={workspaceDimensions} />
       </div>
       </div>
