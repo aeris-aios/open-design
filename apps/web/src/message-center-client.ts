@@ -1,3 +1,5 @@
+import type { AmrSessionState } from '@open-design/contracts';
+
 export type MessageCenterFilter = 'all' | 'unread' | 'read';
 
 export interface MessageCenterMessage {
@@ -129,8 +131,19 @@ export async function readAmrAuthMode(): Promise<AmrAuthMode> {
     if (payload?.error === 'amr-runtime-unavailable') return 'unavailable';
   }
   if (!response.ok) throw new Error(`AMR status failed: ${response.status}`);
-  const payload = (await response.json()) as { loggedIn?: boolean };
-  return payload.loggedIn === true ? 'signed-in' : 'signed-out';
+  const payload = (await response.json()) as {
+    loggedIn?: boolean;
+    sessionState?: AmrSessionState;
+  };
+  // `loggedIn` answers "is a credential present", not "can it be used" — the
+  // daemon keeps it true for an expired one and puts the verdict in
+  // `sessionState`. This reader publishes what it finds as the shared
+  // authority, and `App.isAmrSessionAuthenticated` reads the same status the
+  // same way; disagreeing with it would let a reauth-required answer take the
+  // authority back to signed-in and admit account pulls under a session that
+  // cannot be used.
+  const usable = payload.loggedIn === true && payload.sessionState !== 'reauth_required';
+  return usable ? 'signed-in' : 'signed-out';
 }
 
 export async function isAmrLoggedIn(): Promise<boolean> {

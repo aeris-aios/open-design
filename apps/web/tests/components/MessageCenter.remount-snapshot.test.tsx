@@ -556,6 +556,72 @@ describe('MessageCenter remount snapshot', () => {
     expect(screen.queryByTestId('go-plan-sunset-dialog')).toBeNull();
   });
 
+  it('does not POST an account read whose auth check crossed the end of the session', async () => {
+    // The sibling spec below holds the POST. This one holds the STATUS READ
+    // that authorises it — which is the earlier and worse case, because the
+    // epoch was captured after that read came back, by which time the change it
+    // was meant to detect had already been counted. The post-POST comparison
+    // then saw no change at all, so the write went through: an account POST for
+    // a session that had ended, plus the read state, the anonymous clear and
+    // the delta behind it.
+    let releaseStatus: (() => void) | null = null;
+    let holdStatus = false;
+    const posted: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/integrations/vela/status')) {
+        statusCalls += 1;
+        if (holdStatus) {
+          holdStatus = false;
+          await new Promise<void>((resolve) => { releaseStatus = resolve; });
+        }
+        return Response.json({ loggedIn: true });
+      }
+      if (url.includes('/read') && init?.method === 'POST') {
+        posted.push(url);
+        return Response.json({});
+      }
+      if (url.includes('/message-center') && url.includes('/messages')) {
+        messageCalls += 1;
+        return Response.json({
+          messages: [row('auth-held-row', null)],
+          nextCursor: null,
+          unreadCount: 1,
+        });
+      }
+      return Response.json({});
+    }));
+
+    const deltas: Array<{ account: boolean }> = [];
+    const stop = subscribeMessageCenterReads((delta) => { deltas.push({ account: delta.account }); });
+
+    render(
+      <I18nProvider initial="zh-CN">
+        <MessageCenter />
+      </I18nProvider>,
+    );
+    await waitFor(() => expect(messageCalls).toBeGreaterThan(0));
+    fireEvent.click(screen.getByTestId('message-center-trigger'));
+    const rowButton = await screen.findByRole('button', { name: /auth-held-row/ });
+
+    // The click's own auth read is held on the wire.
+    holdStatus = true;
+    fireEvent.click(rowButton);
+    await waitFor(() => expect(releaseStatus).not.toBeNull());
+
+    // Polling elsewhere observes the session ending. No generation change.
+    noteAuthoritativeAuthMode(false, issueStatusObservation());
+    await new Promise((r) => setTimeout(r, 20));
+
+    // The held read answers with the session that was valid when it went out.
+    releaseStatus!();
+    await new Promise((r) => setTimeout(r, 40));
+
+    expect(posted).toEqual([]);
+    expect(deltas.filter((d) => d.account)).toEqual([]);
+    stop();
+  });
+
   it('does not record an account read whose POST crossed the end of the session', async () => {
     // Same rule as the pull path, on the write path. The post-await check here
     // only compared the workspace generation, and a remote or expired session

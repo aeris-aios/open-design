@@ -610,6 +610,13 @@ export function MessageCenter({
     // the question is "did a newer anonymous write land while this read was in
     // flight", and nothing about snapshot publication answers it.
     const anonSeqAtStart = currentAnonymousWriteSeq();
+    // The write's own status read is a status read like any other: stamped
+    // before it goes out, and published through the ordered authority so it is
+    // refused if something newer answered first. Capturing the epoch AFTER this
+    // await was too late — a sign-out observed while the read was on the wire
+    // had already been counted by then, so the post-POST comparison saw no
+    // change and let the write through for a session that had ended.
+    const issuedStatusObservation = issueStatusObservation();
     const writeAuthMode = await resolveAuthModeForWrite();
     // `unavailable` is not an answer about the user, and every branch below
     // needs one: the account path would skip its POST, and the anonymous path
@@ -629,11 +636,16 @@ export function MessageCenter({
       return;
     }
     const account = writeAuthMode === 'signed-in';
+    // Refused means this answer was overtaken while it was on the wire; it no
+    // longer describes the session, and the whole write is working from it.
+    if (!noteAuthoritativeAuthMode(account, issuedStatusObservation)) return;
     // Published only once the boundary is confirmed, below.
     if (options?.requireAccount && !account) {
       throw new Error('A signed-in account is required to acknowledge this announcement');
     }
     if (currentWorkspaceAccountGeneration() !== issuedAccountGeneration) return;
+    // Captured after this write's own publication, so the write is never
+    // overtaken by itself, and before the POST it guards.
     const issuedAuthModeEpoch = currentAuthModeEpoch();
     const readAt = new Date().toISOString();
     if (account) await markAccountMessageRead(messageId);
