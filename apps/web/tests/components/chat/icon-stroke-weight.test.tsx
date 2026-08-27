@@ -1,0 +1,227 @@
+// @vitest-environment jsdom
+/**
+ * 聊天面板的描边图标**太细,细到看不见**(设计 2026-08-27:「除了 brain 以外,
+ * 其他 icon 好像都太细了,都看不到了」)。
+ *
+ * ## 根因
+ *
+ * 稿子(PR #7170 head `1bbdce0b06` 的 `docs/design/chat-panel-next.html`,
+ * md5 `28ea4c6558d6158e88976e11283e269e`,`specs/current/chat-panel-next.md` §1.1
+ * 指的就是它)第 476 行有一条**全局基线**:
+ *
+ *     svg { stroke-width: 1.75px; stroke-linecap: round; stroke-linejoin: round; }
+ *
+ * 我们从来没有这一条。`primitives/icons.tsx` 的文件头却写着「`stroke-width` 交给
+ * 全局 `svg` 规则」—— 交给了一条**不存在的规则**,于是所有描边图标掉回浏览器默认的
+ * `stroke-width: 1`,并且是 butt 端头 + miter 拐角。
+ *
+ * ## 为什么「1」比「1.75」细得多,不是细 43%
+ *
+ * SVG 里的 `stroke-width` 单位是**用户单位**,不是设备像素 —— 它要乘上
+ * viewBox → 显示尺寸的缩放比。我们的图标都是 `viewBox="0 0 24 24"`,
+ * 挂在 14px 的格子里,缩放比是 14/24 ≈ 0.583。所以:
+ *
+ *     稿子   1.75 用户单位 × 0.583 = 1.021 CSS px   ← 看得见
+ *     我们   1    用户单位 × 0.583 = 0.583 CSS px   ← 不到 1px,在非 HiDPI 上直接淡掉
+ *
+ * 下面三档的目标值**是真机量出来的**,不是照着 CSS 文本抄的:把上面那份 md5 对得上的
+ * 稿子喂进无头 Chrome,对每个 `<svg>` 读 `getComputedStyle().strokeWidth` 再乘
+ * `getScreenCTM().a`。三档分别落在 1.021 / 0.802 / 0.948。
+ *
+ * ## 这一档**不能**用 vector-effect: non-scaling-stroke 修
+ *
+ * 稿子只在两处钉了 `non-scaling-stroke`(`.ck` 那枚勾、`.tool .wifi` 那三条弧),
+ * 其余一律**跟着 viewBox 缩放**。真机实测稿子自己就是这样:同一条 1.75,
+ * 10px 的格子里量到 0.729、16px 的格子里量到 1.167。给我们的图标加
+ * `non-scaling-stroke` 会把 1.75 钉成 1.75 设备像素 —— 比稿子粗 1.7 倍。
+ * 所以下面第三条**反向对照**盯的就是这个:三档的实际粗细必须**各不相同**。
+ *
+ * ## jsdom 的局限(说明,不拿假断言凑数)
+ *
+ * jsdom 不做层叠、不算 CTM,`getComputedStyle().strokeWidth` 永远是空的。
+ * 所以这里断言的是**标记上的表现属性 + CSS Module 文本里的显示尺寸**,
+ * 两者相乘得到的就是浏览器最终画出来的粗细(表现属性是元素上的声明,
+ * 不会被继承值盖掉)。真实几何的前后对照在无头 Chrome 里另做,记在 PR 里。
+ */
+import { cleanup, render } from '@testing-library/react';
+import { readFileSync, readdirSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
+import type { ReactElement } from 'react';
+
+import { ChevronIcon, toolIcon } from '../../../src/components/chat/primitives/icons';
+import { QuotedRefs } from '../../../src/components/chat/QuotedRefs';
+import { Icon } from '../../../src/components/Icon';
+import { I18nProvider } from '../../../src/i18n';
+import type { ToolKind } from '../../../src/runtime/chat/tool-kind';
+
+/** 稿子第 476 行的基线,单位是**用户单位**(viewBox 单位),不是设备像素。 */
+const DESIGN_BASELINE = 1.75;
+
+/** 真机量稿子得到的实际粗细(CSS px)。来源见文件头。 */
+const DESIGN_EFFECTIVE = {
+  /** `.ti > svg`(执行记录行首那一格),14px */
+  toolRow: 1.021,
+  /** `.chev`(折叠箭头),11px */
+  chevron: 0.802,
+  /** `.refs` 里那枚对话气泡,13px */
+  quotedRefs: 0.948,
+} as const;
+
+afterEach(cleanup);
+
+/** 从一份 CSS Module 文本里取某条规则的 `width: Npx`。取不到就炸,不给默认值。 */
+function cssWidth(file: string, selector: string): number {
+  const css = readFileSync(resolve(__dirname, '../../../src', file), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '');
+  for (const block of css.split('}')) {
+    const brace = block.indexOf('{');
+    if (brace < 0) continue;
+    const head = block.slice(0, brace).trim().replace(/\s+/g, ' ');
+    if (head !== selector) continue;
+    const m = /(?:^|;)\s*width:\s*([\d.]+)px/.exec(block.slice(brace + 1));
+    if (m?.[1]) return Number(m[1]);
+  }
+  throw new Error(`${file} 里找不到 \`${selector}\` 的 width —— 尺寸变了,这条判据要跟着改`);
+}
+
+/** 一枚 svg 在屏幕上实际画出来的描边粗细:用户单位 × (显示尺寸 ÷ viewBox 边长)。 */
+function effectiveStroke(svg: SVGSVGElement, displayPx: number): number {
+  const viewBox = svg.getAttribute('viewBox');
+  expect(viewBox, '图标没有 viewBox,缩放比无从算起').toBeTruthy();
+  const side = Number(viewBox!.trim().split(/\s+/)[2]);
+  const raw = svg.getAttribute('stroke-width');
+  expect(raw, '图标没写 stroke-width,会掉回浏览器默认的 1 用户单位').not.toBeNull();
+  return Number(raw) * (displayPx / side);
+}
+
+function renderSvg(node: ReactElement): SVGSVGElement {
+  const { container } = render(<span>{node}</span>);
+  const svg = container.querySelector('svg');
+  expect(svg).not.toBeNull();
+  return svg as unknown as SVGSVGElement;
+}
+
+const TOOL_KINDS: ToolKind[] = ['read', 'write', 'edit', 'search', 'exec', 'image', 'other'];
+
+describe('聊天面板描边图标的笔画粗细', () => {
+  it('执行记录行首那一格:七类图标全部落在稿子量出来的 1.021px 上', () => {
+    const displayPx = cssWidth('components/chat/primitives/record.module.css', '.icon > svg');
+    for (const kind of TOOL_KINDS) {
+      const svg = renderSvg(toolIcon(kind));
+      expect(Number(svg.getAttribute('stroke-width')), `${kind} 没吃到基线`).toBe(DESIGN_BASELINE);
+      expect(effectiveStroke(svg, displayPx), `${kind} 画出来的粗细和稿子对不上`)
+        .toBeCloseTo(DESIGN_EFFECTIVE.toolRow, 2);
+      cleanup();
+    }
+  });
+
+  it('折叠箭头:11px 的格子里落在 0.802px', () => {
+    const svg = renderSvg(<ChevronIcon />);
+    expect(Number(svg.getAttribute('stroke-width'))).toBe(DESIGN_BASELINE);
+    expect(effectiveStroke(svg, Number(svg.getAttribute('width')))).toBeCloseTo(DESIGN_EFFECTIVE.chevron, 2);
+  });
+
+  it('引用芯片那枚气泡:13px 的格子里落在 0.948px', () => {
+    const displayPx = cssWidth('components/chat/QuotedRefs.module.css', '.icon');
+    const { container } = render(
+      <I18nProvider>
+        <QuotedRefs quotes={[{ id: 'q1', text: '一段引文', messageId: 'm1' }]} onClear={() => {}} />
+      </I18nProvider>,
+    );
+    const svg = container.querySelector('[data-testid="chat-quoted-refs"] > svg');
+    expect(svg, '引用芯片没渲染出气泡').not.toBeNull();
+    const el = svg as unknown as SVGSVGElement;
+    expect(Number(el.getAttribute('stroke-width'))).toBe(DESIGN_BASELINE);
+    expect(effectiveStroke(el, displayPx)).toBeCloseTo(DESIGN_EFFECTIVE.quotedRefs, 2);
+  });
+
+  it('端头和拐角跟着稿子走 round —— 1px 以下的线,butt + miter 会让笔画更淡', () => {
+    for (const kind of TOOL_KINDS) {
+      const svg = renderSvg(toolIcon(kind));
+      expect(svg.getAttribute('stroke-linecap'), `${kind} 的端头不是 round`).toBe('round');
+      expect(svg.getAttribute('stroke-linejoin'), `${kind} 的拐角不是 round`).toBe('round');
+      cleanup();
+    }
+    const chev = renderSvg(<ChevronIcon />);
+    expect(chev.getAttribute('stroke-linecap')).toBe('round');
+    expect(chev.getAttribute('stroke-linejoin')).toBe('round');
+  });
+
+  /* ── 反向对照 ──────────────────────────────────────────────
+     稿子里**不是只有一个数**。只断言「等于 1.75」的话,一条全局
+     `svg { stroke-width: 1.75px }` 也能全绿,而那条会把仓库里十几处
+     写死的 stroke-width 一起盖掉(CSS 声明恒赢表现属性)。
+     下面两条就是拿来证明「没有一刀切」的。 */
+
+  it('反向对照 · 共享 Icon 组件仍然是它自己的 1.6,没被一刀切成 1.75', () => {
+    // `grid-4` 走的是 Icon 的**描边兜底分支**(remix 里没有对应字形),
+    // 那一支才带 stroke-width;挑一个 remix 名字会拿到实心路径,对照就落空了
+    const { container } = render(<Icon name="grid-4" size={15} />);
+    const svg = container.querySelector('svg[stroke-width]');
+    expect(svg, 'Icon 的描边兜底分支没渲染出来,这条对照不成立').not.toBeNull();
+    expect(Number(svg!.getAttribute('stroke-width'))).toBe(1.6);
+    expect(Number(svg!.getAttribute('stroke-width'))).not.toBe(DESIGN_BASELINE);
+  });
+
+  it('反向对照 · 没有人把它做成一条全局 `svg { stroke-width }`', () => {
+    /*
+     * 这是最省事也最危险的修法:稿子第 476 行确实是全局的,照搬一条就能让本文件
+     * 前四条全绿。但 SVG 表现属性属于优先级更低的 "author presentational hints",
+     * **任何** CSS 声明都赢它 —— 一条全局 `svg { stroke-width }` 会把
+     * `apps/web/src` 里 115 处写死的 `strokeWidth={…}` 静默盖掉
+     * (共享 Icon 的 1.6、`.msg-att-eye` 的 2、`.qf-chip-check` 的 2 全在内)。
+     *
+     * jsdom 不做层叠,上面几条量不到 CSS,所以这条改成盯**源文本**:
+     * 全仓不许出现「选择器就是裸 `svg`、而且设了 stroke-width」的规则。
+     */
+    const roots = [
+      resolve(__dirname, '../../../src/styles'),
+      resolve(__dirname, '../../../src/components'),
+    ];
+    const files: string[] = [];
+    const walk = (dir: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = resolve(dir, entry.name);
+        if (entry.isDirectory()) walk(full);
+        else if (entry.name.endsWith('.css')) files.push(full);
+      }
+    };
+    for (const root of roots) walk(root);
+    files.push(resolve(__dirname, '../../../src/index.css'));
+    expect(files.length, 'CSS 一个都没扫到,这条判据是空的').toBeGreaterThan(20);
+
+    const offenders: string[] = [];
+    for (const file of files) {
+      const css = readFileSync(file, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+      for (const block of css.split('}')) {
+        const brace = block.indexOf('{');
+        if (brace < 0) continue;
+        const head = block.slice(0, brace);
+        const body = block.slice(brace + 1);
+        if (!/(?:^|;)\s*stroke-width\s*:/.test(body)) continue;
+        // 顶层逗号切开,任何一支**只**是 `svg` 就算裸全局
+        if (head.split(',').some((s) => s.trim().replace(/\s+/g, ' ') === 'svg')) {
+          offenders.push(`${file.split('/apps/web/')[1]}: ${head.trim()}`);
+        }
+      }
+    }
+    expect(offenders, '出现了裸 `svg { stroke-width }`,它会盖掉全仓写死的描边').toEqual([]);
+  });
+
+  it('反向对照 · 三档的实际粗细各不相同 —— 描边跟着尺寸缩放,没有钉成设备像素', () => {
+    const values = [DESIGN_EFFECTIVE.toolRow, DESIGN_EFFECTIVE.chevron, DESIGN_EFFECTIVE.quotedRefs];
+    expect(new Set(values).size, '三档量出来一样粗,说明加了 non-scaling-stroke —— 稿子没有').toBe(3);
+
+    const tool = renderSvg(toolIcon('read'));
+    expect(tool.getAttribute('vector-effect'), '图标不该钉 non-scaling-stroke').toBeNull();
+    cleanup();
+    const chev = renderSvg(<ChevronIcon />);
+    expect(chev.getAttribute('vector-effect')).toBeNull();
+
+    // 同一个 1.75 在两个尺寸上必须画出两个粗细
+    const toolPx = 1.75 * (cssWidth('components/chat/primitives/record.module.css', '.icon > svg') / 24);
+    const chevPx = 1.75 * (Number(chev.getAttribute('width')) / 24);
+    expect(toolPx).not.toBeCloseTo(chevPx, 2);
+  });
+});
