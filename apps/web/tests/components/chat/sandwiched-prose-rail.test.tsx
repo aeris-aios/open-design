@@ -93,9 +93,32 @@ describe('N5 夹心正文落回 22px 竖线', () => {
     }
   });
 
-  it('工具行自己那 22px 不许动 —— 它和稿子逐字相同', () => {
+  it('夹心正文那 22px 不许动 —— 它对齐的是上面那一行的**名字**,不是它的图标', () => {
+    /*
+     * ⚠️ **这条 2026-08-27 换过一次基准。**
+     *
+     * 原来它钉的是「工具行自己那 22px 不许动 —— 它和稿子逐字相同」,读的是
+     * `.fold.flat > .body.stack > .tool { padding: 5px 7px 5px 29px }`。
+     * 那条规则确实和稿子逐字相同,但**抄错了位置**:把交付稿放进 Chrome 数过,
+     * `.fold.mod-flat > .body.mod-stack > .tool` 在稿子自己的 84 格里命中 **0 处** ——
+     * 稿子里工具行永远住在某个步骤里面,顶层清一色是步骤。用户 2026-08-27 指出
+     * 「todo 外面的工具调用应该也没这个缩进吧?」之后,顶层工具行挪回第 0 列。
+     *
+     * 夹心正文那 22px **没有跟着动**,因为它的依据从来不是工具行的缩进:
+     * 稿子写的是「让它的首字和上面那行步骤名对齐…22 = 步骤行的 7 内边距 + 状态点 15」。
+     * 顶层的行首那一格挪没挪,名字都还在 22。真机量过(§F-18):
+     * 顶层行图标 0 / 名字 22~23,夹心正文 22 —— 对齐关系原样保住。
+     */
     expect(has('.fold.flat > .body.stack > .tool')).toBe(true);
-    expect(CSS).toMatch(/\.fold\.flat > \.body\.stack > \.tool \{[^}]*padding: 5px 7px 5px 29px/);
+    expect(CSS).toMatch(/\.fold\.flat > \.body\.stack > \.tool \{[^}]*padding: 5px 7px/);
+
+    const proseBlock = CSS.split('}')
+      .find((b) => (b.split('{')[0] ?? '').includes('.think:has(') && !(b.split('{')[0] ?? '').includes('::before'));
+    expect(proseBlock).toBeDefined();
+    expect(proseBlock).toMatch(/padding-inline-start:\s*22px/);
+    // 正向对照:22 是从「7 内边距 + 15 状态点」来的,那两个数还在原处
+    expect(CSS).toMatch(/\.fold\.flat > \.body\.stack > \.fold > summary \{[^}]*padding: 5px 7px/);
+    expect(CSS).toMatch(/--row-slot:\s*15px/);
   });
 
   /**

@@ -135,31 +135,77 @@
  */
 .fold.flat summary .meta,
 .fold.flat summary .chev { margin-left: 0; }
-.fold.flat > .body.stack { padding: 0 0 2px; }
+/*
+ * 壳里那两条列,以及串起它们的那条链的中轴 —— 全稿唯一一处写这三个数的地方。
+ *
+ * 交付稿 `progress-running` / `progress-done` 逐行量过(真 Chrome,坐标相对壳 body 内容盒):
+ *   · 壳 body 的直接子代(步骤)行首那一格落在 **0**,宽 15;步骤名落在 22
+ *   · 步骤**里面**的子行(工具行、序号行、嵌一层的折叠块)一律落在 **22**
+ *   · 链画在 **7.5** —— 行首那一格 15px 的中轴
+ * 22 是怎么来的:稿子原话「缩进一格(状态点 15 + 间距 7 = 22)」—— 让开步骤自己那颗状态点。
+ *
+ * 所以 `--chain-x` 不是拍出来的:它就是 `--row-slot` 那一格的中轴。
+ * 两个数写在一起,谁动了另一个跟着动,链和图标不会各走各的。
+ */
+.fold.flat > .body.stack {
+  padding: 0 0 2px;
+  /* 行首那一格的宽(状态点 / 图标 / 序号共用一格) */
+  --row-slot: 15px;
+  /* 链的中轴,相对壳 body 的内容盒 */
+  --chain-x: 7.5px;
+  /* 这一行的盒子比壳 body 内容盒往左探出多少 —— 链要按各行自己的 0 点换算 */
+  --row-outdent: 0px;
+}
 .fold.flat[open] > summary + .body.stack {
   border-top: var(--chat-stroke) solid var(--chat-border);
   padding-top: 6px;
 }
 .fold.flat > .body.stack > .think { padding: 6px 0; }
-.fold.flat > .body.stack > .fold { margin-inline: -7px; position: relative; }
 /*
- * 步骤之间那条**竖直连接线**。稿子:
+ * 壳 body 的**直接子代**都是链上的一格,一律站在第 0 列。
+ *
+ * 三种 DOM 走同一条:能展开的步骤 / 工具行(`details.fold`)、不能展开的工具行
+ * (`div.tool`)、思考那一格(`details.fold.thoughts`)。它们在产线上是平级的兄弟,
+ * 站在同一列才有「一条链」可言 —— 稿子里顶层清一色是步骤,行首那一格全落 0(逐行量过)。
+ *
+ * `margin-inline: -7px` 把行的可点区域撑到壳的两侧(悬停底色齐边),
+ * `--row-outdent` 记的就是这 7px:链的偏移要按各行自己的 0 点换算。
+ */
+.fold.flat > .body.stack > :is(.fold, .tool) {
+  margin-inline: -7px;
+  position: relative;
+  --row-outdent: 7px;
+}
+/*
+ * 串起这些格的那条**竖直连接线**。稿子:
  *   .fold.mod-flat > .body.mod-stack > .fold:not(:last-of-type)::before,
  *   .fold.mod-flat > .body.mod-stack > .fold[open]:not(:first-of-type)::before
  *   { inset-inline-start: 14.5px; top: 25px; bottom: 0; width: 1px; background: var(--border) }
  *
- * 它把一串步骤串成一条链:最后一条不画(下面没有东西了),
- * 展开的那一条即使排在第一位也要画(它下面接着的是自己的内容)。
- * 我们原来一条都没有 —— 用户 2026-08-26 逐格指出。
+ * 最后一格不画(下面没有东西了);展开的那一格即使排在第一位也要画
+ * (它下面接着的是自己的内容)。我们原来一条都没有 —— 用户 2026-08-26 逐格指出。
+ *
+ * **两处偏离稿子,都是量出来的**(2026-08-27):
+ *
+ * ① `:is(.fold, .tool)` 而不是只认 `.fold`,`:has(~ …)` / `… ~ …` 而不是 `:*-of-type`。
+ *    稿子顶层清一色是 `details`,所以 `:not(:last-of-type)` 够用;产线上顶层混着
+ *    `div.tool`,`of-type` 按标签算,`details` 和 `div` 各数各的 —— 一条尾随的
+ *    工具行不会让前一条 `details` 失去 `:last-of-type`,链在那里凭空多一截或少一截。
+ *    同一处修正夹心正文那条规则已经做过(见下面 `:is(.fold, .tool)` 的注释)。
+ *
+ * ② `inset-inline-start` 不再写死 14.5px,按各行自己的缩进算。
+ *    14.5 = 链的中轴 7.5 + 步骤行往左探出的 7 —— 两个数原来分别硬编码在这里(14.5)
+ *    和夹心正文那里(7.5),表面上是两条线,实际必须落在同一条轴上。
+ *    2026-08-27 就是在这儿出的事:思考那一格换了缩进,写死的 14.5 没跟着动,
+ *    于是当时用 `:not(.thoughts)` 把它排除掉,链在那一格断开。现在偏移由
+ *    `--chain-x + --row-outdent` 算出来,行怎么缩进线跟着走,不可能再错开。
  */
-/* `:not(.thoughts)` —— 思考那一格是**工具行**不是步骤(2026-08-27 用户裁决),
-   它缩进到 22px 之后,这条按「折叠头贴左」算的线会孤零零落在图标左边 14.5px。
-   工具行本来就不画这条线,思考跟着工具行走。量到的坐标见上面 `.fold.thoughts` 那条注释。 */
-.fold.flat > .body.stack > .fold:not(.thoughts):not(:last-of-type)::before,
-.fold.flat > .body.stack > .fold:not(.thoughts)[open]:not(:first-of-type)::before {
+.fold.flat > .body.stack > :is(.fold, .tool):has(~ :is(.fold, .tool))::before,
+.fold.flat > .body.stack > :is(.fold, .tool) ~ .fold[open]::before {
   content: '';
   position: absolute;
-  inset-inline-start: 14.5px;
+  inset-inline-start: calc(var(--chain-x) + var(--row-outdent, 0px));
+  /* 25px 让位给这一行自己的行首那一格 —— 稿子:「线不是被点盖住,是让位给点」 */
   top: 25px;
   bottom: 0;
   width: 1px;
@@ -199,7 +245,11 @@
 .fold.flat:not(.hasTodo) > .body.stack > :is(.fold, .tool) ~ .think:has(~ :is(.fold, .tool))::before {
   content: '';
   position: absolute;
-  inset-inline-start: 7.5px;
+  /* 和上面那条链**同一个表达式**。这一段叙述不带那 7px 负外边距,`--row-outdent`
+     吃壳 body 上的 0 —— 同一个式子在两种盒子里各算各的,落到同一条绝对轴上。
+     原来这里写 7.5、上面写 14.5,是同一条线被拆成两个各自维护的数。 */
+  inset-inline-start: calc(var(--chain-x) + var(--row-outdent, 0px));
+  /* 这一段没有自己的行首格,轴上没有它的点,不用让位 —— 通高,链从它身边直穿过去 */
   top: 0;
   bottom: 0;
   width: 1px;
@@ -214,26 +264,38 @@
 .fold.flat > .body.stack > .fold > summary .meta { font-weight: 400; }
 /* 壳里有步骤时,叙述退居其次(S22:平铺形态下该用哪一档,待设计答复) */
 .fold.flat > .body.stack:has(> .fold) > .think { color: var(--chat-text-muted); }
-/* 没有清单的平铺形态里,工具行直接挂在壳下,缩进对齐步骤名(S7 的临时做法) */
-.fold.flat > .body.stack > .tool { margin-inline: -7px; padding: 5px 7px 5px 29px; }
 /*
- * 思考那一格跟着**工具行**缩进,不跟着步骤缩进。
+ * **顶层的工具行站第 0 列,不吃那 22px 缩进**(用户裁决 2026-08-27)。
  *
- * 用户裁决 2026-08-27:「就变成普通的这个搜索一样的东西, 只不过可以下拉展开」
- * 「思考中动画啥的, 这些都是和 toolrow 所在地方同样的缩进逻辑」。
+ * 用户原话:「这里不是说要动态判断间距吗? 像这里如果是 todo 外面, 不应该有这个缩进?
+ * todo 外面的工具调用应该也没这个缩进吧?」——配图是顶层「思考过程」左边空出一格。
  *
- * 为什么要单补一条:同样是「壳下面的一行」,工具行有两种 DOM,缩进却不一样 ——
- * `div.tool` 走上面那条(-7 + 29,图标落在 22px),而**折叠头**走
- * `.fold.flat > .body.stack > .fold > summary` 的 7px(图标落在 0)。
- * 思考这一格是可折叠的,天然掉进后一档,于是比它要对齐的那种工具行左偏 22px。
- * 在 Chrome 里量过(harness 见 `specs/current/chat-panel-feedback.md` §F-15):
- * 补之前工具行图标 x=22、思考过程 x=0;补之后两者都是 22。
+ * 这一条原来是 `padding: 5px 7px 5px 29px`(图标落 22),抄的是稿子的
+ * `.fold.mod-flat > .body.mod-stack > .tool`。**抄错了位置,不是抄错了值**:
+ * 那条规则在稿子自己的 84 格里**一次都没有命中**(把交付稿放进 Chrome 数过,
+ * `.fold.mod-flat > .body.mod-stack > .tool` 命中 0 处)——稿子里工具行永远住在
+ * 某个步骤**里面**,顶层清一色是步骤。它的注释也写明了适用前提:「折叠头本身就是
+ * 一个步骤时,它下面的工具行是这个步骤的子项」。
  *
- * **只补顶层这一档。** 嵌进 todo 抽屉的那一层本来就齐:
- * `.fold.flat .body.stack .body.stack > .fold > summary` 和同层工具行同为 29px,
- * 量到的两个 x 都是 22。多补一次反而会把抽屉里那一行推出去。
+ * 而我们的壳头永远是「进行中 / 已完成」,从来不是一个步骤 —— 顶层的工具行没有
+ * 「谁的子项」可言,它自己就是链上的一格。让它缩进 22,等于给一个不存在的父步骤让位。
+ *
+ * 22 那一格是**步骤里面**的列(稿子:「缩进一格(状态点 15 + 间距 7 = 22)」),
+ * 由下面那两条嵌套规则管,不归这里。两套列的完整口径见
+ * `specs/current/chat-panel-feedback.md` §F-18。
  */
-.fold.flat > .body.stack > .fold.thoughts > summary { padding-inline-start: 29px; }
+.fold.flat > .body.stack > .tool { padding: 5px 7px; }
+/*
+ * 思考那一格没有自己的缩进规则 —— 它就是顶层的一格,和步骤、工具行同一列。
+ *
+ * 这里原来有一条 `.fold.flat > .body.stack > .fold.thoughts > summary
+ * { padding-inline-start: 29px }`,把它推到 22 去和当时的工具行对齐。
+ * 工具行那 22px 本身就是错的(见上一条),对齐一个错的位置只是把错误传播开;
+ * 用户 2026-08-27 指着顶层 Thoughts 左边那个空槽问「不应该有这个缩进?」的就是它。
+ *
+ * 用户当初那句「和 toolrow 所在地方同样的缩进逻辑」现在照旧成立 ——
+ * 只不过「toolrow 所在地方」被一起挪回了第 0 列,两者仍然同列。
+ */
 /*
  * 嵌套一层之后的行缩进。稿子这两条各有**两个逗号段**:
  *   `.fold .body.mod-stack .body.mod-stack > *,

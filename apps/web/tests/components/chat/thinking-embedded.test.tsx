@@ -320,37 +320,65 @@ describe('N7-f 缩进对齐工具行,两态之间不跳', () => {
   };
 
   it('顶层:思考那一格的行首和工具行**取同一个值**', () => {
-    /* 工具行自己那条(基准)。先证明它读得到 —— 读不到的话下面就是拿 null 比 null。 */
+    /*
+     * ⚠️ **这条断言的期望值 2026-08-27 变过一次:29px → 7px。**
+     *
+     * 原来两边都是 29(图标落在 22)。用户当天晚些时候指着顶层 Thoughts 左边那个
+     * 空槽问「像这里如果是 todo 外面, 不应该有这个缩进? todo 外面的工具调用应该也
+     * 没这个缩进吧?」—— 于是**基准本身**从 29 挪回 7:22 那一列是「步骤**里面**」
+     * 的列(稿子:「缩进一格(状态点 15 + 间距 7 = 22)」),顶层的行不该占它。
+     * 交付稿里 `.fold.mod-flat > .body.mod-stack > .tool` 命中 0 处(放进 Chrome 数过),
+     * 顶层清一色是步骤、行首一律落 0。完整口径见 `chat-panel-feedback.md` §F-18。
+     *
+     * **这一条要钉的东西没变**:思考那一格和同层工具行取同一个值,而不是各写各的。
+     */
     const toolPad = declOf('.fold.flat > .body.stack > .tool', 'padding');
     expect(toolPad).not.toBeNull();
-    const toolStart = /(\d+)px\s*$/.exec(toolPad!)?.[1];
-    expect(toolStart).toBe('29');
+    expect(toolPad).toBe('5px 7px');
 
-    // 思考那一格必须补到同一个值,而不是自己写死一个常量
-    const think = declOf('.fold.flat > .body.stack > .fold.thoughts > summary', 'padding-inline-start');
-    expect(think).toBe(`${toolStart}px`);
+    /* 思考那一格**不再有自己的缩进规则** —— 它和步骤、工具行同吃顶层那一档。
+       留着一条专属规则就是留着一个会各走各的地方。 */
+    expect(declOf('.fold.flat > .body.stack > .fold.thoughts > summary', 'padding-inline-start')).toBeNull();
+    expect(declOf('.fold.flat > .body.stack > .fold > summary', 'padding')).toBe('5px 7px');
   });
 
-  it('顶层普通折叠头**不**跟着改 —— 证明上面那条是真的在补差,不是全局挪了一格', () => {
-    /* 反向对照:命令折叠行、执行计划这些「步骤」照旧贴左(7px)。
-       少了这一条,把所有 summary 一律改成 29px 也能让上面那条绿。 */
-    const step = declOf('.fold.flat > .body.stack > .fold > summary', 'padding');
-    expect(step).toBe('5px 7px');
-  });
-
-  it('思考那一格不画步骤之间那条竖线 —— 它是工具行,不是步骤', () => {
+  it('**反向对照**:清单抽屉**里面**那一层照旧 29px —— 顶层挪回去没把它带走', () => {
     /*
-     * 步骤链那条竖线画在 `inset-inline-start: 14.5px`(壳里绝对位置 7.5px),
-     * 是按「折叠头贴左」算的。思考这一格缩到 22px 之后,那条线会孤零零落在
-     * 图标左边 14.5px 的地方 —— 在 Chrome 里量到过:foldBoxX=-7、线在 14.5、图标在 22。
-     * 工具行(`div.tool`)本来就一条线都不画,思考跟着工具行走就该一样。
+     * 少了这一条,把所有行一律改成 7px 也能让上面那条绿 —— 那会把抽屉里的子行
+     * 一起拽到最左,清单和它的子项就分不出层级了。
+     * 真机量到(§F-18):顶层三种行的图标都是 0,抽屉里三种行的图标都是 22。
+     */
+    /* 这两支写在同一条规则的两个逗号段里,`declOf` 是按整段 head 精确比的,匹配不到 —— 直接读文本 */
+    expect(CSS).toMatch(
+      /\.fold\.flat \.body\.stack :is\(\.body\.stack, \.body\.stream\) > \*,\s*\.fold\.flat \.body\.stack \.body\.stack > \.fold > summary \{[^}]*padding-inline-start: 29px/,
+    );
+  });
+
+  it('思考那一格**在**步骤链上,而且线和它自己的图标列对齐', () => {
+    /*
+     * ⚠️ **这条断言 2026-08-27 被推翻过一次。**
+     *
+     * 原来它断言的是相反的事 ——「思考那一格不画步骤之间那条竖线 —— 它是工具行,
+     * 不是步骤」,做法是给链那两条选择器挂 `:not(.thoughts)`。当时的理由:
+     *
+     *   > 步骤链那条竖线画在 `inset-inline-start: 14.5px`(壳里绝对位置 7.5px),
+     *   > 是按「折叠头贴左」算的。思考这一格缩到 22px 之后,那条线会孤零零落在
+     *   > 图标左边 14.5px 的地方 —— 量到过:foldBoxX=-7、线在 14.5、图标在 22。
+     *
+     * **观察没错,病根找反了**:错的不是线,是思考那一格当时缩到了 22。用户当天
+     * 指出顶层不该有那 22px 之后,这一格回到第 0 列,它自己的图标列就是 7.5 那条轴,
+     * 线不再「孤零零落在图标左边」——它正好压在图标中轴上。
+     *
+     * 留着这段历史是因为「为什么曾经排除过」比「现在没排除」更值钱:
+     * 下一个看到线和图标错开的人,要先问「是不是又有哪一行的列错了」,
+     * 而不是再把它从链上摘一次。链断在哪一格,用户当天用截图指过。
      */
     const railSelectors = CSS
       .split('}')
       .map((b) => (b.split('{')[0] ?? '').replace(/\s+/g, ' ').trim())
-      .filter((s) => s.includes('::before') && s.includes('.body.stack > .fold'));
+      .filter((s) => s.includes('::before') && s.includes('.body.stack >'));
     expect(railSelectors.length).toBeGreaterThan(0);          // 正向对照:规则找得到
-    for (const s of railSelectors) expect(s).toContain(':not(.thoughts)');
+    for (const s of railSelectors) expect(s).not.toContain(':not(.thoughts)');
   });
 
   it('思考中 / 思考过程用**同一个** 15px 图标位 —— 左边缘不会跳', () => {
