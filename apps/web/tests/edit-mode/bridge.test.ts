@@ -1005,6 +1005,26 @@ describe('manual edit bridge target normalization', () => {
     dom.window.close();
   });
 
+  it('keeps an emptied text target eligible for a later preview update', () => {
+    const dom = new JSDOM(
+      `<main><h1 data-od-id="title">Original title</h1></main>${buildManualEditBridge(true)}`,
+      { runScripts: 'dangerously', url: 'http://localhost' },
+    );
+    const title = dom.window.document.querySelector('[data-od-id="title"]') as HTMLElement;
+
+    dom.window.dispatchEvent(new dom.window.MessageEvent('message', {
+      data: { type: 'od-edit-preview-text', id: 'title', value: '' },
+    }));
+    expect(title.textContent).toBe('');
+
+    dom.window.dispatchEvent(new dom.window.MessageEvent('message', {
+      data: { type: 'od-edit-preview-text', id: 'title', value: 'Retyped' },
+    }));
+    expect(title.textContent).toBe('Retyped');
+
+    dom.window.close();
+  });
+
   it('treats Shift+Enter as repeatable soft line breaks without committing the inline edit', () => {
     const dom = new JSDOM(
       `<main><p data-od-id="body">First line</p></main>${buildManualEditBridge(true)}`,

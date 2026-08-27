@@ -273,6 +273,9 @@ export function buildManualEditBridge(enabled: boolean): string {
   function isTextLeaf(el){
     var text = (el.textContent || '').trim();
     if (!text) return false;
+    return hasOnlyTextAndBreakNodes(el);
+  }
+  function hasOnlyTextAndBreakNodes(el){
     return Array.prototype.every.call(el.children, function(child){ return child.tagName && child.tagName.toLowerCase() === 'br'; });
   }
   function inferKind(el){
@@ -1047,7 +1050,7 @@ export function buildManualEditBridge(enabled: boolean): string {
       // anyway. When an inline session is live on the same element, its save and
       // cancel paths still reconcile against the current model and original HTML.
       var ptEl = findById(ev.data.id || '');
-      if (ptEl && ptEl !== document.body && isTextLeaf(ptEl)) {
+      if (ptEl && ptEl !== document.body && hasOnlyTextAndBreakNodes(ptEl)) {
         renderPlainText(ptEl, String(ev.data.value == null ? '' : ev.data.value));
       }
       return;
