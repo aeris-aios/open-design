@@ -2036,7 +2036,7 @@ export function ChatPane({
           const distance = distanceFromBottomAfterAligningTop(el, formEl);
           formEl.scrollIntoView({ block: 'start', behavior: 'smooth' });
           pinnedToBottomRef.current = distance < 80;
-          setScrolledFromBottom((prev) => shouldShowJumpToLatest({ distance, clientHeight: el.clientHeight, shown: prev }));
+          setScrolledFromBottom((prev) => shouldShowJumpToLatest({ distance, clientHeight: el.clientHeight, scrollHeight: el.scrollHeight, shown: prev }));
           return;
         }
         // Already handled by the auto-scroll effect — don't bottom-scroll.
@@ -2129,7 +2129,7 @@ export function ChatPane({
           const distance = distanceFromBottomAfterAligningTop(el, formEl);
           formEl.scrollIntoView({ block: 'start', behavior: 'smooth' });
           pinnedToBottomRef.current = distance < 80;
-          setScrolledFromBottom((prev) => shouldShowJumpToLatest({ distance, clientHeight: el.clientHeight, shown: prev }));
+          setScrolledFromBottom((prev) => shouldShowJumpToLatest({ distance, clientHeight: el.clientHeight, scrollHeight: el.scrollHeight, shown: prev }));
           return;
         }
         // Form tag in content but the DOM element isn't ready yet (partial
@@ -2198,7 +2198,7 @@ export function ChatPane({
         // scrolledFromBottom remained false until they scrolled.
         const distance =
           target.scrollHeight - target.scrollTop - target.clientHeight;
-        setScrolledFromBottom((prev) => shouldShowJumpToLatest({ distance, clientHeight: target.clientHeight, shown: prev }));
+        setScrolledFromBottom((prev) => shouldShowJumpToLatest({ distance, clientHeight: target.clientHeight, scrollHeight: target.scrollHeight, shown: prev }));
         pinnedToBottomRef.current = distance < 80;
       });
     }
@@ -2241,6 +2241,7 @@ export function ChatPane({
         const next = shouldShowJumpToLatest({
           distance,
           clientHeight: target.clientHeight,
+          scrollHeight: target.scrollHeight,
           shown: prev,
         });
         return prev === next ? prev : next;
@@ -2262,6 +2263,34 @@ export function ChatPane({
       setChatLogScrolling(false);
     };
   }, [tab]);
+
+  /**
+   * 内容变了就重算一次「回到最新」该不该在。
+   *
+   * 为什么非要有这一条:那颗浮标的判据只在 **scroll 事件**里跑。可它显不显示的前提
+   * ——「还能往下滚多远」——**会在没有任何滚动的情况下改变**:
+   *  · 切到另一条会话(短的那条根本滚不动,一个 scroll 事件都不会发)
+   *  · run 结束、执行记录自动收起,内容一下矮了一大截
+   * 这两种情况下状态就那么挂着,于是浮标压在一屏没有滚动条的对话上
+   * (用户 2026-08-27:「没法滚动时不要出现这个吧??」)。
+   *
+   * 判据本身还兜了一层不变量(见 `shouldShowJumpToLatest` 里的 `scrollHeight`),
+   * 两条一起才完整:那条管「算的时候别算错」,这条管「变了要去算」。
+   */
+  useEffect(() => {
+    const el = logRef.current;
+    if (!el) return;
+    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+    setScrolledFromBottom((prev) => {
+      const next = shouldShowJumpToLatest({
+        distance,
+        clientHeight: el.clientHeight,
+        scrollHeight: el.scrollHeight,
+        shown: prev,
+      });
+      return prev === next ? prev : next;
+    });
+  }, [tab, displayMessages.length, streaming]);
 
   useEffect(() => {
     if (tab !== 'chat') return;

@@ -50,3 +50,44 @@ describe('回到最新的出现阈值', () => {
     expect(shouldShowJumpToLatest({ distance: 1400, clientHeight: 4000, shown: false })).toBe(true);
   });
 });
+
+/**
+ * 滚不动的时候一律不出现(用户 2026-08-27:「没法滚动时不要出现这个吧??」)。
+ *
+ * 怎么会出现的:门槛只由 `distance` 决定,而 `distance` 只在 **scroll 事件**里重算。
+ * 在长会话里滚上去 → 浮标显形;**切到一条短会话**后,`scrolledFromBottom` 这个状态
+ * 没人复位,新的短会话又滚不动、一个 scroll 事件都不会发 —— 于是它就挂在一屏
+ * 根本没有滚动条的对话上。
+ *
+ * 所以判据里补一条**不变量**:内容没有溢出容器 = 没有「最新」可回,一律 false。
+ * 这条比门槛更硬 —— 不看迟滞、不看 `shown`。
+ *
+ * ⚠️ 断言形状要挑对:`distance: 0` 那种老代码本来就返回 false,写出来是**空转**
+ * (第一版就是这么写的,4 条全绿)。能证伪的是「distance 还是大的、可内容已经
+ * 不溢出了」—— 正是内容收缩后、下一个 scroll 事件到来之前的那一拍。
+ */
+describe('滚不动就别出现', () => {
+  const H = 800;
+
+  it('距离还挂着旧值,但内容已经不溢出 —— 收掉', () => {
+    expect(shouldShowJumpToLatest({
+      distance: 900, clientHeight: H, scrollHeight: H, shown: true,
+    })).toBe(false);
+  });
+
+  it('未显示时同理,不许因为旧距离而冒出来', () => {
+    expect(shouldShowJumpToLatest({
+      distance: 900, clientHeight: H, scrollHeight: H, shown: false,
+    })).toBe(false);
+  });
+
+  it('真的能滚、也确实滚上去了 —— 照常出现(否则上面两条就是把功能删了)', () => {
+    expect(shouldShowJumpToLatest({
+      distance: 900, clientHeight: H, scrollHeight: 3000, shown: false,
+    })).toBe(true);
+  });
+
+  it('不传 scrollHeight 时按老规矩走,不因为缺参数就静默收掉', () => {
+    expect(shouldShowJumpToLatest({ distance: 900, clientHeight: H, shown: false })).toBe(true);
+  });
+});

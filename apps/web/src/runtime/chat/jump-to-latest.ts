@@ -31,6 +31,10 @@ export interface JumpToLatestInput {
   distance: number;
   /** 滚动容器的可视高度。 */
   clientHeight: number;
+  /**
+   * 内容总高。给了就用它判「到底能不能滚」;不给则只按门槛走(老调用点兼容)。
+   */
+  scrollHeight?: number;
   /** 此刻是不是已经显示着 —— 迟滞要用。 */
   shown: boolean;
 }
@@ -38,9 +42,24 @@ export interface JumpToLatestInput {
 export function shouldShowJumpToLatest({
   distance,
   clientHeight,
+  scrollHeight,
   shown,
 }: JumpToLatestInput): boolean {
   const height = Number.isFinite(clientHeight) && clientHeight > 0 ? clientHeight : 0;
+  /*
+   * **滚不动就没有「最新」可回**(用户 2026-08-27:「没法滚动时不要出现这个吧??」)。
+   *
+   * 这条压在门槛之前,而且不看 `shown` —— 它不是一个更严的门槛,是一条不变量。
+   * 需要它是因为 `distance` 只在 scroll 事件里重算:在长会话里滚上去让浮标显形,
+   * 再切到一条**短会话**,状态没人复位、短会话又发不出 scroll 事件,
+   * 于是它挂在一屏根本没有滚动条的对话上。
+   *
+   * 1px 的余量给亚像素:内容和容器一样高时 `scrollHeight` 常比 `clientHeight`
+   * 大零点几,严格 `>` 会把「其实滚不动」判成「能滚」。
+   */
+  if (scrollHeight != null && Number.isFinite(scrollHeight) && scrollHeight <= height + 1) {
+    return false;
+  }
   const showAt = clamp(height * SHOW_RATIO, MIN_SHOW_PX, MAX_SHOW_PX);
   if (!shown) return distance > showAt;
   // 已经在显示:门槛放低,往下滚一点不会立刻消失。
