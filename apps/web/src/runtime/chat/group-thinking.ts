@@ -18,12 +18,26 @@
  * 「连续」是硬判据:中间隔了工具行就是两段推理,分别成格。合并会把两次不相干的
  * 思考拼成一段,读起来像它想了很久一件事。
  */
-import type { ShellItem } from './contract';
+import type { ShellItem, ShellText } from './contract';
 
 /** 收拢后的一格:折叠头写「思考过程」,展开是原样的几段 */
 export interface ThoughtsGroup {
   kind: 'thoughts';
   texts: string[];
+  /**
+   * 这一格占掉的墙上时间;拿不到就是 `null`,那一格右边什么都不显示。
+   *
+   * **跨段合并怎么算**:几段推理收进同一格,是因为它们之间只隔着**不落行**的事件
+   * (最常见是 `TodoWrite` —— 它只改清单,不在壳里留下一行)。每一段自己记的是
+   * 「它填掉的那段空白」,而相邻两段空白**共用同一个时刻端点**(那个 TodoWrite 的
+   * `startedAt` 既是前一段的终点、也是后一段的起点),所以直接相加就等于
+   * 「第一段开始到最后一段结束」的端到端跨度 —— 不会重复计、也不会漏掉夹在
+   * 中间那一瞬。这一格在屏幕上是**一条连续的推理**,报的也就是那一条的总时长。
+   *
+   * 有一段算不出来(比如它前面那件事没有时刻)时整格算不出来:
+   * 只把算得出的那几段加起来,得到的是一个**偏小的假数**,比不显示更糟。
+   */
+  elapsedMs: number | null;
   /**
    * 还在往下写的**那一段**。只有它挂 96px 限高滚动窗(D46'),
    * 别的几格都是跑完收起来的普通条目。
@@ -48,15 +62,21 @@ const isThinking = (item: ShellItem): boolean =>
  */
 export function groupThinking(items: ShellItem[], live: boolean): GroupedShellItem[] {
   const out: GroupedShellItem[] = [];
-  let run: string[] | null = null;
+  let run: ShellText[] | null = null;
   const flush = (): void => {
-    if (run && run.length) out.push({ kind: 'thoughts', texts: run });
+    if (run && run.length) {
+      out.push({
+        kind: 'thoughts',
+        texts: run.map((t) => t.text),
+        elapsedMs: sumElapsed(run),
+      });
+    }
     run = null;
   };
   for (const item of items) {
     if (isThinking(item)) {
       // 空白段落不占一格,但也不该把前后两段推理**切断**,所以过滤在 isThinking 里
-      (run ??= []).push((item as { text: string }).text);
+      (run ??= []).push(item as ShellText);
       continue;
     }
     flush();
@@ -66,7 +86,17 @@ export function groupThinking(items: ShellItem[], live: boolean): GroupedShellIt
   if (live) {
     const tail = out[out.length - 1];
     if (tail && tail.kind === 'thoughts') tail.live = true;
-    else out.push({ kind: 'thoughts', texts: [], live: true });
+    else out.push({ kind: 'thoughts', texts: [], elapsedMs: null, live: true });
   }
   return out;
+}
+
+/** 全都算得出才给数 —— 少一段就是偏小的假数(见 `ThoughtsGroup.elapsedMs`) */
+function sumElapsed(parts: ShellText[]): number | null {
+  let total = 0;
+  for (const part of parts) {
+    if (part.elapsedMs == null) return null;
+    total += part.elapsedMs;
+  }
+  return total > 0 ? total : null;
 }

@@ -233,6 +233,7 @@ function renderItem(item: GroupedShellItem, index: number, ctx: RenderCtx): Reac
       <ThoughtsRow
         key={`thoughts-${item.live ? 'live' : 'done'}-${index}`}
         texts={item.texts}
+        elapsedMs={item.elapsedMs}
         live={item.live === true}
         t={ctx.t}
       />
@@ -274,13 +275,22 @@ function renderItem(item: GroupedShellItem, index: number, ctx: RenderCtx): Reac
  * ⚠️ 绿勾(`StatusMark status="ok"`)是**故意去掉**的,别顺手加回来:
  * 推理不是「一条做完了的活」,它没有成败可标。
  *
- * 不挂耗时:推理的时长在壳头的总耗时里,这一格再报一次等于把同一段时间说两遍。
+ * **想完了那一格右边挂自己的耗时**(用户 2026-08-27:「thought 是不是本身右边也要
+ * 显示一个耗时?」「todo 内的倒是每个工具调用都有耗时, thought 也要有耗时」)。
+ * 这里原来写着「不挂耗时:推理的时长在壳头的总耗时里」—— 那句话的**前提是假的**:
+ * 壳头的跨度只由带时刻的事件撑开,第一个工具之前的推理根本不在里面
+ * (真机 `4347efff`:整轮 6m 12s,壳头当时只写 3m 11s,掐掉的正是开头那 2m 34s 推理)。
+ *
+ * **正在想的时候不显示** —— 和进行中的 todo 同一条规矩(`TodoRow` 的
+ * `status === 'in_progress'` 那一档):还没结束的事报不出时长,报了也只会每帧跳。
  */
-function ThoughtsRow({ texts, live, t }: {
+function ThoughtsRow({ texts, elapsedMs, live, t }: {
   texts: string[];
+  elapsedMs: number | null;
   live: boolean;
   t: RenderCtx['t'];
 }): ReactElement {
+  const elapsed = live ? null : formatElapsed(elapsedMs);
   const bodyRef = useRef<HTMLDivElement>(null);
   useThinkingStream(bodyRef, live);
   /*
@@ -321,6 +331,7 @@ function ThoughtsRow({ texts, live, t }: {
   return (
     <Foldable
       summary={summary}
+      elapsed={elapsed ?? undefined}
       className={styles.thoughts}
       defaultOpen={live}
       stream={live}
