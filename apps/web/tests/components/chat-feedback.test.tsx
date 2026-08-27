@@ -451,12 +451,36 @@ describe('chat assistant feedback', () => {
     expect(screen.getByRole('group', { name: 'Feedback' })).toBeTruthy();
   });
 
-  it('collects feedback on a canceled assistant turn', () => {
+  /**
+   * 手动停止的那一轮**不收赞踩** —— 这条 2026-08-27 被设计稿推翻过一次。
+   *
+   * 原来断言的是「取消的轮次照样收反馈」。设计稿 15-6(组件 #39,「仅一种状态」)
+   * 那一格里,停住的轮次只有复制和 Fork 两个按钮,没有赞踩:用户自己把它掐了,
+   * 没有产出可评价。**跑失败的轮次仍然给赞踩** —— 那是一个结果,而且恰恰是
+   * 大家最想踩的那种,判据落在 `userStoppedTheTurn` 上,不是「非成功即无反馈」。
+   *
+   * 连带影响:分析侧从此拿不到「被手动停止的轮次」这一档样本。设计稿是明确的,
+   * 所以先按稿子走;真要保留这档样本,`userStoppedTheTurn` 是唯一那一行。
+   */
+  it('does not collect feedback on a manually stopped turn', () => {
     renderChatPane({
       messages: [
         completedAssistant({
           content: 'Partial answer',
           runStatus: 'canceled',
+        }),
+      ],
+    });
+
+    expect(screen.queryByRole('group', { name: 'Feedback' })).toBeNull();
+  });
+
+  it('still collects feedback on a failed turn — a failure is a result', () => {
+    renderChatPane({
+      messages: [
+        completedAssistant({
+          content: 'Partial answer',
+          runStatus: 'failed',
         }),
       ],
     });

@@ -12,6 +12,7 @@ import { createPortal } from 'react-dom';
 import { Button } from '@open-design/components';
 import { Icon } from '../Icon';
 import { useT } from '../../i18n';
+import { chatSeam } from './ChatRoot';
 import styles from './SupportDialog.module.css';
 
 export interface SupportChannel {
@@ -39,9 +40,27 @@ export function SupportDialog({ channels, onClose, inline }: SupportDialogProps)
     return () => window.removeEventListener('keydown', onKey);
   }, [inline, onClose]);
 
+  /*
+   * 浮层形态自己带上 `--chat-*` 接缝。
+   *
+   * 它走 portal 挂到 `<body>` 下,而自定义属性按 **DOM 树**继承 —— 于是它落在
+   * 页面上那个接缝之外,`background` / `box-shadow` / 遮罩的 `color-mix()`
+   * 全部解析失败,弹窗整个透明、和背后的页面糊在一起(2026-08-27 真机量到
+   * `--chat-bg` 是空串)。`ChatRoot.tsx` 的注释早写过这条:脱离接缝
+   * 「组件会退化成无色无字号的裸结构 —— **而且不报错**」。
+   *
+   * 就地形态(陈列页那一格)本来就渲染在接缝之内,再挂一层是多余的,也会让
+   * 陈列页多出一个 `data-chat-root`,把按这个属性数接缝的回归测试搅乱。
+   */
+  const seam = inline ? null : chatSeam();
   const dialog = (
     <div
-      className={inline ? `${styles.overlay} ${styles.overlayInline}` : styles.overlay}
+      className={
+        inline
+          ? `${styles.overlay} ${styles.overlayInline}`
+          : `${styles.overlay} ${seam?.className ?? ''}`.trim()
+      }
+      {...(seam ? { 'data-chat-root': seam['data-chat-root'] } : {})}
       data-testid="chat-support-dialog"
       // 点遮罩关掉;点弹窗本身不关
       onClick={(event) => {
