@@ -383,6 +383,94 @@ export const DAEMON_STREAM_RECONNECT_LIMIT = 5;
 const DAEMON_STREAM_RECONNECT_BACKOFF_INITIAL_MS = 700;
 const DAEMON_STREAM_RECONNECT_BACKOFF_MAX_MS = 8_000;
 
+/**
+ * 一条**开着但一个字节都不来**的流,等多久算它已经死了。
+ *
+ * 为什么非有不可:浏览器和 daemon 之间永远隔着一层代理(dev 是 `next.config.ts`
+ * 的 rewrite,打包版是 `apps/web/sidecar/server.ts` 的 `proxyHttpRequest`)。
+ * 本机实测(2026-08-27,Next 16 dev rewrite + 一个可杀的上游):**上游在流中途死掉,
+ * 代理会把客户端那条响应一直挂着** —— curl 只在自己 30s 超时才退出,上游死后
+ * 27 秒里既没有 EOF 也没有错误。于是 `reader.read()` 既不 resolve 也不 reject,
+ * 整个消费循环停在那一行,后面所有重连代码一句都跑不到。用户看到的就是
+ * 壳头永远写着「进行中」、既没有重连行也没有报错(真机 2026-08-27)。
+ *
+ * ── 阈值为什么钉在**心跳**上,而不是「多久没输出」 ────────────────────────
+ *
+ * 这是这条超时唯一安全的量法。daemon 的 `createSseResponse`
+ * (`apps/daemon/src/server.ts`)对**每一条** SSE 挂一个无条件的
+ * `setInterval(writeKeepAlive, SSE_KEEPALIVE_INTERVAL_MS)`,25 秒一个注释帧,
+ * **与 agent 有没有在吐东西无关**;`/api/runs/:id/events` 正是走它
+ * (`runtimes/runs.ts` 的 `stream()`)。所以这里量的是「**这条连接**还活着吗」,
+ * 永远不是「**这个 agent** 是不是太慢了」。
+ *
+ * 这一条区分是硬要求,不是措辞讲究:真机上正常的静默可以很长 —— AMR `session/new`
+ * 中位数 26.7 秒,claude 思考静默过 36 秒,codex 有过 274.9 秒零输出。任何按
+ * 「多久没有运行事件」计的超时都会把这些正常的慢判成断线,那比现在这个 bug 更糟
+ * (误报一条「正在重新连接」会让用户以为是自己的网,还会把真正在跑的一轮打断)。
+ * 而它们全都照旧每 25 秒收到一个 keepalive,所以在这条判据下一个都不会中招。
+ *
+ * 取 3 个心跳(75s)而不是 1 个:单次心跳错过可能只是 GC、调度、代理抖动。
+ * 连丢三次没有任何解释能站得住。也仍远小于 5 分钟的卡死看门狗
+ * (`observability/stuck-run.ts`),那一条是埋点,不是给用户看的。
+ */
+const DAEMON_STREAM_IDLE_TIMEOUT_MS = 75_000;
+
+/** 读超时的哨兵,和真正的传输错误分开,免得被当成 AbortError 往外抛。 */
+const DAEMON_STREAM_IDLE_TIMEOUT = Symbol('daemon-stream-idle-timeout');
+
+/**
+ * 读一帧,但**不许无限等**。
+ *
+ * 超过 {@link DAEMON_STREAM_IDLE_TIMEOUT_MS} 还没有任何字节到达就返回哨兵,
+ * 调用方按「这条连接断了」处理。刻意不 abort 整个 `signal`:断的是这一条连接,
+ * 不是这一轮运行 —— 重连循环还要继续用同一个 `signal` 去开下一条。
+ */
+async function readFrameWithIdleDeadline(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  timeoutMs: number,
+): Promise<ReadableStreamReadResult<Uint8Array> | typeof DAEMON_STREAM_IDLE_TIMEOUT> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      reader.read(),
+      new Promise<typeof DAEMON_STREAM_IDLE_TIMEOUT>((resolve) => {
+        timer = setTimeout(() => resolve(DAEMON_STREAM_IDLE_TIMEOUT), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+/**
+ * 这份非 2xx 应答,是 **daemon 自己答的**吗?
+ *
+ * 判据是「有没有人替 daemon 答话」,不是状态码本身 —— 状态码在这里靠不住:
+ * 本机实测 Next 16 的 dev rewrite 在上游死掉之后回的是 **500**
+ * `Internal Server Error`(text/plain),而打包版那条代理回的是 **502**
+ * (`apps/web/sidecar/server.ts:562`)。按状态码开白名单会正好漏掉真机上最常见的那一种。
+ *
+ * 而 daemon 自己报错永远走 `sendApiError`(`apps/daemon/src/http/api-errors.ts`),
+ * 一律是 `res.status(...).json(...)`,body 里必有 `{"error":{"code":...}}` 这个信封。
+ * 代理替一个已经死了的 daemon 答话时给不出这个信封 —— 它根本没拿到 daemon 的话。
+ *
+ * 所以:**有信封 = daemon 答了,它的话是终局的;没信封 = 没人答得上来,这就是掉线。**
+ * 这样既不会把 400 / 403 这种「服务端明确拒绝了你」拖进重连(那种重试 5 次也没用,
+ * 只会把一句准确的错误换成一句含糊的「连接失败」),也不会把 daemon 自己的 500
+ * 误判成掉线。
+ */
+function daemonAnsweredWithError(bodyText: string): boolean {
+  if (!bodyText) return false;
+  try {
+    const parsed = JSON.parse(bodyText) as unknown;
+    if (!isRecord(parsed)) return false;
+    const error = parsed.error;
+    return isRecord(error) && typeof error.code === 'string';
+  } catch {
+    return false;
+  }
+}
+
 export interface DaemonStreamOptions {
   agentId: string;
   history: ChatMessage[];
@@ -1553,6 +1641,25 @@ async function consumeDaemonRun({
 
       if (!resp.ok || !resp.body) {
         const text = await resp.text().catch(() => '');
+        /*
+         * daemon 死了之后,这条路才是真机上最常走的一条 —— 而它以前一进来就收摊。
+         *
+         * 浏览器和 daemon 之间永远隔着一层代理,所以「daemon 不在了」到达客户端时
+         * **不是** fetch 抛错(那是直连才有的形状,只有下面那个 `catch` 认得),
+         * 而是一份代理替它生成的非 2xx 应答:dev 是 500,打包版是 502。
+         * 于是这里第一次拿到非 2xx 就 `return`,5 次预算一次都没用上,
+         * `exhausted` 也永远发不出来 —— 组件 22 那一行和 22-3 那颗〔重新连接〕
+         * 因此在真机上一次都没出现过(用户 2026-08-27)。
+         *
+         * 分流交给 `daemonAnsweredWithError`:daemon 自己答的话是终局的,照旧立刻报错;
+         * 没人答得上来的,就是掉线,按掉线走重连预算。
+         */
+        if (!daemonAnsweredWithError(text)) {
+          reconnects += 1;
+          noteReconnectAttempt();
+          if (reconnects < DAEMON_STREAM_RECONNECT_LIMIT) await waitBeforeReconnect();
+          continue;
+        }
         clearReconnect();
         handlers.onError(new Error(`daemon ${resp.status}: ${text || 'no body'}`));
         return;
@@ -1572,7 +1679,18 @@ async function consumeDaemonRun({
       while (true) {
         let readResult: ReadableStreamReadResult<Uint8Array>;
         try {
-          readResult = await reader.read();
+          /*
+           * 有读超时,不能裸 `await reader.read()`。上游死在流中途时代理会把这条
+           * 响应一直挂着(实测见 DAEMON_STREAM_IDLE_TIMEOUT_MS),裸读会永远停在这里,
+           * 于是「daemon 卡死 / 被杀」在客户端**是隐形的** —— 壳头照旧写着进行中。
+           * 阈值钉在 daemon 的 25s 心跳上,所以长时间不吐东西的正常运行不受影响。
+           */
+          const framed = await readFrameWithIdleDeadline(reader, DAEMON_STREAM_IDLE_TIMEOUT_MS);
+          if (framed === DAEMON_STREAM_IDLE_TIMEOUT) {
+            try { void reader.cancel(); } catch {}
+            break;
+          }
+          readResult = framed;
         } catch (err) {
           // Only catch reader.read() failures — a broken SSE connection
           // (tab backgrounded, proxy idle timeout, network drop). Parsing
