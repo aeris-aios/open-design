@@ -3488,7 +3488,7 @@ export const ar: Dict = {
   'assistant.role': 'المساعد',
   'assistant.workingLabel': 'جاري العمل',
   'assistant.doneLabel': 'تم',
-  'assistant.canceledLabel': 'ملغى',
+  'assistant.canceledLabel': 'تم الإيقاف يدويًا',
   'assistant.copyMarkdown': 'نسخ Markdown الرد',
   'assistant.forkConversation': 'تفرع من هنا',
   'assistant.forkingConversation': 'جارٍ التفرع…',

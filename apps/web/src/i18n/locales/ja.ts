@@ -3488,7 +3488,7 @@ export const ja: Dict = {
   'assistant.role': 'アシスタント',
   'assistant.workingLabel': '作業中',
   'assistant.doneLabel': '完了',
-  'assistant.canceledLabel': 'キャンセル済み',
+  'assistant.canceledLabel': '手動で停止しました',
   'assistant.copyMarkdown': '応答のMarkdownをコピー',
   'assistant.forkConversation': 'ここからフォーク',
   'assistant.forkingConversation': 'フォーク中…',

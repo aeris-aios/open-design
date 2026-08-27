@@ -661,9 +661,9 @@ const arts = (paths: string[], opts: { publish?: boolean } = {}) => {
 
 /**
  * 逐字照抄 `AssistantMessageImpl` 给 `AssistantFeedback` 的那份 `footerProps`
- * (`AssistantMessage.tsx` 的 `showFeedback` 分支)。**特别注意没有 `createdAt`** ——
- * 产品在这条分支上真的没传,所以时间在这几格里不出。这不是夹具漏了,是照实抄的;
- * 补上它等于让陈列页报告一个用户看不到的对齐结果。差异写在第 34 格的注记里。
+ * (`AssistantMessage.tsx` 的 `showFeedback` 分支)。
+ * `createdAt` **不放在默认值里**:产线上两条分支都传了 `message.createdAt`,
+ * 但它是逐格的数据(哪一格摆几点),所以由用得着的那几格自己给。
  */
 type FooterProps = Parameters<typeof AssistantFooter>[0];
 const footer = (over: Partial<FooterProps> = {}): FooterProps => ({
@@ -694,6 +694,21 @@ const fbRow = (rating: 'positive' | 'negative' | null, over: Partial<FooterProps
     modelId="claude-sonnet"
     agentProviderId="claude_code"
     producedFileCount={2}
+  />
+);
+
+/**
+ * 被中断的那一轮(第 #39 格)。**不走 `fbRow`** —— 产线上 `isFeedbackEligible`
+ * 对 `canceled` 判 false,渲染的是没有赞踩的那条分支,连 `.assistant-feedback-wrap`
+ * 那层壳都没有。挂 `AssistantFeedback` 会照出一个用户根本看不到的样子。
+ */
+const stoppedRow = () => (
+  <AssistantFooter
+    {...footer({
+      canceled: true,
+      copyMarkdown: SUMMARY_SHORT,
+      createdAt: Date.UTC(2026, 0, 1, 6, 32),
+    })}
   />
 );
 
@@ -979,11 +994,12 @@ const OUTRO: Cell[] = [
   },
   {
     gid: 39, sub: '15-6', cmp: '回合状态行', state: '这轮被中断 · 状态词说清有没有剩余,绿点转灰', family: '产出收尾',
-    node: () => fbRow(null, { canceled: true, copyMarkdown: SUMMARY_SHORT }),
+    node: () => stoppedRow(),
     notes: [
-      '⚠️ **文案对不上**:产品这一态是 `assistant.canceledLabel` =「已取消」,稿子要的是「已手动停止」;另一档 `assistant.unfinishedLabel` =「已停止,仍有未完成任务」正好是稿子点名反对的写法(「剩没剩,上面那段执行记录本来就写着」)。两条都要换,19 语 + `types.ts`',
-      '⚠️ **赞 / 踩这一格不该出**:稿子中断轮只留 复制 / Fork。产品的 `isFeedbackEligible` 对 `canceled` 判 `isTerminalRunStatus` → **true**,所以两枚照常渲染 —— 这一页照出来的就是这个差。要加这条门会**改反馈埋点的样本口径**,得跟数据侧打招呼',
-      '🐞 **这一格照出来是绿勾 + 绿字**:稿子的 `.fin.mod-stop` 要的是 5px 灰圆点(`--text-faint`)+ `--text-muted` 的字 ——「它不是出事,只是没跑完」。而 `theater.css` 那条换勾的规则只排除了 `data-streaming` 和 `data-unfinished` 两种,**没有排除 canceled**,所以中断的一轮也戴上了「已完成」那枚绿勾。同样**没有在这一轮改**',
+      '**文案已按稿子换**:`assistant.canceledLabel` 从「已取消」改成「已手动停止」——「说清是谁停的」,19 语已补齐。稿子在 CSS 注释里点名反对「仍有未完成任务」那种限定语:剩没剩、剩几步,上面那段执行记录本来就写着',
+      '**赞 / 踩已经不出了**:中断的一轮没有「答得好不好」可评 —— 它压根没答完。判据落在 `isFeedbackEligible` 的 `userStoppedTheTurn` 上,所以这一格挂的是产线真正走的那条分支(`AssistantFooter`,没有 `AssistantFeedback` 那层壳)。**跑挂了的那一轮不在此列**:那是结果,评得动',
+      '**灰点 + 中性字已经对上了**:这一格量出来是 5px 圆点 `--text-faint`(#bdbdbd)+ 状态词 `--text-muted`(#5c5c5c),和稿子逐值相同。字色原来输在层叠上 —— `routines.css` 的 `.app .assistant-footer .assistant-label` 与 theater 的中断档同为 (0,3,0),而 routines 排在后面,旧皮肤那份 `--text-faint` 赢;那条规则的每一句都和 composio 逐字相同,已整条删掉',
+      '右端的 `14:32` 在这一格是**真的贴到右端的**:没有赞踩就没有 `.assistant-feedback-wrap`,整行直接满宽,中间那根弹簧撑得开',
       '第 81 格(组件 20 · 暂停任务)画的是同一件事在流水里的另一半;两格要一起看',
     ],
   },
