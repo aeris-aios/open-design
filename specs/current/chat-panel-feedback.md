@@ -393,7 +393,7 @@
 
 | # | 事 | 状态 |
 |---|---|---|
-| S12 | 等待期间**一句回音都没有** | ✅ **已实现并真机确认** —— 壳带上 `quietMs`(上一件事之后过了多久,纯函数层从已有的秒级 tick 推,组件不自己起计时器);超过 60 秒壳头换成稿子逐字的「上游响应慢，已等 N 秒」,一有东西落下来自动退回。`startedAtMs` 专为「卡在首个 token」那一格服务(每月 5,547 次,事件流里一个带时刻的事都没有)。**〔停止〕那一半不新加控件** —— 输入框那颗停止键一直都在。**超时判定一个字没动。** 红测两份,并撤掉实现复验过。真机:第 61 秒准时出现 |
+| S12 | 等待期间**一句回音都没有** | ✅ **已实现并真机确认** —— 壳带上 `quietMs`(上一件事之后过了多久,纯函数层从已有的秒级 tick 推,组件不自己起计时器);超过 60 秒壳头换成稿子逐字的「上游响应慢，已等 N 秒」,一有东西落下来自动退回。**静默起点是传输层如实登记的「最近一帧什么时候到的」**(`runtime/chat/upstream-activity.ts`)—— 不是事件条数,也不是事件自带的时刻,理由与真机复现见 F-8 的 ②b。`startedAtMs` 专为「卡在首个 token」那一格服务(每月 5,547 次,事件流里一个带时刻的事都没有)。**〔停止〕那一半不新加控件** —— 输入框那颗停止键一直都在。**超时判定一个字没动。** 红测两份,并撤掉实现复验过。真机:第 61 秒准时出现 |
 
 ### F-8 用户真机连点名的一批(2026-08-27 下午)
 
@@ -602,10 +602,42 @@ thinking / tool_input 增量。模型一路吐字,界面报「上游响应慢」
 
 修法:`BuildTurnInput` 新增 `lastEventAtMs` —— 客户端自己观察到的**到达时刻**,
 是传输事实,不依赖任何 agent 填字段;带时刻的事件仍优先(更准),它只在更晚时接手。
-`AssistantMessage` 用事件条数当钥匙取时刻,且只在运行中传。
 
 **这条修的是全家**:规格点名 qwen / deepseek / grok-build / aider / antigravity /
 atomcode / qoder 都不发工具事件,原来它们全会误报。
+
+#### ②b 第一版取到达时刻的方式是错的(web,已修)
+
+到达时刻这个判据没问题,**取它的钥匙**错了:`AssistantMessage` 当时写的是
+`useMemo(() => Date.now(), [displayEvents.length])` —— 事件条数一变就重取。
+可那个数在整段流式期间根本不动。真机 run `7ed15c2f-8ea0-4e55-b7e3-e463037dd868`
+(1129 行落盘)壳头写着「上游响应慢，已等 156 秒」的那一刻,事件流里带时刻的事
+确实停了 161.6 秒(`tool_result` +676.1s → `tool_use` +837.7s),而**这 161.6 秒里
+落了 126 条帧**,平均 0.7 秒一条。三条原因叠在一起:
+
+- `tool_input_delta` 在 `providers/daemon.ts` 就被岔进 `onToolInputDelta`,
+  **不变成 `AgentEvent`**,不进 `message.events`。它是这条 run 里 1134 条 agent 帧
+  中的 624 条,更是那个窗口里 126 条中的 124 条;
+- claude 的 `thinking_delta` 一律空串(这条 run **377/377** 条 `delta: ""`),
+  `appendBufferedAgentDeltas` 的 `if (thinkingDelta)` 把空串挡掉,事件数组
+  **连引用都不换**,连 `useMemo(…, [events])` 都不会重算;
+- 就算带了字,连续的 `text` / `thinking` 会被 `appendCoalescedAgentEvent`
+  合进**最后一条**,长度同样不涨 —— 所以这条对 plain-stream 那批也不成立。
+
+同一份 run 里这种窗口有四个:305.2s / 87.6s / 161.6s / 70.9s,而四个窗口里的
+真实最大静默只有 2.3s / 2.2s / **73.6s** / 2.1s ——「上游真的慢」在这一轮里只发生过
+一次,却报了四次。
+
+修法:静默起点改由**传输层**如实登记 —— `runtime/chat/upstream-activity.ts` 按 run
+记「最近一帧什么时候到的」,`providers/daemon.ts` 在 `sawRunEvent` 那一支叫它
+(keepalive 注释帧**不叫**:那是我们自己的心跳,证不出上游在干活),
+`AssistantMessage` 在既有的每秒 tick 上与 `nowMs` **同刻**取一次。
+登记不到就不传,让 `shellQuiet` 退回轮次开头 ——「卡在首个 token」那一档要的正是这个。
+
+红测 `apps/web/tests/components/chat/s12-upstream-alive.test.tsx`:真实传输层 +
+真实 `AssistantMessage`,帧形状逐字抄自上面那份落盘。正负成对(帧在落 → 不报;
+真空 73.6 秒 → 报;帧回来 → 自己退回;只有 keepalive → 照报;一帧没来 → 从轮次开头算),
+四条 ablation 各自只红该红的那几条。
 
 ### ③ codex 写文件不落行(daemon,已修)
 

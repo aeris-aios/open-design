@@ -3,6 +3,7 @@ import { useCharReveal } from "./chat/useCharReveal";
 import { ExecutionShell } from "./chat/ExecutionShell";
 import { buildTurnBlocks } from "../runtime/chat/build-turn-blocks";
 import type { ExecutionShell as ExecutionShellData } from "../runtime/chat/contract";
+import { upstreamActivityAt } from "../runtime/chat/upstream-activity";
 import { FileOpsSummary } from "./FileOpsSummary";
 import type { ArtifactExportFormat } from "../runtime/chat/artifact-export";
 import {
@@ -530,24 +531,46 @@ export const AssistantMessage = memo(AssistantMessageImpl, areAssistantMessagePr
  *   - status pills
  */
 /**
- * 「现在」按秒往前推,只在 `active` 期间。不活动时返回 undefined ——
- * 让调用方退回「按事件时间戳算」那条路,已经结束的轮次不该有任何定时器。
+ * 壳头那颗秒表的两个读数,每秒一起取一次,只在 `active` 期间走。
  *
- * 为什么不用 `Date.now()` 直接读:React 不会因为墙上时间变了就重渲染。
- * 秒表要自己走,就得有人每秒推它一下。
+ *  · `nowMs` —— 「现在」。不这么推的话 React 不会因为墙上时间变了就重渲染,
+ *    秒表会冻在最后一次事件那一刻,页面上看着像卡死。
+ *  · `lastEventAtMs` —— 上游最近一帧是什么时候到的(S12 的静默起点)。
+ *
+ * **两个读数必须同一刻取。** 分成两个 hook 就是两个 interval、两次 setState,
+ * 而且它们取的「现在」差着毫秒,静默 = now − last 会莫名多出个负数或零头。
+ *
+ * **为什么从 `upstreamActivityAt` 取,而不是数事件条数。**
+ * 上一版这里写的是 `useMemo(() => Date.now(), [displayEvents.length])` ——
+ * 想法没错(到达时刻比事件自带的时刻诚实),但那把钥匙在流式期间根本不动:
+ * `tool_input_delta` 不进事件数组、claude 的空 `thinking_delta` 被挡在门外、
+ * 连续文字被合进最后一条。真机 run `7ed15c2f` 的 161.6 秒窗口里落了 126 条帧,
+ * 而 `displayEvents.length` 一次都没变,于是壳头照报「已等 156 秒」。
+ * 传输层那张表记的是帧到达,与事件加工无关,也与 agent 填不填时刻无关。
+ *
+ * 取不到(没有 runId、或这条 run 一帧都还没来过)就返回 undefined,
+ * 让 `buildTurnBlocks` 退回轮次开头 —— 「卡在首个 token」那一档要的正是这个。
  */
-function useTickingNow(active: boolean): number | undefined {
-  const [now, setNow] = useState<number | undefined>(undefined);
+interface StreamClock {
+  nowMs?: number | undefined;
+  lastEventAtMs?: number | undefined;
+}
+
+function useTickingNow(active: boolean, runId?: string): StreamClock {
+  const [tick, setTick] = useState<StreamClock>({});
   useEffect(() => {
     if (!active) {
-      setNow(undefined);
+      setTick({});
       return;
     }
-    setNow(Date.now());
-    const id = setInterval(() => { setNow(Date.now()); }, 1000);
+    const sample = (): void => {
+      setTick({ nowMs: Date.now(), lastEventAtMs: upstreamActivityAt(runId) ?? undefined });
+    };
+    sample();
+    const id = setInterval(sample, 1000);
     return () => { clearInterval(id); };
-  }, [active]);
-  return now;
+  }, [active, runId]);
+  return tick;
 }
 
 function AssistantMessageImpl({
@@ -642,24 +665,8 @@ function AssistantMessageImpl({
    * 壳内装过程(thinking / 工具行 / done 之前的叙述),壳外只留结论 —— 归属规则全在
    * `buildTurnBlocks` 里,这里不做任何判断。
    */
-  /**
-   * 壳头那颗秒表的「现在」。跑着的时候每秒往前推一格。
-   *
-   * 不喂这个的话,耗时只能算到「最后一次结束时间」—— 一次长工具调用期间没有新事件落下来,
-   * 秒数就冻在那儿不动,页面上看着像卡死;而设计稿里这颗秒表是一直在走的。
-   */
-  const nowMs = useTickingNow(streaming);
-  /**
-   * 最后一条事件**是什么时候到的**。S12 的静默计时要它(见 `BuildTurnInput.lastEventAtMs`)。
-   *
-   * 用事件条数做钥匙:条数一变就说明刚有东西落下来,时刻取那一刻。
-   * 不能去读事件自带的时刻 —— claude 的 thinking / tool_input 增量一条都不带,
-   * 真机 119 条里只有 12 条有,而恰恰是「一路在吐 thinking」那一段最需要这个判据。
-   *
-   * 历史消息重新打开时条数不会再变,这个值就停在挂载那一刻;S12 只在运行中看它,
-   * 所以影响面只有「重开一个还在跑的轮次」那一种,秒表从重开算起,不会误报「等太久」。
-   */
-  const lastEventAtMs = useMemo(() => Date.now(), [displayEvents.length]);
+  /** 壳头那颗秒表的「现在」+ S12 的静默起点,每秒同刻取一次(见 `useTickingNow`)。 */
+  const { nowMs, lastEventAtMs } = useTickingNow(streaming, message.runId);
   const nextTurn = useMemo(() => {
     const turn = buildTurnBlocks({
       events: displayEvents,
@@ -673,7 +680,9 @@ function AssistantMessageImpl({
       // 带时刻的事件,没有这一对起止,壳头就只有一句光秃秃的「已完成」。
       ...(message.createdAt != null ? { startedAtMs: message.createdAt } : {}),
       ...(message.endedAt != null ? { endedAtMs: message.endedAt } : {}),
-      ...(streaming ? { lastEventAtMs } : {}),
+      // 取不到就**不传** —— 让 `shellQuiet` 退回轮次开头,而不是拿一个假的
+      // 「刚刚」把 S12 悄悄关掉(「卡在首个 token」那一档每月 5,547 次)。
+      ...(streaming && lastEventAtMs != null ? { lastEventAtMs } : {}),
     });
     return {
       shells: turn.filter((b): b is ExecutionShellData => b.kind === 'shell'),

@@ -82,6 +82,7 @@ import {
   type PersistedArtifactFileRef,
 } from '../artifacts/strip';
 import { trackRunProgress, trackRunStart, trackRunTerminal } from '../observability/stuck-run';
+import { markUpstreamActivity } from '../runtime/chat/upstream-activity';
 
 const MAX_TRANSCRIPT_MESSAGE_CHARS = 12_000;
 const LARGE_TOOL_RESULT_CHARS = 8_000;
@@ -1567,6 +1568,18 @@ async function consumeDaemonRun({
           sawStreamProgress = true;
           sawRunEvent = true;
           trackRunProgress(runId);
+          /*
+           * S12 的静默计时就认这一刻 —— **上游给过我们东西**的唯一如实证据。
+           *
+           * 必须记在这里,不能记在事件落进 `message.events` 之后:那之后
+           * `tool_input_delta` 已经被岔走、空 thinking 已经被挡掉、连续文字
+           * 已经被合并,真机 161.6 秒的窗口里数组一次都不会变。理由与真机
+           * 数据见 `runtime/chat/upstream-activity.ts`。
+           *
+           * 也必须在 `parsed.kind !== 'event'` 这一刀**之后**:keepalive 注释帧
+           * 是我们自己的心跳,证不出上游还在干活,拿它归零就等于把 S12 关掉。
+           */
+          markUpstreamActivity(runId);
           if (parsed.id) {
             lastEventId = parsed.id;
             onRunEventId?.(parsed.id);

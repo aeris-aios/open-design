@@ -10,6 +10,11 @@
  * 一条时刻都不带。模型一直在吐字,界面却报「上游响应慢」。
  *
  * 所以判据换成客户端自己知道的**到达时刻**:`lastEventAtMs`。
+ *
+ * ⚠️ 这里测的是**纯函数怎么用这个入参**,不是它从哪来。喂它的人必须是传输层
+ * (`providers/daemon.ts` → `runtime/chat/upstream-activity.ts`),不能是
+ * 「事件条数变了没」—— 那把钥匙在流式期间根本不动,真机复现与四条 ablation
+ * 见 `tests/components/chat/s12-upstream-alive.test.tsx`。
  * 「最近有没有东西落下来」是传输事实,不该依赖事件里那个大部分 agent 都不填的字段。
  * 带时刻的事件仍然优先(它更准),到达时刻只在它更晚时接手。
  */
