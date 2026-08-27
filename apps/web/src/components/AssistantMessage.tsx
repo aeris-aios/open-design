@@ -747,10 +747,16 @@ function AssistantMessageImpl({
   /*
    * `produced` 保持原样 —— 它是 daemon 结算出的**权威清单**,语义不能动。
    *
-   * 收窄发生在两个**消费点**,不是在这里:结果面板有两条互斥的渲染路,
-   * 有写 / 改工具记录时走 `FileOpsSummary`(`summaryArtifactOps`),没有时走
-   * `ProducedFiles`(`displayedProduced`)。两条各收窄一次,各有各的测试和
-   * 各自的 ablation;在这里收窄会让其中一条被收两遍,那条的测试就永远红不了。
+   * 收窄发生在两个**消费点**,不是在这里:结果面板有两条互斥的输入路 ——
+   * 有写 / 改工具记录时用 `summaryArtifactOps`,没有时用 `displayedProduced`
+   * (见下面 `turnArtifactPanelEntries` 的三分支)。两条各收窄一次,各有各的
+   * 测试和各自的 ablation;在这里收窄会让其中一条被收两遍,那条的测试就永远
+   * 红不了。
+   *
+   * 注:这两条路原来分别渲染成 `FileOpsSummary` 和 `ProducedFiles` 两个组件,
+   * 后者已被产物卡片对齐那一轮删掉、两条汇进同一个 `FileOpsSummary`。
+   * **路还是两条、收窄仍是各一次**,只是终点合并了 —— 这句留着,免得下一个人
+   * 看到「一个组件」就以为可以把两次收窄合并成一次。
    */
   const produced = rawProduced;
   const displayedProduced = useMemo(
