@@ -12862,10 +12862,28 @@ export async function startServer({
       'text_delta',
       'thinking_delta',
     ]);
+    /*
+     * `first_token` only. `first_visible_output` has exactly ONE owner: the
+     * `send()` path, which asks `runLifecycleMarkersForStreamEvent` whether the
+     * frame actually carried characters.
+     *
+     * Co-stamping both here made the two boundaries the same number by
+     * construction, and Claude is the case where they genuinely differ: its
+     * extended thinking arrives as `thinking_delta` frames whose `thinking` is
+     * the empty string (20 of 20 frames on a 26.5s turn measured straight off
+     * the CLI). A token really was produced — thinking tokens are billed — so
+     * `first_token` belongs here; nothing was drawn, so the pixel boundary does
+     * not. Run 1cc48454-e9a7-411a-981e-4325fcca95dd reported
+     * `time_to_first_visible_output_ms: 9926` for a turn whose first on-screen
+     * character landed at 46,729ms.
+     *
+     * A runtime whose visible output never reaches `send()` simply leaves the
+     * mark unset, and `summarizeRunTimingAnalytics` already falls back to
+     * `firstTokenAt` — i.e. exactly the value this line used to write.
+     */
     const noteFirstTokenAt = (timestamp = Date.now()) => {
       if (run.analyticsTelemetry?.firstTokenAt) return;
       lifecycle.mark('first_token', timestamp);
-      lifecycle.mark('first_visible_output', timestamp);
     };
     // Subsegment markers inside `processSpawnedAt -> firstTokenAt` (#3408 §4).
     // `cliReadyAt` is the first well-formed adapter output and is stamped for
