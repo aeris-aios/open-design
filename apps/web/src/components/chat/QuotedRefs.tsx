@@ -20,8 +20,12 @@ export function QuotedRefs({ quotes, onClear }: QuotedRefsProps): ReactElement |
   if (quotes.length === 0) return null;
   return (
     <span className={styles.refs} data-testid="chat-quoted-refs">
-      <svg className={styles.icon} viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-        <path d="M4.58341 17.3211C3.55316 16.2274 3 15 3 13.0104C3 9.51092 5.45651 6.37372 9.03059 4.82324L9.92328 6.20073C6.58804 8.00532 5.93618 10.3459 5.67564 11.8202C6.21263 11.5433 6.91558 11.4463 7.60471 11.5102C9.40908 11.6776 10.8312 13.1591 10.8312 15C10.8312 16.933 9.26416 18.5 7.33116 18.5C6.2581 18.5 5.23196 18.0095 4.58341 17.3211ZM14.5834 17.3211C13.5532 16.2274 13 15 13 13.0104C13 9.51092 15.4565 6.37372 19.0306 4.82324L19.9233 6.20073C16.588 8.00532 15.9362 10.3459 15.6756 11.8202C16.2126 11.5433 16.9156 11.4463 17.6047 11.5102C19.4091 11.6776 20.8312 13.1591 20.8312 15C20.8312 16.933 19.2642 18.5 17.3312 18.5C16.2581 18.5 15.232 18.0095 14.5834 17.3211Z" />
+      {/* 稿子 `.refs .ic` 是**描边的对话气泡**,不是实心引号。
+          原来这里画的是 ❝ —— 用户第一眼就问「注释的样式怎么是这样的??」。
+          气泡说的是「这是从对话里摘出来的一段」,引号说的是「这是引文」;
+          稿子选的是前者,而这一族的其它记号(浮条、芯片)也都是描边的。 */}
+      <svg className={styles.icon} viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden>
+        <path d="M20 15a2 2 0 01-2 2H8l-4 4V5a2 2 0 012-2h12a2 2 0 012 2z" />
       </svg>
       <span>{t('chat.quote.count', { count: quotes.length })}</span>
       <button
@@ -31,7 +35,8 @@ export function QuotedRefs({ quotes, onClear }: QuotedRefsProps): ReactElement |
         aria-label={t('chat.quote.removeAria')}
         title={t('chat.quote.removeAria')}
       >
-        <Icon name="close" size={11} />
+        {/* 稿子 `.del svg { width: 10px; height: 10px }` */}
+        <Icon name="close" size={10} />
       </button>
       <span className={styles.pop}>
         <ol>

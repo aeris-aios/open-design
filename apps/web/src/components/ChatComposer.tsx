@@ -143,6 +143,11 @@ import { fetchConnectorCatalogSnapshot } from './connectors-state';
 import { PlaceholderCarousel } from './home-hero/PlaceholderCarousel';
 import type { PlaceholderScenario } from './home-hero/placeholderScenarios';
 import type { ChatQuote } from '../runtime/chat/quote-selection';
+import {
+  loadComposerDraftExtras,
+  saveComposerDraftExtras,
+  type ComposerDraftContext,
+} from '../runtime/chat/composer-draft';
 import { QuotedRefs } from './chat/QuotedRefs';
 
 type TranslateFn = (key: keyof Dict, vars?: Record<string, string | number>) => string;
@@ -150,6 +155,39 @@ type TranslateFn = (key: keyof Dict, vars?: Record<string, string | number>) => 
 interface TrackedWorkspaceLinkedDir {
   dir: string;
   previousLinkedDirs: string[];
+}
+
+/**
+ * 一批 id 落到当前已加载的列表上:能对上的变成对象,对不上的原样退回来。
+ *
+ * 两条恢复路径共用它 —— 队列里点「编辑」和刷新之后重建,拿的是同一套判据,
+ * 不会出现「队列那边认得这个技能、刷新这边不认」这种分叉。
+ *
+ * 「对不上」有两种截然不同的原因,这个函数**不区分**,由调用方决定怎么办:
+ *   · 真的没了(技能卸了 / MCP 删了)—— 该丢
+ *   · 列表还没拉回来(输入框的插件 / MCP / 连接器是**懒加载**的,首屏就是空的)
+ *     —— 这时候丢等于把用户挂上去的绑定无声吞掉,所以刷新那条路径要留着重试
+ */
+function resolveStagedById<T extends { id: string }>(
+  ids: string[] | undefined,
+  pool: T[],
+): { resolved: T[]; unresolved: string[] } {
+  const resolved: T[] = [];
+  const unresolved: string[] = [];
+  for (const id of ids ?? []) {
+    const hit = pool.find((item) => item.id === id);
+    if (hit) resolved.push(hit);
+    else unresolved.push(id);
+  }
+  return { resolved, unresolved };
+}
+
+/** 按 id 合并进已挂的一批,已经在里面的不重复添加(用户手动挂的优先保留)。 */
+function mergeStagedById<T extends { id: string }>(current: T[], incoming: T[]): T[] {
+  if (incoming.length === 0) return current;
+  const seen = new Set(current.map((item) => item.id));
+  const additions = incoming.filter((item) => !seen.has(item.id));
+  return additions.length > 0 ? [...current, ...additions] : current;
 }
 
 function dedupeWorkspaceContextItems(items: WorkspaceContextItem[]): WorkspaceContextItem[] {
@@ -255,6 +293,12 @@ interface Props {
    */
   quotes?: ChatQuote[];
   onClearQuotes?: () => void;
+  /**
+   * 刷新之后把落盘的引用还给宿主。引用的 state 在宿主(ChatPane)那儿,但**生命周期
+   * 一直由输入框驱动**:发送时就是输入框调 `onClearQuotes` 清掉的。恢复走同一个方向,
+   * 才不会出现「谁负责把它捞回来」这种两边都以为对方管的空档。
+   */
+  onRestoreQuotes?: (quotes: ChatQuote[]) => void;
   projectId: string | null;
   projectFiles: ProjectFile[];
   activeProjectFileName?: string | null;
@@ -518,6 +562,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
       onShowToast,
       quotes,
       onClearQuotes,
+      onRestoreQuotes,
     },
     ref
   ) {
@@ -530,6 +575,12 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
         : null;
     const activeFileDisplayName = activeFileContext ? lastPathSegment(activeFileContext) : null;
     const [draft, setDraft] = useState(() => initialDraft ?? loadComposerDraft(draftStorageKey) ?? "");
+    /*
+     * 刷新之后要回来的**整份**负载。读一次就够 —— 会话一换,`ProjectView` 会拿
+     * `${project.id}:${activeConversationId}` 当 key 把整棵 ChatPane 重挂,
+     * 这个 useRef 跟着重建,所以「按会话隔离」是挂载边界保证的,不靠这里判。
+     */
+    const restoredExtrasRef = useRef(loadComposerDraftExtras(draftStorageKey));
     const [placeholderScenario, setPlaceholderScenario] = useState<PlaceholderScenario | null>(null);
     const composerRootRef = useRef<HTMLDivElement | null>(null);
     const pendingSessionModeRef = useRef<ChatSessionMode | null>(null);
@@ -558,16 +609,25 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
     // conversation switches) so the event measures real chat-panel
     // entries rather than ChatComposer remounts. See PR #2285 review
     // 2026-05-20 04:08 for the rationale.
-    const [staged, setStaged] = useState<ChatAttachment[]>([]);
+    // 附件存的是**项目里的相对路径**,不是文件本身 —— 刷新之后原样成立,直接回来。
+    const [staged, setStaged] = useState<ChatAttachment[]>(
+      () => normalizeChatAttachmentOrders(restoredExtrasRef.current.attachments),
+    );
     // Manual editor height set by dragging the shell's gray backdrop up/down.
     // null = the default auto-grow min/max behavior.
     const [manualEditorHeight, setManualEditorHeight] = useState<number | null>(null);
-    const nextAttachmentOrderRef = useRef(0);
+    const nextAttachmentOrderRef = useRef(nextChatAttachmentOrder(restoredExtrasRef.current.attachments));
     const [libraryPickerOpen, setLibraryPickerOpen] = useState(false);
     const [figmaModalOpen, setFigmaModalOpen] = useState(false);
     const [figmaHelpOpen, setFigmaHelpOpen] = useState(false);
     const [projectReferenceOpen, setProjectReferenceOpen] = useState(false);
-    const [stagedVisualComments, setStagedVisualComments] = useState<ChatCommentAttachment[]>([]);
+    /*
+     * 只恢复**输入框自己攒的**那批标注。宿主用 `commentAttachments` 传进来的那批由
+     * daemon 持有,刷新之后本来就会自己回来 —— 一起存下来会在刷新后变成两份。
+     */
+    const [stagedVisualComments, setStagedVisualComments] = useState<ChatCommentAttachment[]>(
+      () => restoredExtrasRef.current.commentAttachments,
+    );
     const streamingAnnotationSendPendingRef = useRef(false);
     // Remembers the entry_from that the deferred streaming send must carry once
     // it flushes. The Mark draw-overlay tags 'mark' synchronously; without this
@@ -654,8 +714,13 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
     const [stagedMcpServers, setStagedMcpServers] = useState<McpServerConfig[]>([]);
     const [stagedConnectors, setStagedConnectors] = useState<ConnectorDetail[]>([]);
     const linkedDirs = projectMetadata?.linkedDirs ?? [];
+    // 工作区上下文条目是自包含的(id / kind / label / path),存下来直接还原,
+    // 和宿主本轮给的 `initialWorkspaceContexts` 合并去重。
     const [stagedWorkspaceContexts, setStagedWorkspaceContexts] = useState<WorkspaceContextItem[]>(
-      () => dedupeWorkspaceContextItems(initialWorkspaceContexts),
+      () => dedupeWorkspaceContextItems([
+        ...initialWorkspaceContexts,
+        ...restoredExtrasRef.current.context.workspaceItems,
+      ]),
     );
     const [workspaceLinkedDirAdds, setWorkspaceLinkedDirAdds] = useState<Record<string, TrackedWorkspaceLinkedDir>>(
       () => trackedWorkspaceLinkedDirsForContexts(initialWorkspaceContexts, linkedDirs),
@@ -758,7 +823,10 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
     // surface the user bounces off, or a background chat) never pays for the
     // full plugin-manifest list. Latches once true and never resets.
     const [composerEngaged, setComposerEngaged] = useState(
-      () => (draft ?? '').trim().length > 0,
+      () => (draft ?? '').trim().length > 0
+        || restoredExtrasRef.current.context.skillIds.length > 0
+        || restoredExtrasRef.current.context.mcpServerIds.length > 0
+        || restoredExtrasRef.current.context.connectorIds.length > 0,
     );
     // Match HomeHero's empty-editor behavior: once the user places the real
     // caret in this composer, hide/pause the decorative typewriter overlay so
@@ -889,6 +957,98 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
     useEffect(() => {
       saveComposerDraft(draftStorageKey, draft);
     }, [draftStorageKey, draft]);
+
+    /*
+     * ── 刷新之后把整份草稿写回去 ──────────────────────────────────────────
+     *
+     * 正文、附件、标注、工作区条目在 `useState` 初值里就已经回来了(它们自包含,
+     * 不需要问任何人)。这里处理剩下两件**需要等**的事。
+     */
+
+    /** 还没落到芯片上的绑定 id。列表回来一批就消一批,始终对不上的就此丢掉。 */
+    const pendingRestoredContextRef = useRef<ComposerDraftContext | null>(
+      restoredExtrasRef.current.context.skillIds.length > 0
+        || restoredExtrasRef.current.context.mcpServerIds.length > 0
+        || restoredExtrasRef.current.context.connectorIds.length > 0
+        ? restoredExtrasRef.current.context
+        : null,
+    );
+
+    /*
+     * 技能 / MCP / 连接器只存了 id(存完整对象等于把 `McpServerConfig.env` 里的
+     * 用户 API key 写进 localStorage),所以要等对应的列表拉回来才能变成芯片。
+     * 这几份列表是**懒加载**的:首屏一律是空数组。要是在挂载那一下就解析,
+     * 用户挂上去的每一枚 MCP / 连接器芯片都会被无声吞掉 —— 看起来像「存了个寂寞」。
+     * 所以这里跟着列表变化重试,解析掉的从待办里划掉,划不掉的留着等下一批。
+     */
+    useEffect(() => {
+      const pending = pendingRestoredContextRef.current;
+      if (!pending) return;
+      const nextSkills = resolveStagedById(pending.skillIds, skills);
+      const nextMcp = resolveStagedById(pending.mcpServerIds, mcpServers);
+      const nextConnectors = resolveStagedById(pending.connectorIds, connectors);
+      if (nextSkills.resolved.length > 0) {
+        setStagedSkills((current) => mergeStagedById(current, nextSkills.resolved));
+      }
+      if (nextMcp.resolved.length > 0) {
+        setStagedMcpServers((current) => mergeStagedById(current, nextMcp.resolved));
+      }
+      if (nextConnectors.resolved.length > 0) {
+        setStagedConnectors((current) => mergeStagedById(current, nextConnectors.resolved));
+      }
+      pendingRestoredContextRef.current =
+        nextSkills.unresolved.length + nextMcp.unresolved.length + nextConnectors.unresolved.length > 0
+          ? {
+              skillIds: nextSkills.unresolved,
+              mcpServerIds: nextMcp.unresolved,
+              connectorIds: nextConnectors.unresolved,
+              workspaceItems: [],
+            }
+          : null;
+    }, [skills, mcpServers, connectors]);
+
+    /*
+     * 引用的 state 住在宿主那儿,所以只能还回去。挂载一次就够 ——
+     * 之后是用户在操作,再塞回去会把人家刚清掉的东西又变出来。
+     */
+    const restoredQuotesHandedBackRef = useRef(false);
+    useEffect(() => {
+      if (restoredQuotesHandedBackRef.current) return;
+      restoredQuotesHandedBackRef.current = true;
+      const restored = restoredExtrasRef.current.quotes;
+      if (restored.length === 0) return;
+      onRestoreQuotes?.(restored);
+    }, [onRestoreQuotes]);
+
+    /*
+     * 攒上去的东西跟着写下去。`reset()` 把这几样清空之后,这里写出的是空负载 ——
+     * 空负载不落盘,于是「发出去了」和「草稿没了」是同一件事,不需要单独去 remove。
+     */
+    useEffect(() => {
+      saveComposerDraftExtras(draftStorageKey, {
+        attachments: staged,
+        commentAttachments: stagedVisualComments,
+        quotes: quotes ?? [],
+        context: {
+          skillIds: stagedSkills.map((item) => item.id),
+          mcpServerIds: stagedMcpServers.map((item) => item.id),
+          connectorIds: stagedConnectors.map((item) => item.id),
+          // 只存**用户自己挂上去的**那几条。当前工作区那一条来自
+          // `activeWorkspaceContext`,刷新之后宿主会重新给 —— 存下来会让它变成
+          // 摘不掉的常驻项(用户「×」掉之后下次刷新又长回来)。
+          workspaceItems: stagedWorkspaceContexts,
+        },
+      });
+    }, [
+      draftStorageKey,
+      staged,
+      stagedVisualComments,
+      quotes,
+      stagedSkills,
+      stagedMcpServers,
+      stagedConnectors,
+      stagedWorkspaceContexts,
+    ]);
 
     useEffect(() => {
       if (previousWorkspaceContextIdRef.current === activeWorkspaceContextId) return;
@@ -1228,27 +1388,13 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
           // since queueing) are skipped rather than crashing. The applied
           // plugin is restored from its full snapshot, so it needs no lookup.
           const ctx = meta?.context;
-          setStagedSkills(
-            ctx?.skillIds
-              ? ctx.skillIds
-                  .map((id) => skills.find((s) => s.id === id))
-                  .filter((s): s is SkillSummary => Boolean(s))
-              : [],
-          );
-          setStagedMcpServers(
-            ctx?.mcpServerIds
-              ? ctx.mcpServerIds
-                  .map((id) => mcpServers.find((s) => s.id === id))
-                  .filter((s): s is McpServerConfig => Boolean(s))
-              : [],
-          );
-          setStagedConnectors(
-            ctx?.connectorIds
-              ? ctx.connectorIds
-                  .map((id) => connectors.find((c) => c.id === id))
-                  .filter((c): c is ConnectorDetail => Boolean(c))
-              : [],
-          );
+          // 队列这条路径是**一次性**解析:点「编辑」时懒加载的列表早就回来了,
+          // 对不上就是真的没了。刷新那条路径首屏列表还是空的,处理方式不同 ——
+          // 见 `pendingRestoredContextRef`。
+          setStagedSkills(resolveStagedById(ctx?.skillIds, skills).resolved);
+          setStagedMcpServers(resolveStagedById(ctx?.mcpServerIds, mcpServers).resolved);
+          setStagedConnectors(resolveStagedById(ctx?.connectorIds, connectors).resolved);
+          pendingRestoredContextRef.current = null;
           setStagedWorkspaceContexts(ctx?.workspaceItems ?? []);
           const restoredAppliedPlugin = meta?.appliedPluginSnapshot ?? null;
           setActiveAppliedPlugin(restoredAppliedPlugin);
