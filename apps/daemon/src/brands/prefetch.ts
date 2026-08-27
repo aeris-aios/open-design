@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { harvestFonts, type FontFile } from "./fonts.js";
 import { fetchExternalBrandAsset } from "./safe-fetch.js";
+import { endOfTag, findRealTagOffset, HTML_TAG_PATTERNS } from '@open-design/contracts/runtime/html-injection-points';
 
 /**
  * Deterministic brand-material prefetch. Given a site URL, fetch the HTML +
@@ -228,11 +229,21 @@ function defuseScripts(html: string): string {
   return html.replace(/<script\b/gi, '<script type="text/od-defused-script"');
 }
 
+/** Text of the document's own <title>, or "" — never one held in a string. */
+function readRealTitleText(html: string): string {
+  const start = findRealTagOffset(html, HTML_TAG_PATTERNS.titleOpen);
+  if (start < 0) return "";
+  const openEnd = endOfTag(html, start);
+  if (openEnd < 0) return "";
+  const close = html.toLowerCase().indexOf("</title", openEnd + 1);
+  return close < 0 ? "" : html.slice(openEnd + 1, close);
+}
+
 export function previewablePrefetchHtml(html: string, cap = HTML_CAP): string {
   const raw = html.slice(0, cap);
   const out = defuseScripts(raw);
-  if (/<body\b/i.test(out) || raw.length < cap) return out;
-  const title = decodeEntities(/<title[^>]*>([\s\S]*?)<\/title>/i.exec(out)?.[1] ?? "").trim();
+  if (findRealTagOffset(out, HTML_TAG_PATTERNS.bodyOpen) >= 0 || raw.length < cap) return out;
+  const title = decodeEntities(readRealTitleText(out)).trim();
   return [
     "<!doctype html>",
     "<html>",
