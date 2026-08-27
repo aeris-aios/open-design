@@ -13,6 +13,9 @@ export interface TabScopeLoginStatus {
    *  session with no `user` object at all (see below). */
   profile: string;
   user: { id?: string; email?: string } | null;
+  /** Non-secret digest of the active credential. The only thing that separates
+   *  two accounts on one profile when the session carries no `user` at all. */
+  credentialRevision?: string;
 }
 
 /** Seed value for `previousAccountBucket` on the very first call — distinct
@@ -128,8 +131,20 @@ export interface TabIdentityScopeResult {
  */
 export function deriveAccountBucket(status: TabScopeLoginStatus): string {
   if (!status.loggedIn) return 'anon';
+  // Ordered by how tightly each answer is bound to an ACCOUNT. A user id or
+  // email survives re-authentication, so they come first — keying on the
+  // credential there would call a routine token refresh an account switch.
+  //
+  // An env-backed session is authenticated with `user: null` and no fabricated
+  // identity, and its credential digest is the only thing that distinguishes
+  // two accounts on one profile. The daemon's docblock on `credentialRevision`
+  // is explicit that this is why the field exists: without it, a switch that
+  // only rewrites the Settings-backed env reuses the previous account's cached
+  // data. The profile is a CLI environment, not an account, so it stays where
+  // it was — the last resort, for a session that offers nothing better.
   return status.user?.id?.trim()
     || status.user?.email?.trim()
+    || status.credentialRevision?.trim()
     || `profile:${status.profile}`;
 }
 

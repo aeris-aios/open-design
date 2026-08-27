@@ -383,6 +383,59 @@ describe('App AMR polling', () => {
     expect(adoptableSnapshot('zh-CN')).toBeNull();
   });
 
+  it('retires the previous account\'s cache when an identity-less credential switches account', async () => {
+    // Same boundary as the sibling above, on the shape that carries no identity
+    // to compare. An env-backed session is authenticated with `user: null`, so
+    // both sides of a switch that only rewrites the Settings-backed env derive
+    // the same profile — and the profile is a CLI environment, not an account.
+    // The credential digest is what separates them, which is the reason the
+    // daemon returns it.
+    resetMessageCenterSnapshot();
+    mockedFetchAmrModels.mockReset();
+    mockedFetchAmrModels.mockResolvedValue({
+      source: 'remote',
+      refreshing: false,
+      models: [{ id: 'remote-a', label: 'remote-a' }],
+    });
+
+    const envAccountA = {
+      loggedIn: true,
+      loginInFlight: false,
+      profile: 'local',
+      user: null,
+      credentialRevision: 'revision-a',
+      configPath: '/tmp/amr-config.json',
+    };
+    const envAccountB = { ...envAccountA, credentialRevision: 'revision-b' };
+    let current: unknown = envAccountA;
+    mockedFetchVelaLoginStatus.mockImplementation(async () => (
+      stampStatusObservation({ ...(current as object) }, issueStatusObservation()) as never
+    ));
+
+    render(<App />);
+    await waitFor(() => expect(currentAuthoritativeLoggedIn()).toBe(true));
+    await act(async () => { await new Promise((r) => setTimeout(r, 30)); });
+
+    publishSnapshot({
+      at: Date.now(),
+      accountGeneration: currentWorkspaceAccountGeneration(),
+      locale: 'zh-CN',
+      loggedIn: true,
+      messages: [],
+      readIds: new Set(['env-account-a-row']),
+      pendingReadIds: new Set(),
+    });
+    expect(adoptableSnapshot('zh-CN')).not.toBeNull();
+
+    current = envAccountB;
+    await act(async () => {
+      window.dispatchEvent(new Event(AMR_LOGIN_STATUS_EVENT));
+      await new Promise((r) => setTimeout(r, 30));
+    });
+
+    expect(adoptableSnapshot('zh-CN')).toBeNull();
+  });
+
   it('keeps the authoritative auth mode signed out when the message centre observed the end first', async () => {
     // `applyAmrLoginStatus` is not the only publisher of the authority:
     // `MessageCenter.sync` reads the auth mode itself and publishes what it got.
