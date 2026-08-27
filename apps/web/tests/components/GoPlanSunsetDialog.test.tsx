@@ -95,8 +95,8 @@ describe('GoPlanSunsetDialog', () => {
   it.each([
     {
       locale: 'en' as const,
-      title: 'Notice: Go subscriptions are being discontinued',
-      decision: 'Stop selling new Go subscriptions, effective immediately',
+      title: 'Notice: Go subscriptions are ending',
+      decision: 'New Go subscriptions end today',
       acknowledge: 'Got it',
     },
     {
@@ -117,6 +117,22 @@ describe('GoPlanSunsetDialog', () => {
     expect(screen.getByRole('heading', { name: title })).toBeTruthy();
     expect(screen.getByText(decision)).toBeTruthy();
     expect(screen.getByRole('button', { name: acknowledge })).toBeTruthy();
+  });
+
+  it('renders the product-approved English announcement copy', () => {
+    renderDialog(vi.fn(async () => undefined), 'en');
+
+    [
+      'Notice: Go subscriptions are ending',
+      'We’ve heard your feedback and recognize that Go’s allowance rules and product experience need improvement. We’re sorry.',
+      'What’s changing',
+      'New Go subscriptions end today',
+      'Existing subscribers will receive full refunds by August 31; Go access ends after refund',
+      'Other plans are unaffected',
+      'Refunds return to the original payment method; timing depends on the provider. Thank you for your feedback and support.',
+    ].forEach((copy) => expect(screen.getByText(copy)).toBeTruthy());
+    expect(screen.getByRole('button', { name: 'View other plans' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Got it' })).toBeTruthy();
   });
 
   it('tracks Pricing attribution without consuming the announcement', () => {
