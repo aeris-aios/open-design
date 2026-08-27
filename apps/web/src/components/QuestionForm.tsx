@@ -24,6 +24,11 @@ import {
   type VisualStyleContext,
   type VisualStyleVariant,
 } from '../runtime/visual-style-catalog';
+import {
+  VISUAL_STYLE_BATCH_SIZE,
+  resolveVisualStyleBatch,
+  rotateVisualStyleBatch,
+} from '../runtime/visual-style-deck';
 import { Icon } from './Icon';
 
 export type QuestionFormInteraction =
@@ -1097,7 +1102,6 @@ function CustomChoiceInput({
   );
 }
 
-const VISUAL_STYLE_PAGE_SIZE = 4;
 /**
  * 叠放态的手势常量，逐个取自交付稿 `docs/design/chat-panel-next.html` 里
  * 那段 `visual-fan` 脚本：拖过 `THROW` 就当你要翻页，剩下的路交给动效；
@@ -1170,26 +1174,46 @@ function VisualStylePicker({
   submitSlot?: ReactNode;
 }) {
   const t = useT();
-  const [offset, setOffset] = useState(0);
+  /*
+   * 这一沓里放的是【这一批的 6 张】,不是整份目录(2026-08-27 产品口径:
+   * 「点击换一批时,顺序从 22 个里每次挑 6 个出来」)。挑哪 6 张、
+   * 「换一批」怎么换、选中的那张怎么钉住,全在 `runtime/visual-style-deck.ts`,
+   * 那边有逐条的理由和单测。
+   *
+   * `batchHint` 只是【提示】不是真相:每次渲染都要 `resolveVisualStyleBatch`
+   * 修一遍 —— 目录可能换了(切换产物类型),「随机」也可能从整份目录里
+   * 抽中一张不在牌面上的卡,那张必须被拉进来,不然用户抽中了却看不见、取消不掉。
+   */
+  const allValues = cards.map((card) => card.value);
+  /*
+   * 【首屏就要有一份真的牌面】,不能拿 `null` 当起点。
+   *
+   * `resolveVisualStyleBatch` 在没有上一批可参照时,只能把选中的值塞进**第一个空槽**——
+   * 于是「取消选择」会当场把那张卡挪到槽 0,牌面跟着重排,用户点下去的那一下
+   * 看起来像没生效(实测:选满两张再取消第一张,第二张会跳到最前面,而它是选中的,
+   * 于是最前面那张仍然带着勾)。存一份初始牌面之后,`current` 永远是真的,
+   * 钉住的那张就只会待在它自己的槽里。
+   */
+  const [batchHint, setBatchHint] = useState<string[]>(() =>
+    resolveVisualStyleBatch({ all: allValues, current: null, keep: value }),
+  );
+  /** 下一次「换一批」从目录的第几张开始补。 */
+  const [cursor, setCursor] = useState(0);
   /** 换过一批 / 替人随机挑过之后，把这一沓翻回第一张 —— 见 VisualDirectionStack。 */
   const [stackResetToken, setStackResetToken] = useState(0);
   /** 「随机」抽中的那张 —— 交给这一沓翻到最前面(见 `pickRandomStyle`) */
   const [revealValue, setRevealValue] = useState<string | undefined>(undefined);
-  const selectedCards = cards.filter((card) => value.includes(card.value));
   const customValue =
     value.find((candidate) => !cards.some((card) => card.value === candidate)) ?? '';
-  /*
-   * **整份目录都进这一沓**(2026-08-26 裁决:「左右切换的卡片列表直接渲染 22 个不就行了」)。
-   *
-   * 稿子只画 4 张是**模拟数据**,不是规格 —— 设计同学不读代码,他们给的是形态,
-   * 数量得按真实目录规模自己想清楚。原来按 4 张一页分页,于是底栏多出一颗
-   * 稿子没有的「+22」,而左右箭头翻的还只是这一页里的 4 张。
-   *
-   * `offset` 仍然保留:「换一批」把这一沓整体转过去,不再是「换到下一页」。
-   */
-  const compactCards = Array.from({ length: cards.length }, (_, index) =>
-    cards[(offset + index) % cards.length]!,
-  );
+  const byValue = new Map(cards.map((card) => [card.value, card] as const));
+  const batchValues = resolveVisualStyleBatch({
+    all: allValues,
+    current: batchHint,
+    keep: value,
+  });
+  const compactCards = batchValues
+    .map((candidate) => byValue.get(candidate))
+    .filter((card): card is VisualStyleCard => card !== undefined);
 
   /** 每张卡交给叠放外壳的那一份：值、方向名、预览面，以及自己能不能点。 */
   const stackOptions: VisualDirectionOption[] = compactCards.map((card) => ({
@@ -1207,14 +1231,25 @@ function VisualStylePicker({
   }));
 
   function shuffle() {
-    // 只有一张的时候转不动;不再按「一页 4 张」判
-    if (cards.length <= 1) return;
+    // 目录还不够一批的时候没得换 —— 牌面上本来就是全部
+    if (cards.length <= VISUAL_STYLE_BATCH_SIZE) return;
     onInteraction?.({
       element: 'visual_style_refresh',
       questionId,
       styleContext: context,
     });
-    setOffset((current) => (current + VISUAL_STYLE_PAGE_SIZE) % cards.length);  // 转过 4 张,不是换一页
+    const next = rotateVisualStyleBatch({
+      all: allValues,
+      current: batchValues,
+      keep: value,   // 选中的那张钉住:轮走了就再也点不到,于是取消不掉
+      cursor,
+    });
+    setBatchHint(next.batch);
+    setCursor(next.cursor);
+    /* 翻页位置归零 —— 不然新的一批还压在旧的翻页位置上,最前面那张是第三张。
+       `revealValue` 也要清掉:它是「随机」留下的,不清的话这一沓会去找一张
+       可能已经不在牌面上的卡。 */
+    setRevealValue(undefined);
     setStackResetToken((current) => current + 1);
   }
 
@@ -1264,7 +1299,7 @@ function VisualStylePicker({
       size="sm"
       className="qf-visual-foot-action"
       data-action="reshuffle"
-      disabled={disabled || cards.length <= 1}
+      disabled={disabled || cards.length <= VISUAL_STYLE_BATCH_SIZE}
       onClick={shuffle}
     >
       {t('qf.visualReshuffle')}

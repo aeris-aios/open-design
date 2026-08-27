@@ -19,6 +19,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { QuestionFormView } from '../../src/components/QuestionForm';
 import type { QuestionForm } from '../../src/artifacts/question-form';
 import { visualStyleCardsForContext } from '../../src/runtime/visual-style-catalog';
+import { VISUAL_STYLE_BATCH_SIZE } from '../../src/runtime/visual-style-deck';
 
 afterEach(cleanup);
 
@@ -65,7 +66,11 @@ describe('direction-cards 由内置目录接管', () => {
       <QuestionFormView form={modelAuthored} interactive visualStyleContext="prototype" onSubmit={vi.fn()} />,
     );
     const imgs = container.querySelectorAll('img.qf-visual-preview-image');
-    expect(imgs.length).toBe(visualStyleCardsForContext('prototype').length);
+    /* 牌面上是【这一批的 6 张】,不是整份目录 —— 2026-08-27 产品口径
+       (「换一批时,顺序从 22 个里每次挑 6 个出来」)。这条要守的是
+       「每一张都是真图」,和一批放几张无关,所以按牌面上的卡数比。 */
+    expect(imgs.length).toBe(container.querySelectorAll('.qf-visual-card').length);
+    expect(imgs.length).toBe(VISUAL_STYLE_BATCH_SIZE);
     expect((imgs[0] as HTMLImageElement).src).toContain('/style-catalog/v1/prototype-');
     // 占位块那一路一张都不该出
     expect(container.querySelectorAll('.qf-visual-preview-prototype')).toHaveLength(0);
