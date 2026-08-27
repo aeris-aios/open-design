@@ -116,6 +116,23 @@ export interface TabIdentityScopeResult {
  * `amrLoginStatus === null` case below, instead of computing a scope key
  * against a workspace read that has not had its first confident settle.
  */
+/**
+ * Which account a status describes.
+ *
+ * `loggedIn` says whether there is an account, not WHICH one, and the two are
+ * different boundaries: a credential can move from one account to another with
+ * `loggedIn` true on both sides — a `vela login` in a terminal is enough — and
+ * everything scoped to an account has to move with it. Exported so the tab
+ * scope and the account-boundary notification below decide identity the same
+ * way; two answers to "which account is this" is how one of them goes stale.
+ */
+export function deriveAccountBucket(status: TabScopeLoginStatus): string {
+  if (!status.loggedIn) return 'anon';
+  return status.user?.id?.trim()
+    || status.user?.email?.trim()
+    || `profile:${status.profile}`;
+}
+
 export function deriveTabIdentityScope(
   inputs: TabIdentityScopeInputs,
 ): TabIdentityScopeResult {
@@ -148,11 +165,7 @@ export function deriveTabIdentityScope(
     };
   }
 
-  const accountBucket = amrLoginStatus.loggedIn
-    ? amrLoginStatus.user?.id?.trim()
-      || amrLoginStatus.user?.email?.trim()
-      || `profile:${amrLoginStatus.profile}`
-    : 'anon';
+  const accountBucket = deriveAccountBucket(amrLoginStatus);
   const accountChanged = accountBucket !== previousAccountBucket;
 
   const nextWorkspaceBucket =

@@ -143,7 +143,7 @@ import {
   useProjectRouteWorkspaceContext,
 } from './collab/useProjectRouteWorkspaceContext';
 import { resolvePlanTier } from './collab/team-plan';
-import { deriveTabIdentityScope, UNSET_ACCOUNT_BUCKET } from './collab/tab-scope';
+import { deriveAccountBucket, deriveTabIdentityScope, UNSET_ACCOUNT_BUCKET } from './collab/tab-scope';
 import { CommunityView } from './components/CommunityView';
 import { seedHomeComposerPrompt } from './components/HomeView';
 import {
@@ -1687,6 +1687,7 @@ function AppInner() {
   // snapshot updates `agents`, which makes Settings fetch status again and
   // creates a status -> models -> agents request loop.
   const amrLoginStatusRef = useRef<VelaLoginStatus | null>(null);
+  const amrAccountBucketRef = useRef<string | null>(null);
   const applyAmrLoginStatus = useCallback((
     status: VelaLoginStatus,
     options: { forceModelRefresh?: boolean; restartOnSignIn?: boolean } = {},
@@ -1708,6 +1709,23 @@ function AppInner() {
     // or a status read from before the session ended goes on to restart model
     // polling and repaint the signed-in surfaces.
     if (!noteAuthoritativeAuthMode(isLoggedIn, statusObservationOrder(status))) return;
+    // `loggedIn` says whether there IS an account, not which one. A credential
+    // can move from account A to account B with it true on both sides — a
+    // `vela login` in a terminal does it — and the workspace generation, which
+    // is what every account-scoped cache partitions by, moves on sign-in,
+    // sign-out and a profile switch only. So nothing retired account A's data:
+    // the message centre's settled snapshot, a joinable in-flight run, the
+    // mounted rows and any stale continuation all stayed eligible, and a
+    // remount inside the snapshot window showed A's targeted rows under B.
+    //
+    // The boundary already exists and everything already reads it; it just was
+    // not fired here.
+    const accountBucket = deriveAccountBucket(status);
+    const previousAccountBucket = amrAccountBucketRef.current;
+    amrAccountBucketRef.current = accountBucket;
+    if (previousAccountBucket !== null && previousAccountBucket !== accountBucket) {
+      notifyWorkspaceContextRefresh();
+    }
     const pendingRetry = amrAuthRetryContinuationRef.current;
     const accountChangedWhileAuthorizing = Boolean(
       pendingRetry

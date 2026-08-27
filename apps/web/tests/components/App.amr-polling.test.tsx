@@ -24,10 +24,13 @@ import {
 } from '../../src/providers/status-observation';
 import { AMR_LOGIN_STATUS_EVENT } from '../../src/components/amrLoginPolling';
 import {
+  adoptableSnapshot,
   currentAuthoritativeLoggedIn,
   noteAuthoritativeAuthMode,
+  publishSnapshot,
   resetMessageCenterSnapshot,
 } from '../../src/components/message-center-snapshot';
+import { currentWorkspaceAccountGeneration } from '../../src/collab/workspace-identity';
 
 // Settings is now a full-page route (`/settings`): App.openSettings navigates
 // instead of toggling a modal flag, so the router mock must feed navigate()
@@ -317,6 +320,67 @@ describe('App AMR polling', () => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
     vi.clearAllMocks();
+  });
+
+  it('retires the previous account\'s message-centre cache on a direct account switch', async () => {
+    // A signed-in account A -> signed-in account B switch is a supported shape:
+    // `deriveTabIdentityScope` identifies the account by `user.id`, then email,
+    // then profile, precisely so a tab can be reset across one. It happens with
+    // no sign-out — a `vela login` in a terminal is enough — so `loggedIn` is
+    // true on both sides of it.
+    //
+    // Nothing fired the account boundary for that. The workspace generation
+    // moves on sign-in, sign-out and a profile switch only, and the authority
+    // this PR publishes is a boolean, so neither noticed. Everything the
+    // message centre partitions by that boundary — the settled snapshot, a
+    // joinable in-flight run, the mounted rows, a stale continuation — stayed
+    // eligible, and a remount inside the 10s window could show account A's
+    // targeted rows, unread badge and announcement under account B.
+    resetMessageCenterSnapshot();
+    mockedFetchAmrModels.mockReset();
+    mockedFetchAmrModels.mockResolvedValue({
+      source: 'remote',
+      refreshing: false,
+      models: [{ id: 'remote-a', label: 'remote-a' }],
+    });
+
+    const accountA = {
+      loggedIn: true,
+      loginInFlight: false,
+      profile: 'local',
+      user: { id: 'account-a', email: 'a@example.com' },
+      configPath: '/tmp/amr-config.json',
+    };
+    const accountB = { ...accountA, user: { id: 'account-b', email: 'b@example.com' } };
+    let current: unknown = accountA;
+    mockedFetchVelaLoginStatus.mockImplementation(async () => (
+      stampStatusObservation({ ...(current as object) }, issueStatusObservation()) as never
+    ));
+
+    render(<App />);
+    await waitFor(() => expect(currentAuthoritativeLoggedIn()).toBe(true));
+    await act(async () => { await new Promise((r) => setTimeout(r, 30)); });
+
+    // Account A's rows land in the shared cache.
+    publishSnapshot({
+      at: Date.now(),
+      accountGeneration: currentWorkspaceAccountGeneration(),
+      locale: 'zh-CN',
+      loggedIn: true,
+      messages: [],
+      readIds: new Set(['account-a-row']),
+      pendingReadIds: new Set(),
+    });
+    expect(adoptableSnapshot('zh-CN')).not.toBeNull();
+
+    // The credential switches to account B. Still signed in throughout.
+    current = accountB;
+    await act(async () => {
+      window.dispatchEvent(new Event(AMR_LOGIN_STATUS_EVENT));
+      await new Promise((r) => setTimeout(r, 30));
+    });
+
+    expect(adoptableSnapshot('zh-CN')).toBeNull();
   });
 
   it('keeps the authoritative auth mode signed out when the message centre observed the end first', async () => {
