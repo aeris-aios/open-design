@@ -29,6 +29,7 @@ import {
 import { Icon, type IconName } from './Icon';
 import { PixelLiquid } from './PixelLiquid';
 import { HtmlProjectCoverFrame } from './project-cover';
+import { AudioArtifact } from './chat/AudioArtifact';
 
 interface Props {
   entries: FileOpEntry[];
@@ -304,7 +305,7 @@ function FileOpRow({
  * (用户 2026-08-26 真机指认「变成上面卡片形式才对」)。
  * 用同一张卡的骨架,缩略图位换成「图标 + 文件名」的封面。
  */
-export type ArtifactCardKind = Extract<ArtifactKind, 'html' | 'image' | 'video'> | 'doc';
+export type ArtifactCardKind = Extract<ArtifactKind, 'html' | 'image' | 'video' | 'audio'> | 'doc';
 
 export interface ArtifactCardItem {
   /** Project-relative name; also the key passed to open / publish / export. */
@@ -326,7 +327,15 @@ function docCardIcon(name: string): IconName {
 
 export function artifactCardKind(path: string): ArtifactCardKind | null {
   const kind = artifactKind(path);
-  return kind === 'html' || kind === 'image' || kind === 'video' ? kind : null;
+  /*
+   * 音频也算 —— 它有自己的卡面(设计稿组件 24 那条胶囊,`AudioArtifact`)。
+   * 这里原来把它挡在外面,于是那个组件建好了却永远出不来。它**不需要契约给数据**:
+   * 时长等 `loadedmetadata`,波形没有真采样就按时长生成一条稳定的伪采样 ——
+   * 两条都写在组件自己的 docblock 里。
+   */
+  return kind === 'html' || kind === 'image' || kind === 'video' || kind === 'audio'
+    ? kind
+    : null;
 }
 
 /**
@@ -437,6 +446,10 @@ function ArtifactCard({
             <Icon name={docCardIcon(item.name)} size={22} />
             <span className="artifact-card-doc-name" title={item.name}>{item.name}</span>
           </span>
+        ) : item.kind === 'audio' ? (
+          /* 设计稿组件 24:一条胶囊(图标 + 已播 + 波形 + 总时长 + 播放 / 下载),
+             不是缩略图 —— 音频没有可看的一帧 */
+          <AudioArtifact src={src} name={item.name} />
         ) : item.kind === 'video' ? (
           <video
             className="artifact-card-media"

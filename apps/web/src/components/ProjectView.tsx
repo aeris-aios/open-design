@@ -8838,6 +8838,23 @@ export function ProjectView({
     scheduleProjectTimeout,
   ]);
 
+  /*
+   * 〔更换模型〕(E3)。交付稿 `error-ux-design.md:130`(S08)写的是
+   * 「更换模型**直接打开模型选择器,选完自动重跑**」。
+   *
+   * 分两半:这里推一拍信号把 composer 那张 `AvatarMenu` 叫开,并记下是**哪一轮**
+   * 在等重跑;等 `onAgentModelChange` 真的换了模型,再把那一轮重发一次。
+   *
+   * 记 message 而不是只记一个布尔:用户可能在选模型之前又翻了别的会话,
+   * 到时候重跑的必须仍是当初按下那颗按钮的那一轮。
+   */
+  const [modelPickerOpenSignal, setModelPickerOpenSignal] = useState(0);
+  const rerunAfterModelChangeRef = useRef<ChatMessage | null>(null);
+  const handleSwitchModel = useCallback((assistantMessage: ChatMessage) => {
+    rerunAfterModelChangeRef.current = assistantMessage;
+    setModelPickerOpenSignal((n) => n + 1);
+  }, []);
+
   const handleRetry = useCallback(
     (
       assistantMessage: ChatMessage,
@@ -11354,6 +11371,13 @@ export function ProjectView({
             ...(project?.id ? { project_id: project.id } : {}),
           });
           onAgentModelChange(agentId, choice);
+          /*
+           * 「选完自动重跑」的那一半。只有确实是从报错卡那颗〔更换模型〕进来的
+           * 才会有待重跑的那一轮 —— 平时手动换模型不该无端重发。
+           */
+          const pending = rerunAfterModelChangeRef.current;
+          rerunAfterModelChangeRef.current = null;
+          if (pending) handleRetry(pending, 'switch_model_retry');
         }}
         onApiModelChange={(model) => {
           trackComposerBarClick(analytics.track, {
@@ -11367,6 +11391,7 @@ export function ProjectView({
         }}
         onOpenSettings={onOpenSettings}
         onRefreshAgents={onRefreshAgents}
+        openSignal={modelPickerOpenSignal}
         placement="up"
         projectWorkspaceScope={projectWorkspaceScopeState}
       />
@@ -11474,6 +11499,7 @@ export function ProjectView({
               onDeleteComment={(commentId) => void removePreviewComment(commentId)}
               onSend={handleComposerSend}
               onRetry={handleRetry}
+              onSwitchModel={handleSwitchModel}
               amrAuthRetryContinuation={amrAuthRetryContinuation}
               amrAuthRetryMountId={amrAuthRetryMountIdRef.current}
               amrAuthRetryWorkspaceIdentityKey={projectRunAuthorityKey}

@@ -689,6 +689,12 @@ interface Props {
   // (it owns the AppConfig lifecycle) so we just pass the open trigger.
   onOpenSettings?: (section?: SettingsSection) => void;
   /**
+   * 〔更换模型〕—— 交付稿要的是「**直接打开模型选择器**,选完自动重跑」
+   * (`error-ux-design.md:130`,S08)。宿主接上这个就走内联选择器;
+   * 没接的宿主(首页那种没有内联列表的)回落到设置面板,总好过按了没反应。
+   */
+  onSwitchModel?: (assistantMessage: ChatMessage) => void;
+  /**
    * 钱包余额提示(交付稿第 75 / 76 格的升级卡),`null` = 不提示。
    *
    * 单位美元,两档由余额自己决定:`> 0` 是「撑不完下一个任务」的暖橙档,
@@ -1018,6 +1024,7 @@ export function ChatPane({
   onSelectConversation,
   onDeleteConversation,
   onOpenSettings,
+  onSwitchModel,
   amrBalanceCardUsd = null,
   onAmrBalanceUpgrade,
   showByokRecoveryAction = false,
@@ -3085,8 +3092,11 @@ export function ChatPane({
                             ) : runFailureUi.primaryAction === 'switch-model' ? (
                               /*
                                * 模型下线 / 不在套餐里 —— 重试必然同样结果,所以这一档
-                               * 不给重试(设计原则四)。真实落点是设置的「执行」段,
-                               * 也就是 composer 那颗齿轮通向的同一个模型选择面板。
+                               * 不给重试(设计原则四)。
+                               *
+                               * 落点按交付稿:「更换模型**直接打开模型选择器**,选完自动
+                               * 重跑」(`error-ux-design.md:130`)。宿主接了 `onSwitchModel`
+                               * 就开 composer 那颗触发器背后的内联列表;没接的回落设置面板。
                                */
                               <button
                                 type="button"
@@ -3094,7 +3104,8 @@ export function ChatPane({
                                 data-testid="chat-error-switch-model"
                                 onClick={() => {
                                   trackRecoveryClick(retryAssistant, 'switch_model_retry');
-                                  onOpenSettings?.('execution');
+                                  if (onSwitchModel && retryAssistant) onSwitchModel(retryAssistant);
+                                  else onOpenSettings?.('execution');
                                 }}
                               >
                                 {t('chat.runError.switchModelCta')}

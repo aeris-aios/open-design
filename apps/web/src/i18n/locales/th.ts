@@ -130,7 +130,7 @@ export const th: Dict = {
   'chat.runError.title.runtimeConfig': 'ข้อผิดพลาดการตั้งค่า',
   'chat.runError.cliMissingMessage': 'ไม่พบเครื่องมือบรรทัดคำสั่งของ {agent} โปรดติดตั้งและตรวจสอบว่าอยู่ใน PATH แล้วลองอีกครั้ง',
   'chat.runError.promptTooLargeMessage': 'รอบนี้เกินขีดจำกัดบริบทของโมเดล โปรดย่อพรอมป์ ลดไฟล์แนบ หรือเริ่มการสนทนาใหม่ แล้วลองอีกครั้ง',
-  'chat.runError.modelUnavailableMessage': 'โมเดลที่เลือกไม่พร้อมใช้งานหรือไม่มีอยู่ โปรดสลับไปใช้โมเดลอื่นในการตั้งค่า แล้วลองอีกครั้ง',
+  'chat.runError.modelUnavailableMessage': 'โมเดลที่เลือกไม่พร้อมใช้งานหรือไม่มีอยู่ เลือกโมเดลอื่นเพื่อทำงานต่อ',
   'chat.runError.rateLimitedMessage': 'คุณถึงขีดจำกัดการใช้งานของบริการโมเดลแล้ว โปรดรอสักครู่แล้วลองอีกครั้ง หรือสลับไปใช้โมเดลหรือบริการอื่น',
   'chat.runError.modelWindowLimitMessage': 'ขณะนี้มีผู้ใช้งานจำนวนมาก โปรดลองอีกครั้งหลัง {retryAt} คำขอนี้ไม่มีการเรียกเก็บเงิน',
   'chat.runError.modelWindowLimitMessageNoTime': 'ขณะนี้มีผู้ใช้งานจำนวนมาก โปรดลองอีกครั้งในภายหลัง คำขอนี้ไม่มีการเรียกเก็บเงิน',

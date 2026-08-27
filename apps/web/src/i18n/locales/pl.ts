@@ -130,7 +130,7 @@ export const pl: Dict = {
   'chat.runError.title.runtimeConfig': 'Błąd konfiguracji',
   'chat.runError.cliMissingMessage': 'Nie znaleziono narzędzia wiersza poleceń {agent}. Zainstaluj je i upewnij się, że jest w PATH, a następnie spróbuj ponownie.',
   'chat.runError.promptTooLargeMessage': 'Ta tura przekroczyła limit kontekstu modelu. Skróć zapytanie, usuń załączniki lub rozpocznij nową rozmowę i spróbuj ponownie.',
-  'chat.runError.modelUnavailableMessage': 'Wybrany model jest niedostępny lub nie istnieje. Przełącz się na inny model w Ustawieniach i spróbuj ponownie.',
+  'chat.runError.modelUnavailableMessage': 'Wybrany model jest niedostępny lub nie istnieje. Wybierz inny model, aby kontynuować.',
   'chat.runError.rateLimitedMessage': 'Osiągnięto limit użycia usługi modelu. Poczekaj chwilę i spróbuj ponownie lub przełącz się na inny model albo usługę.',
   'chat.runError.modelWindowLimitMessage': 'Obecnie duże obciążenie. Spróbuj ponownie po {retryAt}. Za to żądanie nie naliczono opłaty.',
   'chat.runError.modelWindowLimitMessageNoTime': 'Obecnie duże obciążenie. Spróbuj ponownie za chwilę. Za to żądanie nie naliczono opłaty.',

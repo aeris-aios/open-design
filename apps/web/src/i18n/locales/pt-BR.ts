@@ -130,7 +130,7 @@ export const ptBR: Dict = {
   'chat.runError.title.runtimeConfig': 'Erro de configuração',
   'chat.runError.cliMissingMessage': 'A ferramenta de linha de comando do {agent} não foi encontrada. Instale-a e verifique se está no PATH, depois tente novamente.',
   'chat.runError.promptTooLargeMessage': 'Este turno excedeu o limite de contexto do modelo. Encurte o prompt, remova anexos ou inicie uma nova conversa e tente novamente.',
-  'chat.runError.modelUnavailableMessage': 'O modelo selecionado está indisponível ou não existe. Troque para outro modelo em Configurações e tente novamente.',
+  'chat.runError.modelUnavailableMessage': 'O modelo selecionado está indisponível ou não existe. Escolha outro modelo para continuar.',
   'chat.runError.rateLimitedMessage': 'Você atingiu o limite de uso do serviço do modelo. Aguarde um momento e tente novamente, ou troque para outro modelo ou serviço.',
   'chat.runError.modelWindowLimitMessage': 'Alta demanda no momento. Tente novamente após {retryAt}. Esta solicitação não foi cobrada.',
   'chat.runError.modelWindowLimitMessageNoTime': 'Alta demanda no momento. Tente novamente em instantes. Esta solicitação não foi cobrada.',
