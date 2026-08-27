@@ -12,6 +12,14 @@ const canonicalTemplateSource = readFileSync(
   new URL('../../../design-templates/open-design-landing/example.html', import.meta.url),
   'utf8',
 );
+const templateStylesSource = readFileSync(
+  new URL('../../../design-templates/open-design-landing/styles.css', import.meta.url),
+  'utf8',
+);
+const templateComposerSource = readFileSync(
+  new URL('../../../design-templates/open-design-landing/scripts/compose.ts', import.meta.url),
+  'utf8',
+);
 
 test('keeps reveal content visible until the animation observer is ready', () => {
   assert.match(
@@ -41,6 +49,22 @@ test('preserves the hero and mobile CTA reveal exceptions after readiness', () =
 });
 
 test('keeps the canonical design template in the progressive-enhancement contract', () => {
+  assert.match(
+    templateStylesSource,
+    /\[data-reveal\]\s*\{[\s\S]*?opacity:\s*1;[\s\S]*?translate:\s*0 0;[\s\S]*?\}/,
+  );
+  assert.match(
+    templateStylesSource,
+    /\.reveal-ready \[data-reveal\]:not\(\[data-revealed='true'\]\)\s*\{[\s\S]*?opacity:\s*0;/,
+  );
+  assert.match(
+    templateComposerSource,
+    /observer\.observe\(elements\[j\]\)[\s\S]*?classList\.add\('reveal-ready'\)/,
+  );
+  assert.match(
+    templateComposerSource,
+    /catch \(error\)[\s\S]*?classList\.remove\('reveal-ready'\)/,
+  );
   assert.match(
     canonicalTemplateSource,
     /\[data-reveal\]\s*\{[\s\S]*?opacity:\s*1;[\s\S]*?translate:\s*0 0;[\s\S]*?\}/,
