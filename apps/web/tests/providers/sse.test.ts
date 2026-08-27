@@ -439,6 +439,81 @@ describe('streamViaDaemon', () => {
     expect(err.resumable).toBe(true);
   });
 
+  // Frame shape lifted from a real failed run (`.od/runs/60d39320-…`): the
+  // daemon's own sentence is generic and the actual cause only exists in the
+  // stderr the daemon captured. The live path has to carry that onto the
+  // surfaced error, or the failure card can only ever show the generic sentence.
+  it('carries the captured stderr tail onto a surfaced terminal failure', async () => {
+    const stderrTail =
+      'Error: dsh: plugin tree failed to load: credentials-local: the value for "version" in /Users/tester/.dsh/.credentials.yaml must be a string';
+    const handlers = createDaemonHandlers();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === '/api/runs') return jsonResponse({ runId: 'run-1' });
+      if (url === '/api/runs/run-1/events') {
+        return sseResponse(
+          `event: error\ndata: ${JSON.stringify({
+            message: 'DeepSeek Harness profile exited without a terminal result.',
+            error: {
+              code: 'DSH_PROFILE_MISSING_RESULT',
+              message: 'DeepSeek Harness profile exited without a terminal result.',
+              retryable: false,
+            },
+            stderrTail,
+          })}\n\n`,
+        );
+      }
+      if (url === '/api/runs/run-1') {
+        return jsonResponse({ id: 'run-1', status: 'failed' });
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await streamViaDaemon({
+      agentId: 'deepseek-harness',
+      history: [{ id: '1', role: 'user', content: 'do the thing' }],
+      systemPrompt: '',
+      signal: new AbortController().signal,
+      handlers,
+    });
+
+    expect(handlers.onError).toHaveBeenCalledTimes(1);
+    const err = handlers.onError.mock.calls[0]![0] as Error & { stderrTail?: string };
+    expect(err.message).toBe('DeepSeek Harness profile exited without a terminal result.');
+    expect(err.stderrTail).toBe(stderrTail);
+  });
+
+  it('leaves the stderr tail unset when the failure frame carries none', async () => {
+    const handlers = createDaemonHandlers();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === '/api/runs') return jsonResponse({ runId: 'run-1' });
+      if (url === '/api/runs/run-1/events') {
+        return sseResponse(
+          'event: error\ndata: {"code":"AGENT_EXECUTION_FAILED","message":"upstream drop","retryable":true}\n\n',
+        );
+      }
+      if (url === '/api/runs/run-1') {
+        return jsonResponse({ id: 'run-1', status: 'failed' });
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await streamViaDaemon({
+      agentId: 'mock',
+      history: [{ id: '1', role: 'user', content: 'do the thing' }],
+      systemPrompt: '',
+      signal: new AbortController().signal,
+      handlers,
+    });
+
+    expect(handlers.onError).toHaveBeenCalledTimes(1);
+    const err = handlers.onError.mock.calls[0]![0] as Error & { stderrTail?: string };
+    expect(err.stderrTail).toBeUndefined();
+  });
+
   it('sends run-scoped media execution policy to the daemon', async () => {
     const handlers = createDaemonHandlers();
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {

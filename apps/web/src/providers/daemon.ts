@@ -536,9 +536,17 @@ function daemonSseError(data: SseErrorPayload): Error {
   const error = new Error(daemonSseErrorMessage(data)) as Error & {
     code?: string;
     details?: unknown;
+    stderrTail?: string;
   };
   if (data.error?.code) error.code = data.error.code;
   if (data.error?.details !== undefined) error.details = data.error.details;
+  // The daemon's own sentence for a failure is frequently generic ("…exited
+  // without a terminal result"); the agent's stderr is where the actual cause
+  // is. It arrives already bounded and secret-redacted (failureCardStderrTail),
+  // so carry it verbatim onto the surfaced error for the failure card's details.
+  if (typeof data.stderrTail === 'string' && data.stderrTail.trim()) {
+    error.stderrTail = data.stderrTail;
+  }
   return error;
 }
 

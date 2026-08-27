@@ -196,6 +196,17 @@ export type CompatibleErrorResponse = ApiErrorResponse | LegacyErrorResponse;
 export interface SseErrorPayload {
   message: string;
   error?: ApiError;
+  /**
+   * Bounded, secret-redacted tail of what the agent process printed to stderr
+   * during this run — the ORIGINAL cause behind a failure whose `message` is
+   * necessarily generic (e.g. "…exited without a terminal result").
+   *
+   * Produced daemon-side by `failureCardStderrTail`, so the bound (a tail of
+   * lines, capped in bytes) and the redaction both happen before the text
+   * crosses the process boundary. Absent when the run wrote no stderr —
+   * consumers must render nothing rather than an empty section.
+   */
+  stderrTail?: string;
 }
 
 export function createApiError(code: ApiErrorCode, message: string, init: Omit<ApiError, 'code' | 'message'> = {}): ApiError {

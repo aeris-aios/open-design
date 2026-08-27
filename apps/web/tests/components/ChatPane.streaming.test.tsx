@@ -645,6 +645,116 @@ describe('ChatPane streaming state', () => {
     expect(text).not.toContain('\nerror:\n');
   });
 
+  // The card's copy promises the reader "the original error is collected under
+  // 「view details」". Before this, the details body held only the daemon's
+  // generic sentence and a pile of ids, while the agent's own stderr — captured,
+  // persisted, and carrying the actual cause — was surfaced nowhere at all.
+  // Shapes below are lifted from a real failed run's persisted error event.
+  it('puts the captured agent stderr in the diagnostics body', () => {
+    const text = buildRunErrorDiagnosticText({
+      message: 'DeepSeek Harness profile exited without a terminal result.',
+      rawMessage: 'DeepSeek Harness profile exited without a terminal result.',
+      errorCode: 'DSH_PROFILE_MISSING_RESULT',
+      stderrTail: DSH_STDERR_TAIL,
+      traceId: '60d39320-f154-4974-855b-47cf9da2ef47',
+      projectId: 'project-1',
+      conversationId: 'conv-1',
+      assistantMessageId: 'assistant-1',
+      agentId: 'deepseek-harness',
+    });
+
+    expect(text).toContain('agent_stderr_tail:');
+    expect(text).toContain(DSH_REAL_CAUSE);
+    // The generic sentence still leads, and the id block still follows: the
+    // stderr is added to the body, it does not displace what was there.
+    expect(text).toMatch(/^DeepSeek Harness profile exited without a terminal result\./);
+    expect(text).toContain('error_code: DSH_PROFILE_MISSING_RESULT');
+  });
+
+  it('grows no stderr section for a failure that captured no stderr', () => {
+    const text = buildRunErrorDiagnosticText({
+      message: 'Connection dropped. Try again.',
+      rawMessage: 'json-rpc id 4: Connection reset by server',
+      errorCode: 'AGENT_CONNECTION_DROPPED',
+      traceId: 'run-abc',
+      projectId: 'project-1',
+      conversationId: 'conv-1',
+      assistantMessageId: 'assistant-1',
+      agentId: 'amr',
+    });
+
+    expect(text).not.toContain('agent_stderr_tail');
+    expect(text).toMatch(
+      /^json-rpc id 4: Connection reset by server\n\nOpenDesign run error diagnostics/,
+    );
+  });
+
+  it('ignores a blank stderr tail rather than emitting an empty section', () => {
+    const text = buildRunErrorDiagnosticText({
+      message: 'Connection dropped. Try again.',
+      rawMessage: 'json-rpc id 4: Connection reset by server',
+      errorCode: 'AGENT_CONNECTION_DROPPED',
+      stderrTail: '   \n  ',
+      traceId: 'run-abc',
+      projectId: 'project-1',
+      conversationId: 'conv-1',
+      assistantMessageId: 'assistant-1',
+      agentId: 'amr',
+    });
+
+    expect(text).not.toContain('agent_stderr_tail');
+  });
+
+  it('shows the captured stderr under 「view details」 on the failure card', async () => {
+    const messages: ChatMessage[] = [
+      { id: 'user-1', role: 'user', content: 'Create a login page', createdAt: 0 },
+      {
+        id: 'assistant-1',
+        role: 'assistant',
+        content: '',
+        agentId: 'deepseek-harness',
+        createdAt: 1,
+        runId: '60d39320-f154-4974-855b-47cf9da2ef47',
+        runStatus: 'failed',
+        events: [
+          {
+            kind: 'status',
+            label: 'error',
+            detail: 'DeepSeek Harness profile exited without a terminal result.',
+            code: 'DSH_PROFILE_MISSING_RESULT',
+            stderrTail: DSH_STDERR_TAIL,
+          },
+        ],
+      },
+    ];
+
+    render(
+      <ChatPane
+        projectKindForTracking="prototype"
+        messages={messages}
+        streaming={false}
+        error={null}
+        projectId="project-1"
+        projectFiles={[]}
+        onEnsureProject={async () => 'project-1'}
+        onSend={vi.fn()}
+        onStop={vi.fn()}
+        conversations={conversations}
+        activeConversationId="conv-1"
+        onSelectConversation={vi.fn()}
+        onDeleteConversation={vi.fn()}
+        projectMetadata={projectMetadata}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'brand.viewDetails' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Copy error diagnostics' }));
+
+    await waitFor(() => expect(clipboardMocks.copyToClipboard).toHaveBeenCalledTimes(1));
+    const copied = clipboardMocks.copyToClipboard.mock.calls[0]?.[0] ?? '';
+    expect(copied).toContain(DSH_REAL_CAUSE);
+  });
+
   it('renders user turns with the chat bubble styling hook', () => {
     const messages: ChatMessage[] = [
       {
@@ -1376,6 +1486,33 @@ Expected output:
     expect(log.scrollTop).toBe(600);
   });
 });
+
+// Verbatim from a real failed run's persisted `status:error` event
+// (`.od/runs/60d39320-…/events.jsonl`): the bounded, redacted tail of what the
+// agent actually printed. The account name is the only substitution.
+const DSH_REAL_CAUSE =
+  'credentials-local: the value for "version" in /Users/tester/.dsh/.credentials.yaml must be a string';
+
+const DSH_STDERR_TAIL = `    at boot (file:///Users/tester/.nvm/versions/node/v24.18.0/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-app-boot/lib/index.js:1186:9)
+    at async runProfile (file:///Users/tester/.nvm/versions/node/v24.18.0/lib/node_modules/@deepseek-ai/dsh/lib/profile-boot-DG5t9aNs.js:247:14)
+    at async file:///Users/tester/.nvm/versions/node/v24.18.0/lib/node_modules/@deepseek-ai/dsh/lib/bin.js:133:3 {
+  [cause]: Error: failed to apply loader entry include (cordis:include): failed to apply loader entry credentials (@deepseek-ai/dsh-credentials-local): credentials-local: the value for "version" in /Users/tester/.dsh/.credentials.yaml must be a string
+      at updateError (file:///Users/tester/.nvm/versions/node/v24.18.0/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/cordis-plugin-loader/lib/index.js:299:9)
+      at Entry._init (file:///Users/tester/.nvm/versions/node/v24.18.0/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/cordis-plugin-loader/lib/index.js:519:10) {
+    [cause]: Error: failed to apply loader entry credentials (@deepseek-ai/dsh-credentials-local): credentials-local: the value for "version" in /Users/tester/.dsh/.credentials.yaml must be a string
+        at updateError (file:///Users/tester/.nvm/versions/node/v24.18.0/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/cordis-plugin-loader/lib/index.js:299:9)
+        at Entry._init (file:///Users/tester/.nvm/versions/node/v24.18.0/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/cordis-plugin-loader/lib/index.js:519:10) {
+      [cause]: TypeError: credentials-local: the value for "version" in /Users/tester/.dsh/.credentials.yaml must be a string
+          at parseCredentialsDocument (file:///Users/tester/.nvm/versions/node/v24.18.0/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-credentials-local/lib/index.js:132:40)
+          at LocalCredentialProvider.loadInitial (file:///Users/tester/.nvm/versions/node/v24.18.0/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-credentials-local/lib/index.js:344:17)
+          at async [cordis.init] (file:///Users/tester/.nvm/versions/node/v24.18.0/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-credentials-local/lib/index.js:207:3)
+          at file:///Users/tester/.dsh/profiles/open-design/#credentials
+          at file:///Users/tester/.dsh/profiles/open-design/#include
+    }
+  }
+}
+
+Node.js v24.18.0`;
 
 const conversations: Conversation[] = [
   {
