@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { harvestFonts, type FontFile } from "./fonts.js";
 import { fetchExternalBrandAsset } from "./safe-fetch.js";
-import { endOfTag, findRealTagOffset, HTML_TAG_PATTERNS } from '@open-design/contracts/runtime/html-injection-points';
+import { findRealElementRange, findRealTagOffset, HTML_TAG_PATTERNS } from '@open-design/contracts/runtime/html-injection-points';
 
 /**
  * Deterministic brand-material prefetch. Given a site URL, fetch the HTML +
@@ -231,12 +231,11 @@ function defuseScripts(html: string): string {
 
 /** Text of the document's own <title>, or "" — never one held in a string. */
 function readRealTitleText(html: string): string {
-  const start = findRealTagOffset(html, HTML_TAG_PATTERNS.titleOpen);
-  if (start < 0) return "";
-  const openEnd = endOfTag(html, start);
-  if (openEnd < 0) return "";
-  const close = html.toLowerCase().indexOf("</title", openEnd + 1);
-  return close < 0 ? "" : html.slice(openEnd + 1, close);
+  // The close is found by the raw-text rule rather than as text: `</title-page>`
+  // is not a close, and `toLowerCase()` is not length-preserving, so offsets
+  // taken from it would not line up with `html`.
+  const range = findRealElementRange(html, HTML_TAG_PATTERNS.titleOpen, 'title');
+  return range ? html.slice(range.contentStart, range.contentEnd) : "";
 }
 
 export function previewablePrefetchHtml(html: string, cap = HTML_CAP): string {

@@ -35,6 +35,7 @@ import {
 
 import {
   endOfTag,
+  findRealElementRange,
   findRealTagEnd,
   findRealTagOffset,
   HTML_TAG_PATTERNS,
@@ -312,24 +313,19 @@ export function sanitizeTitleInDoc(html: string): string {
   const bodyOpen = findRealTagOffset(html, HTML_TAG_PATTERNS.bodyOpen);
   const searchLimit = headClose >= 0 ? headClose : bodyOpen >= 0 ? bodyOpen : html.length;
 
-  const titleStart = findRealTagOffset(html, HTML_TAG_PATTERNS.titleOpen);
-  if (titleStart < 0 || titleStart >= searchLimit) return html;
+  // Both ends by the parser's rules: the open tag through `endOfTag`, so a `>`
+  // inside a quoted attribute cannot cut it short, and the close by the
+  // raw-text rule, so `</title >` and `</title\n>` close it while
+  // `</title-page>` does not. `indexOf('</title>')` accepted one spelling, and
+  // the next `</title>` in a later script string became the rewrite range.
+  const range = findRealElementRange(html, HTML_TAG_PATTERNS.titleOpen, 'title');
+  if (!range || range.start >= searchLimit) return html;
 
-  // Locate the end of the <title> open tag.
-  // endOfTag, not indexOf('>'): a `>` inside a quoted attribute value would
-  // otherwise end the open tag early and swallow part of the title text.
-  const openTagEnd = endOfTag(html, titleStart);
-  if (openTagEnd < 0) return html;
-
-  // Locate the matching </title>.
-  const closingTagStart = html.toLowerCase().indexOf('</title>', openTagEnd + 1);
-  if (closingTagStart < 0) return html;
-  const closingTagEnd = html.indexOf('>', closingTagStart);
-  if (closingTagEnd < 0) return html;
-
-  const openTag = html.slice(titleStart, openTagEnd + 1);
-  const rawContent = html.slice(openTagEnd + 1, closingTagStart);
-  const closeTag = html.slice(closingTagStart, closingTagEnd + 1);
+  const titleStart = range.start;
+  const closingTagEnd = range.end - 1;
+  const openTag = html.slice(range.start, range.contentStart);
+  const rawContent = html.slice(range.contentStart, range.contentEnd);
+  const closeTag = html.slice(range.contentEnd, range.end);
 
   const decoded = decodeHtmlEntitiesForTitle(rawContent);
   const safe = sanitizePreviewTitle(decoded);

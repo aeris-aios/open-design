@@ -56,6 +56,32 @@ describe('buildSrcdoc injection points', () => {
     expect(srcdoc).toContain('<title data-x="a>b">Invoice Q1</title>');
   });
 
+  it('ends a title at a close the parser accepts, not the one spelling', () => {
+    // `</title >` closes the element. A `indexOf('</title>')` misses it and
+    // takes the next `</title>` in the document — here one inside an authored
+    // script string — so the rewrite range spans everything between.
+    const html = '<!doctype html><html><head><title>Invoice Q1</title ></head>'
+      + '<body><script>const doc = `<title>Slip</title>`;<\/script>'
+      + '<p>hi</p></body></html>';
+
+    const srcdoc = buildSrcdoc(html);
+
+    expect(srcdoc).toContain('<title>Invoice Q1</title >');
+    expect(srcdoc).toContain('const doc = `<title>Slip</title>`;');
+  });
+
+  it('does not accept a longer tag name as the title close', () => {
+    // `</title-page>` is not a close, so the whole `a</title-page>b` is title
+    // text and is sanitized as one string. Taking it as the close would title
+    // the document `a` and leave `b` as stray text before `</head>`.
+    const html = '<!doctype html><html><head><title>a</title-page>b</title></head>'
+      + '<body><p>hi</p></body></html>';
+
+    const srcdoc = buildSrcdoc(html);
+
+    expect(srcdoc).toContain('<title>a-title-page-b</title>');
+  });
+
   it('keeps every injected bridge outside the authored script', () => {
     const authored = 'const doc = `<head></head><body>slip</body>`;';
     const html = `<!doctype html><html><body><script>${authored}<\/script><p>hi</p></body></html>`;
