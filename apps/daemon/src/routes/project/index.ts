@@ -1792,6 +1792,7 @@ function findScriptClose(lowerHtml: string, from: number): number {
  * would end the template early and drop the scan back into author text.
  */
 function skipTemplateContent(html: string, lowerHtml: string, from: number): number {
+  const selectMode = newSelectModeState();
   const tagOpen = /<(\/?)([a-z][^\t\n\f\r \/>]*)/iy;
   let depth = 1;
   let i = from;
@@ -1822,13 +1823,15 @@ function skipTemplateContent(html: string, lowerHtml: string, from: number): num
     const tagEnd = tag.end;
     if (tagEnd < 0) return -1;
     const tagName = (open[2] ?? '').toLowerCase();
+    if (!observeSelectMode(selectMode, tagName, !!open[1], tag.selfClosing)) return -1;
     if (!open[1] && (PREVIEW_RAW_TEXT_ELEMENTS as readonly string[]).includes(tagName)) {
       const contentEnd = findRawTextClose(lowerHtml, tagName, tagEnd + 1);
       if (contentEnd < 0) return -1;
       i = contentEnd;
       continue;
     }
-    if (!open[1] && (tagName === 'svg' || tagName === 'math') && !tag.selfClosing) {
+    if (!open[1] && !selectMode.inSelect && (tagName === 'svg' || tagName === 'math')
+        && !tag.selfClosing) {
       // Foreign content inside a template follows the same rules, CDATA
       // included, so it has to go through the same skip.
       const contentEnd = skipForeignContent(html, lowerHtml, tagName, tagEnd + 1);
@@ -1844,8 +1847,57 @@ function skipTemplateContent(html: string, lowerHtml: string, from: number): num
 
 // Void elements never have contents, so they never open a namespace frame and
 // a trailing solidus on them is redundant rather than meaningful.
+/**
+ * The in-select insertion mode, shared by every walker that decides whether an
+ * `<svg>` / `<math>` start tag opens foreign content.
+ *
+ * It lives in one place because it has to give the same answer everywhere: a
+ * template's contents are parsed with the same insertion modes as the document,
+ * so a walker that models this at the top level and not inside a template
+ * disagrees with itself on the same bytes.
+ */
+interface SelectModeState {
+  inSelect: boolean;
+  tableDepth: number;
+}
+
+function newSelectModeState(): SelectModeState {
+  return { inSelect: false, tableDepth: 0 };
+}
+
+/**
+ * Fold one tag into `state`. Returns false when the transition depends on table
+ * scope, which no linear scan can determine — the caller refuses rather than
+ * guessing. See the `<select>` notes in `findRealTagOffset`.
+ */
+function observeSelectMode(
+  state: SelectModeState,
+  tagName: string,
+  isEndTag: boolean,
+  selfClosing: boolean,
+): boolean {
+  const wasInSelect = state.inSelect;
+  const tableDepthBefore = state.tableDepth;
+  let determinate = true;
+  if (tagName === 'select') state.inSelect = !isEndTag && !state.inSelect;
+  else if (state.inSelect && !isEndTag && SELECT_CLOSING_START_TAGS.includes(tagName)) {
+    state.inSelect = false;
+  } else if (state.inSelect && tableDepthBefore > 0 && SELECT_IN_TABLE_CLOSING_TAGS.includes(tagName)) {
+    determinate = false;
+  }
+  // A token the in-select mode ignored never reaches the table stack, and a
+  // `<table>` cannot put itself in a table.
+  if (!(wasInSelect && tableDepthBefore === 0)) {
+    if (!isEndTag && tagName === 'table' && !selfClosing) state.tableDepth += 1;
+    else if (isEndTag && tagName === 'table' && state.tableDepth > 0) state.tableDepth -= 1;
+  }
+  return determinate;
+}
+
 // Start tags that close an open `<select>` and are then reprocessed, in every
 // select context.
+const HTML_NAMESPACE = 'http://www.w3.org/1999/xhtml';
+
 const SELECT_CLOSING_START_TAGS: readonly string[] = ['input', 'keygen', 'textarea'];
 // Tags that close it only in "in select in table" — outside a table the
 // in-select mode ignores them and the select stays open.
@@ -2111,8 +2163,7 @@ function findRealTagOffset(html: string, pattern: RegExp): number {
   // toLowerCase() is not length-preserving (U+0130 lowercases to two code
   // units), and every offset taken from the shadow is used against `html`.
   const lower = asciiLower(html);
-  let inSelect = false;
-  let tableDepth = 0;
+  const selectMode = newSelectModeState();
   let i = 0;
   while (i < html.length) {
     if (html.charCodeAt(i) !== 60 /* < */) {
@@ -2170,28 +2221,12 @@ function findRealTagOffset(html: string, pattern: RegExp): number {
     // the table tokens below close it too — and outside a table those same
     // tokens are simply ignored, which is why the table has to be tracked
     // rather than assumed.
-    // Both decisions are made against the state *before* this token: a
-    // `<table>` cannot put itself in a table. In select mode with no table
-    // already open the token is ignored outright, so it neither ends the mode
-    // nor joins the table stack — counting it first made `<select><table>`
-    // look like "in select in table" and end the mode on its own token.
-    const wasInSelect = inSelect;
-    const tableDepthBefore = tableDepth;
-    if (tagName === 'select') inSelect = !open[1] && !inSelect;
-    else if (inSelect && !open[1] && SELECT_CLOSING_START_TAGS.includes(tagName)) inSelect = false;
-    else if (inSelect && tableDepthBefore > 0 && SELECT_IN_TABLE_CLOSING_TAGS.includes(tagName)) {
-      // Whether this ends the mode depends on the select being in *table
-      // scope*, which is a property of the open-element stack, not of having
-      // seen a `<table>` start tag: foster parenting can move the select out of
-      // the table it appeared inside. A linear scan cannot tell the two apart,
-      // and both answers are wrong in some document — skipping the foreign walk
-      // when the mode has ended, or taking it when it has not. So refuse.
-      return -1;
-    }
-    if (!(wasInSelect && tableDepthBefore === 0)) {
-      if (!open[1] && tagName === 'table' && !tag.selfClosing) tableDepth += 1;
-      else if (open[1] && tagName === 'table' && tableDepth > 0) tableDepth -= 1;
-    }
+    // Whether a table token ends the mode depends on the select being in *table
+    // scope*, a property of the open-element stack rather than of having seen a
+    // `<table>` start tag — foster parenting can move the select out of the
+    // table it appeared inside. A linear scan cannot tell those apart, and both
+    // answers are wrong in some document, so that case refuses.
+    if (!observeSelectMode(selectMode, tagName, !!open[1], tag.selfClosing)) return -1;
     if (!open[1] && (PREVIEW_RAW_TEXT_ELEMENTS as readonly string[]).includes(tagName)) {
       const contentEnd = findRawTextClose(lower, tagName, tagEnd + 1);
       // Unclosed raw text runs to the end of the document — same as above.
@@ -2199,7 +2234,8 @@ function findRealTagOffset(html: string, pattern: RegExp): number {
       i = contentEnd;
       continue;
     }
-    if (!open[1] && !inSelect && (tagName === 'svg' || tagName === 'math') && !tag.selfClosing) {
+    if (!open[1] && !selectMode.inSelect && (tagName === 'svg' || tagName === 'math')
+        && !tag.selfClosing) {
       const contentEnd = skipForeignContent(html, lower, tagName, tagEnd + 1);
       if (contentEnd < 0) return -1;
       i = contentEnd;
@@ -6788,15 +6824,21 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
    *
    * Parsed rather than scanned, because the answer depends on namespace and on
    * template content: a `<base>` directly under `<svg>` is an SVG element and
-   * inert, and one inside a `<template>` belongs to an inert fragment. Both
-   * look identical to a linear scan.
+   * inert, and one inside an HTML `<template>` belongs to an inert fragment.
+   * Both look identical to a linear scan.
+   *
+   * The template test is by namespace as well as name. A foreign element may
+   * also be called `template` — `<svg><template><foreignObject><base>` — and it
+   * creates no inert fragment, so the base under it is live and a name-only
+   * test would wrongly discard it.
    */
   function hasAuthoredHtmlBase(html: string): boolean {
     const $ = load(html);
     return $('base').toArray().some((element) => {
-      if (element.namespace !== 'http://www.w3.org/1999/xhtml') return false;
-      for (let node = element.parent; node; node = node.parent) {
-        if ((node as { name?: string }).name === 'template') return false;
+      if (element.namespace !== HTML_NAMESPACE) return false;
+      for (let node: typeof element.parent = element.parent; node; node = node.parent) {
+        const candidate = node as { name?: string; namespace?: string };
+        if (candidate.name === 'template' && candidate.namespace === HTML_NAMESPACE) return false;
       }
       return true;
     });

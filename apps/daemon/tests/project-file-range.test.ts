@@ -486,6 +486,32 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
           + '<main id="slot">real</main></body></html>',
       ),
     );
+    // A template's contents are parsed with the same insertion modes as the
+    // document, so the in-select mode applies inside one too. Modelling it at
+    // the top level and not here made the two walkers disagree on the same
+    // bytes.
+    await writeFile(
+      path.join(dir, 'template-select-foreign.html'),
+      Buffer.from(
+        '<!doctype html><html><head></head><body>'
+          + '<template><select><svg></select>'
+          + '<script>const x = "<p></template><body>slip</body>";<\/script></template>'
+          + '<main id="slot">real</main></body></html>',
+      ),
+    );
+    // A foreign element may also be called `template`, and it creates no inert
+    // fragment — so a `<base>` beneath it is live and must still suppress the
+    // generated containment base.
+    await writeFile(
+      path.join(dir, 'svg-template-base.html'),
+      Buffer.from(
+        '<!doctype html><html><head></head><body>'
+          + '<svg><template><foreignObject>'
+          + '<base href="https://author.example/assets/">'
+          + '</foreignObject></template></svg>'
+          + '<main id="slot">real</main></body></html>',
+      ),
+    );
     // A leading BOM is the encoding signature and only counts at byte zero, so
     // the no-boundary fallback has to insert after it rather than in front of
     // it — otherwise the doctype stops applying and the artifact silently
@@ -1222,6 +1248,24 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
     expect(html).toContain('data-od-project-preview-base');
     expect(html).toContain('href="https://ignored.example/"');
     expect(html).toContain('href="https://inert.example/"');
+  });
+
+  it('applies the in-select mode inside template contents too', async () => {
+    const bridged = await fetch(`${rawUrl('template-select-foreign.html')}?odPreviewBridge=scroll`);
+    expect(bridged.status).toBe(200);
+    const html = await bridged.text();
+    const page = load(html);
+    expect(page('body > [data-od-url-scroll-bridge]').length).toBe(1);
+    expect(page('#slot').text()).toBe('real');
+    expect(html).toContain('const x = "<p></template><body>slip</body>";');
+  });
+
+  it('treats a foreign element named template as live, not inert', async () => {
+    const bridged = await fetch(`${rawUrl('svg-template-base.html')}?odPreviewBridge=scroll`);
+    expect(bridged.status).toBe(200);
+    const html = await bridged.text();
+    expect(html).not.toContain('data-od-project-preview-base');
+    expect(html).toContain('href="https://author.example/assets/"');
   });
 
   it('keeps a leading BOM at byte zero when there is no boundary', async () => {
