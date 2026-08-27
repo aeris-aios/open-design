@@ -680,3 +680,194 @@ describe('「回到最新」什么时候该在(用户 2026-08-27:「总是在不
     expect(jumpBtnShown()).toBe(false);
   });
 });
+
+describe('尾部预留空白不能把「用户滑走了」这件事吃掉(用户 2026-08-27)', () => {
+  /*
+   * 「运行期间,稍微向上滑动一点就突然自动滑成这样了」
+   *
+   * ── 真机量到的那一屏(用户的 runtime,`.chat-log`)────────────────────
+   *   scrollTop      1357
+   *   scrollHeight   1950      ← 真实滚动条看到的总高
+   *   clientHeight    440
+   *   尾部占位块      250      ← anchor-to-top 预留的空白
+   *
+   * 用户离**真实**底部 1950 − 1357 − 440 = 153px。可判「用户是不是自己滑走了」
+   * 用的是**扣掉预留空白之后**的高度:(1950 − 250) − 1357 − 440 = −97,夹到 0 —— 于是
+   * 程序认定他「就贴在底上」,跟随不松手,下一次写 `scrollTop` 就把他拽回去。
+   *
+   * 换句话说:**只要他往上滑的距离不超过那块空白(250px),程序就完全看不见他的手。**
+   *
+   * ── 为什么不能把那个扣除删掉 ──────────────────────────────────────
+   * 扣除本身是对的,它修的是另一个 bug(见上面「预留空白不算『底下还有内容』」那条):
+   * 浮标不该被一屏预留的空点亮。错的是**同一个被扣过的数字被喂给了两个不同的问题**:
+   *
+   *   · 「要不要亮浮标」        —— 该扣,空白不是内容。
+   *   · 「用户是不是自己滑走了」 —— 不该扣,他对着**真实的滚动条**在滑。
+   */
+
+  /** 复刻真机那一屏的几何:真内容 1700 + 预留空白 250 = 1950,视口 440。 */
+  const anchoredTurn: ChatMessage[] = [
+    { id: 'u0', role: 'user', content: 'first request', createdAt: 1 },
+    { id: 'a0', role: 'assistant', content: 'first reply', createdAt: 2 },
+    { id: 'u1', role: 'user', content: 'ship the deck', createdAt: 3 },
+    { id: 'a1', role: 'assistant', content: 'Step 1 of 5', createdAt: 4, runStatus: 'running' },
+  ];
+
+  function streamedTurn(text: string): ChatMessage[] {
+    return [
+      ...anchoredTurn.slice(0, 3),
+      { id: 'a1', role: 'assistant', content: text, createdAt: 4, runStatus: 'running' },
+    ];
+  }
+
+  /**
+   * 把面板开到真机那一屏:anchor-to-top 接管、预留空白正好 250px、
+   * 视图停在这条用户消息顶到视口顶端的位置(也就是**真实滚动条的底部**)。
+   *
+   * 占位块的高度不是硬编码进来的,是 `sizeAnchorSpacer` 自己算的:
+   * 440(视口) − 178(消息下面的真内容) − 12(顶部留白) = 250。
+   */
+  async function openAnchoredScreen() {
+    geom = { contentHeight: 1440, clientHeight: 440, scrollTop: 0 };
+    const view = render(chatPaneEl(anchoredTurn.slice(0, 2)));
+    await flushFrames();
+
+    await flushMounts();
+    typeInComposer('ship the deck');
+    pressEnter();
+
+    geom.contentHeight = 1700;
+    await act(async () => {
+      view.rerender(chatPaneEl(anchoredTurn, { streaming: true }));
+    });
+    stubUserMessageTop(view.container, 1522);
+    await flushFrames();
+
+    // 真机那一屏的四个数,一个不差。
+    expect(tailSpacerHeight()).toBe(250);
+    expect(scrollHeightOf()).toBe(1950);
+    expect(geom.clientHeight).toBe(440);
+    expect(geom.scrollTop).toBe(1510);
+    expect(maxScrollTop()).toBe(1510);
+    return view;
+  }
+
+  /** 用户自己滚回底部 —— 跟随重新挂上。这是「他确实在跟着看」的前提。 */
+  async function rearmFollowByScrollingBack() {
+    await userScrollTo(1000);
+    await userScrollTo(1510);
+  }
+
+  it('往上滑 153px(不到预留空白的 250px)必须停在原地,不许被拽回底部', async () => {
+    await openAnchoredScreen();
+    await rearmFollowByScrollingBack();
+    expect(geom.scrollTop).toBe(1510);
+
+    // 用户往上滑一点点 —— 真机那一屏就是这个位置。
+    await userScrollTo(1357);
+
+    // 离**真实**底部 153px,离扣掉空白之后的「内容底部」0px。
+    expect(scrollHeightOf() - geom.scrollTop - geom.clientHeight).toBe(153);
+    expect(geom.contentHeight - geom.scrollTop - geom.clientHeight).toBe(-97);
+
+    // 松开手的这一刻就不该被拽走 —— 跟随此时就该松手,不用等下一块内容到。
+    expect(geom.scrollTop).toBe(1357);
+  });
+
+  it('往上滑 153px 之后,后续每一块流式内容都不许把视图拽回底部', async () => {
+    const { rerender } = await openAnchoredScreen();
+    await rearmFollowByScrollingBack();
+    await userScrollTo(1357);
+
+    let text = 'Step 1 of 5';
+    for (let step = 0; step < 3; step += 1) {
+      text += ' more';
+      geom.contentHeight += 120;
+      await act(async () => {
+        rerender(chatPaneEl(streamedTurn(text), { streaming: true }));
+      });
+      await triggerResize();
+      await flushFrames();
+    }
+
+    expect(geom.scrollTop).toBe(1357);
+  });
+
+  it('滑走之后,内容回流带来的 1px 向下修正不许被当成「他又回来了」', async () => {
+    /*
+     * 第二条病根,同一个根因。`nextFollowIntent` 里「重新跟上」的判据是
+     * `!escaped && isNearBottom(next)` —— 而扣掉 250px 空白之后 `isNearBottom`
+     * 在整段 250px 里**恒为真**。于是上方内容回流时浏览器原生 scroll anchoring
+     * 往下修一个像素(方向朝下 → 清掉 `escaped`),跟随当场自己挂回来。
+     *
+     * 用滚轮松手(而不是靠 scroll 事件),是为了让这一条**只**验「重新跟上」那一半:
+     * 滚轮那条路不看几何,两边代码都会松手,所以红/绿的差别只可能来自下面这一跳。
+     */
+    await openAnchoredScreen();
+    await rearmFollowByScrollingBack();
+
+    await act(async () => {
+      fireEvent.wheel(chatLog(), { deltaY: -40 });
+      await Promise.resolve();
+    });
+    await userScrollTo(1357);
+    expect(geom.scrollTop).toBe(1357);
+
+    // 上方一张工具卡回流,浏览器把 `scrollTop` 往下修了 1px。
+    await userScrollTo(1358);
+
+    expect(geom.scrollTop).toBe(1358);
+  });
+
+  it('反面:预留空白在,但用户确实贴在真实底部时,仍然要跟随', async () => {
+    /*
+     * 这条挡的是「永远不跟随」那种假修法 —— 那样上面两条也会绿。
+     * 预留空白 250px 原封不动,用户停在真实滚动条的最底下,流式内容必须一路跟到新的底。
+     */
+    const { rerender } = await openAnchoredScreen();
+    await rearmFollowByScrollingBack();
+    expect(geom.scrollTop).toBe(1510);
+
+    let text = 'Step 1 of 5';
+    for (let step = 0; step < 3; step += 1) {
+      text += ' more';
+      geom.contentHeight += 120;
+      await act(async () => {
+        rerender(chatPaneEl(streamedTurn(text), { streaming: true }));
+      });
+      await triggerResize();
+      await flushFrames();
+    }
+
+    expect(tailSpacerHeight()).toBe(250);
+    expect(geom.scrollTop).toBe(maxScrollTop());
+    expect(geom.scrollTop).toBe(1870);
+  });
+
+  it('反面:预留空白撑着时,浮标仍然不许被那一屏空白点亮', async () => {
+    /*
+     * 这条挡的是「把扣除整个删掉」那种假修法 —— 那样上面三条也会绿。
+     *
+     * 440px 的面板里,「很上面」的门槛是 clamp(440 × 0.75, 320, 1200) = 330px。
+     * 挑 scrollTop = 1100 正好把两个答案劈开:
+     *   离**真实**底部  1950 − 1100 − 440 = 410  > 330 → 不扣空白就会点亮浮标
+     *   离**内容**底部  1700 − 1100 − 440 = 160  < 330 → 屏幕上就是最新的,不该点亮
+     */
+    await openAnchoredScreen();
+    await rearmFollowByScrollingBack();
+
+    await userScrollTo(1357);
+    expect(geom.contentHeight - geom.scrollTop - geom.clientHeight).toBeLessThanOrEqual(0);
+    expect(jumpBtnShown()).toBe(false);
+
+    await userScrollTo(1100);
+    expect(scrollHeightOf() - geom.scrollTop - geom.clientHeight).toBe(410);
+    expect(geom.contentHeight - geom.scrollTop - geom.clientHeight).toBe(160);
+    expect(jumpBtnShown()).toBe(false);
+
+    // 再往上滚到**内容**也确实剩一大截时,入口必须出现 —— 否则「永远不亮」也能让这条绿。
+    await userScrollTo(900);
+    expect(geom.contentHeight - geom.scrollTop - geom.clientHeight).toBe(360);
+    expect(jumpBtnShown()).toBe(true);
+  });
+});

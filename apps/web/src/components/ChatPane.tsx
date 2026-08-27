@@ -2291,7 +2291,8 @@ export function ChatPane({
        * 把我们自己写的 `scrollTop`、浏览器夹取、原生 scroll anchoring 的修正
        * 全都排除在「用户滚动」之外(见 `stick-to-bottom.ts`)。
        */
-      const sample = readLogSample(target);
+      // 真实几何,不扣预留空白 —— 见 `readViewportSample` 的注释。
+      const sample = readViewportSample(target);
       followIntentRef.current = nextFollowIntent(
         followIntentRef.current,
         lastScrollSampleRef.current,
@@ -2551,14 +2552,50 @@ export function ChatPane({
   }
 
   /*
-   * 量滚动状态时**把预留空白扣掉**。
+   * ── 同一块几何,两个问题,两个答案 ────────────────────────────────────
    *
-   * 这是「回到最新」误报的另一半病根:anchor-to-top 会在回复下面撑一块空白,好让
-   * 刚发出的那条用户消息能顶到视口顶端。那块空白是**预留的空**,不是内容 —— 可
+   * anchor-to-top 会在回复下面撑一块空白(尾部占位块),好让刚发出的那条用户消息
+   * 能顶到视口顶端。那块空白**既是真实可滚动的区域,又不是内容** —— 两句话都对,
+   * 所以它必须按问题分开算:
+   *
+   *   ┌ 问题 ───────────────────────┬ 预留空白算不算 ┬ 用哪个 reader ─────┐
+   *   │ 要不要亮「回到最新」浮标      │ 不算(是空)   │ readContentSample │
+   *   │ 用户是不是自己滑走了、停不停手 │ 算(是滚动条) │ readViewportSample│
+   *   └─────────────────────────────┴───────────────┴───────────────────┘
+   *
+   * 把扣过的数字喂给第二个问题,就是用户 2026-08-27 那条 bug:
+   * 「运行期间,稍微向上滑动一点就突然自动滑成这样了」。真机量到的那一屏是
+   * scrollTop 1357 / scrollHeight 1950 / clientHeight 440 / 占位块 250 —— 他离真实
+   * 底部 153px,可扣掉空白之后算出来是 (1950−250)−1357−440 = −97 → 夹到 0,
+   * 判成「贴着底」,跟随不松手,下一次写 `scrollTop` 就把他拽回去。
+   * **只要他往上滑的距离不超过那块空白,程序就完全看不见他的手。**
+   */
+
+  /**
+   * 用户手底下那根**真实滚动条**的几何 —— 一个像素都不减。
+   *
+   * 「用户是不是自己滑走了」只能拿这个判:他对着真实滚动条滑了 153px 就是滑了
+   * 153px,预留空白正是那根滚动条的一部分。`nextFollowIntent` 的另外两条判据也
+   * 依赖真实值 —— 「`scrollHeight` 没变 = 不是内容引起的」说的是**浏览器**看到的
+   * 那个 `scrollHeight`(夹取和原生 scroll anchoring 都按它走),不是我们减完的数。
+   */
+  function readViewportSample(el: HTMLDivElement): ScrollSample {
+    const clientHeight = el.clientHeight;
+    return {
+      scrollTop: el.scrollTop,
+      scrollHeight: Math.max(clientHeight, el.scrollHeight),
+      clientHeight,
+    };
+  }
+
+  /**
+   * 把预留空白扣掉之后的几何 —— **只回答「底下还有没有内容可看」**。
+   *
+   * 这是「回到最新」误报的另一半病根:那块空白是**预留的空**,不是内容 —— 可
    * 「离底部还有多远」照单全收,于是浮标被一屏空白点亮,而屏幕上明明就是最新的东西
    * (用户 2026-08-27 的截图:一条用户消息 + 一个「进行中」头,下面大半空着,浮标在)。
    */
-  function readLogSample(el: HTMLDivElement): ScrollSample {
+  function readContentSample(el: HTMLDivElement): ScrollSample {
     const clientHeight = el.clientHeight;
     return {
       scrollTop: el.scrollTop,
@@ -2567,9 +2604,13 @@ export function ChatPane({
     };
   }
 
-  /** 把当前几何记成基线。**我们自己写完 `scrollTop` 之后必须叫一次**,否则下一次用户滚动的方向会算反。 */
+  /**
+   * 把当前几何记成基线。**我们自己写完 `scrollTop` 之后必须叫一次**,否则下一次用户滚动的方向会算反。
+   *
+   * 记的是**真实**几何:下一次 scroll 事件也是拿真实几何来跟它相减的,两边单位必须一致。
+   */
   function rememberScrollSample(el: HTMLDivElement) {
-    lastScrollSampleRef.current = readLogSample(el);
+    lastScrollSampleRef.current = readViewportSample(el);
   }
 
   /** 唯一的 `scrollTop` 写入口:写完就记基线。 */
@@ -2601,7 +2642,8 @@ export function ChatPane({
       // 那些事件看起来就像用户在滚,会把跟随打断(这也是当初写死 instant 的原因)。
       if (el.scrollTop !== el.scrollHeight) writeLogScrollTop(el, el.scrollHeight);
     }
-    const sample = readLogSample(el);
+    // 浮标问的是「底下还有没有**内容**」,所以这里用扣掉预留空白的那份。
+    const sample = readContentSample(el);
     /*
      * 这里**一个字都不改跟随意图**。
      *
@@ -2640,21 +2682,26 @@ export function ChatPane({
    */
   function settleFollowAfterPredictedScroll(el: HTMLDivElement, distance: number) {
     const clientHeight = el.clientHeight;
-    const scrollHeight = Math.max(clientHeight, el.scrollHeight - reservedTailHeight());
-    const sample: ScrollSample = {
-      scrollTop: Math.max(0, scrollHeight - clientHeight - distance),
-      scrollHeight,
+    /*
+     * 跟随意图和基线按**真实**几何定 —— `distance` 本来就是拿真实几何预测出来的
+     * (`distanceFromBottomAfterAligningTop` 读的是 `el.scrollHeight`),而基线要跟
+     * 下一次 scroll 事件的读数同单位,否则下一跳的方向会算反。
+     */
+    const viewport: ScrollSample = {
+      scrollTop: Math.max(0, el.scrollHeight - clientHeight - distance),
+      scrollHeight: Math.max(clientHeight, el.scrollHeight),
       clientHeight,
     };
-    lastScrollSampleRef.current = sample;
-    followIntentRef.current = isSampleNearBottom(sample)
+    lastScrollSampleRef.current = viewport;
+    followIntentRef.current = isSampleNearBottom(viewport)
       ? { following: true, escaped: false }
       : { following: false, escaped: true };
+    // 浮标仍然按「底下还有没有内容」算 —— 预留空白不是内容。
     setScrolledFromBottom((prev) =>
       shouldShowJumpToLatest({
         distance,
         clientHeight,
-        scrollHeight,
+        scrollHeight: Math.max(clientHeight, el.scrollHeight - reservedTailHeight()),
         shown: prev,
         following: isFollowingTail(),
       }),
