@@ -45,6 +45,24 @@ function isChatSessionMode(value: unknown): value is ChatSessionMode {
   return value === 'chat' || value === 'design' || value === 'plan';
 }
 
+/**
+ * 分叉复制一条消息时,这一轮**到底成没成**要跟着走;指向那次 run 的把手不跟着走。
+ *
+ * `runId` / `lastRunEventId` 是**指针** —— 重连、完成通知去重、SSE 续流都拿 runId
+ * 认人,带到新会话就是给它挂了一个不属于它的把手,所以照旧摘掉。
+ * `runStatus` 不是指针,是**结论**。丢掉它,前端就没有任何东西宣布这一轮结束了,
+ * 只能回退到「从事件里猜」(`AssistantMessage.legacyTurnFailed`):那条判据看到任何
+ * 一条报错的 `tool_result` 就判整轮失败。于是一轮明明成功、只是中途某个工具报过错的
+ * 回答,分叉之后壳头变成红色的「运行失败」(真机 2026-08-27,那一次是
+ * `desktop renderer unavailable`)—— 把「不知道」显示成了「失败」。
+ *
+ * 只带**终态**:`queued` / `running` 说的是「源会话此刻还在跑」,那是活的运行状态,
+ * 复制过来会让新会话里那一条永远转圈(原注释担心的正是这个),所以仍然不带。
+ */
+function settledForkVerdict(status: unknown): string | undefined {
+  return typeof status === 'string' && TERMINAL_RUN_STATUSES.has(status) ? status : undefined;
+}
+
 export function registerProjectConversationRoutes(app: Express, ctx: RegisterProjectConversationRoutesDeps): void {
   const { db, design } = ctx;
   const { sendApiError } = ctx.http;
@@ -217,14 +235,13 @@ export function registerProjectConversationRoutes(app: Express, ctx: RegisterPro
       seedMessages.forEach((m, index) => {
         // Fresh id per copied message; upsertMessage assigns the next
         // position so role/content ordering is preserved. Drop the source's
-        // run pointers (runId/runStatus/lastRunEventId): they belong to the
-        // OTHER conversation's runs, and a copied still-`running` assistant
-        // turn would otherwise render a perpetual spinner in the side chat.
+        // run pointers (runId/lastRunEventId) but keep each turn's verdict —
+        // see `settledForkVerdict`.
         upsertMessage(db, conv.id, {
           ...m,
           id: randomId(),
           runId: undefined,
-          runStatus: undefined,
+          runStatus: settledForkVerdict(m.runStatus),
           lastRunEventId: undefined,
           /* 拿不到源标题就不盖 —— 没有标题的分界线是两条发丝线夹一行空白 */
           forkedInto:

@@ -272,8 +272,10 @@ describe('GET /api/projects/:id resolvedDir', () => {
       role: 'assistant',
       content: 'first answer',
     });
+    // 指针不继承(它们指向源会话那次 run),结论继承 —— 见
+    // `settledForkVerdict` 和 `tests/routes/conversation-fork-run-verdict.test.ts`。
     expect(forkMessagesBody.messages[1]?.runId).toBeUndefined();
-    expect(forkMessagesBody.messages[1]?.runStatus).toBeUndefined();
+    expect(forkMessagesBody.messages[1]?.runStatus).toBe('succeeded');
     expect(forkMessagesBody.messages[1]?.lastRunEventId).toBeUndefined();
 
     /*
@@ -466,11 +468,12 @@ describe('GET /api/projects/:id resolvedDir', () => {
       'enrich it',
       'partial answer before reset',
     ]);
-    // Fresh ids, and the dead run pointers are not inherited.
+    // Fresh ids, and the dead run pointers are not inherited. The verdict is:
+    // that turn really did fail, and the copy must keep saying so.
     expect(forkMessages.map((m) => m.id)).not.toContain('ghost-assistant-1');
     expect(forkMessages[1]).toMatchObject({ role: 'assistant', content: 'partial answer before reset' });
     expect(forkMessages[1]?.runId).toBeUndefined();
-    expect(forkMessages[1]?.runStatus).toBeUndefined();
+    expect(forkMessages[1]?.runStatus).toBe('failed');
     expect(forkMessages[1]?.lastRunEventId).toBeUndefined();
   });
 
