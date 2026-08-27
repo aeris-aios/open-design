@@ -107,7 +107,7 @@ describe('N5 夹心正文落回 22px 竖线', () => {
     const shellOf = (items: ShellItem[]): Shell => ({
       kind: 'shell', seq: 0, status: 'succeeded', items,
       thinking: false, stopped: false, elapsedMs: null, quietMs: null,
-    } as Shell);
+    } as unknown as Shell);
     const show = (items: ShellItem[]) => render(
       <I18nProvider initial="zh-CN"><ExecutionShell shell={shellOf(items)} /></I18nProvider>,
     ).container.querySelector('details');
