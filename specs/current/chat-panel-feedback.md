@@ -643,3 +643,54 @@ claude 会出。39 个录制里 5 个中招;顺带确认 `file_change` 是**唯�
 根 typecheck 干净,而 `tools-dev` 起不来,因为 daemon build 挂了 6 条
 (正则捕获组解构成 `string | undefined`)。**改过 `apps/daemon/src/**` 必须单跑
 `pnpm --filter @open-design/daemon build`。**
+
+## F-13 真机端到端验收结果(2026-08-27,浏览器 + 真 daemon)
+
+运行时:`tools-dev run web --daemon-port 17456 --web-port 17573`,worktree `od-wt-chat-panel`。
+截图存于 `/tmp/od-shots/`。
+
+### 已在真机上眼见为实
+
+| 项 | 证据 |
+|---|---|
+| 产物卡出现时机 | 「你好」那一轮:正文 → 「已完成 09:28」→ 下一步建议,**产物大卡不再出现** |
+| 壳头耗时 | `已完成 13s` / `进行中 26s` / `进行中 1m 14s` 均正常走秒 |
+| thinking 折叠(N2) | 9 个「思考过程」折叠行,**默认收起**,点开读得到完整推理 |
+| 表单间距(N3) | 量到左右各 **11px**、下划线到底栏 **16px** —— 与稿子逐字一致(原来是 1px / 0px) |
+| 回到最新 | 短会话 `canScroll:false` 时按钮**不出现**;长会话可滚时正常出现 |
+| **claude todo** | `TaskCreate=31` → 合成 **4 个 TodoWrite 快照** → 界面渲染「执行计划 · 4 步」+ 四条清单行 |
+| **#39 中断状态行** | 文案「已手动停止」✅ 颜色 `rgb(92,92,92)` = `--text-muted` ✅ 只有「继续剩余任务 / 从这里分叉」、**无赞踩** ✅ 秒数按 W4 停在 `1m 14s` |
+| BYOK | OpenRouter 配好后「已连接。2119 毫秒响应 — 'ok'」;真跑一轮走 `byok-opencode`,正常出文本与 usage |
+| 错误卡 | dsh 失败时正常呈现:红色标题 + 说明 + 查看详情 + 联系支持/导出日志/重试 |
+
+### 单测验过但**真机未触发**(如实记录)
+
+- **S12 静默计时修复**:真机跑到 `1m 14s` 时头仍是「进行中」,但那是因为工具事件本来就带时刻、
+  一直在刷新计时 —— **没有验到修复本身**(它管的是「事件一直来但都不带时刻」)。
+  需要一轮 >60s 的纯 thinking 才能复现,无法按需构造。
+- **claude 跨回合 todo id 错位修复**:这一轮 `TaskUpdate=0`(在它推进前就手动停了),没触发。
+
+### 真机挖出的新问题
+
+1. **claude 的推理对当前世代模型根本不下发** —— 对照实验:
+   `haiku` → `thinking_delta=15 带内容=14`,尾部 block 441 字;
+   `opus` → `thinking_delta=0`,尾部 block 也没有。
+   历史录制同样双峰:5 个有内容的 run **全部是 `model: haiku`**,其余 `default` 全空。
+   所以 opus/sonnet 下推理窗口是空的**属于上游行为**,不是我们吞了。
+   (`claude-stream.ts` 那条「空 delta 不算流过」的修复方向仍正确,救的是
+   haiku 那种「delta 空、尾部有内容」的形态,留着。)
+2. **紧凑 chip 在 BYOK 下念错执行者**(已修):`aria-label` 是「Claude Code · gemini-2.5-flash」,
+   实际跑的是 `byok-opencode`。非紧凑那支 `chipPrimary` 早就按 `config.mode` 分了岔,
+   紧凑那支 `chipAgentLabel` 没有。可见文字只有模型名,所以只有读屏用户被念错。
+3. **错误卡承诺了原始报错却不给**(已派单):卡上写「原始报错收在下面的『查看详情』里」,
+   展开只有 `DSH_PROFILE_MISSING_RESULT` 和几个 id;而 stderr 上那句
+   `credentials-local: the value for "version" in ~/.dsh/.credentials.yaml must be a string`
+   **已被 daemon 捕获并落盘**,只是从没露出来。
+4. **本机 dsh 环境坏了**(非 OD 问题):`~/.dsh/.credentials.yaml` 的 schema 与
+   dsh 0.1.0-rc.6 对不上(`version` 要字符串,改完 `refs` 又要字符串)。
+   已还原用户文件不动,留给用户决定是否重建凭证。
+
+### daemon 全量测试判据
+
+3 条失败:`project-upload-filenames` 与 `run-failure-telemetry-smoke` **单跑即绿**(并行抖动);
+`chat-project-skill-critique-label` 是**已知的分支落后 main** 导致,与本轮改动无关。
