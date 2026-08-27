@@ -126,6 +126,8 @@ const view = (over: Partial<ChatReconnectView> = {}): ChatReconnectView => ({
   attempt: 2,
   max: 5,
   exhausted: false,
+  // 传输层的原话永远不是「按下之后的乐观读数」,见 `ChatReconnectView.manualRetry`。
+  manualRetry: false,
   ...over,
 });
 

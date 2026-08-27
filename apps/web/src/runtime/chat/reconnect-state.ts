@@ -17,6 +17,10 @@
  *      `onRunStatus('failed')` → `emitReconnect('exhausted')` → `onError(...)`,
  *      而报错那条路上还会再来一次 `failed`。所以 `exhausted` 必须能扛住随后到达的
  *      `failed`,否则那颗按钮会一闪而过。
+ *   2b. **按下那颗按钮必须有回音,而且回音必须到期**(`manual-retry` /
+ *      `manual-retry-expired`)。按下之后要走的整条链都在异步里,daemon 没回来时
+ *      它在半路就断了,屏幕原封不动 —— 而「点了没变化」和「按钮坏了」长得一模一样。
+ *      于是按下**无条件**翻回「正在重新连接」,并由一把统一的到期闸把它送回 22-3。
  *   3. **与组件 20 · PauseLine 不同时出现**。`PauseLine` 自己不判这件事(它的文档把这条
  *      写成「调用方的接线约束」),而它的显示条件是 `runStatus: 'canceled'` +
  *      `cancelOrigin: 'user_stop'`。于是这里让**任何** `canceled` 立刻把重连行撤掉:
@@ -63,7 +67,31 @@ export interface ChatReconnectView {
   max: number;
   /** 预算用尽:自动重连停止,交回给人(22-3)。 */
   exhausted: boolean;
+  /**
+   * 这一行现在显示的是**用户按下〔重新连接〕之后的乐观读数**,不是传输层的原话。
+   *
+   * 它存在的唯一理由是让「按下」这件事有回音:重挂能不能起来要过好几道前置条件,
+   * 而那些条件全在异步里,屏幕上没有任何东西替这一下按压说话(真机 2026-08-27,
+   * 用户原话「点击 reconnect 咋没啥反应」)。
+   *
+   * 乐观就必须有到期:任何一条乐观读数都由 `manual-retry-expired` 统一回落成
+   * 22-3,时限见 {@link MANUAL_RECONNECT_FEEDBACK_MS}。这个标记就是那把闸的钥匙 ——
+   * 传输层后来接管出来的真读数不带它,于是闸对真读数一律无效。
+   */
+  manualRetry: boolean;
 }
+
+/**
+ * 那一下按压的乐观读数最多留多久,到点回落成 22-3(带按钮)。
+ *
+ * 取值的两头:
+ *   · 下限 —— 重挂真的起得来时,真机量到整行在 **0.4s** 内消失(2026-08-27)。
+ *     所以任何小于那个数的时限都会先闪一次「连接失败」再消失,凭空多一次跳变。
+ *   · 上限 —— 这是**失败**路径上用户要等的沉默时间。太长就从「在试」变成「又卡住了」。
+ *
+ * 3 秒:够慢到看得见「它真的去试了」,够快到失败结论不迟到。
+ */
+export const MANUAL_RECONNECT_FEEDBACK_MS = 3000;
 
 export type ChatReconnectSignal =
   /** 传输层的原话,逐字来自 `DaemonStreamHandlers.onReconnect`。 */
@@ -98,16 +126,37 @@ export type ChatReconnectSignal =
    */
   | { kind: 'dropped'; runId?: string }
   /**
-   * 用户按了〔重新连接〕。**刻意什么都不做** —— 撤那一行的唯一正当时机是
-   * 「重挂真的开始了」,`ProjectView` 在 `reattachDaemonRun` 前一行推的 `dropped`
-   * 已经占住了那个位置。
+   * 用户按了〔重新连接〕。把交回给人的那一行**立刻**翻回「正在重新连接 1/5」。
    *
-   * 为什么不能在按下的那一刻乐观地撤:重挂有前置条件(要先拉到这一轮的运行状态),
-   * 而断线时那一条也常常拉不到 —— 于是重挂根本没开始,那一行却已经没了。真机上
-   * (2026-08-27)看到的正是这个:屏幕只剩壳头一句「运行失败」,报错卡按 R9 又是
-   * 该压掉的,用户连再点一次的入口都没有。**宁可多留一行,不可留死胡同。**
+   * 为什么必须翻:按下之后要走的是「清重试记账 → 叫醒重挂扫描 → 拉运行状态 →
+   * 起重挂」,daemon 没回来时这条链在第三步就断了,而整条链上没有一样东西会
+   * 碰这一行 —— 屏幕于是原封不动。真机 2026-08-27,用户原话「点击 reconnect
+   * 咋没啥反应」。**「点了没变化」和「按钮坏了」在屏幕上长得一模一样。**
+   *
+   * 为什么不能翻成「整行消失」:更早一版就是那么做的(乐观推一条 `dropped`),
+   * 而重挂起不来时没有人再把行画回来,屏幕只剩壳头一句「运行失败」,报错卡按 R9
+   * 又是该压掉的 —— 用户连再按一次的入口都没有。撤整行的唯一正当时机仍然只有
+   * 「重挂真的开始了」,那个位置由 `dropped` 占着。
+   *
+   * 只对**已经交回给人**的那一行有效:还在数的那一行本来就没有按钮,而且它显示的
+   * 是传输层的真实读数,不该被一次按压改写成 1。
+   *
+   * 连点不成立:翻过去之后 `exhausted` 是 false,`Reconnect` 那一档根本不画按钮
+   * (见 `components/chat/Reconnect.tsx`)—— 窗口里没有可按的东西,一次按压
+   * 只换来一次重挂扫描,也没有任何东西会自己再按一次。
    */
-  | { kind: 'manual-retry'; runId: string };
+  | { kind: 'manual-retry'; runId: string }
+  /**
+   * 那一下按压的乐观读数到期了(`MANUAL_RECONNECT_FEEDBACK_MS`)。
+   *
+   * 乐观读数**必须**有且只有这一个收场:重挂没起来的形态太多(状态拉不到、
+   * daemon 亲口说这一轮已经 failed、被冷却窗口挡下、扫描本身因为 `daemonLive`
+   * 翻假而压根没跑),挨个去认等于把一条不变量拆成十几处记得写对。这里只认一件事:
+   * **过了这么久这一行还是那条乐观读数,就说明没接上** —— 回落成 22-3,把按钮还给人。
+   *
+   * 对不是乐观读数的那一行一律不动,所以传输层真的接管之后这把闸自动作废。
+   */
+  | { kind: 'manual-retry-expired'; runId: string };
 
 /**
  * 一条信号推一次状态。`prev` 原样返回表示「这条信号跟屏幕上这一行无关」。
@@ -116,7 +165,18 @@ export function nextChatReconnectView(
   prev: ChatReconnectView | null,
   signal: ChatReconnectSignal,
 ): ChatReconnectView | null {
-  if (signal.kind === 'manual-retry') return prev;
+  if (signal.kind === 'manual-retry') {
+    if (!prev || prev.runId !== signal.runId) return prev;
+    if (!prev.exhausted) return prev;
+    // 从 1 起:这是**人按的**这一次的第一次,不是接着传输层那一段数下去。
+    // 「共几次」沿用同一份传输层预算,断了之后那把梯子也是从 1/5 重走。
+    return { ...prev, attempt: 1, exhausted: false, manualRetry: true };
+  }
+
+  if (signal.kind === 'manual-retry-expired') {
+    if (!prev || prev.runId !== signal.runId || !prev.manualRetry) return prev;
+    return { ...prev, attempt: prev.max, exhausted: true, manualRetry: false };
+  }
 
   if (signal.kind === 'agent-retry') {
     if (prev && prev.runId !== signal.runId) return prev;
@@ -140,6 +200,7 @@ export function nextChatReconnectView(
       attempt: signal.attempt,
       max: signal.max,
       exhausted: false,
+      manualRetry: false,
     };
   }
 
@@ -164,6 +225,9 @@ export function nextChatReconnectView(
       case 'succeeded':
         return null;
       case 'failed':
+        // 乐观窗口里 `exhausted` 是 false,而 `failed` 恰恰是掉线时传输层写的那个字 ——
+        // 走下面那条就等于「按一下整行消失」,回到那个死胡同。窗口的收场只认到期闸。
+        if (prev.manualRetry) return prev;
         // 用尽后传输层先发 failed 再发 exhausted,报错那条路上还会再来一次 failed。
         // 已经交回给人的那一行要立得住,没交回去的就跟着这一轮一起收场。
         return prev.exhausted ? prev : null;
@@ -182,6 +246,8 @@ export function nextChatReconnectView(
     attempt: signal.attempt,
     max: signal.max,
     exhausted: signal.phase === 'exhausted',
+    // 传输层的原话永远不是乐观读数 —— 它一接管,那把到期闸就作废。
+    manualRetry: false,
   };
 }
 

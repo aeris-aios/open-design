@@ -171,6 +171,8 @@ describe('R9 断线:报错卡让位给流水最后一行的重连行', () => {
     attempt: 5,
     max: 5,
     exhausted: true,
+    // 传输层交回给人的那一行,不是「按下之后的乐观读数」。
+    manualRetry: false,
   };
 
   it('持久化的断线行不出报错卡', () => {

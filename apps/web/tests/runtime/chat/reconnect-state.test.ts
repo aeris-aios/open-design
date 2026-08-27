@@ -51,6 +51,9 @@ describe('nextChatReconnectView · 82 重连中', () => {
       attempt: 2,
       max: 5,
       exhausted: false,
+      // 传输层的原话永远不是「按下之后的乐观读数」。这个字段是那把到期闸的钥匙,
+      // 见 `ChatReconnectView.manualRetry`。
+      manualRetry: false,
     });
   });
 
@@ -200,22 +203,24 @@ describe('nextChatReconnectView · 不残留', () => {
   });
 });
 
-describe('nextChatReconnectView · 按了〔重新连接〕之后不许留下死胡同', () => {
+describe('nextChatReconnectView · 按下〔重新连接〕要有回音,而且不许留下死胡同', () => {
   /**
-   * 真机复现(2026-08-27):断线走到「连接失败 +〔重新连接〕」,点那颗按钮,
-   * 那一行**整个消失了,而且什么都没重连** —— 屏幕上只剩壳头一句「运行失败」,
-   * 报错卡又被 R9 按设计压掉了,于是用户连再点一次的入口都没有。
+   * 真机量到的两件事(2026-08-27),它们互相牵制,所以写在同一族里:
    *
-   * 成因:`ProjectView.handleManualReconnect` 乐观地推了一条 `dropped`。可
-   * `dropped` 的语义是「本地不再跟这条流了」(切会话、卸载),按重连恰恰相反。
-   * 而重挂本身有前置条件(要先拉到运行状态),断线时那一条也常常拉不到 ——
-   * 重挂于是根本没开始,没有人再把那一行画回来。
+   *   甲、daemon 还没回来时按那颗按钮,**屏幕上一点变化都没有** —— 记账被清掉、
+   *      重挂扫描被叫醒、扫描失败、一切回到原样。用户原话「点击 reconnect 咋没啥
+   *      反应」。从用户视角,「点了没变化」和「按钮坏了」长得一模一样。
+   *   乙、更早一版曾经乐观地把整行撤掉,结果重挂起不来时屏幕上只剩壳头一句
+   *      「运行失败」,连再按一次的入口都没有。
    *
-   * 撤那一行的唯一正当时机是**重挂真的开始了**,`ProjectView` 在
-   * `reattachDaemonRun` 的前一行已经推了 `dropped`(见那里的注释)。
+   * 于是这一层的规矩是:按下**无条件**进入重连态(甲),而这个乐观读数**必须**
+   * 有一个到期回落(乙)—— 到期由 `manual-retry-expired` 说了算,`ProjectView`
+   * 按下时同步支起那把闸(`MANUAL_RECONNECT_FEEDBACK_MS`)。
+   *
+   * 撤整行的唯一正当时机仍然只有一个:**重挂真的开始了**(`dropped`)。
    */
-  it('leaves the handed-back row on screen so it can be pressed again', () => {
-    const exhausted = nextChatReconnectView(null, {
+  const exhausted = () =>
+    nextChatReconnectView(null, {
       kind: 'transport',
       runId: RUN,
       conversationId: CONV,
@@ -223,15 +228,91 @@ describe('nextChatReconnectView · 按了〔重新连接〕之后不许留下死
       max: 5,
       phase: 'exhausted',
     });
-    expect(exhausted?.exhausted).toBe(true);
 
-    const afterPress = nextChatReconnectView(exhausted, { kind: 'manual-retry', runId: RUN });
-    expect(afterPress, '点了重连就把行撤掉 = 重挂起不来时没有第二次机会').toBe(exhausted);
+  it('flips the handed-back row straight back into 正在重新连接 1/5', () => {
+    const handedBack = exhausted();
+    expect(handedBack?.exhausted).toBe(true);
+
+    const afterPress = nextChatReconnectView(handedBack, { kind: 'manual-retry', runId: RUN });
+    expect(afterPress, '按下没有任何读数变化 = 和按钮坏了长得一样').not.toBe(handedBack);
+    expect(afterPress).toEqual<ChatReconnectView>({
+      reason: 'transport',
+      runId: RUN,
+      conversationId: CONV,
+      // 从 1 起:这是**这次人按的**第一次,不是接着传输层那 5 次数下去。
+      attempt: 1,
+      max: 5,
+      exhausted: false,
+      manualRetry: true,
+    });
+  });
+
+  it('falls back to 22-3 when the press did not take', () => {
+    const afterPress = nextChatReconnectView(exhausted(), { kind: 'manual-retry', runId: RUN });
+    const expired = nextChatReconnectView(afterPress, {
+      kind: 'manual-retry-expired',
+      runId: RUN,
+    });
+    expect(expired?.exhausted, '卡在「正在重连」永远转 = 第二种死胡同').toBe(true);
+    expect(expired?.manualRetry).toBe(false);
+    expect(expired?.attempt).toBe(5);
+  });
+
+  it('does not resurrect the row when the press actually reconnected', () => {
+    // 重挂真的起来了 → `dropped` 把整行撤掉。此后那把到期闸不许再画回来。
+    const afterPress = nextChatReconnectView(exhausted(), { kind: 'manual-retry', runId: RUN });
+    const started = nextChatReconnectView(afterPress, { kind: 'dropped', runId: RUN });
+    expect(started).toBeNull();
+    expect(nextChatReconnectView(started, { kind: 'manual-retry-expired', runId: RUN })).toBeNull();
+  });
+
+  it('does not let the expiry gate touch a reading the transport layer owns', () => {
+    // 按下之后传输层自己重新数起来了 —— 那把闸是给乐观读数准备的,不许动真读数。
+    const afterPress = nextChatReconnectView(exhausted(), { kind: 'manual-retry', runId: RUN });
+    const real = nextChatReconnectView(afterPress, reconnecting(3));
+    expect(real?.manualRetry).toBe(false);
+    expect(nextChatReconnectView(real, { kind: 'manual-retry-expired', runId: RUN })).toBe(real);
+  });
+
+  it('holds the optimistic row when the daemon answers "still failed"', () => {
+    /*
+     * 掉线期间传输层写的正是 `failed`,而没交回给人的那一行遇到 `failed` 是要
+     * 归 null 的。乐观窗口里绝不能走那条 —— 那就等于「按一下整行消失」,回到
+     * 乙那个死胡同。收场由到期闸统一判。
+     */
+    const afterPress = nextChatReconnectView(exhausted(), { kind: 'manual-retry', runId: RUN });
+    const stillFailed = nextChatReconnectView(afterPress, {
+      kind: 'settled',
+      runId: RUN,
+      status: 'failed',
+    });
+    expect(stillFailed, '乐观窗口被 failed 抹掉 = 按一下整行消失').toBe(afterPress);
+  });
+
+  it('still disappears for real when the run turns out to have succeeded', () => {
+    const afterPress = nextChatReconnectView(exhausted(), { kind: 'manual-retry', runId: RUN });
+    expect(
+      nextChatReconnectView(afterPress, { kind: 'settled', runId: RUN, status: 'succeeded' }),
+    ).toBeNull();
+  });
+
+  it('ignores a press while the transport layer is still counting', () => {
+    // 还在数的那一行没有按钮(22-3 才有),所以这条不该被按到。真被按到也不许
+    // 把传输层的真实读数改写成 1。
+    const counting = nextChatReconnectView(null, reconnecting(3));
+    expect(nextChatReconnectView(counting, { kind: 'manual-retry', runId: RUN })).toBe(counting);
   });
 
   it('ignores a press aimed at some other run', () => {
     const view = nextChatReconnectView(null, reconnecting(2));
     expect(nextChatReconnectView(view, { kind: 'manual-retry', runId: 'run-other' })).toBe(view);
+  });
+
+  it('ignores an expiry aimed at some other run', () => {
+    const afterPress = nextChatReconnectView(exhausted(), { kind: 'manual-retry', runId: RUN });
+    expect(
+      nextChatReconnectView(afterPress, { kind: 'manual-retry-expired', runId: 'run-other' }),
+    ).toBe(afterPress);
   });
 });
 

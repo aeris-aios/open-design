@@ -36,6 +36,7 @@ import {
 import {
   type ChatReconnectSignal,
   type ChatReconnectView,
+  MANUAL_RECONNECT_FEEDBACK_MS,
   nextChatReconnectView,
   reconnectViewForConversation,
   settledSignalFromMessages,
@@ -2705,22 +2706,55 @@ export function ProjectView({
    * (给还在跑的 daemon 留喘息),这里是用户明确要求现在就试,所以先撤掉冷却与
    * 重试计数,再推一拍 `recoveryTick` 把重挂扫描叫醒。
    *
-   * 按下之后这一行先撤掉:「用尽、交回给人」这句话此刻已经不成立了。要是又断,
-   * 传输层会再从 1/5 报起 —— 计数由它说了算,这里不自己编一个。
+   * 按下之后那一行**当场**翻回「正在重新连接 1/5」,不撤整行。
+   *
+   * 为什么必须当场变:按下之后要走的整条链(清记账 → 叫醒扫描 → 拉运行状态 →
+   * 起重挂)全在异步里,而 daemon 没回来时它在第三步就断了 —— 上面这几行
+   * `delete` 一个像素都不会改。真机 2026-08-27 用户原话「点击 reconnect 咋没啥
+   * 反应」;**「点了没变化」和「按钮坏了」在屏幕上长得一模一样。**
+   *
+   * 为什么不能撤整行:更早一版乐观推了一条 `dropped`,重挂起不来时没有人再把
+   * 行画回来,屏幕只剩壳头一句「运行失败」,用户连再按一次的入口都没有。
+   * 撤整行的唯一正当时机仍然是「重挂真的开始了」,那个位置由 `attachRecoverableRuns`
+   * 里 `reattachDaemonRun` 前一行的 `dropped` 占着。
+   *
+   * 乐观就必须有到期。这把闸是那条不变量在运行时的唯一落点:重挂起不来的形态太多
+   * (状态拉不到、daemon 亲口说这一轮已经 failed、被冷却窗口挡下、扫描因为
+   * `daemonLive` 翻假压根没跑),挨个去认等于把一条规矩拆成十几处记得写对。
+   * 过了 `MANUAL_RECONNECT_FEEDBACK_MS` 这一行还是那条乐观读数,就回落成 22-3
+   * 把按钮还给人 —— 判据在 `reconnect-state.ts` 的 `manual-retry-expired`,
+   * 传输层真的接管出来的读数不带 `manualRetry`,那把闸对它自动作废。
+   *
+   * 连点不成立,而且不是靠一把锁:乐观读数的 `exhausted` 是 false,而
+   * `components/chat/Reconnect.tsx` 只有 `exhausted` 那一档才画按钮 ——
+   * 窗口里屏幕上没有可按的东西,一次按压最多换来一次重挂扫描。
    */
   const reconnectRunId = reconnectView?.runId ?? null;
+  const manualReconnectExpiryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const handleManualReconnect = useCallback(() => {
     const runId = reconnectRunId;
+    /*
+     * 没有 runId 就是**屏幕上没有那一行**:按钮和这个 id 读的是同一份
+     * `reconnectView`(渲染那一路只多过一道会话过滤,过滤只会把它变成 null),
+     * 所以没有行 = 没有按钮 = 没有东西可接。能走到这里只剩一种时序:画面画出按钮
+     * 之后、这一下按压落地之前那一行自己收场了(比如这一轮其实已经成功)。
+     * 那时什么都不做才是对的 —— 不该为一个已经不存在的目标再起一次重挂。
+     */
     if (!runId) return;
     transientFailedRetriesRef.current.delete(runId);
     genericDisconnectRetriesRef.current.delete(runId);
     genericDisconnectBackoffUntilRef.current.delete(runId);
     completedReattachRunsRef.current.delete(runId);
-    // 不在这里撤那一行:见 `reconnect-state.ts` 的 `manual-retry`。撤它的时机在
-    // 下面那条重挂真的启动的那一行。
+    clearProjectTimeout(manualReconnectExpiryRef.current);
+    manualReconnectExpiryRef.current = null;
     setReconnectView((prev) => nextChatReconnectView(prev, { kind: 'manual-retry', runId }));
+    manualReconnectExpiryRef.current = scheduleProjectTimeout(() => {
+      manualReconnectExpiryRef.current = null;
+      setReconnectView((prev) =>
+        nextChatReconnectView(prev, { kind: 'manual-retry-expired', runId }));
+    }, MANUAL_RECONNECT_FEEDBACK_MS);
     setRecoveryTick((t) => t + 1);
-  }, [reconnectRunId]);
+  }, [reconnectRunId, clearProjectTimeout, scheduleProjectTimeout]);
   const recoveredArtifactMessagesRef = useRef<Set<string>>(new Set());
   const messagesRef = useRef<ChatMessage[]>([]);
   const startingQueuedChatSendIdRef = useRef<string | null>(null);
