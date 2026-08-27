@@ -31,8 +31,15 @@ import styles from './primitives/record.module.css';
 /**
  * 多久算「等太久」。60 秒来自 `error-ux-design.md:33`(10 分钟 / Cloud 30 分钟才报超时,
  * 这一句只是等待期间的回音,不改变任何超时判定)。
+ *
+ * **2026-08-27 起壳头不再读它** —— S12 的那句文案撤回了(裁决与理由见下面 `head` 里
+ * 的注释)。门槛本身留着:整条探测逻辑一行没删,产品打算换一种展现形式把它请回来,
+ * 到时候不必重新考据这个 60 秒是哪来的。
+ *
+ * 导出是**故意**的:保留测试直接引用它,谁把它删了
+ * `tests/components/chat/s12-copy-revert.test.tsx` 会当场红。
  */
-const SLOW_UPSTREAM_AFTER_MS = 60_000;
+export const SLOW_UPSTREAM_AFTER_MS = 60_000;
 
 export interface ExecutionShellProps {
   shell: ShellData;
@@ -82,18 +89,33 @@ export function ExecutionShell({ shell, onOpenFile, onRetryImage }: ExecutionShe
     }
     if (running) {
       /**
-       * S12「等太久没动静」(P1,18,891 次/月、6,372 台):60 秒没有新东西落下来就
-       * 换一句话,告诉用户我们知道它久,而不是干写着「进行中」。门槛与文案逐字来自
-       * `docs/design/run-errors/error-ux-design.md:33`;〔停止〕那一半由输入框那颗
-       * 常驻的停止键承担,不在这里再摆一颗。
+       * 壳头就是普通的「进行中 / 思考中」。
        *
-       * 一有任何东西落下来,`quietMs` 自己就归零(见 `build-turn-blocks` 的 `shellQuiet`),
-       * 所以这句话会自动退回去 —— 这里不留状态。
+       * ── S12 文案撤回(2026-08-27,只撤展现,不撤探测)────────────────────
+       *
+       * 这里曾经在静默超过 `SLOW_UPSTREAM_AFTER_MS` 时把壳头换成
+       * 「上游响应慢，已等 N 秒」(S12「等太久没动静」,P1,18,891 次/月、6,372 台,
+       * 门槛与文案逐字来自 `docs/design/run-errors/error-ux-design.md:33`)。
+       * 产品裁决把它撤了,原话:「这个文案先让 subagent 改回 进行中 吧,跟产品讨论了下,
+       * 但背后的探测逻辑先保留,后续可能会用到,只不过用别的展现形式」。
+       * 触发裁决的画面是壳头那一行「上游响应慢，已等 411 秒  13m 7s」—— 一句话占满壳头,
+       * 右边的总耗时还在说同一段时间,读起来像故障,而它只是在等。
+       *
+       * **撤的只有这一行取值。** 探测整条链一行没删,而且还在跑:
+       *   `providers/daemon.ts` 的 `markUpstreamActivity`(每收到一条真运行帧)
+       *     → `runtime/chat/upstream-activity.ts`(按 run 记的到达时刻表)
+       *     → `AssistantMessage` 的 `useTickingNow` 每秒喂给 `buildTurnBlocks`
+       *     → `build-turn-blocks.ts` 的 `shellQuiet` 算出静默
+       *     → `contract.ts` 的 `quietMs` 挂在每张运行中的壳上。
+       * 这里只是**暂时不读** `shell.quietMs`;它照旧被算出来、照旧送到这个组件手上,
+       * 换个展现形式时接上就行。
+       *
+       * ⚠️ 想「顺手把死代码清干净」的下一位:这不是死代码。
+       * 钉子在 `tests/components/chat/s12-copy-revert.test.tsx` 的「探测保留」一节 ——
+       * 删掉 `shellQuiet` / `quietMs` / `SLOW_UPSTREAM_AFTER_MS` 中任何一个都会当场红。
+       * 传输层那一截另有 `tests/components/chat/s12-upstream-alive.test.tsx` 钉着。
        */
-      const quiet = shell.quietMs != null && shell.quietMs >= SLOW_UPSTREAM_AFTER_MS;
-      const label = quiet
-        ? t('chat.record.slowUpstream', { seconds: Math.floor((shell.quietMs ?? 0) / 1000) })
-        : shell.thinking ? t('chat.record.thinking') : t('chat.record.running');
+      const label = shell.thinking ? t('chat.record.thinking') : t('chat.record.running');
       return (
         <>
           {/* 不给标签:紧跟着的就是「进行中 / 思考中」那行字,读屏念一遍就够 */}
