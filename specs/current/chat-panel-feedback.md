@@ -611,14 +611,14 @@ atomcode / qoder 都不发工具事件,原来它们全会误报。
 到达时刻这个判据没问题,**取它的钥匙**错了:`AssistantMessage` 当时写的是
 `useMemo(() => Date.now(), [displayEvents.length])` —— 事件条数一变就重取。
 可那个数在整段流式期间根本不动。真机 run `7ed15c2f-8ea0-4e55-b7e3-e463037dd868`
-(1129 行落盘)壳头写着「上游响应慢，已等 156 秒」的那一刻,事件流里带时刻的事
+(1357 行落盘)壳头写着「上游响应慢，已等 156 秒」的那一刻,事件流里带时刻的事
 确实停了 161.6 秒(`tool_result` +676.1s → `tool_use` +837.7s),而**这 161.6 秒里
 落了 126 条帧**,平均 0.7 秒一条。三条原因叠在一起:
 
 - `tool_input_delta` 在 `providers/daemon.ts` 就被岔进 `onToolInputDelta`,
-  **不变成 `AgentEvent`**,不进 `message.events`。它是这条 run 里 1134 条 agent 帧
-  中的 624 条,更是那个窗口里 126 条中的 124 条;
-- claude 的 `thinking_delta` 一律空串(这条 run **377/377** 条 `delta: ""`),
+  **不变成 `AgentEvent`**,不进 `message.events`。它是这条 run 里 1346 条 agent 帧
+  中的 699 条,更是那个窗口里 126 条中的 124 条;
+- claude 的 `thinking_delta` 一律空串(这条 run **414/414** 条 `delta: ""`),
   `appendBufferedAgentDeltas` 的 `if (thinkingDelta)` 把空串挡掉,事件数组
   **连引用都不换**,连 `useMemo(…, [events])` 都不会重算;
 - 就算带了字,连续的 `text` / `thinking` 会被 `appendCoalescedAgentEvent`

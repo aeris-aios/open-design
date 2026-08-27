@@ -3,7 +3,7 @@
  * S12「上游响应慢，已等 N 秒」**在上游一直吐帧的时候也照报**(真机复现)。
  *
  * 真机证据 —— run `7ed15c2f-8ea0-4e55-b7e3-e463037dd868`(2026-08-27,claude,
- * 落盘 1129 行 `events.jsonl`)。壳头写着「上游响应慢，已等 156 秒」的那一刻,
+ * 落盘 1357 行 `events.jsonl`)。壳头写着「上游响应慢，已等 156 秒」的那一刻,
  * 事件流里带时刻的事件确实停了 161.6 秒(最后一条 `tool_result` 在 +676.1s,
  * 下一条 `tool_use` 在 +837.7s),可**这 161.6 秒里落了 126 条帧**:
  * 124 条 `tool_input_delta` + 2 条 `tool_use`,平均 0.7 秒一条。用户当场问:
@@ -16,7 +16,7 @@
  *  · `tool_input_delta` 在 `providers/daemon.ts` 就被岔进 `onToolInputDelta`,
  *    **根本不会变成 `AgentEvent`**,更不会进 `message.events` —— 而它正是这个
  *    窗口里 124/126 的帧;
- *  · claude 的 `thinking_delta` 一律是空串(这条 run 里 377/377 条 `delta: ""`),
+ *  · claude 的 `thinking_delta` 一律是空串(这条 run 里 414/414 条 `delta: ""`),
  *    `appendBufferedAgentDeltas` 的 `if (thinkingDelta)` 把空串挡掉,
  *    事件数组连**引用都不换**;
  *  · 就算 thinking 带了字,连续的 thinking / text 会被 `appendCoalescedAgentEvent`
@@ -55,7 +55,7 @@ const TOOL_INPUT_DELTA = {
   delta: ' { display: grid; place-items: center; padding: 48px 32px; }\n  ',
 } as const;
 
-/** claude 的推理增量:真机 377 条,**每一条**的 delta 都是空串 */
+/** claude 的推理增量:真机 414 条,**每一条**的 delta 都是空串 */
 const EMPTY_THINKING_DELTA = { type: 'thinking_delta', delta: '' } as const;
 
 /** SSE 帧:`id: N\nevent: E\ndata: {…}\n\n` */
@@ -217,7 +217,7 @@ describe('S12 · 上游一直在吐帧时不许说它慢', () => {
     expect(screen.getByText('进行中')).toBeTruthy();
   });
 
-  it('claude 的空推理增量同样算数 —— 它们是这条 run 里 377 条中的全部形态', async () => {
+  it('claude 的空推理增量同样算数 —— 它们是这条 run 里 414 条中的全部形态', async () => {
     renderTurn(<AssistantMessage message={streamingTurn()} streaming projectId="p1" />);
     await idle(0);
 

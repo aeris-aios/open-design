@@ -6,9 +6,9 @@
  * 而 `message.events` 是加工过的产物,三处都会把这件事实抹掉:
  *
  *  1. `tool_input_delta` 在 `providers/daemon.ts` 就被岔进 `onToolInputDelta`,
- *     压根不变成 `AgentEvent`。真机 run `7ed15c2f` 里它是 1134 条 agent 帧中的 624 条,
+ *     压根不变成 `AgentEvent`。真机 run `7ed15c2f` 里它是 1346 条 agent 帧中的 699 条,
  *     而报「已等 156 秒」的那个 161.6 秒窗口里,126 条帧有 124 条是它。
- *  2. claude 的 `thinking_delta` 一律是空串(那条 run 里 377/377 条 `delta: ""`),
+ *  2. claude 的 `thinking_delta` 一律是空串(那条 run 里 414/414 条 `delta: ""`),
  *     `appendBufferedAgentDeltas` 的 `if (thinkingDelta)` 直接把它挡在门外 ——
  *     事件数组连引用都不换。
  *  3. 连续的 `text` / `thinking` 会被 `appendCoalescedAgentEvent` 合进**最后一条**,
