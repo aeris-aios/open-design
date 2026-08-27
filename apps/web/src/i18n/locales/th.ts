@@ -5304,4 +5304,12 @@ export const th: Dict = {
   'labs.envOverrideNotice': "การตั้งค่านี้ถูกควบคุมด้วยตัวแปรสภาพแวดล้อม จึงเปลี่ยนที่นี่ไม่ได้",
   'labs.latchedNotice': "หยุดชั่วคราวอัตโนมัติหลังตรวจพบปัญหา การสร้างกำลังใช้วิธีเดิม",
   'labs.loadFailedNotice': "อ่านการตั้งค่านี้ไม่ได้ กรุณาตรวจสอบว่า daemon ในเครื่องกำลังทำงานอยู่",
+  'labs.optOutPrompt': "กลับไปใช้วิธีเดิมแล้ว มีอะไรไม่เหมาะ",
+  'labs.optOutWorseOutput': "ผลงานแย่ลง",
+  'labs.optOutTooSlow': "ช้าเกินไป",
+  'labs.optOutNotWhatIWanted': "ไม่ใช่สิ่งที่ต้องการ",
+  'labs.optOutOther': "อื่น ๆ",
+  'labs.optOutSkip': "ข้าม",
+  'labs.optOutOtherPlaceholder': "อะไรที่ไม่เหมาะบ้าง",
+  'labs.optOutSubmit': "ส่ง",
 };

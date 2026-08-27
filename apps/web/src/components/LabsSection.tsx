@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
-import type { OdNextRolloutControlResponse, OdNextRolloutMode } from '@open-design/contracts';
+import type {
+  OdNextRolloutControlResponse,
+  OdNextRolloutMode,
+  TrackingLabsOptOutReason,
+} from '@open-design/contracts';
 
 import { trackLabsItemToggled } from '../analytics/events';
 import { useAnalytics } from '../analytics/provider';
@@ -91,6 +95,115 @@ function LabsTooltip({ label, body, scope }: { label: string; body: string; scop
   );
 }
 
+/**
+ * How long the reason panel waits before recording a non-answer.
+ *
+ * Long enough that it is not a trick question, short enough that the row does
+ * not stay in a feedback state for the rest of the session. Not shown as a
+ * countdown: a visible timer turns a question into a deadline.
+ */
+const OPT_OUT_PROMPT_TTL_MS = 120_000;
+
+/** Free-text cap. Long enough for a real sentence, short of an essay. */
+const CUSTOM_REASON_MAX = 200;
+
+const OPT_OUT_CHOICES: ReadonlyArray<{ reason: TrackingLabsOptOutReason; labelKey: 'labs.optOutWorseOutput' | 'labs.optOutTooSlow' | 'labs.optOutNotWhatIWanted' }> = [
+  { reason: 'worse_output', labelKey: 'labs.optOutWorseOutput' },
+  { reason: 'too_slow', labelKey: 'labs.optOutTooSlow' },
+  { reason: 'not_what_i_wanted', labelKey: 'labs.optOutNotWhatIWanted' },
+];
+
+interface OptOutPanelProps {
+  onAnswer: (answer: { reason: TrackingLabsOptOutReason[]; customReason?: string }) => void;
+}
+
+/**
+ * Asks why, once, right after the user turns an experiment off.
+ *
+ * Inline rather than a dialog: the user just declined something, and a modal
+ * asking them to justify it reads as friction. It resolves exactly once —
+ * every path out (a choice, skip, the timeout, or leaving the page) reports,
+ * so the share of people who declined to answer is visible rather than missing.
+ */
+function OptOutPanel({ onAnswer }: OptOutPanelProps) {
+  const t = useT();
+  const [expanded, setExpanded] = useState(false);
+  const [text, setText] = useState('');
+  const answerRef = useRef(onAnswer);
+  answerRef.current = onAnswer;
+
+  useEffect(() => {
+    // Picking "other" is an explicit intent to write something. Taking the
+    // panel away mid-sentence would be hostile, so the clock stops there —
+    // a discrete state change, not hover-tracking.
+    if (expanded) return undefined;
+    const timer = window.setTimeout(() => {
+      answerRef.current({ reason: ['skipped'] });
+    }, OPT_OUT_PROMPT_TTL_MS);
+    return () => window.clearTimeout(timer);
+  }, [expanded]);
+
+  const trimmed = text.trim();
+  return (
+    <div className={styles.optOut}>
+      <span className={styles.optOutPrompt}>{t('labs.optOutPrompt')}</span>
+      <div className={styles.optOutChoices}>
+        {OPT_OUT_CHOICES.map((choice) => (
+          <button
+            key={choice.reason}
+            type="button"
+            className={styles.optOutChip}
+            onClick={() => onAnswer({ reason: [choice.reason] })}
+          >
+            {t(choice.labelKey)}
+          </button>
+        ))}
+        <button
+          type="button"
+          className={`${styles.optOutChip}${expanded ? ` ${styles.optOutChipActive}` : ''}`}
+          aria-expanded={expanded}
+          onClick={() => setExpanded(true)}
+        >
+          {t('labs.optOutOther')}
+        </button>
+        <button
+          type="button"
+          className={styles.optOutSkip}
+          onClick={() => onAnswer({ reason: ['skipped'] })}
+        >
+          {t('labs.optOutSkip')}
+        </button>
+      </div>
+      {expanded ? (
+        <div className={styles.optOutInputRow}>
+          <input
+            type="text"
+            className={styles.optOutInput}
+            maxLength={CUSTOM_REASON_MAX}
+            placeholder={t('labs.optOutOtherPlaceholder')}
+            aria-label={t('labs.optOutOtherPlaceholder')}
+            value={text}
+            autoFocus
+            onChange={(event) => setText(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key !== 'Enter' || !trimmed) return;
+              onAnswer({ reason: ['other'], customReason: trimmed });
+            }}
+          />
+          <button
+            type="button"
+            className={styles.optOutSubmit}
+            disabled={!trimmed}
+            onClick={() => onAnswer({ reason: ['other'], customReason: trimmed })}
+          >
+            {t('labs.optOutSubmit')}
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export interface LabsSectionProps {
   /**
    * Drives the dialog-level autosave pill. This switch writes immediately
@@ -106,6 +219,10 @@ export function LabsSection({ onAutosaveStatus }: LabsSectionProps) {
   const [state, setState] = useState<LabsHarnessState | null>(LOADING);
   const [busy, setBusy] = useState(false);
   const noticeId = useId();
+  // Non-null while the reason panel is up. Held in a ref as well as state so
+  // the unmount path can settle it without re-rendering a dying component.
+  const [askingReason, setAskingReason] = useState(false);
+  const reasonPendingRef = useRef(false);
   // Guards against a slow earlier write re-applying UI after a later toggle,
   // and against setState landing on an unmounted section.
   const writeTokenRef = useRef(0);
@@ -140,6 +257,34 @@ export function LabsSection({ onAutosaveStatus }: LabsSectionProps) {
     };
   }, []);
 
+  const answerOptOut = useCallback(
+    (answer: { reason: TrackingLabsOptOutReason[]; customReason?: string }) => {
+      // Exactly once. A chip click that races the timeout, or a timeout that
+      // races unmount, must not produce two reason rows for one opt-out.
+      if (!reasonPendingRef.current) return;
+      reasonPendingRef.current = false;
+      const custom = answer.customReason?.trim() ?? '';
+      trackLabsItemToggled(analytics.track, {
+        item_id: 'design_harness',
+        to: 'off',
+        source: 'settings',
+        reason: answer.reason,
+        has_custom_reason: custom.length > 0,
+        ...(custom ? { custom_reason: custom } : {}),
+      });
+      if (mountedRef.current) setAskingReason(false);
+    },
+    [analytics.track],
+  );
+
+  useEffect(() => () => {
+    // Leaving the page with the question still open is the same signal as
+    // letting it time out: the user moved on. Recording it keeps every opt-out
+    // paired with exactly one reason row, so the share who declined to answer
+    // is a number rather than a gap.
+    if (reasonPendingRef.current) answerOptOut({ reason: ['skipped'] });
+  }, [answerOptOut]);
+
   const toggle = useCallback(() => {
     if (!state || state.lock || writeInFlightRef.current) return;
     const next = !state.on;
@@ -163,6 +308,14 @@ export function LabsSection({ onAutosaveStatus }: LabsSectionProps) {
           to: next ? 'on' : 'off',
           source: 'settings',
         });
+        if (!next) {
+          // The opt-out itself is already reported above; the reason arrives
+          // as a second event once the user answers. Counting opt-outs from
+          // the first and reasons from the second keeps the opt-out count
+          // whole even when nobody answers.
+          reasonPendingRef.current = true;
+          setAskingReason(true);
+        }
         onAutosaveStatus?.('saved');
       } catch {
         if (token !== writeTokenRef.current || !mountedRef.current) return;
@@ -211,6 +364,7 @@ export function LabsSection({ onAutosaveStatus }: LabsSectionProps) {
               {t(lockNoticeKey)}
             </span>
           ) : null}
+          {askingReason ? <OptOutPanel onAnswer={answerOptOut} /> : null}
         </div>
         {/* `aria-disabled` rather than `disabled`: a disabled button leaves the
             tab order, so a screen-reader user never reaches the sentence that

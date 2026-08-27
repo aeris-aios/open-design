@@ -5753,4 +5753,12 @@ export const zhCN: Dict = {
   'labs.envOverrideNotice': "当前由环境变量接管，无法在此修改。",
   'labs.latchedNotice': "检测到问题后已自动暂停，生成正在使用原来的方式。",
   'labs.loadFailedNotice': "读取不到这项设置，请确认本地 daemon 正在运行。",
+  'labs.optOutPrompt': "已切回原来的生成方式。哪里不合适？",
+  'labs.optOutWorseOutput': "产物变差",
+  'labs.optOutTooSlow': "太慢",
+  'labs.optOutNotWhatIWanted': "不是我要的",
+  'labs.optOutOther': "其他",
+  'labs.optOutSkip': "跳过",
+  'labs.optOutOtherPlaceholder': "具体是哪里不合适？",
+  'labs.optOutSubmit': "提交",
 };

@@ -5304,4 +5304,12 @@ export const ko: Dict = {
   'labs.envOverrideNotice': "환경 변수가 이 설정을 제어하고 있어 여기서 변경할 수 없습니다.",
   'labs.latchedNotice': "문제가 감지되어 자동으로 중지되었습니다. 생성은 기존 방식을 사용합니다.",
   'labs.loadFailedNotice': "이 설정을 읽지 못했습니다. 로컬 daemon 이 실행 중인지 확인하세요.",
+  'labs.optOutPrompt': "이전 생성 방식으로 되돌렸습니다. 어떤 점이 아쉬웠나요?",
+  'labs.optOutWorseOutput': "결과물이 나빠짐",
+  'labs.optOutTooSlow': "너무 느림",
+  'labs.optOutNotWhatIWanted': "원하던 것이 아님",
+  'labs.optOutOther': "기타",
+  'labs.optOutSkip': "건너뛰기",
+  'labs.optOutOtherPlaceholder': "구체적으로 어떤 점이 아쉬웠나요?",
+  'labs.optOutSubmit': "제출",
 };

@@ -5299,4 +5299,12 @@ export const fa: Dict = {
   'labs.envOverrideNotice': "این تنظیم توسط یک متغیر محیطی کنترل می‌شود، بنابراین اینجا قابل تغییر نیست.",
   'labs.latchedNotice': "پس از شناسایی یک مشکل به‌طور خودکار متوقف شد. تولید از روش قبلی استفاده می‌کند.",
   'labs.loadFailedNotice': "خواندن این تنظیم ممکن نشد. بررسی کنید که daemon محلی در حال اجرا باشد.",
+  'labs.optOutPrompt': "به روش قبلی برگشتیم. چه چیزی مناسب نبود؟",
+  'labs.optOutWorseOutput': "کیفیت خروجی افت کرد",
+  'labs.optOutTooSlow': "خیلی کند است",
+  'labs.optOutNotWhatIWanted': "چیزی که می‌خواستم نبود",
+  'labs.optOutOther': "سایر",
+  'labs.optOutSkip': "رد کردن",
+  'labs.optOutOtherPlaceholder': "دقیقاً چه چیزی مناسب نبود؟",
+  'labs.optOutSubmit': "ارسال",
 };

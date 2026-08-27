@@ -5760,4 +5760,12 @@ export const zhTW: Dict = {
   'labs.envOverrideNotice': "目前由環境變數接管，無法在此修改。",
   'labs.latchedNotice': "偵測到問題後已自動暫停，生成正在使用原本的方式。",
   'labs.loadFailedNotice': "讀取不到這項設定，請確認本機 daemon 正在執行。",
+  'labs.optOutPrompt': "已切回原本的生成方式。哪裡不合適？",
+  'labs.optOutWorseOutput': "產物變差",
+  'labs.optOutTooSlow': "太慢",
+  'labs.optOutNotWhatIWanted': "不是我要的",
+  'labs.optOutOther': "其他",
+  'labs.optOutSkip': "略過",
+  'labs.optOutOtherPlaceholder': "具體是哪裡不合適？",
+  'labs.optOutSubmit': "送出",
 };

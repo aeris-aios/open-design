@@ -5304,4 +5304,12 @@ export const ja: Dict = {
   'labs.envOverrideNotice': "環境変数が優先されているため、ここでは変更できません。",
   'labs.latchedNotice': "問題を検知したため自動的に停止しました。生成は従来の方式を使用しています。",
   'labs.loadFailedNotice': "この設定を読み込めませんでした。ローカルの daemon が起動しているか確認してください。",
+  'labs.optOutPrompt': "元の生成方式に戻しました。どこが合いませんでしたか？",
+  'labs.optOutWorseOutput': "成果物の質が下がった",
+  'labs.optOutTooSlow': "遅い",
+  'labs.optOutNotWhatIWanted': "求めていたものと違う",
+  'labs.optOutOther': "その他",
+  'labs.optOutSkip': "スキップ",
+  'labs.optOutOtherPlaceholder': "具体的にどこが合いませんでしたか？",
+  'labs.optOutSubmit': "送信",
 };

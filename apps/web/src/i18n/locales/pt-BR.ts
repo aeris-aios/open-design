@@ -5304,4 +5304,12 @@ export const ptBR: Dict = {
   'labs.envOverrideNotice': "Uma variável de ambiente controla esta configuração, então ela não pode ser alterada aqui.",
   'labs.latchedNotice': "Pausado automaticamente após um problema ser detectado. A geração está usando o método anterior.",
   'labs.loadFailedNotice': "Não foi possível ler esta configuração. Verifique se o daemon local está em execução.",
+  'labs.optOutPrompt': "Voltamos ao método anterior. O que não funcionou?",
+  'labs.optOutWorseOutput': "Resultados piores",
+  'labs.optOutTooSlow': "Muito lento",
+  'labs.optOutNotWhatIWanted': "Não era o que eu queria",
+  'labs.optOutOther': "Outro",
+  'labs.optOutSkip': "Pular",
+  'labs.optOutOtherPlaceholder': "O que exatamente não funcionou?",
+  'labs.optOutSubmit': "Enviar",
 };

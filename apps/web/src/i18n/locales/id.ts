@@ -5304,4 +5304,12 @@ export const id: Dict = {
   'labs.envOverrideNotice': "Pengaturan ini dikendalikan variabel lingkungan, jadi tidak bisa diubah di sini.",
   'labs.latchedNotice': "Dijeda otomatis setelah masalah terdeteksi. Generasi memakai cara sebelumnya.",
   'labs.loadFailedNotice': "Tidak bisa membaca pengaturan ini. Pastikan daemon lokal sedang berjalan.",
+  'labs.optOutPrompt': "Kembali ke metode sebelumnya. Apa yang kurang pas?",
+  'labs.optOutWorseOutput': "Hasil jadi lebih buruk",
+  'labs.optOutTooSlow': "Terlalu lambat",
+  'labs.optOutNotWhatIWanted': "Bukan yang saya inginkan",
+  'labs.optOutOther': "Lainnya",
+  'labs.optOutSkip': "Lewati",
+  'labs.optOutOtherPlaceholder': "Apa yang kurang pas secara spesifik?",
+  'labs.optOutSubmit': "Kirim",
 };

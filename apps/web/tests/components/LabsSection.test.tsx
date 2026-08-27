@@ -228,6 +228,144 @@ describe('LabsSection', () => {
     expect(track).not.toHaveBeenCalled();
   });
 
+  describe('opt-out reason', () => {
+    async function optOut() {
+      stubFetch({ rolloutStatus: status({ requestedMode: 'active', requestedModeSource: 'app_config' }) });
+      renderSection();
+      await waitFor(() => expect(switchEl().getAttribute('aria-checked')).toBe('true'));
+      fireEvent.click(switchEl());
+      await waitFor(() => expect(track).toHaveBeenCalledTimes(1));
+      await screen.findByText('Switched back to the previous approach. What did not work?');
+    }
+
+    function reasonEvents() {
+      return track.mock.calls.filter((c) => (c[1] as { reason?: unknown }).reason);
+    }
+
+    it('asks only after an opt-out, never after opting in', async () => {
+      stubFetch();
+      renderSection();
+      await waitFor(() => expect(switchEl().getAttribute('aria-disabled')).toBe('false'));
+
+      fireEvent.click(switchEl());
+
+      await waitFor(() => expect(track).toHaveBeenCalledTimes(1));
+      expect(screen.queryByText('Switched back to the previous approach. What did not work?')).toBeNull();
+    });
+
+    it('reports a chosen reason as a second event, leaving the opt-out count intact', async () => {
+      await optOut();
+
+      fireEvent.click(screen.getByText('Too slow'));
+
+      await waitFor(() => expect(track).toHaveBeenCalledTimes(2));
+      expect(track.mock.calls[0]?.[1]).toEqual({ item_id: 'design_harness', to: 'off', source: 'settings' });
+      expect(track.mock.calls[1]?.[1]).toEqual({
+        item_id: 'design_harness',
+        to: 'off',
+        source: 'settings',
+        reason: ['too_slow'],
+        has_custom_reason: false,
+      });
+      expect(screen.queryByText('Switched back to the previous approach. What did not work?')).toBeNull();
+    });
+
+    it('records an explicit skip', async () => {
+      await optOut();
+
+      fireEvent.click(screen.getByText('Skip'));
+
+      await waitFor(() => expect(reasonEvents()).toHaveLength(1));
+      expect(reasonEvents()[0]?.[1]).toMatchObject({ reason: ['skipped'], has_custom_reason: false });
+    });
+
+    it('carries the free text when the user picks other', async () => {
+      await optOut();
+
+      fireEvent.click(screen.getByText('Other'));
+      const input = screen.getByLabelText('What specifically did not work?') as HTMLInputElement;
+      fireEvent.change(input, { target: { value: '  layout drifts on long decks  ' } });
+      fireEvent.click(screen.getByText('Submit'));
+
+      await waitFor(() => expect(reasonEvents()).toHaveLength(1));
+      expect(reasonEvents()[0]?.[1]).toMatchObject({
+        reason: ['other'],
+        has_custom_reason: true,
+        custom_reason: 'layout drifts on long decks',
+      });
+    });
+
+    it('keeps submit unavailable until the free text has content', async () => {
+      await optOut();
+
+      fireEvent.click(screen.getByText('Other'));
+      const submit = screen.getByText('Submit') as HTMLButtonElement;
+      expect(submit.disabled).toBe(true);
+
+      fireEvent.change(screen.getByLabelText('What specifically did not work?'), {
+        target: { value: '   ' },
+      });
+      expect(submit.disabled).toBe(true);
+
+      fireEvent.change(screen.getByLabelText('What specifically did not work?'), {
+        target: { value: 'x' },
+      });
+      expect(submit.disabled).toBe(false);
+    });
+
+    it('records a skip when the question times out unanswered', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        await optOut();
+        expect(reasonEvents()).toHaveLength(0);
+
+        await vi.advanceTimersByTimeAsync(120_000);
+
+        await waitFor(() => expect(reasonEvents()).toHaveLength(1));
+        expect(reasonEvents()[0]?.[1]).toMatchObject({ reason: ['skipped'] });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('stops the clock once the user starts writing a custom reason', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        await optOut();
+        fireEvent.click(screen.getByText('Other'));
+
+        await vi.advanceTimersByTimeAsync(300_000);
+
+        // Taking the panel away mid-sentence would discard what they typed.
+        expect(reasonEvents()).toHaveLength(0);
+        expect(screen.getByLabelText('What specifically did not work?')).toBeTruthy();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('records a skip when the user leaves the page with the question open', async () => {
+      // Otherwise every abandoned question is a silent gap, and the share of
+      // people who declined to answer reads lower than it is.
+      await optOut();
+
+      cleanup();
+
+      await waitFor(() => expect(reasonEvents()).toHaveLength(1));
+      expect(reasonEvents()[0]?.[1]).toMatchObject({ reason: ['skipped'] });
+    });
+
+    it('answers exactly once even when two paths out race', async () => {
+      await optOut();
+
+      fireEvent.click(screen.getByText('Too slow'));
+      cleanup();
+
+      await waitFor(() => expect(reasonEvents()).toHaveLength(1));
+      expect(reasonEvents()[0]?.[1]).toMatchObject({ reason: ['too_slow'] });
+    });
+  });
+
   it('locks the switch and explains when an environment variable owns the mode', async () => {
     stubFetch({
       rolloutStatus: status({ requestedMode: 'active', requestedModeSource: 'env' }),

@@ -5304,4 +5304,12 @@ export const fr: Dict = {
   'labs.envOverrideNotice': "Une variable d environnement contrôle ce réglage, il ne peut pas être modifié ici.",
   'labs.latchedNotice': "Mis en pause automatiquement après la détection d un problème. La génération utilise la méthode habituelle.",
   'labs.loadFailedNotice': "Impossible de lire ce réglage. Vérifiez que le daemon local est en cours d exécution.",
+  'labs.optOutPrompt': "Retour à la méthode précédente. Qu'est-ce qui n'allait pas ?",
+  'labs.optOutWorseOutput': "Résultats moins bons",
+  'labs.optOutTooSlow': "Trop lent",
+  'labs.optOutNotWhatIWanted': "Pas ce que je voulais",
+  'labs.optOutOther': "Autre",
+  'labs.optOutSkip': "Ignorer",
+  'labs.optOutOtherPlaceholder': "Qu'est-ce qui n'allait pas exactement ?",
+  'labs.optOutSubmit': "Envoyer",
 };

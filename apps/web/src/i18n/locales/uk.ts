@@ -5304,4 +5304,12 @@ export const uk: Dict = {
   'labs.envOverrideNotice': "Налаштуванням керує змінна середовища, тут його змінити не можна.",
   'labs.latchedNotice': "Автоматично призупинено після виявлення проблеми. Генерація використовує попередній спосіб.",
   'labs.loadFailedNotice': "Не вдалося прочитати це налаштування. Перевірте, чи запущено локальний daemon.",
+  'labs.optOutPrompt': "Повернулися до попереднього способу. Що не підійшло?",
+  'labs.optOutWorseOutput': "Результат став гіршим",
+  'labs.optOutTooSlow': "Занадто повільно",
+  'labs.optOutNotWhatIWanted': "Не те, що я хотів",
+  'labs.optOutOther': "Інше",
+  'labs.optOutSkip': "Пропустити",
+  'labs.optOutOtherPlaceholder': "Що саме не підійшло?",
+  'labs.optOutSubmit': "Надіслати",
 };

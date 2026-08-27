@@ -5304,4 +5304,12 @@ export const hu: Dict = {
   'labs.envOverrideNotice': "Ezt a beállítást egy környezeti változó vezérli, ezért itt nem módosítható.",
   'labs.latchedNotice': "Egy észlelt hiba után automatikusan szüneteltetve. A generálás a korábbi módszert használja.",
   'labs.loadFailedNotice': "Nem sikerült beolvasni ezt a beállítást. Ellenőrizd, hogy fut e a helyi daemon.",
+  'labs.optOutPrompt': "Visszaálltunk a korábbi módszerre. Mi nem volt megfelelő?",
+  'labs.optOutWorseOutput': "Rosszabb eredmény",
+  'labs.optOutTooSlow': "Túl lassú",
+  'labs.optOutNotWhatIWanted': "Nem ezt szerettem volna",
+  'labs.optOutOther': "Egyéb",
+  'labs.optOutSkip': "Kihagyás",
+  'labs.optOutOtherPlaceholder': "Pontosan mi nem volt megfelelő?",
+  'labs.optOutSubmit': "Elküldés",
 };

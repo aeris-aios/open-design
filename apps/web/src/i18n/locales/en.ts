@@ -5318,4 +5318,12 @@ export const en: Dict = {
   'labs.envOverrideNotice': "An environment variable is controlling this setting, so it cannot be changed here.",
   'labs.latchedNotice': "Paused automatically after a problem was detected. Generation is using the original approach.",
   'labs.loadFailedNotice': "Could not read this setting. Check that the local daemon is running.",
+  'labs.optOutPrompt': "Switched back to the previous approach. What did not work?",
+  'labs.optOutWorseOutput': "Output got worse",
+  'labs.optOutTooSlow': "Too slow",
+  'labs.optOutNotWhatIWanted': "Not what I wanted",
+  'labs.optOutOther': "Other",
+  'labs.optOutSkip': "Skip",
+  'labs.optOutOtherPlaceholder': "What specifically did not work?",
+  'labs.optOutSubmit': "Submit",
 };

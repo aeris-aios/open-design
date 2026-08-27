@@ -5304,4 +5304,12 @@ export const pl: Dict = {
   'labs.envOverrideNotice': "Tym ustawieniem steruje zmienna środowiskowa, więc nie można go tu zmienić.",
   'labs.latchedNotice': "Automatycznie wstrzymane po wykryciu problemu. Generowanie korzysta z dotychczasowej metody.",
   'labs.loadFailedNotice': "Nie udało się odczytać tego ustawienia. Sprawdź, czy lokalny daemon działa.",
+  'labs.optOutPrompt': "Wrócono do poprzedniej metody. Co nie zadziałało?",
+  'labs.optOutWorseOutput': "Gorsze wyniki",
+  'labs.optOutTooSlow': "Za wolno",
+  'labs.optOutNotWhatIWanted': "To nie to, czego chciałem",
+  'labs.optOutOther': "Inne",
+  'labs.optOutSkip': "Pomiń",
+  'labs.optOutOtherPlaceholder': "Co dokładnie nie zadziałało?",
+  'labs.optOutSubmit': "Wyślij",
 };

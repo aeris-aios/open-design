@@ -5304,4 +5304,12 @@ export const ru: Dict = {
   'labs.envOverrideNotice': "Настройкой управляет переменная окружения, здесь её изменить нельзя.",
   'labs.latchedNotice': "Автоматически приостановлено после обнаружения проблемы. Генерация использует прежний способ.",
   'labs.loadFailedNotice': "Не удалось прочитать эту настройку. Проверьте, запущен ли локальный daemon.",
+  'labs.optOutPrompt': "Вернулись к прежнему способу. Что не подошло?",
+  'labs.optOutWorseOutput': "Результат стал хуже",
+  'labs.optOutTooSlow': "Слишком медленно",
+  'labs.optOutNotWhatIWanted': "Не то, что я хотел",
+  'labs.optOutOther': "Другое",
+  'labs.optOutSkip': "Пропустить",
+  'labs.optOutOtherPlaceholder': "Что именно не подошло?",
+  'labs.optOutSubmit': "Отправить",
 };

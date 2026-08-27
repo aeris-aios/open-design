@@ -5304,4 +5304,12 @@ export const tr: Dict = {
   'labs.envOverrideNotice': "Bu ayarı bir ortam değişkeni yönetiyor, burada değiştirilemez.",
   'labs.latchedNotice': "Bir sorun algılandıktan sonra otomatik olarak duraklatıldı. Üretim önceki yöntemi kullanıyor.",
   'labs.loadFailedNotice': "Bu ayar okunamadı. Yerel daemon un çalıştığını kontrol edin.",
+  'labs.optOutPrompt': "Önceki yönteme geri dönüldü. Ne uymadı?",
+  'labs.optOutWorseOutput': "Çıktı kötüleşti",
+  'labs.optOutTooSlow': "Çok yavaş",
+  'labs.optOutNotWhatIWanted': "İstediğim bu değildi",
+  'labs.optOutOther': "Diğer",
+  'labs.optOutSkip': "Atla",
+  'labs.optOutOtherPlaceholder': "Tam olarak ne uymadı?",
+  'labs.optOutSubmit': "Gönder",
 };

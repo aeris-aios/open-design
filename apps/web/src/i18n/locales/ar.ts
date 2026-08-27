@@ -5304,4 +5304,12 @@ export const ar: Dict = {
   'labs.envOverrideNotice': "يتحكم متغير بيئة في هذا الإعداد، لذا لا يمكن تغييره هنا.",
   'labs.latchedNotice': "تم الإيقاف المؤقت تلقائياً بعد اكتشاف مشكلة. التوليد يستخدم الطريقة السابقة.",
   'labs.loadFailedNotice': "تعذّرت قراءة هذا الإعداد. تأكد من أن daemon المحلي قيد التشغيل.",
+  'labs.optOutPrompt': "تم الرجوع إلى الطريقة السابقة. ما الذي لم يناسبك؟",
+  'labs.optOutWorseOutput': "جودة المخرجات تراجعت",
+  'labs.optOutTooSlow': "بطيء جداً",
+  'labs.optOutNotWhatIWanted': "ليس ما أردته",
+  'labs.optOutOther': "أخرى",
+  'labs.optOutSkip': "تخطٍ",
+  'labs.optOutOtherPlaceholder': "ما الذي لم يناسبك تحديداً؟",
+  'labs.optOutSubmit': "إرسال",
 };
