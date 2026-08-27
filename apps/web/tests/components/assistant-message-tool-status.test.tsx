@@ -382,7 +382,7 @@ describe('AssistantMessage 执行记录', () => {
     expect(recordBody(container)).toBeNull();
   });
 
-  it('流式的 Write 代码预览仍然渲染;run 结束后壳收起(D18)', () => {
+  it('还在流的 Write 一行都不落;run 结束后壳收起(D3 + D18)', () => {
     const streamingEvents = [
       {
         kind: 'tool_use' as const,
@@ -402,12 +402,6 @@ describe('AssistantMessage 执行记录', () => {
           runStatus: 'running',
         }}
         streaming
-        liveToolInput={{
-          'live-write': {
-            name: 'Write',
-            text: '{"file_path":"/repo/result.ts","content":"export const value = 1;"}',
-          },
-        }}
         projectId="project-1"
       />,
     );
@@ -415,9 +409,18 @@ describe('AssistantMessage 执行记录', () => {
     /*
      * 2026-08-26 裁决之后:还没有 todo 的阶段,叙述在壳外,壳里只装工具调用和 thinking。
      * 这一刻那次 Write **还没有结果**,所以壳里确实空着 —— 空壳按 D21 不出箭头也打不开。
-     * 这一条真正要守的是:**流式的代码预览照旧渲染**(它本来就画在壳外)。
+     *
+     * 这一条原来还断言「流式的代码预览照旧渲染」,依据是接入时的临时安排
+     * (`chat-panel-next.md:674`「位置不对但能力不丢」)。
+     * **用户当场把它推翻了**(`chat-panel-feedback.md:422` N4:
+     * 「不应该是一个普通工具调用的样式吗?」),喂料的 `liveToolInput` 链路整条删了,
+     * 那句断言在这里已经无从证伪 —— 挪去 `chat/write-live-preview.test.tsx`,
+     * 那边守的是「通道不许回来」。这里只剩壳自己的形态。
      */
-    expect(container.querySelector('[data-testid="live-code-box"]')?.textContent).toContain('export const value = 1;');
+    expect(rowCount(container)).toBe(1);                       // 只有那句叙述
+    expect(bodyText(container)).toContain('Writing the result now.');
+    expect(bodyText(container)).not.toContain('result.ts');    // 工具行还没落
+    expect(container.textContent ?? '').not.toContain('export const value = 1;');
 
     rerender(
       <AssistantMessage

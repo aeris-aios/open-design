@@ -352,11 +352,6 @@ function SkillPluginCandidateCard({
 interface Props {
   message: ChatMessage;
   streaming: boolean;
-  // Live-only streaming tool-input partials keyed by tool-use id (raw,
-  // mid-token JSON accumulated from `input_json_delta`). Used to render an
-  // in-flight Write/Edit's code in real time before the full `tool_use`
-  // arrives. Never persisted.
-  liveToolInput?: Record<string, { name: string; text: string; seq?: number }>;
   projectId?: string | null;
   // Analytics context for the assistant_feedback_* events. Defaults
   // applied at the call site keep AssistantMessage usable in tests
@@ -501,11 +496,6 @@ const ASSISTANT_MESSAGE_COMPARED_PROPS: Array<keyof Props> = [
   // all N messages per token. A settled earlier turn cannot change its task list
   // without the whole message array being replaced, which moves `message`
   // identity and re-renders this row anyway.
-  // Live streaming tool input changes identity on every `tool_input_delta`.
-  // ChatPane passes it only to the streaming row (undefined elsewhere), so
-  // comparing it re-renders just that row as the card grows — without it the
-  // memo swallows the deltas and the card only updates on the final tool_use.
-  'liveToolInput',
 ];
 
 function areAssistantMessagePropsEqual(prev: Props, next: Props): boolean {
@@ -555,7 +545,6 @@ function useTickingNow(active: boolean): number | undefined {
 function AssistantMessageImpl({
   message,
   streaming,
-  liveToolInput,
   projectId = null,
   projectKind = null,
   conversationId = null,
@@ -611,32 +600,14 @@ function AssistantMessageImpl({
         ? ([{ kind: "text", text: message.content }] satisfies AgentEvent[])
         : [];
   const displayEvents = useMemo(() => dedupeToolUsesById(events), [events]);
-  // ChatPane renders the canonical TodoWrite card above the composer, so the
-  // per-message flow must not render the same task list again.
-  const settledUseIds = useMemo(
-    () => new Set(displayEvents.filter((e) => e.kind === "tool_use").map((e) => e.id)),
-    [displayEvents],
-  );
-  // Live code boxes (Write/Edit streaming) append after everything else.
-  const liveCodeBlocks = useMemo<Block[]>(() => {
-    if (!streaming || !liveToolInput) return [];
-    const out: Block[] = [];
-    for (const [id, entry] of Object.entries(liveToolInput)) {
-      if (settledUseIds.has(id)) continue;
-      if (!isLiveCodeToolName(entry.name)) continue;
-      out.push({ kind: "live-tool", id, name: entry.name, raw: entry.text });
-    }
-    return out;
-  }, [streaming, liveToolInput, settledUseIds]);
   // ChatPane owns one canonical conversation-level Todo card above the
   // composer. Strip TodoWrite snapshots from individual messages so plans do
   // not appear twice or jump around as history is virtualized.
   const blocks = useMemo(() => {
-    const rawBlocks = [...buildBlocks(displayEvents), ...liveCodeBlocks];
     return stripTodoToolGroups(
-      stripEmptyThinkingBlocks(suppressDuplicateQuestionForms(rawBlocks)),
+      stripEmptyThinkingBlocks(suppressDuplicateQuestionForms(buildBlocks(displayEvents))),
     );
-  }, [displayEvents, liveCodeBlocks]);
+  }, [displayEvents]);
   /**
    * 这一轮对执行记录来说算什么状态。
    *
@@ -1123,17 +1094,6 @@ function AssistantMessageImpl({
                 onBrandBrowserAssistConfirm={onBrandBrowserAssistConfirm}
               />
             );
-          if (b.kind === "live-tool") {
-            /**
-             * 还在流的 Write / Edit 代码预览。
-             *
-             * **执行记录暂时接不住它**:`buildTurnBlocks` 只读已落库的事件,
-             * `liveToolInput`(尚未成为事件的半截工具入参)没有落点,而 D3 又规定
-             * 调用跑完才落行。老链路是把它塞进同一张卡里的 —— 那个位置新链路还没有。
-             * 在设计给出落点之前先原地渲染,**宁可位置不对也不能把这块能力弄丢**。
-             */
-            return <LiveCodeBox key={b.id} name={b.name} raw={b.raw} />;
-          }
           if (b.kind === "plugin-candidate") {
             return (
               <SkillPluginCandidateCard
@@ -3744,78 +3704,12 @@ interface ToolItem {
   result?: Extract<AgentEvent, { kind: "tool_result" }>;
 }
 
-// Tools whose streaming JSON input is worth previewing as live code. Other
-// tools (Bash, Grep, TodoWrite, …) stream JSON too but a code panel for them
-// would be noise.
-const LIVE_CODE_TOOL_NAMES = new Set([
-  "Write",
-  "write",
-  "Edit",
-  "edit",
-  "MultiEdit",
-  "multiedit",
-  "NotebookEdit",
-]);
-
-function isLiveCodeToolName(name: string): boolean {
-  return LIVE_CODE_TOOL_NAMES.has(name);
-}
-
-// Pull the (possibly still-streaming) value of a top-level JSON string field
-// out of a raw, not-yet-closed JSON fragment. Returns the decoded text up to
-// wherever the stream currently ends — an unterminated escape or \u sequence
-// at the tail is dropped rather than throwing. Returns null when the field /
-// its opening quote hasn't arrived yet. Good enough for a live preview; the
-// authoritative value comes from the parsed `tool_use.input` once complete.
-function extractStreamingJsonString(raw: string, field: string): string | null {
-  const marker = `"${field}"`;
-  const mi = raw.indexOf(marker);
-  if (mi === -1) return null;
-  let i = mi + marker.length;
-  // Advance to the value's opening quote, past the `:` and any whitespace.
-  while (i < raw.length && raw[i] !== '"') i++;
-  if (i >= raw.length) return null;
-  i++; // step past the opening quote
-  let out = "";
-  while (i < raw.length) {
-    const ch = raw[i]!;
-    if (ch === "\\") {
-      const next = raw[i + 1];
-      if (next === undefined) break; // incomplete escape at the streaming tail
-      switch (next) {
-        case "n": out += "\n"; break;
-        case "t": out += "\t"; break;
-        case "r": out += "\r"; break;
-        case '"': out += '"'; break;
-        case "\\": out += "\\"; break;
-        case "/": out += "/"; break;
-        case "b": out += "\b"; break;
-        case "f": out += "\f"; break;
-        case "u": {
-          const hex = raw.slice(i + 2, i + 6);
-          if (hex.length < 4) return out; // incomplete \u escape at the tail
-          out += String.fromCharCode(parseInt(hex, 16));
-          i += 6;
-          continue;
-        }
-        default: out += next;
-      }
-      i += 2;
-      continue;
-    }
-    if (ch === '"') break; // closing quote → value complete
-    out += ch;
-    i++;
-  }
-  return out;
-}
-
 // Presentational in-flight code panel: a boxed header (spinner + shimmer
 // title + optional meta) over a monospace body with a typing caret. Plain
 // monospace on purpose — shiki highlighting is async and would thrash on
 // every streamed delta; the finished, highlighted view is taken over by the
-// normal card once the write/artifact completes. Shared by the tool-call
-// path (LiveCodeBox) and the streaming-artifact path (ProseBlock).
+// normal card once the artifact completes. Only the streaming-artifact path
+// (ProseBlock) uses it — a still-streaming tool call renders nothing (D3).
 function StreamingCodeCard({
   icon,
   titleLabel,
@@ -3854,32 +3748,6 @@ function StreamingCodeCard({
   );
 }
 
-// In-flight code panel rendered from a tool call whose JSON input is still
-// streaming. The finished view is taken over by the normal tool card once
-// `tool_use` lands.
-function LiveCodeBox({ name, raw }: { name: string; raw: string }) {
-  const t = useT();
-  const file =
-    extractStreamingJsonString(raw, "file_path") ??
-    extractStreamingJsonString(raw, "filePath") ??
-    extractStreamingJsonString(raw, "path") ??
-    "";
-  const baseName = file ? file.split("/").pop() ?? file : "";
-  const code =
-    extractStreamingJsonString(raw, "content") ??
-    extractStreamingJsonString(raw, "new_string") ??
-    "";
-  const isEdit = /edit/i.test(name);
-  return (
-    <StreamingCodeCard
-      icon={isEdit ? "pencil" : "file-code"}
-      titleLabel={isEdit ? t("tool.edit") : t("tool.write")}
-      metaLabel={baseName || undefined}
-      code={code}
-    />
-  );
-}
-
 function toolFamily(name: string): string {
   if (name === "Edit" || name === "str_replace_edit") return "edit";
   if (name === "Write" || name === "write" || name === "create_file") return "write";
@@ -3897,7 +3765,6 @@ type Block =
   | { kind: "text"; text: string }
   | { kind: "thinking"; text: string }
   | { kind: "tool-group"; items: ToolItem[] }
-  | { kind: "live-tool"; id: string; name: string; raw: string }
   | {
       kind: "plugin-candidate";
       candidateId: string;

@@ -641,10 +641,6 @@ interface Props {
   onShareToOpenDesign?: (assistantMessageId: string) => void;
   shareToOpenDesignBusyMessageId?: string | null;
   forceStreamingMessageIds?: Set<string>;
-  // Live-only streaming tool-input partials keyed by tool-use id. Threaded to
-  // AssistantMessage so an in-flight Write/Edit can render its code in real
-  // time before the full `tool_use` arrives. Never persisted.
-  liveToolInput?: Record<string, { name: string; text: string; seq?: number }>;
   initialDraft?: string;
   // Product path of the Home recommendation that started this project. When
   // set (and concrete), the empty-conversation starter cards show that path's
@@ -1004,7 +1000,6 @@ export function ChatPane({
   onShareToOpenDesign,
   shareToOpenDesignBusyMessageId,
   forceStreamingMessageIds,
-  liveToolInput,
   initialDraft,
   onboardingStarterPath = null,
   composerPlaceholder,
@@ -2926,7 +2921,6 @@ export function ChatPane({
                   messages={displayMessages}
                   streaming={streaming}
                   onRetryImage={handleRetryImage}
-                  liveToolInput={liveToolInput}
                   projectId={projectId}
                   projectKindForTracking={projectKindForTracking}
                   activeConversationId={activeConversationId}
@@ -3766,7 +3760,6 @@ function ChatRows({
   messages,
   streaming,
   onRetryImage,
-  liveToolInput,
   projectId,
   projectKindForTracking,
   activeConversationId,
@@ -3824,7 +3817,6 @@ function ChatRows({
   /** 生图失败格的「重试」—— 见 ChatPane 的 handleRetryImage(D59) */
   onRetryImage?: (row: { total: number; done: number; failed: number }, index: number) => void;
   streaming: boolean;
-  liveToolInput?: Record<string, { name: string; text: string; seq?: number }>;
   projectId: string | null;
   projectKindForTracking: TrackingProjectKind | null;
   activeConversationId: string | null;
@@ -4007,10 +3999,6 @@ function ChatRows({
       <AssistantMessage
         message={m}
         streaming={messageStreaming}
-        // Only the streaming row consumes live tool input. Non-streaming rows
-        // get a stable `undefined`, so adding `liveToolInput` to the memo
-        // comparator re-renders just this row per `tool_input_delta`, not all N.
-        liveToolInput={messageStreaming ? liveToolInput : undefined}
         projectId={projectId}
         projectKind={projectKindForTracking}
         conversationId={activeConversationId}
