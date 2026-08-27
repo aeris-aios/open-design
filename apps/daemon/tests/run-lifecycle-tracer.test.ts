@@ -65,11 +65,17 @@ describe('runLifecycleMarkersForStreamEvent', () => {
     });
   });
 
+  // NOTE(sync/main): origin/main removed `artifact` from `firstModelEventType`
+  // on purpose — an agent `artifact` event is the daemon's own close-time
+  // persistence of plain-stream stdout, never a runtime relaying model output,
+  // so anchoring the "model started responding" boundary on it would drag every
+  // phase boundary to the END of the run. That ruling is kept. What this spec
+  // was actually pinning — an artifact counts as visible output and as an
+  // artifact write even though it carries no `delta` — is unaffected.
   it('treats an artifact as visible output regardless of delta shape', () => {
     expect(
       runLifecycleMarkersForStreamEvent('agent', { type: 'artifact' }),
     ).toEqual({
-      firstModelEventType: 'artifact',
       firstVisibleOutput: true,
       firstArtifactWrite: true,
     });
@@ -295,8 +301,14 @@ describe('first visible output over a recorded empty-thinking turn', () => {
       if (markers.firstVisibleOutput) lifecycle.mark('first_visible_output', frame.at);
     }
 
+    // NOTE(sync/main): origin/main (#7155) split this boundary in two.
+    // `firstModelEventAt` is now ARRIVAL on the daemon clock (first-write-wins),
+    // and the producer-supplied instant — the one this spec feeds in and the one
+    // phase boundaries anchor on — became `firstModelResponseAt` (earliest-wins,
+    // clamped to arrival). The 9.9s fact under test is unchanged; only the field
+    // that carries it moved, so the assertion follows it rather than relaxing.
     // A frame really did arrive at 9.9s -- that boundary is unchanged.
-    expect(run.analyticsTelemetry?.firstModelEventAt).toBe(9_939);
+    expect(run.analyticsTelemetry?.firstModelResponseAt).toBe(9_939);
     expect(run.analyticsTelemetry?.firstModelEventType).toBe('thinking_delta');
     // ...but nothing was on screen until 46.8s.
     expect(run.analyticsTelemetry?.firstVisibleOutputAt).toBe(46_831);

@@ -73,8 +73,14 @@ describe('empty thinking frames and the first visible pixel', () => {
     );
 
     const telemetry = run.analyticsTelemetry ?? {};
+    // NOTE(sync/main): origin/main (#7155) split this boundary in two.
+    // `firstModelEventAt` is now ARRIVAL on the daemon clock (first-write-wins),
+    // and the producer-supplied instant — the one this spec feeds in and the one
+    // phase boundaries anchor on — became `firstModelResponseAt` (earliest-wins,
+    // clamped to arrival). The 9.9s fact under test is unchanged; only the field
+    // that carries it moved, so the assertion follows it rather than relaxing.
     // Frames really did arrive at 9.9s — that boundary is untouched.
-    expect(telemetry.firstModelEventAt).toBe(9_939);
+    expect(telemetry.firstModelResponseAt).toBe(9_939);
     expect(telemetry.firstModelEventType).toBe('thinking_delta');
     // Nothing was on screen until 46.8s.
     expect(telemetry.firstVisibleOutputAt).toBe(46_831);
