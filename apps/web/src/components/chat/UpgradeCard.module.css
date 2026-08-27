@@ -58,11 +58,20 @@
 }
 
 /* 稿子 `.up .h .btn { padding: 8px }` + `.up .h .btn.mod-primary { color: var(--upgrade-ink) }`
-   —— 黑底不变,绿只落在字和那枚闪光上 */
-.cta {
+   —— 黑底不变,绿只落在字和那枚闪光上。
+   ------------------------------------------------------------
+   **祖先 `.up .head` 不能省。** 少了它这条是 (0,1,0),和共享 Button 的
+   primary(`color: var(--bg)`,同样 (0,1,0))打平,谁赢全看 import 顺序 ——
+   真机上就是白的赢了,绿墨从没生效过(用户 2026-08-27 指出)。稿子那条本来
+   就是三个类(`.up .h .btn.mod-primary`),照搬祖先链才不靠顺序取胜。
+   同一副病灶今天已经在 `routines.css` 上出现过一次:两条声明逐字相同、
+   纯靠顺序取胜,文本 diff 照不出来,只有量计算样式才看得见。 */
+.up .head .cta {
   padding: 8px;
   color: var(--chat-upgrade-ink);
 }
-.cta:hover:not(:disabled) {
+/* hover 也要写一遍 —— 稿子注释:`.btn.mod-primary:hover` 会把 color 改回
+   `--bg`,不覆盖的话鼠标一压上去绿就掉了。 */
+.up .head .cta:hover:not(:disabled) {
   color: var(--chat-upgrade-ink);
 }
