@@ -133,8 +133,11 @@ describe('N7-a 思考期间,壳里原有的内容原样还在', () => {
     expect(stream).not.toBeNull();
     /* 它不能是壳 body ——「下沉到思考段自己身上」的全部含义就在这一句 */
     expect(stream).not.toBe(shellBody(container));
-    /* 而且推理正文得真的在这只窗里,否则挂了个空窗也能绿 */
-    expect(stream!.contains(screen.getByText('先判断这一屏属于哪种页面类型。'))).toBe(true);
+    /* 而且推理正文得真的在这只窗里,否则挂了个空窗也能绿。
+       按 textContent 而不是 getByText:还在化开的那几个字被 `useCharReveal` 拆成了
+       一串 `.rv` span(2026-08-27 起思考也走逐字化开),精确文本匹配会被拆散的节点挡住。
+       要钉的是「字在这只窗里」,不是「字在同一个元素里」。 */
+    expect(stream!.textContent).toContain('先判断这一屏属于哪种页面类型。');
     /* 反过来:工具行**不在**窗里(它没被卷进去) */
     expect(stream!.contains(screen.getByText(/读取 a\.png/))).toBe(false);
   });

@@ -1374,7 +1374,11 @@ describe('AssistantMessage question forms', () => {
     );
 
     expect(screen.getByTestId('question-form-loading')).toBeTruthy();
-    expect(screen.getByText('One quick check:')).toBeTruthy();
+    /* 按 textContent 找,不用精确文本匹配:流式期间正文的字被 `useCharReveal`
+       拆成了一串 `.rv` span(2026-08-27 起第一批字也化开,不再是「整段直接刷出来」),
+       `getByText` 会被拆散的节点挡住。要钉的是「表单前面那句话还在」,不是它在同一个节点里。 */
+    expect(document.querySelector('[data-assistant-message-id]')?.textContent)
+      .toContain('One quick check:');
   });
 });
 
