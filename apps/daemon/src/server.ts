@@ -447,6 +447,12 @@ import { narrowProjectCritiqueOverride } from './critique/spawn-inputs.js';
 import { createCopilotStreamHandler } from './copilot-stream.js';
 import { createJsonEventStreamHandler } from './runtimes/json-event-stream.js';
 import {
+  CODEX_APP_SERVER_STREAM_FORMAT,
+  applyCodexTransportOverride,
+  codexResolvedSandboxMode,
+} from './runtimes/defs/codex.js';
+import { attachCodexAppServerSession } from './agent-protocol/codex-app-server/session.js';
+import {
   antigravityAuthGuidance,
   antigravityQuotaGuidance,
   classifyAgentAuthFailure,
@@ -9757,7 +9763,10 @@ export async function startServer({
       sessionMode === 'chat' || sessionMode === 'design' || sessionMode === 'plan'
         ? normalizeConversationSessionMode(sessionMode)
         : normalizeConversationSessionMode(conversationSession?.sessionMode);
-    const def = getAgentDef(agentId);
+    // Single choke point for the codex transport switch. Every other
+    // agent — and codex with the switch off — gets back the identical
+    // registry object, so nothing below can tell this call happened.
+    const def = applyCodexTransportOverride(getAgentDef(agentId));
     if (!def)
       return design.runs.fail(
         run,
@@ -12345,7 +12354,8 @@ export async function startServer({
       const stdinMode =
         def.promptViaStdin ||
         def.streamFormat === 'acp-json-rpc' ||
-        def.streamFormat === 'dsh-profile-jsonl'
+        def.streamFormat === 'dsh-profile-jsonl' ||
+        def.streamFormat === CODEX_APP_SERVER_STREAM_FORMAT
           ? 'pipe'
           : 'ignore';
       const env = applyAgentLaunchEnv({
@@ -12498,7 +12508,7 @@ export async function startServer({
         });
       }
       if (
-        def.promptViaStdin &&
+        (def.promptViaStdin || def.streamFormat === CODEX_APP_SERVER_STREAM_FORMAT) &&
         child.stdin &&
         def.streamFormat !== 'pi-rpc' &&
         def.streamFormat !== 'dsh-profile-jsonl'
@@ -12523,7 +12533,10 @@ export async function startServer({
             );
           }
         });
-        writePromptToChildStdin = true;
+        // The app-server transport owns its own stdin writes (JSON-RPC
+        // frames); only the plain stdin-prompt adapters hand the composed
+        // prompt over on this channel.
+        writePromptToChildStdin = def.promptViaStdin === true;
       }
     } catch (err) {
       cleanupPromptFile();
@@ -13633,6 +13646,45 @@ export async function startServer({
           }
           send(event, data);
         },
+      });
+    } else if (def.streamFormat === CODEX_APP_SERVER_STREAM_FORMAT) {
+      // codex over the JSON-RPC `app-server` transport. Everything flows
+      // through `sendAgentEvent`, exactly as it does for `exec --json`: the
+      // normalizer translates app-server notifications back into the codex
+      // stream frames the shipping parser already understands, so tool rows,
+      // file changes, warnings, errors and usage take the same code path they
+      // always did. The transport's own additions are token-level text and
+      // reasoning deltas.
+      trackingSubstantiveOutput = true;
+      acpSession = attachCodexAppServerSession({
+        child,
+        prompt: composed,
+        cwd: effectiveCwd,
+        model: safeModel,
+        reasoning: safeReasoning,
+        serviceTier: safeServiceTier,
+        sandboxMode: codexResolvedSandboxMode(),
+        imagePaths: def.supportsImagePaths ? amrStagedImages : [],
+        clientVersion: design.getAppVersion?.() ?? '0.0.0',
+        // Capture-style resume, same contract as `exec resume <thread_id>`:
+        // the id comes off the stream, and the daemon replays it here.
+        resumeSessionId:
+          agentResumeCtx.isResuming && agentResumeCtx.resumeSessionId
+            ? agentResumeCtx.resumeSessionId
+            : null,
+        onAgentEvent: (event) => sendAgentEvent(event),
+        onCliReady: () => noteCliReadyAt(),
+        onSessionReady: () => noteSessionInitDoneAt(),
+        // The prompt boundary for this transport is the `turn/start` write, not
+        // a stdin write that never happens. Marking it keeps the Langfuse
+        // `stdin-write` and `agent-call` spans — and therefore the tool spans
+        // nested under `agent-call` — present on app-server runs.
+        onPromptSendStart: () => {
+          lifecycle.mark('model_call_start');
+          lifecycle.mark('stdin_write_start');
+        },
+        onPromptSendEnd: () => lifecycle.mark('stdin_write_end'),
+        onTurnComplete: () => clearFirstOutputWatchdog(),
       });
     } else if (def.streamFormat === 'json-event-stream') {
       // Pipe through sendAgentEvent so the OpenCode `type:'error'` frame
