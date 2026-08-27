@@ -1395,7 +1395,14 @@ describe('AssistantMessage recovered produced files', () => {
     expect(download?.getAttribute('href')).toBe(
       '/api/projects/proj-1/raw/browser-war-deck-outline.md',
     );
-    expect(screen.queryByTestId('file-ops-summary')).toBeNull();
+    /*
+     * 「不折进工具摘要」现在断言的是**没有那份文本清单**,不是「没有
+     * file-ops-summary 这个 testid」—— 两条产物面板路径收成一个组件之后,
+     * 那个 testid 标的是「这一轮的产物面板」这个身份,两条路上都有它
+     * (P0 recvqaerXd82bE 的不变量就挂在它上面),不再是「文本清单那种画法」的记号。
+     */
+    expect(document.querySelector('.file-ops-list')).toBeNull();
+    expect(document.querySelectorAll('[data-testid="file-ops-summary"]')).toHaveLength(1);
   });
 
   it('never shows the tool-op summary and the produced-files block at once (P0 recvqaerXd82bE)', () => {
@@ -1436,10 +1443,17 @@ describe('AssistantMessage recovered produced files', () => {
       />,
     );
 
-    const hasFileOpsSummary = !!screen.queryByTestId('file-ops-summary');
-    const hasProducedFiles = !!document.querySelector('[data-testid="produced-files"]');
-    expect(hasFileOpsSummary).toBe(true);
-    expect(hasProducedFiles).toBe(false);
+    /*
+     * 收口之后这条不变量是**结构性**的:一条消息只调用一次那个组件,所以
+     * 「两块同名面板」在类型上就摆不出来了。断言相应地改成数面板个数 ——
+     * 原来那条 `[data-testid="produced-files"]` 已经随 `ProducedFiles` 一起
+     * 消失,留着会永远为真、白白空过。
+     */
+    expect(document.querySelectorAll('[data-testid="file-ops-summary"]')).toHaveLength(1);
+    // 这一轮真写的那份在面板里;从正文里找回来的**更早**那份不另起一块
+    // (它本来就不是这一轮的产物,原来那第二块面板正是这么冒出来的)。
+    expect(document.querySelector('[data-testid="artifact-card-index.html"]')).toBeTruthy();
+    expect(document.querySelector('[data-testid="artifact-card-logo.svg"]')).toBeNull();
   });
 
   it('lists only the authoritative artifact when an earlier edit targeted a wrong project path', () => {

@@ -9,6 +9,7 @@ import {
   type DragEvent as ReactDragEvent,
   type ReactNode,
 } from 'react';
+import type { ArtifactExportFormat } from '../runtime/chat/artifact-export';
 import { Button } from '@open-design/components';
 import { createPortal } from 'react-dom';
 import type { DesignSystemEditClickProps, TrackingArtifactKind, TrackingProjectKind } from '@open-design/contracts/analytics';
@@ -239,7 +240,7 @@ interface Props {
   shareRequest?: { name: string; nonce: number } | null;
   // Open the named file AND surface its Download/Export menu. Drives the
   // chat-side "Download" next-step action.
-  downloadRequest?: { name: string; nonce: number } | null;
+  downloadRequest?: { name: string; nonce: number; format?: ArtifactExportFormat } | null;
   // Flip a deck preview to a given slide when a queued chat send starts. Mirrors
   // `shareRequest`: the named file is activated (if open) and the matching
   // FileViewer consumes the nonce to navigate.
@@ -3321,7 +3322,12 @@ export function FileWorkspace({
     [shareRequest],
   );
   const activeFileDownloadRequest = useMemo(
-    () => (downloadRequest ? { name: downloadRequest.name, request: { nonce: downloadRequest.nonce } } : null),
+    () => (downloadRequest
+      ? {
+          name: downloadRequest.name,
+          request: { nonce: downloadRequest.nonce, format: downloadRequest.format },
+        }
+      : null),
     [downloadRequest],
   );
   const activeFileSlideNavRequest = useMemo(

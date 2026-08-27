@@ -12,6 +12,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type SetStateAction,
 } from 'react';
+import type { ArtifactExportFormat } from '../runtime/chat/artifact-export';
 import { AnimatePresence } from 'motion/react';
 import { createHtmlArtifactManifest, inferLegacyManifest } from '../artifacts/manifest';
 import { resolveHtmlPointerArtifactTarget } from '../artifacts/pointer';
@@ -2608,7 +2609,9 @@ export function ProjectView({
   // existing export/deploy surface rather than introducing a new share backend.
   const [shareRequest, setShareRequest] = useState<{ name: string; nonce: number } | null>(null);
   // Parallel to shareRequest, but opens the workspace's Download/Export menu.
-  const [downloadRequest, setDownloadRequest] = useState<{ name: string; nonce: number } | null>(null);
+  const [downloadRequest, setDownloadRequest] = useState<
+    { name: string; nonce: number; format?: ArtifactExportFormat } | null
+  >(null);
   const [designSystemEditRequest, setDesignSystemEditRequest] =
     useState<{ module: 'logo'; nonce: number } | null>(null);
   // When a queued chat send starts processing, ask the workspace to flip the
@@ -10270,10 +10273,16 @@ export function ProjectView({
   );
   // Mirrors share, but opens the workspace's Download/Export menu (PDF / image /
   // zip / standalone HTML / save-as-template) instead of a bare file download.
+  /*
+   * `format` **只有产物卡的格式浮层会传**:多格式产物在卡上就把格式选完了,
+   * 不该把人送进预览区的菜单再选第二遍(产品 2026-08-27「导出浮层贴着按钮开」)。
+   * 不带 `format` 的调用(「下一步引导」那行〔下载〕)沿用原语义:打开文件、
+   * 展开导出菜单。
+   */
   const handleArtifactDownload = useCallback(
-    (fileName: string) => {
+    (fileName: string, format?: ArtifactExportFormat) => {
       requestOpenFile(fileName);
-      setDownloadRequest({ name: fileName, nonce: Date.now() });
+      setDownloadRequest({ name: fileName, nonce: Date.now(), ...(format ? { format } : {}) });
     },
     [requestOpenFile],
   );

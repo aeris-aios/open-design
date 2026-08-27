@@ -1,0 +1,70 @@
+/* 贴着〔导出〕那枚胶囊开的格式浮层。
+   ------------------------------------------------------------
+   产品口径(2026-08-27):**不是居中弹窗**。居中弹窗把整屏都占了,而这里要选的
+   只是「导成哪种」——一个四条的清单;弹窗还会盖住刚生成的那张卡,人正是对着它
+   在做判断。所以浮层贴着按钮开,上下由剩余空间决定(`useAnchoredPlacement`)。
+
+   锚点是 `.anchor`(`position: relative`),它就套在按钮外面 —— 浮层因此跟着
+   按钮走,卡片重排、聊天流滚动都不用重算坐标。产物卡本身**没有** `overflow:
+   hidden`(设计稿 `components.css` 那条注释专门交代过:「卡上不能有
+   overflow:hidden —— 它会把 ⋯ 的 tooltip 和弹出的菜单切成半截」),所以浮层
+   可以正常溢出卡面。 */
+.anchor {
+  position: relative;
+  display: inline-flex;
+}
+
+.popover {
+  position: absolute;
+  z-index: 30;
+  /* 右缘与按钮右缘对齐:按钮本身就靠在卡的右上角,浮层向左展开才不会出卡外。 */
+  inset-inline-end: 0;
+  min-width: 168px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  box-shadow: var(--shadow-lg);
+}
+
+.popover[data-placement='below'] {
+  top: calc(100% + 6px);
+}
+
+.popover[data-placement='above'] {
+  bottom: calc(100% + 6px);
+}
+
+.item {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  height: auto;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: calc(var(--radius) - 2px);
+  background: transparent;
+  color: var(--text);
+  font-size: var(--t-mini);
+  line-height: normal;
+  text-align: start;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--duration-faster) var(--ease-out);
+}
+
+.item:hover {
+  background: var(--bg-subtle);
+}
+
+.item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.icon {
+  display: inline-flex;
+  flex: none;
+  color: var(--text-soft);
+}

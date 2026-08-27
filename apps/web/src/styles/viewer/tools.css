@@ -178,6 +178,14 @@
   justify-content: flex-end;
   gap: 4px;
 }
+/* The export pill wraps in a relative anchor when it opens a format popover
+   (multi-format artifacts only). Keeping the wrapper a zero-cost inline-flex
+   means the row still collapses to the right when publish is absent — the
+   count-varies-by-kind rule above holds either way. */
+.artifact-card-act-anchor {
+  flex: none;
+  display: inline-flex;
+}
 /* Solid #353535, product-specified, replacing an earlier 44% black: a
    translucent pill picks up whatever it sits on, so it reads grey on a light
    screenshot and nearly edgeless on a dark one, and a row of cards ends up
