@@ -118,6 +118,9 @@ function renderChat(opts: ChatOpts) {
 }
 
 const view = (over: Partial<ChatReconnectView> = {}): ChatReconnectView => ({
+  // 默认造传输层那一行 —— 这一族测的就是它。自动重试那一读数的覆盖在
+  // `tests/runtime/chat/agent-retry-row.test.ts` 与 `chat-agent-retry-row.test.tsx`。
+  reason: 'transport',
   runId: 'run-1',
   conversationId: CONV,
   attempt: 2,

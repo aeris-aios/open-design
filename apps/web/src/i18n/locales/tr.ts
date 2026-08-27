@@ -3616,6 +3616,7 @@ export const tr: Dict = {
   "chat.edge.reconnectDetail": "Ayrıntıları görüntüle",
   "chat.edge.reconnectFailed": "Bağlantı başarısız",
   "chat.edge.reconnecting": "Yeniden bağlanılıyor",
+  "chat.edge.retrying": "Yeniden deneniyor",
   "qf.visualNext": "Sonraki stil",
   "qf.visualPrev": "Önceki stil",
   "qf.visualRandom": "Rastgele",

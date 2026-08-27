@@ -163,6 +163,9 @@ describe('R9 断线:报错卡让位给流水最后一行的重连行', () => {
   // 流水最后一行的〔重新连接〕,和一张写着「任务执行失败」的通用报错卡。
   // 交付稿第 84 格只画了前者。
   const reconnectExhausted = {
+    // 「交回给人」那一档只属于传输层:自动重试烧完预算之后接手的是报错卡,
+    // 不是一颗〔重新连接〕。
+    reason: 'transport' as const,
     runId: 'run-1',
     conversationId: 'conv-1',
     attempt: 5,

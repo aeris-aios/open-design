@@ -299,6 +299,38 @@ export interface DaemonStreamHandlers extends StreamHandlers {
    * ——设计稿明说「恢复后整行消失,不留『已恢复』」。
    */
   onReconnect?: (state: DaemonReconnectState) => void;
+  /**
+   * daemon 把 agent 那一轮重跑了。UI 用它在流水尾部说一行「正在重试 N/M」——
+   * 和「正在重新连接」共用组件 22 的形态(交付稿 4058:同一件事不许有第三个说法)。
+   *
+   * 和 `onReconnect` 一样只在**期间**发,重跑真的接上了就发一条 `cleared`
+   * 让调用方撤掉那一行 —— 恢复后整行消失,不留「已恢复」。
+   */
+  onAgentRetry?: (state: DaemonAgentRetryState) => void;
+}
+
+/**
+ * 运行层给 UI 的自动重试读数。
+ *
+ * 和 {@link DaemonReconnectState} 是**两件事**:那一条数的是浏览器 ↔ daemon 的
+ * 连接断了几次,这一条数的是 daemon 把 agent 那一轮重跑了第几次。层级不同,
+ * 预算也不同(重连 5 次,重试今天 1 次),所以刻意不合并成一个类型 ——
+ * 合并了就得靠调用方记住这个 `max` 是哪个 max。
+ */
+export interface DaemonAgentRetryState {
+  /** 第几次自动重试,1 起。逐字取自 `run_retry_attempted.retry_attempt_index`。 */
+  attempt: number;
+  /** 这一轮的自动重试预算。逐字取自 `retry_max_attempts`(今天是 1)。 */
+  max: number;
+  /**
+   * `retrying` 重跑正在进行 · `cleared` 重跑真的接上了(第二次尝试吐出了第一段
+   * 可见输出),把那一行撤掉。
+   *
+   * 撤的时机刻意不是 `start`:真机 `.od/runs/0e40b819-…` 里第二次尝试的 `start`
+   * 在错误后 3.2 秒就到了,而第一个 token 还要再等 30 秒。在 `start` 撤等于那一行
+   * 一闪而过,最需要解释的那 30 秒照旧沉默。
+   */
+  phase: 'retrying' | 'cleared';
 }
 
 /**
@@ -1369,6 +1401,14 @@ async function consumeDaemonRun({
   publishRunFinishedEvent,
 }: DaemonReattachOptions): Promise<void> {
   let acc = '';
+  /*
+   * 流水尾部那一行「正在重试」此刻是不是挂着的。
+   *
+   * 放在这一层(而不是每条连接的读循环里)是因为它要**跨传输层重连**活着:
+   * 重跑期间连接如果抖了一下,重连回来接着读的还是同一轮的同一次重试,那一行
+   * 不该因为换了条 TCP 就凭空消失或者重复宣告一次。
+   */
+  let agentRetryPending = false;
   let stderrBuf = '';
   let exitCode: number | null = null;
   let exitSignal: string | null = null;
@@ -1596,9 +1636,43 @@ async function consumeDaemonRun({
 
           const event = parsed as unknown as ChatSseEvent;
 
+          /*
+           * 重跑真的接上了 = 第二次尝试吐出了**用户看得见**的东西。
+           *
+           * 不认 `start`:真机 `.od/runs/0e40b819-…` 里第二次尝试的 `start` 在
+           * 错误后 3.2 秒就到了,而第一个 token 还要再等 30 秒 —— 在 `start` 撤,
+           * 那一行一闪而过,最需要解释的那 30 秒照旧沉默。
+           *
+           * 也不认 `status`(壳头那句「启动中」):它不是上游给的东西,重跑成不成
+           * 它都会来。
+           */
+          const clearAgentRetryOnVisibleOutput = (): void => {
+            if (!agentRetryPending) return;
+            agentRetryPending = false;
+            handlers.onAgentRetry?.({ attempt: 0, max: 0, phase: 'cleared' });
+          };
+
+          if (event.event === 'run_retry_attempted') {
+            // daemon 把这一轮重跑了。它写这条是为了埋点,但 `runs.ts` 的 `emit`
+            // 同时也是 SSE 扇出,所以它本来就到了浏览器 —— 以前只是没人接。
+            const data = event.data;
+            const attempt = Number(data.retry_attempt_index);
+            const max = Number(data.retry_max_attempts);
+            if (Number.isFinite(attempt) && attempt > 0) {
+              agentRetryPending = true;
+              handlers.onAgentRetry?.({
+                attempt,
+                max: Number.isFinite(max) && max > 0 ? max : attempt,
+                phase: 'retrying',
+              });
+            }
+            continue;
+          }
+
           if (event.event === 'stdout') {
             const chunk = String(event.data.chunk ?? '');
             acc += chunk;
+            clearAgentRetryOnVisibleOutput();
             handlers.onDelta(chunk);
             handlers.onAgentEvent({ kind: 'text', text: chunk });
             continue;
@@ -1612,6 +1686,7 @@ async function consumeDaemonRun({
           if (event.event === 'agent') {
             const translated = translateAgentEvent(event.data);
             if (!translated) continue;
+            if (translated.kind !== 'status') clearAgentRetryOnVisibleOutput();
             if (translated.kind === 'text') {
               acc += translated.text;
               handlers.onDelta(translated.text);

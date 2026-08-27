@@ -3616,6 +3616,7 @@ export const hu: Dict = {
   "chat.edge.reconnectDetail": "Részletek megtekintése",
   "chat.edge.reconnectFailed": "A kapcsolat megszakadt",
   "chat.edge.reconnecting": "Újracsatlakozás",
+  "chat.edge.retrying": "Újrapróbálkozás",
   "qf.visualNext": "Következő stílus",
   "qf.visualPrev": "Előző stílus",
   "qf.visualRandom": "Véletlenszerű",

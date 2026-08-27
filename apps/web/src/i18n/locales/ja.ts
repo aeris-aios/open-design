@@ -3616,6 +3616,7 @@ export const ja: Dict = {
   "chat.edge.reconnectDetail": "詳細を表示",
   "chat.edge.reconnectFailed": "接続に失敗しました",
   "chat.edge.reconnecting": "再接続しています",
+  "chat.edge.retrying": "再試行しています",
   "qf.visualNext": "次のスタイル",
   "qf.visualPrev": "前のスタイル",
   "qf.visualRandom": "ランダム",

@@ -202,8 +202,33 @@ export type DaemonAgentPayload =
     }
   | { type: 'raw'; line: string };
 
+/**
+ * The run-level automatic retry the daemon just started, as the browser sees it.
+ *
+ * The daemon writes this as an ANALYTICS record, but `runs.ts`'s `emit` is also
+ * the SSE fan-out (`for (const sse of run.clients) sse.send(event, data, id)`),
+ * so every analytics record reaches a subscribed client on the same stream as
+ * `start` / `agent` / `end`. Declaring it here makes that delivery intentional
+ * rather than incidental: the chat needs it to say "still trying" while the
+ * second attempt spins up, and nothing else can tell it that the first attempt
+ * died — the `error` frame for a retried attempt is deliberately cached and not
+ * surfaced.
+ *
+ * Only the fields the UI reads are declared. The daemon sends the full
+ * `RunRetryAttemptedProps` analytics shape (project/conversation ids, failure
+ * classification, delays); consumers of this event must not grow a dependency
+ * on those — they belong to the analytics contract, which is free to change.
+ */
+export interface ChatSseRunRetryAttemptedPayload {
+  /** Which automatic attempt this is, 1-based. */
+  retry_attempt_index: number;
+  /** How many automatic attempts this run is allowed. 1 today. */
+  retry_max_attempts: number;
+}
+
 export type ChatSseEvent =
   | SseTransportEvent<'start', ChatSseStartPayload>
+  | SseTransportEvent<'run_retry_attempted', ChatSseRunRetryAttemptedPayload>
   | SseTransportEvent<'agent', DaemonAgentPayload>
   | SseTransportEvent<'stdout', ChatSseChunkPayload>
   | SseTransportEvent<'stderr', ChatSseChunkPayload>

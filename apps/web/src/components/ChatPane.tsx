@@ -3527,7 +3527,11 @@ export function ChatPane({
                     attempt={reconnect.attempt}
                     max={reconnect.max}
                     exhausted={reconnect.exhausted}
-                    onReconnect={onManualReconnect}
+                    reason={reconnect.reason}
+                    /* 〔重新连接〕只属于传输层那一行:线断了才有东西可重连。
+                       daemon 重跑一轮时连接是通的,给一颗「重新连接」既没有对应的
+                       动作,也会让用户以为是自己网络的问题。 */
+                    onReconnect={reconnect.reason === 'transport' ? onManualReconnect : undefined}
                   />
                 ) : userStoppedTurn ? (
                   /* 「已手动暂停任务」那一行(交付稿第 81 格)。判据见 `userStoppedTurn`;

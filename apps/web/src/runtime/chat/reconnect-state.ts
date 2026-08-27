@@ -26,8 +26,27 @@
  */
 import type { ChatRunStatus } from '@open-design/contracts';
 
+/**
+ * 这一行在说哪一件「系统在自救」。
+ *
+ *   `transport`   浏览器 ↔ daemon 的那条 SSE 断了,正在重连(组件 22 的原义)
+ *   `agent-retry` 连接好好的,是 daemon 把 agent 那一轮重跑了一遍
+ *
+ * 两件事分属不同层,但用户看到的是同一件事:系统在自救,等一下。交付稿
+ * (`docs/design/chat-panel-next.html:4058`)对此有过明确裁决 ——「断线由
+ * 22 · 重连全程接管……**再单立一个模块只会多出第三个说法**」。所以它们共用
+ * 这一行的形态、共用「恢复后整行消失、不留『已恢复』」这条规矩,只有那句话
+ * 不同:重跑一轮时线是通的,说「正在重新连接」是假话。
+ *
+ * 也是「共几次」取哪个预算的判据 —— 传输层是 5(`DAEMON_STREAM_RECONNECT_LIMIT`),
+ * 自动重试是那一轮的 `retry_max_attempts`。一行只说一件事,所以两个预算不会混。
+ */
+export type ChatSelfHealReason = 'transport' | 'agent-retry';
+
 /** 流水尾部那一行的读数。`null` = 此刻不该有这一行。 */
 export interface ChatReconnectView {
+  /** 这一行说的是哪一件自救。见 {@link ChatSelfHealReason}。 */
+  reason: ChatSelfHealReason;
   /**
    * 这一行属于哪一次运行。换一轮、翻历史、后台重挂的另一条流恢复了 —— 都靠它对齐,
    * 免得一条陈年重连留在流水里(「恢复后自动消失」的另一半)。
@@ -59,6 +78,21 @@ export type ChatReconnectSignal =
   /** 这一轮落了终态。`canceled` 是 PauseLine 的地盘,见文件头第 3 条。 */
   | { kind: 'settled'; runId: string; status: ChatRunStatus }
   /**
+   * daemon 把 agent 那一轮重跑了 —— 逐字来自 SSE 上的 `run_retry_attempted`
+   * (经 `DaemonStreamHandlers.onAgentRetry` 转成读数)。
+   *
+   * 没有 `exhausted` 那一档:预算烧完之后接手的是报错卡(设计稿 S10 的时机原文
+   * 是「自动重试都失败后」),不是一颗〔重新连接〕。这一行只负责说「还在试」。
+   */
+  | {
+      kind: 'agent-retry';
+      runId: string;
+      conversationId: string;
+      attempt: number;
+      max: number;
+      phase: 'retrying' | 'cleared';
+    }
+  /**
    * 本地不再跟这条流了:切会话、离开项目、组件卸载。不带 `runId` 就是全清。
    * 与 `settled` 分开是因为它不表达运行结果 —— 那一轮可能还在 daemon 上跑着。
    */
@@ -83,6 +117,31 @@ export function nextChatReconnectView(
   signal: ChatReconnectSignal,
 ): ChatReconnectView | null {
   if (signal.kind === 'manual-retry') return prev;
+
+  if (signal.kind === 'agent-retry') {
+    if (prev && prev.runId !== signal.runId) return prev;
+    /*
+     * 断线那一行盖得住重试那一行,反过来不行。
+     *
+     * 这两件事在今天的实现里碰不到一起:daemon 发 `error` 帧不关流
+     * (`runtimes/runs.ts` 只有 `finish()` 才 `sse.end()`,而同 run 重试不走
+     * `finish()`),web 那边 `error` 帧只是缓存下来接着读,不会记一次重连。
+     * 但那是当下实现的性质,不是这一层的保证。
+     *
+     * 万一真的同时到达:线断了是更大的事实,而且那一行带着〔重新连接〕——
+     * 用户至少有个能按的东西。重试那一行什么按钮都没有,盖掉它不损失出路。
+     */
+    if (prev?.reason === 'transport') return prev;
+    if (signal.phase === 'cleared') return null;
+    return {
+      reason: 'agent-retry',
+      runId: signal.runId,
+      conversationId: signal.conversationId,
+      attempt: signal.attempt,
+      max: signal.max,
+      exhausted: false,
+    };
+  }
 
   if (signal.kind === 'dropped') {
     if (signal.runId && prev && prev.runId !== signal.runId) return prev;
@@ -117,6 +176,7 @@ export function nextChatReconnectView(
   }
 
   return {
+    reason: 'transport',
     runId: signal.runId,
     conversationId: signal.conversationId,
     attempt: signal.attempt,

@@ -3616,6 +3616,7 @@ export const pl: Dict = {
   "chat.edge.reconnectDetail": "Zobacz szczegóły",
   "chat.edge.reconnectFailed": "Połączenie nieudane",
   "chat.edge.reconnecting": "Ponowne łączenie",
+  "chat.edge.retrying": "Ponowna próba",
   "qf.visualNext": "Następny styl",
   "qf.visualPrev": "Poprzedni styl",
   "qf.visualRandom": "Losowo",
