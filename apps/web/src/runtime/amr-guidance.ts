@@ -199,6 +199,7 @@ export type RunFailureMessageKey =
   | 'chat.runError.workspaceCreditsMessage'
   | 'chat.runError.timedOutMessage'
   | 'chat.runError.inactivityTimeoutMessage'
+  | 'chat.runError.inactivityTimeoutMessageOneMinute'
   | 'chat.runError.inactivityTimeoutMessageNoTime'
   | 'chat.runError.emptyOutputMessage'
   | 'chat.runError.sessionExpiredMessage'
@@ -580,10 +581,15 @@ export function resolveRunFailureUi(
       // Naming a length we could not read would be worse than not naming one:
       // this detail is also reached by text-classifying arbitrary upstream
       // wording, which carries no duration at all.
-      messageKey: minutes
-        ? 'chat.runError.inactivityTimeoutMessage'
-        : 'chat.runError.inactivityTimeoutMessageNoTime',
-      ...(minutes ? { messageVars: { minutes: String(minutes) } } : {}),
+      messageKey:
+        minutes === 1
+          ? 'chat.runError.inactivityTimeoutMessageOneMinute'
+          : minutes
+            ? 'chat.runError.inactivityTimeoutMessage'
+            : 'chat.runError.inactivityTimeoutMessageNoTime',
+      ...(minutes && minutes !== 1
+        ? { messageVars: { minutes: String(minutes) } }
+        : {}),
       secondaryRetry: false,
       showSwitchCard: false,
     };

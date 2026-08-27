@@ -25,6 +25,7 @@ import {
   renderOdNextRuntimeFactsV2,
   composeOdNextStrategyStableRequestContextV2,
   executionProfileFromStreamFormat,
+  formatAgentStallTimeoutObservation,
   PLUGIN_SHARE_ACTION_PLUGIN_IDS,
 } from '@open-design/contracts';
 import { isTodoWriteToolName, stopReasonIsTruncation, todoItemsFromTodoWriteInput } from '@open-design/contracts';
@@ -13066,10 +13067,6 @@ export async function startServer({
       if (!stallPayload) {
         const timeoutMs =
           reason === 'first_output' ? firstOutputTimeoutMs : inactivityTimeoutMs;
-        const timeoutDescription =
-          reason === 'first_output'
-            ? 'without emitting a first output'
-            : 'without emitting any new output';
         // Report only what the daemon observed: the budget elapsed with no
         // output, plus the phase evidence. It must NOT name a cause — this
         // sentence used to assert "The model or CLI likely hung while
@@ -13077,9 +13074,10 @@ export async function startServer({
         // (968 runs across 14 days emitted their first output past the
         // ten-minute mark and then succeeded). The user-facing card renders
         // localized copy off `failure_detail`; this string is the technical
-        // detail behind it.
+        // detail behind it. The observation prefix is shared with the web
+        // parser so wording changes cannot silently lose duration readback.
         const message =
-          `Agent stalled ${timeoutDescription} for ${Math.floor(timeoutMs / 1000)}s. ` +
+          `${formatAgentStallTimeoutObservation(reason, timeoutMs)} ` +
           `Phase details: spawned agent ${userFacingAgentLabel(agentId, resolvedBin)}; stdout arrived: ${childStdoutSeen ? 'yes' : 'no'}; ` +
           `last agent event: ${lastAgentEventPhase}; largest tool result observed: ${lastToolResultChars} chars. ` +
           'Retry the turn, pick a different model, or start a new conversation if the prior context is very large.';

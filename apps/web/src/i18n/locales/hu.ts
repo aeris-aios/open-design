@@ -153,6 +153,7 @@ export const hu: Dict = {
   'chat.runError.workspaceCreditsMessage': "A munkaterületed kreditjei elfogytak. Adj hozzá kreditet (vagy kérd a munkaterület tulajdonosát, hogy töltse fel), vagy válts másik modellre vagy szolgáltatásra.",
   'chat.runError.timedOutMessage': "Ez a futás túl sokáig tartott, ezért leállt. Próbáld újra, vagy szűkítsd a feladatot, és ismételd meg.",
   'chat.runError.inactivityTimeoutMessage': "{minutes} perce nem érkezett új kimenet, ezért egyelőre leállt — minden eddig elkészült rész megmarad.",
+  'chat.runError.inactivityTimeoutMessageOneMinute': "1 perce nem érkezett új kimenet, ezért egyelőre leállt — minden eddig elkészült rész megmarad.",
   'chat.runError.inactivityTimeoutMessageNoTime': "Régóta nem érkezett új kimenet, ezért egyelőre leállt — minden eddig elkészült rész megmarad.",
   'chat.runError.emptyOutputMessage': "Az ügynök úgy fejeződött be, hogy nem adott kimenetet. Ez általában átmeneti, próbáld újra.",
   'chat.runError.sessionExpiredMessage': "A folytatott munkamenet lejárt. Visszaállt, ezért próbáld újra egy új futás indításához.",

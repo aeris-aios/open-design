@@ -316,7 +316,6 @@ describe('resolveRunFailureUi', () => {
     }
   });
 
-  // `inactivity_timeout` is also reached by text classification of arbitrary
   it('floors operator budgets instead of overstating the wait', () => {
     const ninetySeconds = resolveRunFailureUi(
       'AGENT_EXECUTION_FAILED',
@@ -324,8 +323,10 @@ describe('resolveRunFailureUi', () => {
       'amr',
       'Agent stalled without emitting a first output for 90s.',
     );
-    expect(ninetySeconds.messageKey).toBe('chat.runError.inactivityTimeoutMessage');
-    expect(ninetySeconds.messageVars?.minutes).toBe('1');
+    expect(ninetySeconds.messageKey).toBe(
+      'chat.runError.inactivityTimeoutMessageOneMinute',
+    );
+    expect(ninetySeconds.messageVars?.minutes).toBeUndefined();
 
     const justUnderOneMinute = resolveRunFailureUi(
       'AGENT_EXECUTION_FAILED',
@@ -339,6 +340,7 @@ describe('resolveRunFailureUi', () => {
     expect(justUnderOneMinute.messageVars?.minutes).toBeUndefined();
   });
 
+  // `inactivity_timeout` is also reached by text classification of arbitrary
   // upstream wording, which carries no duration at all. Promising a number we
   // did not read would be worse than not naming one.
   it('degrades to the no-duration copy when the wait is unreadable', () => {

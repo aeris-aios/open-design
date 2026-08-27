@@ -153,6 +153,7 @@ export const id: Dict = {
   'chat.runError.workspaceCreditsMessage': "Kredit ruang kerja Anda habis. Tambahkan kredit (atau minta pemilik ruang kerja mengisi ulang), atau beralih ke model atau layanan lain.",
   'chat.runError.timedOutMessage': "Proses ini terlalu lama dan dihentikan. Coba lagi, atau perkecil tugasnya lalu ulangi.",
   'chat.runError.inactivityTimeoutMessage': "Sudah {minutes} menit tanpa keluaran baru, jadi dihentikan dulu — semua yang sudah dikerjakan tetap tersimpan.",
+  'chat.runError.inactivityTimeoutMessageOneMinute': "Sudah 1 menit tanpa keluaran baru, jadi dihentikan dulu — semua yang sudah dikerjakan tetap tersimpan.",
   'chat.runError.inactivityTimeoutMessageNoTime': "Sudah lama tanpa keluaran baru, jadi dihentikan dulu — semua yang sudah dikerjakan tetap tersimpan.",
   'chat.runError.emptyOutputMessage': "Agen selesai tanpa menghasilkan keluaran apa pun. Biasanya ini sementara, coba lagi.",
   'chat.runError.sessionExpiredMessage': "Sesi yang dilanjutkan telah kedaluwarsa. Sesi sudah diatur ulang, jadi coba lagi untuk memulai proses baru.",

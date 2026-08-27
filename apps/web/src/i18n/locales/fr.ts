@@ -153,6 +153,7 @@ export const fr: Dict = {
   'chat.runError.workspaceCreditsMessage': "Votre espace de travail n'a plus de crédits. Ajoutez des crédits (ou demandez au propriétaire de l'espace de recharger), ou passez à un autre modèle ou service.",
   'chat.runError.timedOutMessage': "Cette exécution a été trop longue et a été arrêtée. Réessayez, ou réduisez la tâche puis relancez.",
   'chat.runError.inactivityTimeoutMessage': "Aucune nouvelle sortie depuis {minutes} minutes, donc tout s'est arrêté pour le moment — tout ce qui a déjà été fait est conservé.",
+  'chat.runError.inactivityTimeoutMessageOneMinute': "Aucune nouvelle sortie depuis 1 minute, donc tout s'est arrêté pour le moment — tout ce qui a déjà été fait est conservé.",
   'chat.runError.inactivityTimeoutMessageNoTime': "Aucune nouvelle sortie depuis longtemps, donc tout s'est arrêté pour le moment — tout ce qui a déjà été fait est conservé.",
   'chat.runError.emptyOutputMessage': "L'agent s'est terminé sans produire de sortie. C'est généralement temporaire, réessayez.",
   'chat.runError.sessionExpiredMessage': "La session reprise avait expiré. Elle a été réinitialisée : réessayez pour démarrer une nouvelle exécution.",

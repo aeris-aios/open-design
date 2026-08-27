@@ -50,8 +50,10 @@ describe('run timeout copy', () => {
     expect(en['chat.runError.inactivityTimeoutMessage']).toContain('{minutes}');
     for (const copy of [
       en['chat.runError.inactivityTimeoutMessage'],
+      en['chat.runError.inactivityTimeoutMessageOneMinute'],
       en['chat.runError.inactivityTimeoutMessageNoTime'],
       zhCN['chat.runError.inactivityTimeoutMessage'],
+      zhCN['chat.runError.inactivityTimeoutMessageOneMinute'],
       zhCN['chat.runError.inactivityTimeoutMessageNoTime'],
     ]) {
       expect(copy).not.toMatch(/hung|hang|crash|卡死|挂起|崩溃/i);

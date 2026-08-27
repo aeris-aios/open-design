@@ -153,6 +153,7 @@ export const ptBR: Dict = {
   'chat.runError.workspaceCreditsMessage': "Seu espaço de trabalho ficou sem créditos. Adicione créditos (ou peça ao proprietário do espaço para recarregar) ou mude para outro modelo ou serviço.",
   'chat.runError.timedOutMessage': "Esta execução demorou demais e foi interrompida. Tente novamente ou reduza a tarefa e repita.",
   'chat.runError.inactivityTimeoutMessage': "Ficaram {minutes} minutos sem nova saída, então tudo parou por enquanto — tudo o que já foi feito está guardado.",
+  'chat.runError.inactivityTimeoutMessageOneMinute': "Ficou 1 minuto sem nova saída, então tudo parou por enquanto — tudo o que já foi feito está guardado.",
   'chat.runError.inactivityTimeoutMessageNoTime': "Ficou muito tempo sem nova saída, então tudo parou por enquanto — tudo o que já foi feito está guardado.",
   'chat.runError.emptyOutputMessage': "O agente terminou sem produzir nenhuma saída. Isso costuma ser temporário, tente novamente.",
   'chat.runError.sessionExpiredMessage': "A sessão retomada havia expirado. Ela foi redefinida, então tente novamente para iniciar uma nova execução.",

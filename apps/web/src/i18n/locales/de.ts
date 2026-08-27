@@ -153,6 +153,7 @@ export const de: Dict = {
   'chat.runError.workspaceCreditsMessage': "Dein Workspace hat keine Credits mehr. Füge Credits hinzu (oder bitte den Workspace-Eigentümer aufzuladen) oder wechsle zu einem anderen Modell oder Dienst.",
   'chat.runError.timedOutMessage': "Dieser Lauf hat zu lange gedauert und wurde abgebrochen. Versuche es erneut oder verkleinere die Aufgabe und wiederhole.",
   'chat.runError.inactivityTimeoutMessage': "{minutes} Minuten lang kam keine neue Ausgabe, deshalb wurde vorerst gestoppt – alles bisher Erledigte bleibt erhalten.",
+  'chat.runError.inactivityTimeoutMessageOneMinute': "Eine Minute lang kam keine neue Ausgabe, deshalb wurde vorerst gestoppt – alles bisher Erledigte bleibt erhalten.",
   'chat.runError.inactivityTimeoutMessageNoTime': "Lange Zeit kam keine neue Ausgabe, deshalb wurde vorerst gestoppt – alles bisher Erledigte bleibt erhalten.",
   'chat.runError.emptyOutputMessage': "Der Agent wurde beendet, ohne Ausgabe zu erzeugen. Das ist meist vorübergehend, versuche es erneut.",
   'chat.runError.sessionExpiredMessage': "Die fortgesetzte Sitzung war abgelaufen. Sie wurde zurückgesetzt, wiederhole, um einen neuen Lauf zu starten.",

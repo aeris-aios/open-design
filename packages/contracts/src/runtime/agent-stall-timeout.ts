@@ -30,6 +30,24 @@
  * expected to fall back to wording that does not name a length, exactly as
  * they do for an unreadable one.
  */
+export type AgentStallTimeoutKind = 'first_output' | 'inactivity';
+
+/**
+ * Format the bounded observation shared by the daemon producer and web parser.
+ * Keeping the English diagnostic prefix here prevents harmless daemon copy
+ * edits from silently breaking the localized timeout card's duration readback.
+ */
+export function formatAgentStallTimeoutObservation(
+  kind: AgentStallTimeoutKind,
+  timeoutMs: number,
+): string {
+  const description =
+    kind === 'first_output'
+      ? 'without emitting a first output'
+      : 'without emitting any new output';
+  return `Agent stalled ${description} for ${Math.floor(timeoutMs / 1000)}s.`;
+}
+
 export function readAgentStallWaitedMinutes(
   text: string | null | undefined,
 ): number | null {

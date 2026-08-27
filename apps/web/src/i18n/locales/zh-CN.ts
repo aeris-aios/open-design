@@ -159,6 +159,7 @@ export const zhCN: Dict = {
   "chat.runError.workspaceCreditsMessage": "工作区额度已用尽。请充值（或联系工作区管理员补充），或切换到其他模型/服务。",
   "chat.runError.timedOutMessage": "本次运行耗时过长已被中断。请重试，或缩小任务范围后再试。",
   "chat.runError.inactivityTimeoutMessage": "等了 {minutes} 分钟没有新的输出，先停下来了 —— 已做的部分都保留着。",
+  "chat.runError.inactivityTimeoutMessageOneMinute": "等了 1 分钟没有新的输出，先停下来了 —— 已做的部分都保留着。",
   "chat.runError.inactivityTimeoutMessageNoTime": "太久没有新的输出，先停下来了 —— 已做的部分都保留着。",
   "chat.runError.emptyOutputMessage": "智能体本次结束时没有产生任何输出。这通常是暂时的，重试即可再次运行。",
   "chat.runError.sessionExpiredMessage": "要恢复的会话已过期，已为你重置。重试即可开始一次全新运行。",

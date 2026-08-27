@@ -153,6 +153,7 @@ export const ko: Dict = {
   'chat.runError.workspaceCreditsMessage': "워크스페이스 크레딧이 모두 소진되었습니다. 크레딧을 추가(또는 워크스페이스 관리자에게 충전 요청)하거나 다른 모델/서비스로 전환하세요.",
   'chat.runError.timedOutMessage': "이번 실행이 너무 오래 걸려 중단되었습니다. 다시 시도하거나 작업 범위를 줄여 재시도하세요.",
   'chat.runError.inactivityTimeoutMessage': "{minutes}분 동안 새 출력이 없어 일단 멈췄습니다. 지금까지 진행한 내용은 모두 남아 있습니다.",
+  'chat.runError.inactivityTimeoutMessageOneMinute': "1분 동안 새 출력이 없어 일단 멈췄습니다. 지금까지 진행한 내용은 모두 남아 있습니다.",
   'chat.runError.inactivityTimeoutMessageNoTime': "오랫동안 새 출력이 없어 일단 멈췄습니다. 지금까지 진행한 내용은 모두 남아 있습니다.",
   'chat.runError.emptyOutputMessage': "에이전트가 아무 출력도 없이 종료되었습니다. 대개 일시적이므로 다시 시도하세요.",
   'chat.runError.sessionExpiredMessage': "재개하려던 세션이 만료되었습니다. 초기화되었으니 다시 시도하면 새 실행이 시작됩니다.",

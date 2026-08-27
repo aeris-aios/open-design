@@ -153,6 +153,7 @@ export const pl: Dict = {
   'chat.runError.workspaceCreditsMessage': "W Twoim obszarze roboczym skończyły się kredyty. Dodaj kredyty (lub poproś właściciela obszaru o doładowanie) albo przełącz się na inny model lub usługę.",
   'chat.runError.timedOutMessage': "To uruchomienie trwało zbyt długo i zostało zatrzymane. Spróbuj ponownie lub zawęź zadanie i powtórz.",
   'chat.runError.inactivityTimeoutMessage': "Od {minutes} min nie było nowego wyniku, więc na razie zatrzymano pracę — wszystko, co już zrobiono, jest zachowane.",
+  'chat.runError.inactivityTimeoutMessageOneMinute': "Od 1 minuty nie było nowego wyniku, więc na razie zatrzymano pracę — wszystko, co już zrobiono, jest zachowane.",
   'chat.runError.inactivityTimeoutMessageNoTime': "Długo nie było nowego wyniku, więc na razie zatrzymano pracę — wszystko, co już zrobiono, jest zachowane.",
   'chat.runError.emptyOutputMessage': "Agent zakończył działanie bez żadnego wyniku. Zwykle jest to chwilowe, spróbuj ponownie.",
   'chat.runError.sessionExpiredMessage': "Wznowiona sesja wygasła. Została zresetowana, więc spróbuj ponownie, aby rozpocząć nowe uruchomienie.",

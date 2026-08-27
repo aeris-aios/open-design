@@ -153,6 +153,7 @@ export const tr: Dict = {
   'chat.runError.workspaceCreditsMessage': "Çalışma alanınızın kredisi bitti. Kredi ekleyin (veya çalışma alanı sahibinden yükleme yapmasını isteyin) ya da başka bir modele veya hizmete geçin.",
   'chat.runError.timedOutMessage': "Bu çalışma çok uzun sürdü ve durduruldu. Yeniden deneyin veya görevi küçültüp tekrar deneyin.",
   'chat.runError.inactivityTimeoutMessage': "{minutes} dakikadır yeni çıktı gelmedi, bu yüzden şimdilik durduruldu — şu ana kadar yapılanların hepsi duruyor.",
+  'chat.runError.inactivityTimeoutMessageOneMinute': "1 dakikadır yeni çıktı gelmedi, bu yüzden şimdilik durduruldu — şu ana kadar yapılanların hepsi duruyor.",
   'chat.runError.inactivityTimeoutMessageNoTime': "Uzun süredir yeni çıktı gelmedi, bu yüzden şimdilik durduruldu — şu ana kadar yapılanların hepsi duruyor.",
   'chat.runError.emptyOutputMessage': "Aracı herhangi bir çıktı üretmeden sona erdi. Bu genellikle geçicidir, yeniden deneyin.",
   'chat.runError.sessionExpiredMessage': "Sürdürülen oturumun süresi dolmuştu. Sıfırlandı, bu yüzden yeni bir çalışma başlatmak için yeniden deneyin.",

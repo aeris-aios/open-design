@@ -153,6 +153,7 @@ export const ar: Dict = {
   'chat.runError.workspaceCreditsMessage': "نفدت أرصدة مساحة عملك. أضف أرصدة (أو اطلب من مالك المساحة إعادة الشحن)، أو بدّل إلى نموذج أو خدمة أخرى.",
   'chat.runError.timedOutMessage': "استغرق هذا التشغيل وقتًا طويلاً وتم إيقافه. أعد المحاولة، أو قلّص المهمة ثم أعد المحاولة.",
   'chat.runError.inactivityTimeoutMessage': "مرّت {minutes} دقيقة دون ناتج جديد، لذلك توقّف الأمر مؤقتًا — كل ما أُنجز حتى الآن محفوظ.",
+  'chat.runError.inactivityTimeoutMessageOneMinute': "مرّت دقيقة واحدة دون ناتج جديد، لذلك توقّف الأمر مؤقتًا — كل ما أُنجز حتى الآن محفوظ.",
   'chat.runError.inactivityTimeoutMessageNoTime': "مرّ وقت طويل دون ناتج جديد، لذلك توقّف الأمر مؤقتًا — كل ما أُنجز حتى الآن محفوظ.",
   'chat.runError.emptyOutputMessage': "انتهى الوكيل دون إنتاج أي ناتج. هذا مؤقت غالبًا، فأعد المحاولة.",
   'chat.runError.sessionExpiredMessage': "انتهت صلاحية الجلسة المستأنفة. تمت إعادة ضبطها، لذا أعد المحاولة لبدء تشغيل جديد.",
