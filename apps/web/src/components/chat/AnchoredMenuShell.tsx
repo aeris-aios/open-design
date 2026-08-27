@@ -281,8 +281,22 @@ export function AnchoredMenuShell({
   );
 
   if (!anchorId) return menu;
-  // 锚点还没进 DOM(文件正在打开):什么都不画,别先在角上闪一块出来。
+  /*
+   * 拿不到锚点时什么都不画,但**两种拿不到的含义相反**,别混成一件事:
+   *
+   *  · `anchor === null` —— **从来没解析到过**。卡上点一下会先把文件开进工作区,
+   *    菜单要等 viewer 挂好、`canShare` 翻真才出现,这中间锚点可能还没进 DOM。
+   *    这一档是「在等」,不发收起信号,等它出现。
+   *  · `anchor.isConnected === false` —— **解析到过,又离开了文档**(消息被虚拟化、
+   *    卡片重渲染、文件被关)。这一档是「走了」:hook 已经在同一轮里发过
+   *    `anchorHidden`,这里只要保证**不再照着那个游离节点画**。
+   *
+   * 后一条是用户 2026-08-27 要的那句「出画面再回来就不再重新显示」的落点:
+   * 游离节点的 rect 是它离开前的旧坐标,照着画就是一块悬在半空、跟谁都对不上的
+   * 菜单 —— 正是截图里那个样子。
+   */
   if (!anchor || !rect) return null;
+  if (anchor.isConnected === false) return null;
 
   return createPortal(
     <div
