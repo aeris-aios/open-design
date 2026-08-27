@@ -1259,6 +1259,7 @@ Expected output:
     const onSendQueuedNow = vi.fn();
     const onUpdateQueuedSend = vi.fn();
     const onReorderQueuedSends = vi.fn();
+    const onSendEdited = vi.fn();
     const { container } = render(
       <ChatPane
         messages={[]}
@@ -1296,7 +1297,7 @@ Expected output:
         onUpdateQueuedSend={onUpdateQueuedSend}
         onReorderQueuedSends={onReorderQueuedSends}
         onEnsureProject={async () => 'project-1'}
-        onSend={vi.fn()}
+        onSend={onSendEdited}
         onStop={vi.fn()}
         conversations={conversations}
         activeConversationId="conv-1"
@@ -1350,15 +1351,21 @@ Expected output:
         },
       ],
     });
-    expect(onUpdateQueuedSend).not.toHaveBeenCalled();
+    // 「编辑」= 把这一条**从队列里取出来**放回输入框(产品拍板 2026-08),
+    // 所以点下去的同时它就出队了 —— 屏幕上不会再有同一条话的两个副本。
+    expect(onRemoveQueuedSend).toHaveBeenCalledWith('queued-1');
+    // 出队之后再发,走的就是普通的发送那条路。它**不能**回头去「就地更新」
+    // 一个已经不在队列里的条目 —— 那样这条话会被静默吞掉。
     fireEvent.click(screen.getByTestId('composer-submit'));
-    expect(onUpdateQueuedSend).toHaveBeenCalledWith('queued-1', {
-      prompt: 'Use a bolder export button',
-      attachments: [{ path: 'edited.md', name: 'edited.md', kind: 'file' }],
-      commentAttachments: [
-        { id: 'edited-comment', order: 1, filePath: 'preview.html', comment: 'Bolder' },
-      ],
-    });
+    expect(onUpdateQueuedSend).not.toHaveBeenCalled();
+    // 第四个参数是 meta,这个 mock 的提交按钮不带,所以显式写 undefined ——
+    // 省略它会让断言在「多传了一个 meta」时照样通过。
+    expect(onSendEdited).toHaveBeenCalledWith(
+      'Use a bolder export button',
+      [{ path: 'edited.md', name: 'edited.md', kind: 'file' }],
+      [{ id: 'edited-comment', order: 1, filePath: 'preview.html', comment: 'Bolder' }],
+      undefined,
+    );
 
     const removeButtons = screen.getAllByRole('button', { name: 'chat.comments.remove' });
     fireEvent.click(removeButtons[1]!);

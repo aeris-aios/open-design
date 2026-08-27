@@ -3146,6 +3146,11 @@
 .composer-att-wrap .msg-att-nav {
   position: absolute;
   inset-block: 0;
+  /* `inset-block: 0` 撑不开一个 `<button>` —— Chrome 仍按内容给它高度
+     (量到 36px,而托盘有 62px),然后把这一小截钉在 top: 0。结果是箭头贴着顶
+     (圆片中心比卡片中心高 14.5px),而且它那段用来盖住半张卡的渐变也只盖了
+     上半截。所以高度得显式要,不能指望上下贴边把它拉开。 */
+  block-size: 100%;
   z-index: 3;
   display: none;
   align-items: center;
@@ -3154,6 +3159,12 @@
   border: 0;
   background: none;
   cursor: pointer;
+}
+/* 托盘那一行的上下内边距是不对称的(见 `.composer-att` 的 `padding: 4px 9px 1px`)。
+   箭头整个压在这一行上面,得把同一份纵向内边距抄过来 —— 否则 `align-items: center`
+   居中的是**整条**,落点会比卡片带的中线高 1.5px。 */
+.composer-att-wrap .msg-att-nav {
+  padding-block: 4px 1px;
 }
 .msg.user .msg-att-nav.mod-prev,
 .composer-att-wrap .msg-att-nav.mod-prev {
