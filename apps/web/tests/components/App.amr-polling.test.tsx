@@ -18,6 +18,10 @@ import {
 } from '../../src/providers/registry';
 import { fetchAmrModels, fetchVelaLoginStatus } from '../../src/providers/daemon';
 import { listProjects, listTemplates } from '../../src/state/projects';
+import {
+  issueStatusObservation,
+  stampStatusObservation,
+} from '../../src/providers/status-observation';
 import { AMR_LOGIN_STATUS_EVENT } from '../../src/components/amrLoginPolling';
 import {
   currentAuthoritativeLoggedIn,
@@ -51,15 +55,22 @@ vi.mock('../../src/router', async () => {
   };
 });
 
+// The entry shell reads AMR status on its own (landing read, login poll) and
+// hands what it gets to `onAmrLoginStatusChange`. Exposed here so a spec can
+// push a status up the same way a child surface does.
+let mockChildStatus: unknown = null;
+
 vi.mock('../../src/components/EntryView', () => ({
   EntryView: ({
     agents,
     config,
     onOpenSettings,
+    onAmrLoginStatusChange,
   }: {
     agents: Array<{ id: string; models?: Array<{ id: string }>; authStatus?: string }>;
     config: AppConfig;
     onOpenSettings: () => void;
+    onAmrLoginStatusChange?: (status: unknown) => void;
   }) => (
     <>
       <div data-testid="amr-model">
@@ -75,6 +86,12 @@ vi.mock('../../src/components/EntryView', () => ({
         {agents.find((agent) => agent.id === 'codex')?.authStatus ?? 'none'}
       </div>
       <button onClick={() => onOpenSettings()}>open settings</button>
+      <button
+        data-testid="push-child-status"
+        onClick={() => { if (mockChildStatus) onAmrLoginStatusChange?.(mockChildStatus); }}
+      >
+        push child status
+      </button>
     </>
   ),
 }));
@@ -301,6 +318,57 @@ describe('App AMR polling', () => {
     vi.clearAllMocks();
   });
 
+  it('keeps the authoritative auth mode signed out when a child surface pushes an older status', async () => {
+    // The entry shell and the settings card read status on their own and hand
+    // what they get to `onAmrLoginStatusChange`, bypassing anything the app
+    // effect does to order its OWN reads. A child read issued while signed in
+    // can therefore be pushed up after the app has already accepted a newer
+    // signed-out answer, flipping the authority back and re-authorising the
+    // message-centre pull the sign-out was meant to refuse.
+    //
+    // Which is why the order is taken where the request is issued and checked
+    // where it is published, rather than per reader: a future reader only has
+    // to hand the status on.
+    resetMessageCenterSnapshot();
+    mockedFetchAmrModels.mockReset();
+    mockedFetchAmrModels.mockResolvedValue({
+      source: 'remote',
+      refreshing: false,
+      models: [{ id: 'remote-a', label: 'remote-a' }],
+    });
+
+    // Issued FIRST — while the session was still valid — and held by the child.
+    const childObservation = issueStatusObservation();
+    mockChildStatus = stampStatusObservation({
+      loggedIn: true,
+      loginInFlight: false,
+      profile: 'local',
+      user: { id: 'user-1', email: 'user-1@example.com' },
+      configPath: '/tmp/amr-config.json',
+    }, childObservation);
+
+    // Issued second, and applied: the session has ended.
+    mockedFetchVelaLoginStatus.mockImplementation(async () => {
+      const observation = issueStatusObservation();
+      return stampStatusObservation(
+        { loggedIn: false, loginInFlight: false, profile: 'local' },
+        observation,
+      ) as never;
+    });
+
+    render(<App />);
+    await waitFor(() => expect(currentAuthoritativeLoggedIn()).toBe(false));
+
+    // The child finally pushes what it read before the sign-out.
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('push-child-status'));
+      await new Promise((r) => setTimeout(r, 20));
+    });
+
+    expect(currentAuthoritativeLoggedIn()).toBe(false);
+    mockChildStatus = null;
+  });
+
   it('keeps the authoritative auth mode signed out when an older signed-in status resolves last', async () => {
     // The status effect starts overlapping `fetchVelaLoginStatus()` calls — the
     // initial run, the login-status event, focus and visibility all call the
@@ -334,15 +402,18 @@ describe('App AMR polling', () => {
 
     let releaseStale: (() => void) | null = null;
     let call = 0;
+    // The mock stands in for the provider, so it takes the issue order the
+    // provider takes — before the await, which is the whole point of the order.
     mockedFetchVelaLoginStatus.mockImplementation(async () => {
       call += 1;
+      const observation = issueStatusObservation();
       if (call === 2) {
         // Issued before the sign-out is observed; answered after it.
         await new Promise<void>((resolve) => { releaseStale = resolve; });
-        return signedIn as never;
+        return stampStatusObservation({ ...signedIn }, observation) as never;
       }
-      if (call >= 3) return signedOut as never;
-      return signedIn as never;
+      if (call >= 3) return stampStatusObservation({ ...signedOut }, observation) as never;
+      return stampStatusObservation({ ...signedIn }, observation) as never;
     });
 
     render(<App />);

@@ -96,8 +96,29 @@ export function subscribeAuthoritativeAuthMode(listener: () => void): () => void
   };
 }
 
+/**
+ * How many times the authoritative answer has moved.
+ *
+ * A run captures this before it awaits and compares afterwards. That is a
+ * strictly different question from "does my answer match the current one":
+ * a run whose own answer is FRESHER than the last observation — a mid-session
+ * login is the ordinary case — legitimately disagrees with it and must be
+ * allowed through, while a run that was overtaken during its await must not.
+ * Only a counter can tell those two apart.
+ *
+ * Unlike the subscriber notification below, this moves on the FIRST answer too:
+ * a run that captured "nothing observed yet" and finished after the session was
+ * observed to have ended was overtaken just the same.
+ */
+let authModeEpoch = 0;
+
+export function currentAuthModeEpoch(): number {
+  return authModeEpoch;
+}
+
 export function noteAuthoritativeAuthMode(loggedIn: boolean): void {
   const changed = lastAuthoritativeLoggedIn !== null && lastAuthoritativeLoggedIn !== loggedIn;
+  if (lastAuthoritativeLoggedIn !== loggedIn) authModeEpoch += 1;
   lastAuthoritativeLoggedIn = loggedIn;
   // Compared against what is actually CACHED, not against the previous
   // observation. Keying off the previous value meant the first authoritative
@@ -149,6 +170,7 @@ let snapshotWriteToken = 0;
 export function resetMessageCenterSnapshot(): void {
   lastSyncSnapshot = null;
   lastAuthoritativeLoggedIn = null;
+  authModeEpoch = 0;
   authModeListeners.clear();
   inFlightSync = null;
   snapshotWriteToken = 0;

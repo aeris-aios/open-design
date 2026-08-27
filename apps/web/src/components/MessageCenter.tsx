@@ -27,6 +27,7 @@ import {
   joinableSync,
   ownsLatestSnapshotWrite,
   publishInFlightSync,
+  currentAuthModeEpoch,
   currentAuthoritativeLoggedIn,
   noteAuthoritativeAuthMode,
   subscribeAuthoritativeAuthMode,
@@ -97,6 +98,25 @@ type SyncState = 'loading' | 'ready' | 'error';
  */
 /** Stable identity for the empty view, so deriving it never churns children. */
 const EMPTY_MESSAGES: MessageCenterMessage[] = [];
+
+/**
+ * Whether the authoritative answer moved while this run was awaiting.
+ *
+ * Every network answer here is authorised by the session that was valid when
+ * the request went out, and a remote or expired session ends WITHOUT advancing
+ * the workspace generation — so the generation checks that guard a workspace
+ * switch cannot see it. A run that was overtaken must not touch host state,
+ * shared state, or the read broadcast; refusing its snapshot afterwards cannot
+ * take those writes back.
+ *
+ * Compared as an epoch rather than as "does my answer still match the current
+ * one", because a run whose own answer is FRESHER than the last observation —
+ * a mid-session login is the ordinary case — legitimately disagrees with it and
+ * has to be allowed through.
+ */
+function overtakenByAuthorityChange(issuedAuthModeEpoch: number): boolean {
+  return currentAuthModeEpoch() !== issuedAuthModeEpoch;
+}
 
 export function MessageCenter({
   onOpenNotificationSettings,
@@ -179,7 +199,14 @@ export function MessageCenter({
   // The Go Plan announcement is account-scoped too — it is picked out of the
   // signed-in pull — so it is derived the same way rather than being allowed to
   // stay on screen across a boundary.
-  const rowsBelongToThisAccount = stateAccountGeneration === accountGeneration;
+  // Two boundaries, both render-time. The workspace generation moves on a
+  // switch or a sign-in; a remote or expired session changes the AUTHORITY
+  // without moving it, and `useSyncExternalStore` re-renders on that too — so
+  // comparing the generation alone left one committed render still showing the
+  // finished session's badge and announcement. `null` is "nothing observed
+  // yet", which contradicts nothing.
+  const rowsBelongToThisAccount = stateAccountGeneration === accountGeneration
+    && (authoritativeLoggedIn === null || loggedIn === authoritativeLoggedIn);
   const visibleMessages = rowsBelongToThisAccount ? messages : EMPTY_MESSAGES;
   const visiblePriorityMessage = rowsBelongToThisAccount ? priorityMessage : null;
 
@@ -241,6 +268,9 @@ export function MessageCenter({
       loggedInRef.current = account;
       setLoggedIn(account);
     }
+    // Captured AFTER this run's own note, so the run is never overtaken by
+    // itself.
+    const issuedAuthModeEpoch = currentAuthModeEpoch();
     // Only a real sign-out discards the signed-in overlay. `account` has
     // already collapsed `unavailable` into `false`, and taking this branch on
     // a 503 threw away `pendingReadIdsRef` — the optimistic reads the server
@@ -303,16 +333,8 @@ export function MessageCenter({
     // so blanking it during an outage makes a required notice vanish and
     // reappear — the regression fixed two rounds ago, by a different route.
     // Both wait for an answer; neither guesses from a non-answer.
-    // The boundary effect clears this host, but it only supersedes THIS run
-    // when it has to issue a fresh sync. With a run already on the wire it
-    // joins instead, so a pull answered for a session that has since ended
-    // arrives with its request id, its generation and its captured account all
-    // still current — and commits. Refusing its snapshot afterwards cannot take
-    // host-local writes back. Reachable on the process's first pull, where
-    // there is no published snapshot for the invalidation to compare against
-    // and `inFlightSync` therefore survives.
-    const authoritativeNow = currentAuthoritativeLoggedIn();
-    if (authoritativeNow !== null && authoritativeNow !== account) return;
+    // The pull was answered for the session that was valid when it went out.
+    if (overtakenByAuthorityChange(issuedAuthModeEpoch)) return;
     const authoritative = authMode !== 'unavailable';
     commitState(merged, overlayReadIds, {
       persistAnonymous: authMode === 'signed-out' && ownsLatestWrite,
@@ -603,6 +625,7 @@ export function MessageCenter({
       throw new Error('A signed-in account is required to acknowledge this announcement');
     }
     if (currentWorkspaceAccountGeneration() !== issuedAccountGeneration) return;
+    const issuedAuthModeEpoch = currentAuthModeEpoch();
     const readAt = new Date().toISOString();
     if (account) await markAccountMessageRead(messageId);
     // Immediately after the await, before ANY mutation. Bailing out further
@@ -611,6 +634,12 @@ export function MessageCenter({
     // same-id message read for whoever signed in — and the anonymous cache
     // had already been cleared on the way out of a signed-in session.
     if (currentWorkspaceAccountGeneration() !== issuedAccountGeneration) return;
+    // Same rule, same reason: the POST was authorised by the session that was
+    // valid when it went out. Without this, a read that crossed the end of a
+    // session took `loggedInRef` back to signed-in, added pending read ids,
+    // cleared the anonymous cache and broadcast an account-scoped delta that
+    // another same-generation host consumes.
+    if (overtakenByAuthorityChange(issuedAuthModeEpoch)) return;
     loggedInRef.current = account;
     setLoggedIn(account);
     const nextIds = new Set(readIdsRef.current).add(messageId);

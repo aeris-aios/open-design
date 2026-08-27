@@ -19,6 +19,7 @@ import {
   currentSnapshotWriteToken,
   noteAuthoritativeAuthMode,
   resetMessageCenterSnapshot,
+  subscribeMessageCenterReads,
 } from '../../src/components/message-center-snapshot';
 import { advanceWorkspaceAccountGeneration } from '../../src/collab/workspace-identity';
 
@@ -498,6 +499,118 @@ describe('MessageCenter remount snapshot', () => {
     expect(screen.queryByRole('button', { name: /prior-tenant-row/ })).toBeNull();
     expect(counts[counts.length - 1]).toBe(0);
     held.release?.();
+  });
+
+  it('hides the previous session\'s badge and announcement in the boundary render itself', async () => {
+    // Sibling of the generation-boundary spec above, for the other boundary.
+    // The docblock on `rowsBelongToThisAccount` promises to fail closed DURING
+    // the boundary render — but it only compared the workspace generation, and
+    // a remote or expired session changes the authority WITHOUT advancing it.
+    // `useSyncExternalStore` re-renders on that change while the state still
+    // holds the previous session's rows, so there was one committed render
+    // still showing its unread badge and its targeted announcement.
+    //
+    // Both assertions are on the DOM rather than the `onUnreadCountChange` /
+    // `onPriorityAnnouncementPendingChange` callbacks: those fire from passive
+    // effects, which `flushSync` deliberately does not run, so they would still
+    // be reporting the render before this one.
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/integrations/vela/status')) {
+        statusCalls += 1;
+        return Response.json({ loggedIn: true });
+      }
+      if (url.includes('/message-center') && url.includes('/messages')) {
+        messageCalls += 1;
+        return Response.json({
+          messages: [{
+            ...row('prior-session-row', null),
+            audienceType: 'targeted',
+            messageKey: 'go-plan-sunset-2026-08',
+          }],
+          nextCursor: null,
+          unreadCount: 1,
+        });
+      }
+      return Response.json({});
+    }));
+
+    render(
+      <I18nProvider initial="zh-CN">
+        <MessageCenter priorityAnnouncementActive />
+      </I18nProvider>,
+    );
+    // Panel left closed: the trigger's badge is the render-time surface, and
+    // opening it would put the announcement dialog's modal over everything.
+    await waitFor(() => expect(screen.queryByTestId('go-plan-sunset-dialog')).not.toBeNull());
+    expect(screen.getByTestId('message-center-trigger').textContent).toContain('1');
+
+    // The session ends remotely. No generation change.
+    flushSync(() => {
+      noteAuthoritativeAuthMode(false);
+    });
+
+    expect(screen.getByTestId('message-center-trigger').textContent).not.toContain('1');
+    expect(screen.queryByTestId('go-plan-sunset-dialog')).toBeNull();
+  });
+
+  it('does not record an account read whose POST crossed the end of the session', async () => {
+    // Same rule as the pull path, on the write path. The post-await check here
+    // only compared the workspace generation, and a remote or expired session
+    // does not move it — so a read that started while signed in could resume
+    // after the session ended and still take `loggedInRef` back to signed-in,
+    // add pending read ids, clear the anonymous cache, and broadcast an
+    // account-scoped read delta that another same-generation host consumes.
+    let releaseRead!: () => void;
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/integrations/vela/status')) {
+        statusCalls += 1;
+        return Response.json({ loggedIn: true });
+      }
+      if (url.includes('/read') && init?.method === 'POST') {
+        await new Promise<void>((resolve) => { releaseRead = resolve; });
+        return Response.json({});
+      }
+      if (url.includes('/message-center') && url.includes('/messages')) {
+        messageCalls += 1;
+        return Response.json({
+          messages: [row('account-read-row', null)],
+          nextCursor: null,
+          unreadCount: 1,
+        });
+      }
+      return Response.json({});
+    }));
+
+    const deltas: Array<{ account: boolean; messageId: string }> = [];
+    const stop = subscribeMessageCenterReads((delta) => {
+      deltas.push({ account: delta.account, messageId: delta.messageId });
+    });
+
+    render(
+      <I18nProvider initial="zh-CN">
+        <MessageCenter />
+      </I18nProvider>,
+    );
+    await waitFor(() => expect(messageCalls).toBeGreaterThan(0));
+    fireEvent.click(screen.getByTestId('message-center-trigger'));
+    const rowButton = await screen.findByRole('button', { name: /account-read-row/ });
+
+    // The read goes out while the session is still valid, and is held.
+    fireEvent.click(rowButton);
+    await waitFor(() => expect(releaseRead).toBeTypeOf('function'));
+
+    // Polling observes the session ending. No generation change.
+    noteAuthoritativeAuthMode(false);
+    await new Promise((r) => setTimeout(r, 20));
+
+    const afterBoundary = deltas.length;
+    releaseRead();
+    await new Promise((r) => setTimeout(r, 40));
+
+    expect(deltas.slice(afterBoundary).filter((d) => d.account)).toEqual([]);
+    stop();
   });
 
   it('keeps the targeted announcement alive across a remount that adopts', async () => {

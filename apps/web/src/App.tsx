@@ -109,6 +109,7 @@ import {
   listProjectRuns,
   type VelaLoginStatus,
 } from './providers/daemon';
+import { statusObservationOrder } from './providers/status-observation';
 import {
   AMR_LOGIN_STATUS_EVENT,
   amrLoginStatusEventReason,
@@ -1686,10 +1687,24 @@ function AppInner() {
   // snapshot updates `agents`, which makes Settings fetch status again and
   // creates a status -> models -> agents request loop.
   const amrLoginStatusRef = useRef<VelaLoginStatus | null>(null);
+  const latestAppliedStatusObservationRef = useRef(0);
   const applyAmrLoginStatus = useCallback((
     status: VelaLoginStatus,
     options: { forceModelRefresh?: boolean; restartOnSignIn?: boolean } = {},
   ) => {
+    // Ordering lives here rather than in each reader because this is the one
+    // place that publishes an observation as authoritative, and every reader —
+    // this effect, the entry shell's landing read and login poll, the settings
+    // card — funnels into it. An observation that was overtaken while it was on
+    // the wire says nothing about the session any more; applying it re-publishes
+    // an authority that has already moved on, which re-authorises exactly the
+    // message-centre pull a sign-out was meant to refuse. Dropped before any
+    // side effect, including the authoritative note.
+    const observation = statusObservationOrder(status);
+    if (observation !== null) {
+      if (observation < latestAppliedStatusObservationRef.current) return;
+      latestAppliedStatusObservationRef.current = observation;
+    }
     const previousStatus = amrLoginStatusRef.current;
     const wasLoggedIn = isAmrSessionAuthenticated(previousStatus);
     const isLoggedIn = isAmrSessionAuthenticated(status);
@@ -1930,22 +1945,11 @@ function AppInner() {
   // unmounted before their poll settled.
   useEffect(() => {
     let cancelled = false;
-    // The initial run, the login-status event, focus and visibility all call
-    // this, so several requests can be on the wire at once and they answer in
-    // whatever order the daemon manages. Only the LATEST one issued may speak
-    // for the session: an older signed-in answer landing after a newer
-    // signed-out one used to re-publish `signed-in` as authoritative, which
-    // re-authorises the very message-centre pull that the sign-out was supposed
-    // to refuse.
-    let latestIssued = 0;
     const sync = async (
       options: { refresh?: boolean } = {},
       restartOnSignIn = false,
     ) => {
-      const issued = latestIssued + 1;
-      latestIssued = issued;
       const status = await fetchVelaLoginStatus(options);
-      if (issued !== latestIssued) return;
       if (!cancelled && status) {
         applyAmrLoginStatus(status, {
           forceModelRefresh: options.refresh === true,
