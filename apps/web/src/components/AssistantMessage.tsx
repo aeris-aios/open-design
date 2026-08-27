@@ -2,6 +2,7 @@ import { Fragment, memo, type ReactNode, useCallback, useEffect, useMemo, useRef
 import { useCharReveal } from "./chat/useCharReveal";
 import { ExecutionShell } from "./chat/ExecutionShell";
 import { buildTurnBlocks } from "../runtime/chat/build-turn-blocks";
+import { copyableTurnText } from "../runtime/chat/copyable-turn";
 import type { ExecutionShell as ExecutionShellData } from "../runtime/chat/contract";
 import { upstreamActivityAt } from "../runtime/chat/upstream-activity";
 import type { RecordFileScope } from "../runtime/chat/record-file-open";
@@ -1025,7 +1026,12 @@ function AssistantMessageImpl({
       isBrandBrowserAssistMessage
     );
   const canFork = !streaming && !!onForkFromMessage;
-  const copyMarkdown = message.content.trim().length > 0 ? message.content : undefined;
+  /*
+   * 复制按钮的判据。正文优先,正文空了退回推理原文 —— 判据本身与理由在
+   * `runtime/chat/copyable-turn.ts`。中止的那一轮常常只剩一格「思考过程」,
+   * 那也是内容(用户 2026-08-27:「thought 也算能复制的吧?」)。
+   */
+  const copyMarkdown = copyableTurnText(message.content, nextTurn.shells);
   const showFeedback =
     !!onFeedback &&
     isFeedbackEligible({

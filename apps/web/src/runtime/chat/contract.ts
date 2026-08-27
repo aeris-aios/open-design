@@ -55,7 +55,23 @@ export interface ToolRow {
  * 而 thinking 提出来就是把「想什么」当成「答什么」。踩过一次:整轮只有一句 thinking 时
  * 它被提到壳外、壳空掉后整张壳被丢,「思考中」那一格直接没了。
  */
-export interface ShellText { kind: 'text'; text: string; thinking?: boolean }
+export interface ShellText {
+  kind: 'text';
+  text: string;
+  thinking?: boolean;
+  /**
+   * **推理专用**:这一段推理占掉的墙上时间。回答段永远没有这个字段。
+   *
+   * 为什么只能是「填空」而不是「量它自己」:thinking 事件**一个时刻都不带**
+   * (`PersistedAgentEvent` 的 `{ kind: 'thinking'; text }` 里没有时刻字段,
+   * daemon 那边 `thinking_delta` 的载荷就是 `{ type, delta }` 两个字段)。
+   * 唯一能观测到的是它**填掉了哪一段空白** —— 上一件带时刻的事结束到下一件
+   * 带时刻的事开始之间的那段。所以这里存的是那段空白的长度。
+   *
+   * 拿不到就是 `undefined`,界面上什么都不显示 —— 与工具行同一条纪律(§2.2b)。
+   */
+  elapsedMs?: number;
+}
 
 /** 「执行计划 · N 步」 */
 export interface ShellPlan { kind: 'plan'; steps: string[] }

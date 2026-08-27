@@ -57,10 +57,21 @@ describe('壳头耗时 · 事件不带时刻时退回轮次跨度', () => {
     expect(formatShellElapsed(shell.elapsedMs)).toBe('42s');
   });
 
-  it('事件给得出跨度时,**事件说了算**(它更窄,说的是这张壳不是整轮)', () => {
+  /**
+   * ⚠️ **2026-08-27 推翻**。这一条原来断言的是「事件给得出跨度时事件说了算
+   * (它更窄,说的是这张壳不是整轮)」—— 前半句成立,后半句是错的:
+   * 一轮只有一张壳时,那张壳**就是**整轮(`ensureShell` 在本轮第一条事件上开它,
+   * 它一直开到轮次终止),事件跨度并不「说的是这张壳」,它说的只是壳里带时刻的
+   * 那几件事,把 thinking 整段切在外面。
+   *
+   * 用户真机指认「耗时好像没有算进 thought 的耗时」,真因与数字在
+   * `shell-elapsed-includes-thinking.test.ts`。
+   */
+  it('单壳的一轮:壳头就是轮次跨度,事件跨度不再把两头的推理切掉', () => {
     const shell = sole({
       events: [
         { kind: 'status', label: 'starting' },
+        { kind: 'thinking', text: '先想清楚要动哪里。' },
         { kind: 'tool_use', id: 't1', name: 'Bash', input: { command: 'ls' }, startedAt: 1_010_000 },
         { kind: 'tool_result', toolUseId: 't1', content: 'ok', isError: false, completedAt: 1_015_000 },
         { kind: 'text', text: '看完了。' },
@@ -69,7 +80,7 @@ describe('壳头耗时 · 事件不带时刻时退回轮次跨度', () => {
       startedAtMs: 1_000_000,
       endedAtMs: 1_042_000,
     });
-    expect(shell.elapsedMs).toBe(5_000);
+    expect(shell.elapsedMs).toBe(42_000);
   });
 
   it('轮次跨度是**兜底**不是替换:没有 `startedAtMs` 就仍然什么都不显示', () => {

@@ -1356,3 +1356,116 @@ harness:`apps/web/tests/components/chat/record-columns-probe.test.tsx` 把真组
   改它要动 `.tool` 的 `gap`,会波及壳外独立出现的工具行,另开一条。
 - `.fold.flat > .body.stack > .code { margin-inline: 22px 11px }` 保持原样:
   它是「顶层的终端块」,22 是稿子给的、和这一轮的行首列无关(终端块没有行首格)。
+
+---
+
+## F-19 耗时:壳头补上推理,思考那一格挂自己的数(2026-08-27 用户裁决)
+
+用户真机四连,逐条对照真实 run 查过再动手。截图那一轮已经认出来了 ——
+`.od/runs/4347efff-31d5-4322-b48f-a0b6f3ad24c9`,认得出来是因为清单那两条抽屉的
+耗时逐字对上截图:`1m 46s` / `1m 11s`。
+
+### ① 「耗时好像没有算进 thought 的耗时」—— 成立,而且差得很多
+
+真因:壳自己的跨度 `shellSpan` **只由带时刻的事件撑开**。整条事件流里带时刻的只有
+`tool_use.startedAt` 与 `tool_result.completedAt`;thinking 一个时刻都不带
+(daemon 那边的载荷就是 `{ type: 'thinking_delta', delta }`,`PersistedAgentEvent`
+里也只有 `{ kind: 'thinking'; text }`)。于是**第一个工具调用之前**和**最后一个
+工具结果之后**的推理被整段切掉。
+
+本机 `.od/runs` 里 38 条带推理的真实 run 逐条量过,**壳头无一例外少报**:
+
+| run | 整轮 | 壳头(改前) | 少报 |
+|---|---|---|---|
+| `4347efff`(截图那一轮) | 6m 12s | **3m 11s** | 3m 0.6s |
+| `3be1d04d` | 5m 54s | **1.4s** | 5m 52s |
+| `9bbe3832` | 2m 17s | 0.4s → **屏幕上什么都不显示** | 2m 16s |
+| `0dc3ba6a` | 11m 59s | 5m 42s | 6m 17s |
+| `46ae3c0a` | 7m 5s | 1m 25s | 5m 40s |
+
+修法是一条不变量,不是给推理另外补时间:
+**开这一轮的那张壳从轮次开头开始走表,收这一轮的那张壳走到轮次收尾为止。**
+`ensureShell()` 本来就是在本轮第一条事件上开的第一张壳(D10),最后一张壳一直开到
+轮次终止 —— 那两个时刻是它俩自己的边界,不是借来的。单壳的一轮因此等于轮次跨度。
+它同时**取代**了原来的 `turnElapsed` 兜底(那条是同一件事的特例),函数已删。
+
+两张壳的那一轮仍然分得开:第一张拿轮次**开头**、最后一张拿轮次**收尾**,中间那道缝
+谁也不领 —— T34 那张「两张卡头同一个数」的坏画面在结构上出不来。
+
+被推翻的一条测试:`shell-elapsed-turn-span.test.ts` 的「事件给得出跨度时事件说了算
+(它更窄,说的是这张壳不是整轮)」。前半句成立,后半句是错的:一轮只有一张壳时,
+那张壳**就是**整轮。改写成相反的不变式,原文与推翻日期留在测试注释里。
+
+### ② 顶层那三行为什么一个耗时都没有 —— 一半是 bug,一半不是
+
+截图里顶层是 `Thoughts` / `ToolSearch` / `Thoughts` 三行,右边全空。分开看:
+
+- **`ToolSearch` 那一行不是 bug。** 真实数据 `startedAt=1787828745434` /
+  `completedAt=1787828745473`,**39ms**,低于 `UNKNOWN_ELAPSED_BELOW_MS`(100ms),
+  按 §2.2b「调用与结果同批到达 = 不知道,不是跑得快」本来就该不显示。那一行是对的。
+  顺带全量核过:624 条真实工具行里落在 (0,100ms) 这一档的是 **0** 条 —— 门槛没有在
+  误伤谁;真正没有数的 259 条是**两端缺一端**(`tool_result` 没带 `completedAt`)。
+- **两格 `Thoughts` 是真 bug**,见下一条。
+
+### ③ 思考那一格的耗时怎么算
+
+thinking 事件一个时刻都不带,「量它自己」这条路不存在。能观测到的只有
+**它填掉了哪一段空白** —— 上一件带时刻的事结束到下一件带时刻的事开始。三条边界:
+
+- 开头那一段:上一件事不存在时,起点是**轮次开头**(`startedAtMs`);
+- 收尾那一段:下一件事不存在时,终点是**轮次收尾**(`endedAtMs`);**还在跑就不结账**;
+- 空白里**不止它一个**(中间落过正文 / 工具行)时:一个数都不给 —— 那段空白是几件事
+  分掉的,分给谁都是编。
+
+**跨事件合并**(`groupThinking` 把连续几段收成一格):每一段各记各的空白,而相邻两段
+的空白**共用同一个时刻端点**(隔在中间那次 `TodoWrite` 的 `startedAt` 既是前一段的
+终点、也是后一段的起点),所以相加正好等于端到端跨度,不重复计、也不漏掉中间那一瞬。
+一格里只要有一段算不出来,**整格不给数** —— 只加算得出的那几段是偏小的假数。
+
+**正在想的时候不显示**,和进行中的 todo 是同一条规矩(`TodoRow` 的
+`status === 'in_progress'` 那一档)。
+
+覆盖率:本机 76 格真实思考里 **59 格(78%)** 报得出数;截图那一轮 8 格全报得出,
+顶层两格是 `2m 34s` / `4.0s`,抽屉「交付前自检」里五格是
+`5.4s / 4.3s / 42.8s / 7.0s / 8.9s`。各格相加 + 工具行相加 ≈ 壳头总数,对得上。
+
+`ThoughtsRow` 原来的注释写着「不挂耗时:推理的时长在壳头的总耗时里」—— 那句话的
+**前提就是假的**(见 ①),已改写。
+
+### ④ 中止的一轮没有复制按钮
+
+原判据只有一条:`message.content.trim().length > 0`。而推理走的是 `events`,从来不进
+`content`(`ProjectView` 的 `textBuffer`:`kind === 'text'` 才 `appendContent`,
+`kind === 'thinking'` 只落 `events`)。一轮被停在模型还在想的时候 `content` 就是空的。
+
+新判据在 `runtime/chat/copyable-turn.ts`:**回答优先,回答一个字都没有时退回推理原文**。
+两样都没有仍然不出按钮 —— claude 经 daemon 送出的 thinking 全是空串(真实录制 1786 帧
+无一有字),给那种轮次一颗按下去复制空串的按钮比没有按钮更糟。
+
+### 消融(逐个撤掉一个机制,看恰好哪几条变红)
+
+| 撤掉 | 变红的测试 |
+|---|---|
+| 壳头的轮次边界 widening | `shell-elapsed-includes-thinking` 5 条 + `shell-elapsed-turn-span` 4 条 |
+| `settleThink()`(不往条目上落耗时) | `thoughts-elapsed` 的 6 条正向用例(反向对照全绿) |
+| `groupThinking` 不带 `elapsedMs` | 上面 6 条 + `thoughts-elapsed-row` 2 条 |
+| `ThoughtsRow` 不把 `elapsed` 递给 `Foldable` | `thoughts-elapsed-row` 2 条正向用例 |
+| 撤掉 `live ? null :` 抑制 | `thoughts-elapsed-row` **2 条反向对照**(正向全绿) |
+| `closeThink` 的「仍是数组末尾」守卫 | 「推理和正文分掉同一段空白时,谁都不给数」 |
+| `sumElapsed` 少一段就整格作废 → 改成部分求和 | 「一格里有一段算不出来时,整格不给数」 |
+| `copyableTurnText` 不回落推理 | `stopped-turn-copy` 2 条正向用例(反向对照全绿) |
+
+### 范围外发现(**未修**,列出来)
+
+- **`daemonAgentPayloadToPersistedAgentEvent` 把 `tool_result.completedAt` 丢了。**
+  落库那条链路只写 `{ kind, toolUseId, content, isError }`,而 web 的
+  `translateAgentEvent`(直播那条)是留着的。结果:**历史会话重新打开之后,每一条
+  工具行的耗时都没了**,壳自己的跨度也退化成「第一次调用开跑 → 最后一次调用开跑」。
+  现有夹具 `amr-thinking-todo.turn0.json` 15 条 `tool_result` 全都没有 `completedAt`,
+  正是照着落库那条链路导出来的。
+- **`.od/runs/*/events.jsonl` 里每条 `tool_use` 都镜像了两遍**(同一个 `id`、相隔几
+  毫秒、两个不同的 envelope id)。消息里落库的应该是去重之后的一条(用户截图顶层只有
+  **一行** `ToolSearch`),但运行日志这一份会让任何直接回放它的工具看到重复行。
+- **`tests/components/chat/thinking-fold.test.tsx` 在分支 tip 上本来就是红的**
+  (「还在思考时不折叠」)。在 `od-wt-chat-panel` 上原样复现过,与这一轮无关。
+- **`.tool` 与折叠头的 1px 差**:§F-18 已经记着,未动。

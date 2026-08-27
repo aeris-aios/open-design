@@ -88,6 +88,9 @@ const ABANDON_NAME_RE = /(^|__)todo_abandon$/i;
 
 interface RawTodo { content: string; status: string }
 
+/** 还开着的那一段推理:它自己、它落在哪个数组里、它从哪一刻开始填空 */
+interface OpenThink { item: ShellText; arr: ShellItem[]; from: number | null }
+
 function readTodoList(input: unknown): RawTodo[] {
   const rec = input && typeof input === 'object' ? (input as Record<string, unknown>) : {};
   const raw = rec.todos ?? rec.plan ?? rec.items;
@@ -358,6 +361,16 @@ export function buildTurnBlocks(input: BuildTurnInput): TurnBlock[] {
   let started = false;
   /** 壳内正在累积的那段文字(thinking 或过程叙述)—— 连续的 delta 合并成一段 */
   let openText: ShellText | null = null;
+  /**
+   * 还没结算的**那一段推理**,以及它落在哪个数组里。
+   *
+   * thinking 事件一个时刻都不带,所以推理的时长只能靠**它填掉的那段空白**反推:
+   * 上一件带时刻的事结束(`from`)到下一件带时刻的事开始(`stamp` 的实参)。
+   * `arr` 用来判「这段空白里有没有别的东西」—— 结算那一刻这段推理**仍然是数组
+   * 末尾**,才说明这段空白确实只有它;中间落过正文 / 工具行就不认,那时候这段
+   * 空白是几件事分掉的,谁都说不出自己占了多少(§2.2b「拿不到就不显示,不估算」)。
+   */
+  let openThink: OpenThink | null = null;
   /** 壳外正在累积的结论 */
   let openProse: ProseBlock | null = null;
   let doneSeen = false;
@@ -405,10 +418,49 @@ export function buildTurnBlocks(input: BuildTurnInput): TurnBlock[] {
 
   const stamp = (at?: number): void => {
     if (at == null) return;
+    closeThink(at);
     if (firstStartedAt == null || at < firstStartedAt) firstStartedAt = at;
     if (lastEndedAt == null || at > lastEndedAt) lastEndedAt = at;
     stampShell(at);
   };
+
+  /**
+   * 每一段推理攒下的时长。`null` = 有一截**算不出来**,整段作废 ——
+   * 只把算得出的那几截加起来会得到一个偏小的假数,比不显示更糟(§2.2b)。
+   */
+  const thinkMs = new Map<ShellText, number | null>();
+
+  /**
+   * 给还开着的那段推理结账:它填掉的空白到 `at` 为止。
+   *
+   * 只有这段推理**仍然是它那个数组的末尾**才算这一截 —— 中间要是落过别的东西
+   * (正文、工具行、清单行),那段空白就是几件事分掉的,给谁都是编。
+   *
+   * 一段推理可能被结账**好几次**:中间夹着不落行的事件(`TodoWrite`,或者调用发出去
+   * 但结果还没回来的工具)时,推理被切成几截却仍是同一段文字。相邻两截共用同一个
+   * 时刻端点,所以相加就等于端到端跨度,不会重复计。
+   */
+  function closeThink(at: number): void {
+    const open = openThink;
+    openThink = null;
+    if (!open) return;
+    // 这一截不是它一个人的:别人已经落到它后面了
+    if (open.arr[open.arr.length - 1] !== open.item) return;
+    const prev = thinkMs.get(open.item);
+    if (prev === null) return; // 已经作废,不再往上加
+    const ms = open.from == null ? -1 : at - open.from;
+    thinkMs.set(open.item, ms < 0 ? null : (prev ?? 0) + ms);
+  }
+
+  /**
+   * 把攒下的时长落到条目上。门槛沿用 `UNKNOWN_ELAPSED_BELOW_MS`:
+   * 不到 100ms 的空白是「同一批到达」,那是「不知道」不是「想得快」,和工具行同一条判据。
+   */
+  function settleThink(): void {
+    for (const [item, ms] of thinkMs) {
+      if (ms != null && ms >= UNKNOWN_ELAPSED_BELOW_MS) item.elapsedMs = ms;
+    }
+  }
 
   /** D10:收到本轮第一条事件就开壳,空态先出来,不等任何 agent 信号 */
   const ensureShell = (): void => {
@@ -515,6 +567,17 @@ export function buildTurnBlocks(input: BuildTurnInput): TurnBlock[] {
       const cont = !!open && open.thinking === true && arr[arr.length - 1] === open;
       if (!text.trim() && !cont) continue;
       pushInside(text, true);
+      /*
+       * 这一段推理从哪一刻开始「填空」—— 上一件带时刻的事结束的那一刻,
+       * 一件都还没有就是轮次开头。连续的 delta 合进同一段,只在**新起一段**时开表。
+       */
+      const segment = openText as ShellText | null;
+      // `openThink` 只在 `closeThink` 这个闭包里被赋值,TS 的控制流分析看不见,
+      // 在循环体里会把它窄化成 `null`(和上面 `openText` 同一个坑)。显式断开窄化。
+      const think = openThink as OpenThink | null;
+      if (segment?.thinking && think?.item !== segment) {
+        openThink = { item: segment, arr, from: lastEndedAt ?? input.startedAtMs ?? null };
+      }
       continue;
     }
 
@@ -839,6 +902,13 @@ export function buildTurnBlocks(input: BuildTurnInput): TurnBlock[] {
     const status = input.runStatus ?? 'running';
     const running = status === 'running' || status === 'queued';
 
+    /*
+     * 收尾那一段推理:轮次终止之后,它填掉的那段空白的终点就是**轮次的收尾时刻**。
+     * 还在跑时**不结账** —— 那一格正在写,正在想的不报时长(和进行中的 todo 同一条规矩)。
+     */
+    if (!running && input.endedAtMs != null) closeThink(input.endedAtMs);
+    settleThink();
+
     /* 每条 todo 落自己的耗时(稿子每条抽屉右侧那个 `18.2s`) */
     for (const [seg, span] of segSpan) {
       const ms = span.to - span.from;
@@ -846,16 +916,17 @@ export function buildTurnBlocks(input: BuildTurnInput): TurnBlock[] {
     }
 
     /*
-     * 这一轮**只有一张壳**吗 —— 轮次跨度能不能借给壳,全看这一条(见 `turnElapsed`)。
+     * 壳与轮次的边界 —— 哪张壳开了这一轮、哪张壳收了这一轮(见 `shellElapsed`)。
      * `todoCard` 常常就是 `top` 本人(D50 之后清单不另起卡),所以要去重再数。
      */
-    const soleShell = new Set([top, todoCard].filter(Boolean)).size === 1;
+    const firstShell = top;
+    const lastShell = todoCard ?? top;
 
     for (const shell of [top, todoCard]) {
       if (!shell) continue;
       // 只有**还在跑的那张**跟着 now 走;先结束的那张定在自己的最后一刻
       const live = running && shell === activeShell();
-      shell.elapsedMs = shellElapsed(live, shell, soleShell);
+      shell.elapsedMs = shellElapsed(live, shell, shell === firstShell, shell === lastShell);
       shell.quietMs = shellQuiet(live, shell);
     }
 
@@ -907,52 +978,57 @@ export function buildTurnBlocks(input: BuildTurnInput): TurnBlock[] {
   }
 
   /**
-   * 最后一层兜底:**这一轮自己的起止**(`startedAtMs` → `endedAtMs`,跑着时终点是 `nowMs`)。
+   * 壳头的耗时。
    *
-   * 为什么需要它:壳头的耗时全靠事件上的时刻推,而**一大批 agent 根本不发工具事件** ——
-   * 规格 §2.2 点名的 `qwen` / `deepseek` / `grok-build` / `aider` / `antigravity` /
-   * `atomcode`(plain-stream)与 `qoder`(qoder-stream)两个解析器里 `tool_use` 均为 0 处,
-   * claude 的 `thinking` 也一条时刻都不带。这些轮次事件流里一个带时刻的事都没有,
-   * 于是壳头永远只有一句光秃秃的「已完成」。而消息自己是带 `startedAt` / `endedAt` 的,
-   * 那是这一轮**最权威**的跨度,之前没人问过它。
+   * **一条不变量:开这一轮的那张壳从轮次开头开始走表,收这一轮的那张壳走到轮次收尾为止。**
+   * 因为 `ensureShell()` 是在**本轮第一条事件**上开的第一张壳(D10),而最后一张壳
+   * 一直开到轮次终止 —— 那两个时刻本来就是它俩自己的边界,不是借来的。
    *
-   * **只在这一轮只有一张壳时借**。两张壳时轮次跨度对谁都不成立:它描述的是整轮,
-   * 而每张壳只占其中一截,轮次跨度里没有任何信息能说出那一截在哪儿开始、哪儿结束。
-   * 两张都写上同一个数,正是 T34 那张坏画面 —— 规格 `chat-panel-feedback.md`
-   * 「被推翻的两条」记着:「两张卡头**显示同一个耗时**……陈列页的端到端格照出来过」。
-   * 分不出来就不显示,和规格 §2.2「无耗时:不显示,不用 `0s` / `—` 假值」是同一条纪律。
+   * 为什么必须这么算(用户 2026-08-27 指认「耗时好像没有算进 thought 的耗时」):
+   * 壳自己的跨度 `shellSpan` **只由带时刻的事件撑开**,而带时刻的只有 `tool_use.startedAt`
+   * 与 `tool_result.completedAt`;thinking 一个时刻都不带(daemon 那边的载荷就是
+   * `{ type: 'thinking_delta', delta }`)。于是**第一个工具调用之前**和**最后一个工具
+   * 结果之后**的推理全部被切掉。本机 38 条带推理的真实 run 逐条量过,壳头无一例外少报:
+   * `4347efff` 整轮 6m 12s、壳头写 3m 11s(掐掉开头那 2m 34s 的推理);
+   * `3be1d04d` 整轮 5m 54s、壳头写 **1.4s**;`9bbe3832` 整轮 2m 17s、壳头**一个数都不显示**。
+   * 补上两头的边界之后,单壳的那一轮壳头就等于轮次自己的跨度 —— 推理自然全在里面。
+   *
+   * 两张壳的那一轮仍然分得开:第一张拿轮次**开头**、最后一张拿轮次**收尾**,
+   * 中间那道缝(卡外那段结论)谁也不领。两张写上同一个数的 T34 坏画面
+   * (`chat-panel-feedback.md`「被推翻的两条」)因此在结构上就出不来。
    */
-  function turnElapsed(running: boolean, soleShell: boolean): number | null {
-    if (!soleShell) return null;
-    const from = input.startedAtMs;
-    if (from == null) return null;
-    // 跑着的时候终点是「现在」,秒表照旧一格一格往前走;终止了才认轮次自己的收尾时刻
-    const end = running ? input.nowMs : input.endedAtMs;
-    if (end == null) return null;
-    const ms = end - from;
-    return ms > 0 ? ms : null;
-  }
-
-  function shellElapsed(running: boolean, shell: ExecutionShell | undefined, soleShell: boolean): number | null {
-    // 有自己的跨度就用自己的;没有(比如壳里一件带时刻的事都没有)再退回轮次跨度
+  function shellElapsed(
+    running: boolean,
+    shell: ExecutionShell | undefined,
+    isFirst: boolean,
+    isLast: boolean,
+  ): number | null {
     const span = shell ? shellSpan.get(shell) : undefined;
-    const from = span ? span.from : firstStartedAt;
-    const last = span ? span.to : lastEndedAt;
-    if (from != null) {
-      const end = running ? Math.max(input.nowMs ?? 0, last ?? 0) : (last ?? 0);
-      const ms = end - from;
-      /*
-       * 事件真的给出跨度了 —— 它比轮次跨度**窄**,说的又正是这张壳,所以它说了算。
-       *
-       * 门槛用 `UNKNOWN_ELAPSED_BELOW_MS` 而不是 `> 0`:整张壳的跨度不到 100ms,
-       * 意思是壳里所有带时刻的事**同一批到达**(codex 的 `tool_use` 与 `tool_result`
-       * 间隔 p50 4ms),那不是「跑得快」,是「不知道」—— 和 `format.ts` 开头给
-       * 单条工具行定的判据是同一条。这个门槛只会**多**显示一个数、不会少显示:
-       * 壳头的 `formatShellElapsed` 本来就把 1000ms 以下当未知,不显示任何东西。
-       */
-      if (ms >= UNKNOWN_ELAPSED_BELOW_MS) return ms;
+    let from = span ? span.from : firstStartedAt;
+    let to = span ? span.to : lastEndedAt;
+
+    // 开这一轮的那张壳:表从轮次开头就开始走(第一个工具之前的推理在这一截里)
+    if (isFirst && input.startedAtMs != null) {
+      from = from == null ? input.startedAtMs : Math.min(from, input.startedAtMs);
     }
-    return turnElapsed(running, soleShell);
+    /*
+     * 收这一轮的那张壳:走到轮次收尾为止 —— 跑着的时候「收尾」就是现在,秒表继续走。
+     * `running` 只可能落在最后一张壳上(调用处的 `live` 判据是 `shell === activeShell()`,
+     * 而 `activeShell()` 就是这里的最后一张),所以秒表不需要另开一条分支。
+     */
+    const turnEnd = running ? input.nowMs : input.endedAtMs;
+    if (isLast && turnEnd != null) {
+      to = to == null ? turnEnd : Math.max(to, turnEnd);
+    }
+    if (from == null || to == null) return null;
+    const ms = to - from;
+    /*
+     * 门槛用 `UNKNOWN_ELAPSED_BELOW_MS` 而不是 `> 0`:整张壳的跨度不到 100ms,
+     * 意思是壳里所有带时刻的事**同一批到达**(codex 的 `tool_use` 与 `tool_result`
+     * 间隔 p50 4ms),那不是「跑得快」,是「不知道」—— 和 `format.ts` 开头给
+     * 单条工具行定的判据是同一条。
+     */
+    return ms >= UNKNOWN_ELAPSED_BELOW_MS ? ms : null;
   }
 }
 
