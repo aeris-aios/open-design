@@ -34,6 +34,38 @@ export interface InternalPhysicalRun {
   status: string;
 }
 
+/**
+ * The facts a physical Run's analytics lifecycle needs that cannot be read off
+ * the Run itself. Declared here rather than imported so the seam stays free of
+ * the route layer.
+ *
+ * It is a REQUIRED argument of `start` on purpose. Analytics used to be
+ * installed by whichever caller remembered to do it, and four daemon-internal
+ * Run creators silently reported nothing (OPEND-2365). Making the facts part
+ * of the start contract means a new caller has to state its analytics identity
+ * — including stating that it has none — instead of dropping the Run.
+ */
+export interface InternalRunAnalyticsFacts {
+  /** The request body the Run was composed from. */
+  body: Record<string, unknown>;
+  /**
+   * Identity of whoever asked for this Run. `null` is a real answer: a Run
+   * nothing asked for (a scheduled Automation) has no caller to attribute to,
+   * and the lifecycle stays silent rather than inventing one.
+   */
+  requestAnalyticsContext?: unknown;
+  snapshot?: { ok?: boolean; snapshot?: unknown } | null;
+  /** The rollout decision the caller evaluated, when it differs from the Run's. */
+  rolloutDecision?: unknown;
+  creationKind?: 'created' | 'reused';
+  resumed?: boolean;
+  attributionMismatch?: boolean;
+}
+
+export interface InternalRunAnalyticsLifecycle<TRun> {
+  install(input: InternalRunAnalyticsFacts & { run: TRun }): void;
+}
+
 export interface InternalRunRegistry<
   TMeta extends InternalRunCreateInput,
   TRun extends InternalPhysicalRun,
@@ -86,7 +118,11 @@ export interface InternalRunCreationService<
   TRun extends InternalPhysicalRun,
 > {
   prepare(input: PrepareInternalRunInput<TMeta, TRun>): PreparedInternalRunResult<TRun>;
-  start(run: TRun, starter: (run: TRun) => Promise<unknown>): TRun;
+  start(
+    run: TRun,
+    analytics: InternalRunAnalyticsFacts,
+    starter: (run: TRun) => Promise<unknown>,
+  ): TRun;
 }
 
 export function createInternalRunCreationService<
@@ -98,6 +134,11 @@ export function createInternalRunCreationService<
     run: TRun,
     options?: AssistantRunClaimOptions,
   ) => AssistantRunClaimResult;
+  /**
+   * Armed for every physical Run this service starts, whoever asked for it.
+   * Optional only so a test harness can leave it out.
+   */
+  analyticsLifecycle?: InternalRunAnalyticsLifecycle<TRun>;
 }): InternalRunCreationService<TMeta, TRun> {
   const isRunActive = (runId: string): boolean => {
     const existing = deps.runs.get(runId);
@@ -161,7 +202,11 @@ export function createInternalRunCreationService<
 
   return {
     prepare,
-    start(run, starter) {
+    start(run, analytics, starter) {
+      // Before the child is spawned: `run_created` describes a Run that has
+      // been accepted, and the terminal half must already be attached when the
+      // Run settles — including a Run that fails on its first tick.
+      deps.analyticsLifecycle?.install({ ...analytics, run });
       return deps.runs.start(run, () => starter(run));
     },
   };
