@@ -26,6 +26,7 @@
 
 import {
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -626,6 +627,22 @@ export function EntryTopRightCluster({
   const [accountMenuMode, setAccountMenuMode] = useState<'closed' | 'hover' | 'pinned'>(
     'closed',
   );
+  const updaterSlotHostRef = useRef<HTMLDivElement | null>(null);
+  const [updaterControlVisible, setUpdaterControlVisible] = useState(false);
+  // ReactNode truthiness cannot tell whether UpdaterPopup rendered its control;
+  // observe the stable host so signed-out chrome follows actual rendered content.
+  useLayoutEffect(() => {
+    const host = updaterSlotHostRef.current;
+    if (!host) {
+      setUpdaterControlVisible(false);
+      return;
+    }
+    const syncVisibility = () => setUpdaterControlVisible(host.hasChildNodes());
+    syncVisibility();
+    const observer = new MutationObserver(syncVisibility);
+    observer.observe(host, { childList: true });
+    return () => observer.disconnect();
+  }, [updaterSlot]);
   const accountOpen = accountMenuMode !== 'closed';
   const closeAccountMenu = () => setAccountMenuMode('closed');
   useEffect(() => {
@@ -767,28 +784,34 @@ export function EntryTopRightCluster({
     });
   }
 
-  if ((!leadingSlot && !context && !updaterSlot) || typeof document === 'undefined') return null;
+  if (typeof document === 'undefined') return null;
+  if (!leadingSlot && !context && !updaterSlot) return null;
+
+  const clusterVisible = Boolean(leadingSlot || context || updaterControlVisible);
+  const updaterHostVisible = Boolean(context || updaterControlVisible);
 
   return (
     <>
       {createPortal(
-        <div className="entry-top-right-cluster">
+        <div className={clusterVisible ? 'entry-top-right-cluster' : undefined}>
           {leadingSlot}
           {/* GitHub star chip: its own option in the cluster, right after the
               campaign badge (per product) — it used to live in the account
               menu's social row. */}
-          <a
-            className="entry-top-right-github"
-            href={REPO_URL}
-            {...externalLinkProps}
-            aria-label={`GitHub · ${githubStars == null ? GITHUB_STARS_FALLBACK_LABEL : formatStars(githubStars)} stars`}
-            title={`GitHub · ${githubStars == null ? GITHUB_STARS_FALLBACK_LABEL : formatStars(githubStars)} stars`}
-            data-testid="entry-top-right-github"
-            onClick={() => trackAccountAction('github')}
-          >
-            <Icon name="github-filled" size={14} />
-            <span>{githubStars == null ? GITHUB_STARS_FALLBACK_LABEL : formatStars(githubStars)}</span>
-          </a>
+          {clusterVisible ? (
+            <a
+              className="entry-top-right-github"
+              href={REPO_URL}
+              {...externalLinkProps}
+              aria-label={`GitHub · ${githubStars == null ? GITHUB_STARS_FALLBACK_LABEL : formatStars(githubStars)} stars`}
+              title={`GitHub · ${githubStars == null ? GITHUB_STARS_FALLBACK_LABEL : formatStars(githubStars)} stars`}
+              data-testid="entry-top-right-github"
+              onClick={() => trackAccountAction('github')}
+            >
+              <Icon name="github-filled" size={14} />
+              <span>{githubStars == null ? GITHUB_STARS_FALLBACK_LABEL : formatStars(githubStars)}</span>
+            </a>
+          ) : null}
           {/* One shared capsule for the account module (per product: 头像和积分
               合并成一个胶囊): credits segment on the left (same availability
               rule as the menu's billing card; clicking jumps to B's billing
@@ -1027,7 +1050,11 @@ export function EntryTopRightCluster({
               the same position without inventing an empty account shell. The
               slot stays mounted so `:empty { display: none }` can remove it
               until an installer has downloaded. */}
-          <div className="entry-nav-rail__account-updater" data-testid="entry-nav-account-updater">
+          <div
+            ref={updaterSlotHostRef}
+            className={updaterHostVisible ? 'entry-nav-rail__account-updater' : undefined}
+            data-testid={updaterHostVisible ? 'entry-nav-account-updater' : undefined}
+          >
             {updaterSlot}
           </div>
         </div>,

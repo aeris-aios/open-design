@@ -258,4 +258,20 @@ describe('standalone updater rocket placement in the top-right cluster', () => {
     expect(rocket.closest('.entry-top-right-cluster')).not.toBeNull();
     expect(rocket.closest('.entry-nav-rail__footer')).toBeNull();
   });
+
+  it('keeps the signed-out top-right cluster absent while the updater is idle', async () => {
+    restoreHost = installMockOpenDesignHost({
+      host: { updater: { status: vi.fn(async () => idleStatus()) } },
+    });
+
+    renderRail(null);
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(screen.queryByTestId('entry-nav-updater')).toBeNull();
+    expect(screen.queryByTestId('entry-nav-account-updater')).toBeNull();
+    expect(screen.queryByTestId('entry-top-right-github')).toBeNull();
+    expect(document.querySelector('.entry-top-right-cluster')).toBeNull();
+  });
 });
