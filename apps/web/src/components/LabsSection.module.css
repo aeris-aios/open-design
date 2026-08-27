@@ -19,7 +19,10 @@
 
 .row {
   display: flex;
-  align-items: center;
+  /* Top-aligned, not centred: the row grows when the reason panel opens, and a
+     centred switch would slide down away from the item it belongs to. The
+     switch's own margin puts it level with the name + hint block. */
+  align-items: flex-start;
   justify-content: space-between;
   gap: 20px;
   padding: 14px 16px;
@@ -140,6 +143,7 @@
   flex: none;
   width: 36px;
   height: 20px;
+  margin-top: 10px;
   padding: 0;
   border: 0;
   border-radius: var(--radius-pill);
@@ -195,19 +199,20 @@
 /* Opt-out reason panel.
  *
  * Sits inside the row rather than in a dialog: the user has just declined
- * something, and a modal asking them to justify it reads as friction. The chip
- * shape follows the app's small pill controls; nothing here is a new visual
- * language. */
+ * something, and a modal asking them to justify it reads as friction.
+ * Geometry follows the approved mock (`cheems-work/od-lab/ref/od-labs-switch.html`
+ * — 8px radius chips, 6x11 padding, 7px gaps), with the mock's literal greys
+ * replaced by tokens. Note this is deliberately NOT the pill shape the older
+ * assistant-feedback chips use; the mock asks for a rounded rectangle. */
 .optOut {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin-top: 8px;
   animation: labsOptOutIn 200ms var(--ease-out);
 }
 
 .optOutPrompt {
-  font-size: 12px;
+  margin-top: 10px;
+  font-size: 12.5px;
   line-height: 1.45;
   color: var(--text-muted);
 }
@@ -216,41 +221,49 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
+  margin-top: 11px;
 }
 
 .optOutChip {
-  padding: 4px 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 11px;
   border: 1px solid var(--border);
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius);
   background: var(--bg);
-  color: var(--text);
+  color: var(--text-muted);
   font-size: 12px;
-  line-height: 1.4;
+  line-height: 1.3;
   cursor: pointer;
-  transition: border-color 200ms var(--ease-out), background-color 200ms var(--ease-out);
+  transition: border-color 200ms var(--ease-out), color 200ms var(--ease-out);
 }
 
 .optOutChip:hover,
 .optOutChip:focus-visible {
   border-color: var(--border-strong);
-  background: var(--bg-subtle);
+  color: var(--text-strong);
 }
 
 .optOutChipActive,
 .optOutChipActive:hover {
-  border-color: var(--text);
+  border-color: var(--border-strong);
   color: var(--text-strong);
 }
 
-/* Skip is an escape, not a peer of the reasons — it reads as a link so the
-   real answers keep the visual weight. */
+/* Skip is an escape, not a peer of the reasons — borderless so the real
+   answers keep the visual weight. Padding matches the chips so the baseline
+   stays on the same line. */
 .optOutSkip {
-  padding: 4px 6px;
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 5px;
   border: 0;
   background: transparent;
-  color: var(--text-muted);
+  color: var(--text-soft, var(--text-muted));
   font-size: 12px;
+  line-height: 1.3;
   cursor: pointer;
   transition: color 200ms var(--ease-out);
 }
@@ -265,18 +278,20 @@
   align-items: center;
   gap: 8px;
   max-width: 520px;
+  margin-top: 11px;
 }
 
 .optOutInput {
   flex: 1 1 auto;
   min-width: 0;
-  padding: 6px 10px;
+  padding: 9px 12px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--bg);
   color: var(--text);
-  font-size: 12.5px;
   font-family: inherit;
+  font-size: 12.5px;
+  line-height: 1.3;
 }
 
 .optOutInput:focus {
@@ -286,19 +301,22 @@
 
 .optOutSubmit {
   flex: none;
-  padding: 6px 14px;
+  padding: 9px 16px;
   border: 0;
   border-radius: var(--radius);
   background: var(--text);
   color: var(--bg);
-  font-size: 12px;
+  font-size: 12.5px;
+  line-height: 1.3;
+  white-space: nowrap;
   cursor: pointer;
   transition: opacity 200ms var(--ease-out);
 }
 
 .optOutSubmit:disabled {
   cursor: not-allowed;
-  opacity: 0.4;
+  background: var(--border-strong);
+  opacity: 1;
 }
 
 @keyframes labsOptOutIn {
@@ -315,4 +333,3 @@
 @media (prefers-reduced-motion: reduce) {
   .optOut { animation: none; }
 }
-
