@@ -83,6 +83,42 @@ export function isFullyClipped(rect: DOMRect, clip: ClipRect): boolean {
   );
 }
 
+/**
+ * 「这块面板**不受我们自己的限制**时有多高多宽」。
+ *
+ * 判据不能取被自己改过的量 —— 这是 2026-08-27 那个每帧一翻的死循环的根子:
+ * `placement` 决定 `maxHeight`,而量到的高度又被 `maxHeight` 改小,回头改变了
+ * 下一轮 `placement` 的输入。两者互相喂,一帧一翻。
+ *
+ * `scrollHeight` / `scrollWidth` 量的是**内容**,只要元素是滚动容器
+ * (`overflow: auto|scroll|hidden`),它们就**不受 `max-height` 影响** —— 正是
+ * 需要的那个不变量。Floating UI 的维护者给的解法就是这一条(issue #2954):
+ *
+ *     maxHeight = availableHeight >= floating.scrollHeight ? '' : availableHeight
+ *
+ * 边框补偿用 `clientTop` / `clientLeft`(上/左边框宽度)乘二,**不是**
+ * `offset* - client*` —— 后者还含着横向滚动条的高度,有滚动条时会把补偿量算大。
+ * 这是抄 Floating UI 的 `_deprecated-inner.ts`(`scrollHeight + clientTop * 2`)。
+ * 反正这里只是个不等式判据,差一两个像素只会让阈值稍微保守一点。
+ *
+ * 取 `max(当前盒子, 内容+边框)`:没被限制时当前盒子就是真值(内容可能更矮,
+ * 比如面板有 `min-height`);被限制时内容更高,取内容。
+ *
+ * 不用「临时撤掉 maxHeight 再量一次」是因为那会**强制同步重排两次**,而这个
+ * 函数每次滚动都要跑;也不用「第一次量到的值缓存起来」,因为菜单内容是会变的
+ * (分享/导出两块面板互换、发布状态异步回来),缓存立刻就过期。
+ */
+function naturalSize(panel: HTMLElement, rect: DOMRect): { width: number; height: number } {
+  const borderX = (panel.clientLeft || 0) * 2;
+  const borderY = (panel.clientTop || 0) * 2;
+  const scrollW = panel.scrollWidth || 0;
+  const scrollH = panel.scrollHeight || 0;
+  return {
+    width: Math.max(rect.width, scrollW > 0 ? scrollW + borderX : 0),
+    height: Math.max(rect.height, scrollH > 0 ? scrollH + borderY : 0),
+  };
+}
+
 export interface AnchoredPopover {
   placement: AnchoredPlacement;
   /**
@@ -142,6 +178,27 @@ const INITIAL: AnchoredPopover = {
  * 自己把修正放在了哪个盒子的哪个属性上)。读多少次都是同一个值,和调用次数、
  * 挂载次数、有没有重排统统无关。
  *
+ * ## 决策的输入不许是自己的输出
+ *
+ * 这一条是硬约束,不是风格问题。翻面(`placement`)、限尺寸(`max*`)、平移
+ * (`inlineShift`)三件事互相之间**只能单向依赖**,一旦成环就是每帧一翻:
+ *
+ *     锚点矩形 + 夹取框 + 自然尺寸   ← 全部与本 hook 的输出无关
+ *              ↓
+ *          placement
+ *              ↓
+ *        maxBlockSize / maxInlineSize
+ *
+ * 所以:
+ *  · `placement` 只看**自然高度**,不看被 `maxBlockSize` 改小之后的高度;
+ *  · 竖向预算按**刚定下来的 placement** 配合锚点矩形算,不按面板此刻量到的
+ *    位置算 —— 面板的位置本身就是 `placement` 的产物,拿它当输入就是绕回来了;
+ *  · 横向同理,限宽的判据取自然宽度。
+ *
+ * 2026-08-27 真机上撞过的那个环:`below` 时自然高 337 → 下面只剩 193 → 翻
+ * `above` → 限高 185 生效 → 量到的高度变成 185 → 下面 193 塞得下了 → 判回
+ * `below` → 限高撤掉 → 高度弹回 337 → 循环。
+ *
  * ## 为什么是 useLayoutEffect
  *
  * 方向和坐标必须在这一帧画出来之前定好,否则浮层会先在错的位置闪一下再跳过去。
@@ -161,19 +218,19 @@ export function useAnchoredPopover(
    * 原地那份在菜单自己的 `transform` 上。
    */
   readAppliedShift: MutableRefObject<() => number>,
-  options: { estimatedHeight: number; gap?: number } = { estimatedHeight: 0 },
+  options: { estimatedHeight: number; gap?: number; flipEnabled?: boolean } = { estimatedHeight: 0 },
 ): AnchoredPopover {
-  const { estimatedHeight, gap = 6 } = options;
+  const { estimatedHeight, gap = 6, flipEnabled = true } = options;
   const [state, setState] = useState<AnchoredPopover>(INITIAL);
   // 内联箭头每次渲染都是新的;放进 ref 后监听器只在开合时绑一次。
-  const optionsRef = useRef({ estimatedHeight, gap });
-  optionsRef.current = { estimatedHeight, gap };
+  const optionsRef = useRef({ estimatedHeight, gap, flipEnabled });
+  optionsRef.current = { estimatedHeight, gap, flipEnabled };
 
   const measure = useCallback(() => {
     const anchor = anchorRef.current;
     if (!anchor || typeof anchor.getBoundingClientRect !== 'function') return;
     const rect = anchor.getBoundingClientRect();
-    const { estimatedHeight: estH, gap: g } = optionsRef.current;
+    const { estimatedHeight: estH, gap: g, flipEnabled: canFlip } = optionsRef.current;
     const clip = clippingRect(anchor);
 
     /*
@@ -188,13 +245,21 @@ export function useAnchoredPopover(
     const anchorHidden = anchor.isConnected === false || (!degenerate && isFullyClipped(rect, clip));
 
     // 面板一旦挂上就用真实尺寸;第一帧还没有,退回估值。
-    const panelRect = panelRef?.current?.getBoundingClientRect?.();
-    const height = panelRect && panelRect.height > 0 ? panelRect.height : estH;
+    const panel = panelRef?.current ?? null;
+    const panelRect = panel?.getBoundingClientRect?.();
+    const natural = panel && panelRect ? naturalSize(panel, panelRect) : null;
+    // 翻面只看**自然高度** —— 看被限高改小之后的高度就会成环(见 docblock)。
+    const height = natural && natural.height > 0 ? natural.height : estH;
 
     const spaceBelow = clip.bottom - rect.bottom - g;
     const spaceAbove = rect.top - clip.top - g;
+    /*
+     * 原地那条路(工具栏)根本不消费 `placement` —— 它的方向由既有 CSS
+     * (`top: calc(100% + 6px)`)钉死向下。给它算一个永远不会生效的 `above`,
+     * 只会让下面的竖向预算按错误的方向去配,所以直接不翻。
+     */
     const placement: AnchoredPlacement =
-      spaceBelow < height && spaceAbove > spaceBelow ? 'above' : 'below';
+      canFlip && spaceBelow < height && spaceAbove > spaceBelow ? 'above' : 'below';
 
     /*
      * 量不到面板时**保持现状**,不是归零 —— 归零会让浮层弹回锚点原位,而且
@@ -205,7 +270,7 @@ export function useAnchoredPopover(
     let maxInlineSize: number | null = null;
     let maxBlockSize: number | null = null;
 
-    if (panelRect && panelRect.width > 0) {
+    if (panelRect && natural && panelRect.width > 0) {
       // 还原成「没有修正时它会在哪儿」——否则修正会和自己打架(见 docblock)。
       const naturalLeft = panelRect.left - applied;
       const naturalRight = panelRect.right - applied;
@@ -218,7 +283,7 @@ export function useAnchoredPopover(
        * 否则限宽会被撤掉、内容撑回原宽、再被限回来,来回抖。
        */
       const availableInline = clip.right - clip.left - INLINE_PAD * 2;
-      if (availableInline > 0 && panelRect.width >= availableInline) {
+      if (availableInline > 0 && natural.width >= availableInline) {
         maxInlineSize = availableInline;
       }
 
@@ -230,22 +295,22 @@ export function useAnchoredPopover(
       else if (overEnd > 0) inlineShift = -overEnd;
 
       /*
-       * 竖向预算按**面板真实长在哪儿**算,不按上面刚算出来的 `placement`。
+       * 竖向预算按**刚定下来的 placement** 配合锚点矩形算 —— 不按面板此刻量到
+       * 的位置算。面板的位置是 `placement` 的产物,拿它当输入就绕回来了,那是
+       * 死循环的另一半(上一版正是这么写的)。
        *
-       * 两者会不一致,而且是常态:原地那条路(工具栏)根本不消费 `placement`,
-       * 它的方向由既有 CSS 钉死向下;搬走那条路也要等 `data-placement` 落到
-       * DOM 上、CSS 重排之后才真的翻过去。拿一个还没生效(或永远不会生效)的
-       * 方向去算高度预算,就会给一块明明向下长的面板算「向上还有多少空间」——
-       * 写这段时正是这条让两个 `size` 用例红着不动。
+       * 两档的落位由既有 CSS 决定,这里只是把它算出来:
+       *   below:面板顶边 = 锚点下缘 + gap,底边顶到夹取框下缘
+       *   above:面板底边 = 锚点上缘 − gap,顶边顶到夹取框上缘
        *
-       * 面板顶边比锚点顶边低 = 它在向下长(`top: calc(100% + 6px)`);
-       * 反之是向上长(`bottom: calc(100% + 6px)`),此时下缘钉死、限高会把顶边推下来。
+       * 判据同样取**自然高度**:拿被限高改小之后的高度去判「要不要限高」,
+       * 会在边界上反复撤销又加回。
        */
-      const growsDown = panelRect.top >= rect.top;
-      const availableBlock = growsDown
-        ? clip.bottom - panelRect.top - INLINE_PAD
-        : panelRect.bottom - clip.top - INLINE_PAD;
-      if (availableBlock > 0 && panelRect.height >= availableBlock) {
+      const availableBlock =
+        placement === 'above'
+          ? rect.top - g - clip.top - INLINE_PAD
+          : clip.bottom - (rect.bottom + g) - INLINE_PAD;
+      if (availableBlock > 0 && natural.height >= availableBlock) {
         maxBlockSize = availableBlock;
       }
     }

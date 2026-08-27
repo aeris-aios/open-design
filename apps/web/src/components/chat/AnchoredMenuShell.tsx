@@ -205,6 +205,12 @@ export function AnchoredMenuShell({
     {
       // 分享面板最高,导出面板矮一些;只用来判上/下,不必精确。
       estimatedHeight: 320,
+      /*
+       * 只有搬走那份会翻面。原地那份的方向由既有 CSS 钉死在下面
+       * (`.chrome-share-menu .share-menu-popover { top: calc(100% + 6px) }`),
+       * 它连 `data-placement` 都不写 —— 给它算 `above` 只会让竖向预算配错方向。
+       */
+      flipEnabled: Boolean(anchorId),
     },
   );
 
