@@ -18,7 +18,10 @@ const matchesStampedProcess = vi.hoisted(() =>
   vi.fn<typeof import("@open-design/platform").matchesStampedProcess>(() => false),
 );
 const spawnBackgroundProcess = vi.hoisted(() => vi.fn(async () => ({ pid: 12345 })));
-const convergeSidecarLaunch = vi.hoisted(() => vi.fn(async (request: { stamp: Record<string, string> }) => {
+const convergeSidecarLaunch = vi.hoisted(() => vi.fn(async (
+  request: { stamp: Record<string, string> },
+  _options?: { timeoutMs?: number },
+) => {
   const spawned = await spawnBackgroundProcess();
   return {
     attempts: 1,
@@ -377,6 +380,26 @@ describe("inspectPackedWinApp", () => {
       } else {
         process.env.OD_JSON_IPC_TRACE = previousTrace;
       }
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+});
+
+describe("startPackedWinApp", () => {
+  it("uses an extended convergence budget for packaged Windows cold starts", async () => {
+    const root = await mkdtemp(join(tmpdir(), "open-design-win-lifecycle-"));
+    const config = createConfig(root);
+
+    try {
+      await writeFakeUnpackedExe(config);
+      convergeSidecarLaunch.mockClear();
+
+      await expect(startPackedWinApp(config, { waitForStatus: false })).resolves.toMatchObject({
+        pid: 12345,
+        status: null,
+      });
+      expect(convergeSidecarLaunch).toHaveBeenCalledWith(expect.any(Object), { timeoutMs: 90_000 });
+    } finally {
       await rm(root, { force: true, recursive: true });
     }
   });

@@ -715,7 +715,7 @@ describe("server-side atomic operations", () => {
       await stopSidecar(stable, { killGraceMs: 2_000, termGraceMs: 0 }).catch(() => undefined);
       await stopSidecar(beta, { killGraceMs: 2_000, termGraceMs: 0 }).catch(() => undefined);
     }
-  });
+  }, process.platform === "win32" ? 20_000 : 10_000);
 
   it("removes an unresponsive generation and its stale private endpoint", async () => {
     if (process.platform === "win32") return;
@@ -872,7 +872,7 @@ describe("server-side atomic operations", () => {
     }
   }, process.platform === "win32" ? 30_000 : 15_000);
 
-  it("stops an ownerless target after it rewrites its visible argv", async () => {
+  it("stops an ownerless target after it requests a visible argv rewrite", async () => {
     const fixture = fileURLToPath(new URL("./fixtures/renamed-child.ts", import.meta.url));
     const root = await mkdtemp(join(tmpdir(), "open-design-owner-renamed-"));
     const readyPath = join(root, "ready.json");
@@ -899,7 +899,9 @@ describe("server-side atomic operations", () => {
         expect(ready?.generationPid).toBe(spawned.process.pid);
         expect(runtimePid).toBeGreaterThan(0);
         const runtime = (await captureProcessSnapshot()).find(({ pid }) => pid === runtimePid);
-        expect(runtime?.command).toContain("next-server");
+        // Win32_Process.CommandLine is the immutable launch command even after
+        // Node updates process.title; Unix process listings expose that update.
+        expect(runtime?.command).toContain(process.platform === "win32" ? "renamed-child.ts" : "next-server");
       }, { interval: 100, timeout: FIXTURE_READY_TIMEOUT_MS });
       const renamedRuntimePid = runtimePid;
       if (renamedRuntimePid == null) throw new Error("renamed target did not report its pid");

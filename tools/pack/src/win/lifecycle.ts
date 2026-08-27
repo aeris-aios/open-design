@@ -63,6 +63,7 @@ import type {
 } from "./types.js";
 
 const PACKAGED_CONFIG_PATH_ENV = "OD_PACKAGED_CONFIG_PATH";
+const PACKAGED_COLD_START_CONVERGENCE_TIMEOUT_MS = 90_000;
 const UPDATE_ACTION_TIMEOUT_MS = 10 * 60 * 1000;
 
 function appStamp(
@@ -309,7 +310,7 @@ async function startPackedWinAppLocked(config: ToolPackConfig, options: { waitFo
       runtimeRoot: join(config.roots.runtime.namespaceRoot, "runtime"),
     },
     stamp,
-  });
+  }, { timeoutMs: PACKAGED_COLD_START_CONVERGENCE_TIMEOUT_MS });
   return {
     executablePath: target.executablePath,
     logPath,
