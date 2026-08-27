@@ -1150,6 +1150,50 @@
   border-bottom-color: var(--border-strong);
   box-shadow: none;
 }
+/*
+ * 自由填写框跟着落回稿子那条 **11px 竖线**,底下留稿子那 **16px**。
+ *
+ * 稿子的白底块 `.cbody`(= 我们的 `.question-form-body`)**自己不带内距** ——
+ * 内距全挂在孩子身上,而每个孩子都把内容落在同一条竖线上:
+ *   `.cbody > .q { padding: 10px 11px 8px }`
+ *   `.cbody > .opts.mod-stack { padding: 0 6px 8px }` + `.opts.mod-stack .opt { padding-inline: 5px }`(6 + 5 = 11)
+ *   `.cbody > .foot { padding: 0 11px 8px }` + `.cbody > .foot > .btn:first-child { padding-inline: 0 }`
+ * 稿子把这条写成了明文:「控件正好落在 11px,和上面那句问话同一条竖线」。
+ *
+ * 漏的是自由填写这一路:`.qf-input` / `.qf-textarea` 是 `.question-form-body` 的
+ * **直系孩子**,自己一格内距都没有 —— 在无头 Chrome 上量过(380px 的卡):
+ * 左右各只剩 1px(那 1px 是卡自己的描边),到底栏上缘 0px。下划线一路顶到卡的
+ * 两条边,底下也不留一点余地。选项那一路(`.qf-options`)和折叠的「自己填」
+ * (`.qf-custom`)早就有内距,所以只有「一句问话 + 一个填空」的卡看得见这件事。
+ *
+ * 为什么走**外距**而不是内距:那条下划线是 `border-bottom`,画在 border box 上;
+ * 加 `padding-inline` 只把文字往里推,线还是顶着卡边。外距同时要求把 `width`
+ * 从 `100%` 放回 `auto`(块级元素自己减掉外距),否则 100% + 外距会溢出 ——
+ * 所以这条必须**赢过**裸 `.qf-input`,不能打平靠源码顺序。
+ *
+ * 16 是稿子的数,不是估的:稿子里唯一的自由填写实体是 `.opt .own-ta`,量出来
+ * 下划线到底栏上缘正好 16;稿子在 `.cbody > .foot` 那条注释里把它写死过 ——
+ * 「剩下的 8 + 8 = 16,既是『最后一条选项到底栏上缘』,也是『到下一步按钮』
+ *  —— 同一个数,量哪儿都对得上」。
+ *
+ * `.question-form-body >` 这个祖先不能省:它既是**作用域**(折叠的「自己填」
+ * `.qf-custom .qf-input` 和选项里的 `.qf-own-input` 各有自己的容器内距,不该被
+ * 刷成 11),也是**特异性**(少了它就和 `.qf-custom .qf-input` 打平)。
+ */
+.question-form-body > .qf-help,
+.question-form-body > .qf-input,
+.question-form-body > .qf-textarea {
+  /* 两侧同值,没有要在 RTL 下镜像的东西,所以写物理属性 —— 和旁边的
+     `.qf-custom` / `.qf-label` 保持同一种写法,也才量得到(逻辑属性的
+     简写在 jsdom 的 CSSOM 里解析不出 `marginLeft`,断言会变成空转)。 */
+  margin-left: 11px;
+  margin-right: 11px;
+}
+.question-form-body > .qf-input,
+.question-form-body > .qf-textarea {
+  width: auto;
+  margin-bottom: 16px;
+}
 .qf-custom {
   display: block;
   width: auto;
