@@ -74,10 +74,15 @@ export interface SayTextProps {
 /* ── FileButton ─────────────────────────────────────────────
  * 文件名做成可点按钮。主名省略、后缀永远可见 —— 省略要在 JS 里量,
  * CSS 的 text-overflow 关不掉收缩项里的那点差额(稿子原话)。
+ *
+ * **`onOpen` 是「这个名字打不打得开」的唯一开关**:不传就退回纯文本
+ * (不是一颗点了没反应的按钮)。谁能打开由 `runtime/chat/record-file-open.ts`
+ * 判 —— 读取一律不做链接,写 / 改要拿得到「路径属于当前项目」的正面证据。
  */
 export interface FileButtonProps {
   path: string;
   label: string;
+  /** 不传 = 打不开 = 不渲染成按钮 */
   onOpen?: (path: string) => void;
   /** 是否按文件名规则省略(保后缀、中间省略)。命令 / 模式串**不要**开 */
   elide?: boolean;

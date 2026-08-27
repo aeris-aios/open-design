@@ -21,13 +21,34 @@ export function FileButton({ path, label, onOpen, elide }: FileButtonProps): Rea
    * 截成 `wc -l a.md tr….html`,读起来像另一条命令。默认不省,由调用方按语义开。
    */
   const shown = elide ? elideFileName(label) : label;
+  const title = shown === label ? undefined : label;
+
+  /*
+   * 没有 `onOpen` = 这个名字打不开,那就**不要长成按钮**。
+   *
+   * 原来这里无论如何都吐一颗 `<button>`,只是不挂 onClick —— 键盘 Tab 得到、
+   * 读屏念「打开 X」、鼠标移上去还有手型和下划线,按下去什么都不发生。
+   * 那不叫「不可点」,那叫「点了没反应」;而对读取到的项目外文件,
+   * 连「打开 X」这句读屏标签本身就是假的(产品 2026-08-27)。
+   * 搜索模式、`执行 <命令>` 那两处从来就没传过 `onOpen`,也一起回到纯文本。
+   *
+   * 判据不在这里 —— 在 `runtime/chat/record-file-open.ts`,由 `ToolRow` 调用。
+   */
+  if (!onOpen) {
+    return (
+      <span className={`${styles.file} ${styles.fileStatic}`} title={title}>
+        <code>{shown}</code>
+      </span>
+    );
+  }
+
   return (
     <button
       type="button"
       className={styles.file}
       aria-label={`打开 ${label}`}
-      title={shown === label ? undefined : label}
-      onClick={onOpen ? () => onOpen(path) : undefined}
+      title={title}
+      onClick={() => onOpen(path)}
     >
       <code>{shown}</code>
     </button>

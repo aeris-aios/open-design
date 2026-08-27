@@ -19,6 +19,7 @@ import type { ExecutionShell as ShellData, ImageRow as ImageRowData, ShellItem, 
 import { isExpandable, isStruck } from '../../runtime/chat/contract';
 import { formatElapsed, formatShellElapsed } from '../../runtime/chat/format';
 import { groupThinking, type GroupedShellItem } from '../../runtime/chat/group-thinking';
+import type { RecordFileScope } from '../../runtime/chat/record-file-open';
 import { Foldable } from './primitives/Foldable';
 import { ImageRow } from './primitives/ImageRow';
 import { useThinkingStream } from './primitives/useThinkingStream';
@@ -44,11 +45,17 @@ export const SLOW_UPSTREAM_AFTER_MS = 60_000;
 export interface ExecutionShellProps {
   shell: ShellData;
   onOpenFile?: (path: string) => void;
+  /**
+   * 判「工具行里那个文件名该不该做成打开入口」需要的作用域。
+   * 读取一律不做链接,写 / 改要拿得到「路径属于当前项目」的正面证据 ——
+   * 判据与理由在 `runtime/chat/record-file-open.ts`。
+   */
+  fileScope?: RecordFileScope;
   /** 生图失败格的「重试」—— 没有回调时那一格只画不点(稿子也允许只画) */
   onRetryImage?: (row: ImageRowData, index: number) => void;
 }
 
-export function ExecutionShell({ shell, onOpenFile, onRetryImage }: ExecutionShellProps): ReactElement {
+export function ExecutionShell({ shell, onOpenFile, fileScope, onRetryImage }: ExecutionShellProps): ReactElement {
   const t = useT();
   const running = shell.status === 'running' && !shell.stopped;
   const elapsed = formatShellElapsed(shell.elapsedMs);
@@ -157,7 +164,7 @@ export function ExecutionShell({ shell, onOpenFile, onRetryImage }: ExecutionShe
       bodyRef={bodyRef}
       className={hasTodo ? styles.hasTodo : undefined}
     >
-      {items.length ? items.map((item, i) => renderItem(item, i, { t, onOpenFile, onRetryImage })) : null}
+      {items.length ? items.map((item, i) => renderItem(item, i, { t, onOpenFile, fileScope, onRetryImage })) : null}
     </Foldable>
   );
 }
@@ -165,6 +172,7 @@ export function ExecutionShell({ shell, onOpenFile, onRetryImage }: ExecutionShe
 interface RenderCtx {
   t: ReturnType<typeof useT>;
   onOpenFile?: (path: string) => void;
+  fileScope?: RecordFileScope;
   onRetryImage?: (row: ImageRowData, index: number) => void;
 }
 
@@ -173,7 +181,7 @@ function renderItem(item: GroupedShellItem, index: number, ctx: RenderCtx): Reac
     return <ThoughtsRow key={`thoughts-${index}`} texts={item.texts} t={ctx.t} />;
   }
   if (item.kind === 'tool') {
-    return <ToolRow key={`tool-${item.id}-${index}`} row={item} onOpenFile={ctx.onOpenFile} />;
+    return <ToolRow key={`tool-${item.id}-${index}`} row={item} onOpenFile={ctx.onOpenFile} fileScope={ctx.fileScope} />;
   }
   if (item.kind === 'text') {
     return <SayText key={`text-${index}`} text={item.text} />;

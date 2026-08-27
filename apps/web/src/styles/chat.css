@@ -3568,9 +3568,46 @@ body.od-quick-switcher-open .chat-composer-fixed-layer .composer-att .msg-att-de
      整行窄 24px。宽度那条 `calc(100% - inset*2)` 是同一件事的另一半,一起还原。 */
   width: 100%;
   margin-inline: 0;
-  border: 0;
   background: none;
   padding: 0;
+  /* ── 外框:稿子「不套框」那半条被产品撤了(2026-08-27)────────────────
+     原话:「给我们消息队列加一个小边框吧,不然有点混在一起了,你边框淡一点」。
+     稿子当初撤框的理由(「输入框自己已经是个有边的东西,队列再套一圈,
+     人得先分辨这两块是不是一回事」)在真实场景里翻了过来:队列夹在流水和输入框
+     中间,三块同一个底色、中间一条边都没有,读起来是连着的一整片。
+
+     **只补一条线,不补底、不补阴影** —— 稿子「不铺底」那半条留着。
+     要的是分隔,不是强调;铺底会让队列变成第二张卡片,正是稿子担心的那件事。
+
+     色值 `--chat-border-soft`(#ededed)不是随手挑的淡:
+       · 它**就是队列自己行间分隔线**用的那一档(下面 `.q + .q` 的 `--border-soft`)。
+         外框和内线同一个重量,整条读成「一块列表」,而不是「一个框套着一个表」。
+       · 正下方输入框 `.composer-shell` 的边是 `--bg-fill-secondary`
+         = `rgba(0,0,0,0.06)`;`#ededed` 落在白底上约等于 `rgba(0,0,0,0.07)`,
+         两者几乎同重 —— 分得开,又不会把输入框的边压下去。
+       · 正上方那枚 PlanPill 用的是 `--chat-border`(#dbdbdb)。同一个值搬到
+         这条通栏矩形上就过重了(是输入框那条边的两倍多),产品要的是「淡一点」。
+
+     半径取 `--chat-radius`(8px):执行记录里带框的那一层(`record.module.css`
+     的 `.fold` boxed 态)就是这个值。输入框是 `--radius-lg`(12px),
+     比它收一档,队列读起来是从属的一条,不是并排的第二张卡。
+
+     ⚠️ `--chat-*` 只在 `[data-chat-root]` 子树里有定义(`chat/ChatRoot.module.css`)。
+     队列条挂在 `ChatPane` 的 `chatSeam('pane')` 之内,解析得到;
+     哪天它被搬到接缝之外,这三个 var 会**静默**解析成空串,整条 border 声明作废、
+     框直接不出现且不报错。钉子在
+     `tests/components/chat/queue-strip-border.test.tsx` 的「接缝」一节。 */
+  border: var(--chat-stroke) solid var(--chat-border-soft);
+  border-radius: var(--chat-radius);
+  /* 卡片时代那条投影(2337 行的 `0 10px 24px -18px` + `0 1px 2px`)一直**漏在这儿**:
+     按稿子撤框那一版只写了 `border: 0; background: none; padding: 0`,没把它一起撤,
+     于是队列至今顶着一道没有框的浮空阴影。补一条线的同时把它收掉 ——
+     一条淡线 + 一层投影是两种分隔手法叠用,读起来就不「淡」了。 */
+  box-shadow: none;
+  /* 行的悬停底色是方角的(`.q:hover`),不裁一刀就会从圆角外面探出一小块。
+     提示浮层走 body 上的 `.od-tooltip-layer`,拖放指示线本来就被
+     `.chat-queued-send-list` 的 `overflow-y: auto` 裁着 —— 这一刀不影响它们。 */
+  overflow: hidden;
 }
 /* 稿子 `.queue { max-height: 122px; overflow-y: auto }` —— **只有这两条**,
    它是一个普通的**块**。我们这边是 `display: flex; flex-direction: column`(2356 行),

@@ -137,11 +137,30 @@ describe('StatusMark', () => {
 });
 
 describe('ToolRow', () => {
-  it('读文件:动词 + 可点的文件名', () => {
+  /*
+   * 产品 2026-08-27 把这一档撤了:「这些文件不要变成可点击的.. 因为读的不一定是
+   * 我们项目文件夹下的文件....」。规则与理由在 `runtime/chat/record-file-open.ts`,
+   * 成对的验收在 `tests/components/chat/record-read-not-clickable.test.tsx`。
+   * 这里留一条,是因为原来的断言正好写在这个位置,别让它悄悄消失。
+   */
+  it('读文件:动词 + 文件名,但文件名**不是**可点的按钮', () => {
     const onOpen = vi.fn();
     render(<ToolRow row={row({ tool: 'read', file: { path: '/a/规格.md', label: '规格.md' } })} onOpenFile={onOpen} />);
-    fireEvent.click(screen.getByRole('button', { name: '打开 规格.md' }));
-    expect(onOpen).toHaveBeenCalledWith('/a/规格.md');
+    expect(screen.getByText('规格.md')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: '打开 规格.md' })).toBeNull();
+    expect(onOpen).not.toHaveBeenCalled();
+  });
+
+  it('写文件:项目里的那一个仍然可点', () => {
+    const onOpen = vi.fn();
+    render(
+      <ToolRow
+        row={row({ tool: 'write', name: 'Write', file: { path: 'card.html', label: 'card.html' } })}
+        onOpenFile={onOpen}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: '打开 card.html' }));
+    expect(onOpen).toHaveBeenCalledWith('card.html');
   });
 
   it('写文件显示改动量,不显示耗时(设计稿:两者二选一)', () => {
@@ -187,9 +206,18 @@ describe('SayText / FileButton', () => {
     expect(container.querySelector('p')).toBeNull();
   });
 
-  it('文件名按钮的可读标签指向打开动作', () => {
-    render(<FileButton path="/x/card.html" label="card.html" />);
+  it('能打开时:可读标签指向打开动作', () => {
+    render(<FileButton path="/x/card.html" label="card.html" onOpen={() => {}} />);
     expect(screen.getByRole('button', { name: '打开 card.html' })).toBeTruthy();
+  });
+
+  /* 没有 `onOpen` = 打不开,那就别长成按钮:原来照样吐一颗不挂 onClick 的 `<button>`,
+     键盘 Tab 得到、读屏念「打开 X」,按下去什么都不发生 —— 那句标签本身是假的。 */
+  it('打不开时:退回纯文本,既不可聚焦也不念「打开」', () => {
+    const { container } = render(<FileButton path="/x/card.html" label="card.html" />);
+    expect(screen.getByText('card.html')).toBeTruthy();
+    expect(container.querySelector('button')).toBeNull();
+    expect(screen.queryByLabelText('打开 card.html')).toBeNull();
   });
 });
 
