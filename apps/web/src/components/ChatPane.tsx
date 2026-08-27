@@ -22,8 +22,6 @@ import {
   type MutableRefObject,
   type ReactNode,
 } from 'react';
-import type { ArtifactExportFormat } from '../runtime/chat/artifact-export';
-import type { ArtifactPublishTarget } from '../runtime/chat/artifact-publish';
 import { createPortal } from 'react-dom';
 import { hasOdCard } from '@open-design/contracts';
 import { useAnalytics } from '../analytics/provider';
@@ -668,10 +666,10 @@ interface Props {
   // "Next step" affordance handlers forwarded to the last assistant message.
   // The featured design-toolbox rows are driven directly off the composer ref
   // owned here, so they need no handler from ProjectView (unlike onArtifactShare).
-  /** `target` 由产物卡的发布浮层带上;不带就是「打开文件 + 展开分享菜单」。 */
-  onArtifactShare?: (fileName: string, target?: ArtifactPublishTarget) => void;
-  /** `format` 由产物卡的格式浮层带上;不带就是「打开文件 + 展开导出菜单」。 */
-  onArtifactDownload?: (fileName: string, format?: ArtifactExportFormat) => void;
+  /** `anchorId` 由产物卡那枚胶囊带上:菜单开在它旁边,而不是预览区右上角。 */
+  onArtifactShare?: (fileName: string, anchorId?: string) => void;
+  /** `anchorId` 同上。 */
+  onArtifactDownload?: (fileName: string, anchorId?: string) => void;
   onForkFromMessage?: (assistantMessage: ChatMessage) => void;
   forkingMessageId?: string | null;
   // Header "+" button — kicks off ProjectView's create-conversation flow.
@@ -3753,7 +3751,7 @@ interface AssistantCallbacks {
     | ((message: ChatMessage, change: ChatMessageFeedbackChange) => void)
     | undefined;
   onBrandBrowserAssistConfirm: BrandBrowserAssistConfirm | undefined;
-  onArtifactShare: ((fileName: string, target?: ArtifactPublishTarget) => void) | undefined;
+  onArtifactShare: ((fileName: string, anchorId?: string) => void) | undefined;
   onForkFromMessage: ((message: ChatMessage) => void) | undefined;
   onShareToOpenDesign: ((assistantMessageId: string) => void) | undefined;
   onNextStepAiOptimize: (() => void) | undefined;
@@ -4130,8 +4128,8 @@ function ChatRows({
   nextUserContentByAssistantId: Map<string, string>;
   assistantCallbacksRef: MutableRefObject<AssistantCallbacks>;
   onBrandBrowserAssistConfirm?: BrandBrowserAssistConfirm;
-  /** `target` 由产物卡的发布浮层带上;不带就是「打开文件 + 展开分享菜单」。 */
-  onArtifactShare?: (fileName: string, target?: ArtifactPublishTarget) => void;
+  /** `anchorId` 由产物卡那枚胶囊带上:菜单开在它旁边,而不是预览区右上角。 */
+  onArtifactShare?: (fileName: string, anchorId?: string) => void;
   onToolboxAction?: (id: DesignToolboxActionId) => void;
   onNextStepPromptAction?: (
     prompt: string,
@@ -4150,8 +4148,8 @@ function ChatRows({
   onPickSkill?: (skillId: string) => void;
   /** 把一条「下一步引导」当作用户的下一条消息直接发出去 */
   onNextStepSuggestion?: (text: string) => void;
-  /** `format` 由产物卡的格式浮层带上;不带就是「打开文件 + 展开导出菜单」。 */
-  onArtifactDownload?: (fileName: string, format?: ArtifactExportFormat) => void;
+  /** `anchorId` 同上。 */
+  onArtifactDownload?: (fileName: string, anchorId?: string) => void;
   nextStepSkills?: SkillSummary[];
   nextStepVariant?: NextStepActionsVariant;
   onForkFromMessage?: (message: ChatMessage) => void;
@@ -4347,7 +4345,7 @@ function ChatRows({
         }
         onArtifactShare={
           onArtifactShare
-            ? (fileName, target) => assistantCallbacksRef.current.onArtifactShare?.(fileName, target)
+            ? (fileName, anchorId) => assistantCallbacksRef.current.onArtifactShare?.(fileName, anchorId)
             : undefined
         }
         onToolboxAction={onToolboxAction}

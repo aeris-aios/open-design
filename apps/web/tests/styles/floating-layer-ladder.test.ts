@@ -26,7 +26,7 @@ function withoutComments(css: string): string {
   return css.replace(/\/\*[\s\S]*?\*\//g, '');
 }
 
-const popover = withoutComments(read('components/chat/ArtifactActionPopover.module.css'));
+const anchoredMenu = withoutComments(read('components/chat/AnchoredMenuShell.module.css'));
 
 function tokenValue(name: string): number {
   const match = new RegExp(`--${name}:\\s*(\\d+)`).exec(tokens);
@@ -60,10 +60,57 @@ describe('悬浮层的两档', () => {
     expect(rule).toContain('z-index: var(--z-menu)');
   });
 
-  it('产物卡的浮层也落在菜单层,而不是自己挑一个刚好压过今天那条 tooltip 的数', () => {
-    expect(popover).toContain('z-index: var(--z-menu)');
+  it('搬到卡片旁边的那份菜单也落在菜单层,而不是自己挑一个刚好压过今天那条 tooltip 的数', () => {
+    expect(anchoredMenu).toContain('z-index: var(--z-menu)');
     // 反向:整个文件里不许再出现裸的 z-index 数字
-    const bare = popover.match(/z-index:\s*\d+/g) ?? [];
-    expect(bare, `浮层样式里还有裸数字 ${bare.join(', ')}`).toHaveLength(0);
+    const bare = anchoredMenu.match(/z-index:\s*\d+/g) ?? [];
+    expect(bare, `锚定菜单的样式里还有裸数字 ${bare.join(', ')}`).toHaveLength(0);
+  });
+});
+
+/**
+ * 接缝:搬走的那份和原地那份**解析同一批变量**。
+ *
+ * 2026-08-27 有人问:浮层现在 portal 到 body 了,会不会像 composer 的引用条那样
+ * 悄悄丢掉 `--chat-*`?真机量过(headless Chrome + CDP,`getComputedStyle` 与
+ * `computedStyleMap()` 逐项比):
+ *
+ *   · 24 项标准属性 × 菜单本体和五类子元素 —— **零差异**(祖先类跟着 portal 走了);
+ *   · 自定义属性 —— **零差异**。因为预览区那块菜单本来就长在 workspace 那一栏,
+ *     跟聊天那一栏是兄弟,**原地那份也不在接缝里**。两边都取不到 `--chat-*`,
+ *     一致。
+ *
+ * 所以这里**故意不挂 `chatSeam()`**:挂上去反而会造出不对称 —— 搬走的那份能解析
+ * `--chat-border`、原地那份不能,于是哪天有人往 `.share-menu-*` 里写一个
+ * `var(--chat-…)`,它会在卡片旁边好好的、在工具栏下面悄悄失效。一致地没有,
+ * 比一半有一半没有安全。
+ *
+ * 代价是这条一致性没人守 —— 由下面这条守:菜单的样式里不许出现 `--chat-*`。
+ */
+describe('锚定菜单的变量作用域', () => {
+  const shellCss = read('components/chat/AnchoredMenuShell.tsx');
+
+  it('壳子不挂 chatSeam —— 挂了会让两种形态解析出不同的变量', () => {
+    expect(shellCss).not.toContain('chatSeam');
+  });
+
+  it('菜单的样式不许依赖 --chat-*(两种形态都取不到,写了就是静默失效)', () => {
+    for (const rel of ['styles/shell.css', 'styles/viewer/tools.css']) {
+      const css = withoutComments(read(rel));
+      const rules = css.split('}');
+      const offenders = rules.filter(
+        (rule) =>
+          /\.(share-menu|chrome-unified|chrome-publish|chrome-access)/.test(rule) &&
+          /var\(--chat-/.test(rule),
+      );
+      expect(offenders, `${rel} 里的菜单规则用了 --chat-*:\n${offenders.join('\n')}`).toHaveLength(0);
+    }
+  });
+
+  it('锚定壳自己也不依赖 --chat-*(反向对照:它确实读了别的变量)', () => {
+    const css = withoutComments(read('components/chat/AnchoredMenuShell.module.css'));
+    expect(css).not.toMatch(/var\(--chat-/);
+    // 反向:不是整份文件都没有 var(),否则上一条永真
+    expect(css).toMatch(/var\(--z-menu\)/);
   });
 });

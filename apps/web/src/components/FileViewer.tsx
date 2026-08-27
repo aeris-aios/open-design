@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type CSSProperties, type DragEvent as ReactDragEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import type { ArtifactExportFormat } from '../runtime/chat/artifact-export';
-import { PUBLIC_LINK_TARGET, type ArtifactPublishTarget } from '../runtime/chat/artifact-publish';
+import { AnchoredMenuShell } from './chat/AnchoredMenuShell';
 import { createPortal, flushSync } from 'react-dom';
 import { Button, Input, Select } from '@open-design/components';
 import {
@@ -1769,10 +1769,10 @@ interface Props {
   onCommentModeChange?: (active: boolean) => void;
   // Bumped nonce asking this viewer to open its Share/Export menu (chat-side
   // "Share" next-step action). Only HTML artifacts expose a Share menu.
-  shareRequest?: { nonce: number; target?: ArtifactPublishTarget } | null;
+  shareRequest?: { nonce: number; anchorId?: string } | null;
   // Bumped nonce asking this viewer to open its Download/Export menu (chat-side
   // "Download" next-step action).
-  downloadRequest?: { nonce: number; format?: ArtifactExportFormat } | null;
+  downloadRequest?: { nonce: number; anchorId?: string } | null;
   // Bumped nonce asking a deck preview to flip to `slideIndex` (a queued chat
   // send for this file just started processing).
   slideNavRequest?: { slideIndex: number; nonce: number } | null;
@@ -7375,8 +7375,8 @@ function HtmlViewer({
   onOpenFileReplacing?: (openName: string, closeName: string) => void;
   commentPortalId?: string;
   onCommentModeChange?: (active: boolean) => void;
-  shareRequest?: { nonce: number; target?: ArtifactPublishTarget } | null;
-  downloadRequest?: { nonce: number; format?: ArtifactExportFormat } | null;
+  shareRequest?: { nonce: number; anchorId?: string } | null;
+  downloadRequest?: { nonce: number; anchorId?: string } | null;
   slideNavRequest?: { slideIndex: number; nonce: number } | null;
   // Read-only viewer of a team-shared project: comment-only, no edit/export.
   viewerOnly?: boolean;
@@ -9248,6 +9248,16 @@ function HtmlViewer({
   const speakerNotesTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const boardPreviewScaleOptions = localCommentSideDockActive ? { canvasPadding: 0 } : undefined;
   const shareRef = useRef<HTMLDivElement | null>(null);
+  /*
+   * 菜单开在哪儿。
+   *
+   * `null` = 工具栏点开的那一条路,菜单原地长在 `.chrome-share-menu` 里,和搬动
+   * 之前完全一样。有值 = 产物卡上那枚胶囊点开的,菜单要开在**那枚按钮**旁边
+   * (产品 2026-08-27)—— 菜单本身是同一块,只是换个地方渲染。
+   */
+  const [menuAnchorId, setMenuAnchorId] = useState<string | null>(null);
+  // portal 出去的那一份要单独算「点在里面」,否则外点关闭会把它自己关掉
+  const anchoredMenuRef = useRef<HTMLDivElement | null>(null);
   const [chromeActionsHost, setChromeActionsHost] = useState<HTMLElement | null>(
     () => (typeof document === 'undefined' ? null : resolveChromeActionsHost()),
   );
@@ -13148,6 +13158,18 @@ function HtmlViewer({
     const onDocClick = (e: MouseEvent) => {
       if (!shareRef.current) return;
       if (shareRef.current.contains(e.target as Node)) return;
+      /*
+       * 搬到产物卡旁边的那一份 portal 在 `<body>` 下,不在 `shareRef` 的子树里 ——
+       * 不单独认它,点自己的菜单项会先把菜单关掉(`useDismissOnOutsideInteraction`
+       * 的 docblock 早写过这条前提)。锚点那枚按钮也算「里面」,否则点它等于
+       * 「关掉 + 再开一次」。
+       */
+      const target = e.target as Node;
+      if (anchoredMenuRef.current?.contains(target)) return;
+      if (
+        menuAnchorId &&
+        (target as Element)?.closest?.(`[data-artifact-anchor="${menuAnchorId}"]`)
+      ) return;
       setDeployMenuOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
@@ -13160,7 +13182,7 @@ function HtmlViewer({
       document.removeEventListener('mousedown', onDocClick);
       document.removeEventListener('keydown', onKey);
     };
-  }, [deployMenuOpen, workspaceActive]);
+  }, [deployMenuOpen, workspaceActive, menuAnchorId]);
 
   useEffect(() => {
     if (!workspaceActive || !inTabPresent) return;
@@ -14207,24 +14229,15 @@ function HtmlViewer({
     setExportReadyNudge(false);
     markExportReadyNudgeSeen(projectId, file.name);
     /*
-     * 带着目的地来的请求**直接发那一处** —— 产物卡上那枚浮层已经让人选过了
-     * (产品 2026-08-27)。再把这块面板展开一次,等于让人在**视口右上角**重选
-     * 一遍刚在卡上选过的东西:实测按钮在 (129, 2287),这块面板在 (1436, 94)。
-     * 不带目的地的(「下一步引导」那行〔分享〕)照旧展开面板。
+     * 开的是**同一块**分享菜单;`anchorId` 只决定它开在哪儿 —— 产物卡传锚点,
+     * 菜单就贴着卡上那枚按钮;「下一步引导」那行不传,菜单照旧开在预览区工具栏
+     * 下面(产品 2026-08-27:「为啥不直接复用现在那个分享弹窗??」)。
      */
-    const target = shareRequest?.target;
-    if (target) {
-      if (target === PUBLIC_LINK_TARGET) {
-        void publishCurrentFilePublic();
-      } else {
-        void openDeployModal(target);
-      }
-      return;
-    }
+    setMenuAnchorId(shareRequest?.anchorId ?? null);
     setUnifiedActionTab('share');
     setDeployMenuOpen(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shareRequest?.nonce, shareRequest?.target, canShare, projectId, file.name]);
+  }, [shareRequest?.nonce, shareRequest?.anchorId, canShare, projectId, file.name]);
 
   // Parallel to shareRequest, but opens the Download / Export menu instead — the
   // assistant "next step" card's Download row routes here so it surfaces the same
@@ -14238,20 +14251,12 @@ function HtmlViewer({
     consumedDownloadNonceRef.current = nonce;
     setExportReadyNudge(false);
     markExportReadyNudgeSeen(projectId, file.name);
-    /*
-     * 带着格式来的请求**直接导那一种** —— 产物卡上那枚浮层已经让人选过了
-     * (产品 2026-08-27)。再把菜单展开一次等于让人选第二遍。
-     * 不带格式的(「下一步引导」那行〔下载〕)照旧展开菜单。
-     */
-    const format = downloadRequest?.format;
-    if (format) {
-      runExportFormat(format);
-      return;
-    }
+    /* 与分享同一条路,换成导出菜单。 */
+    setMenuAnchorId(downloadRequest?.anchorId ?? null);
     setUnifiedActionTab('export');
     setDeployMenuOpen(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [downloadRequest?.nonce, downloadRequest?.format, canDownload, projectId, file.name]);
+  }, [downloadRequest?.nonce, downloadRequest?.anchorId, canDownload, projectId, file.name]);
 
   // A queued chat send for this deck just started: flip the preview to the
   // slide its marked element lives on. We write the cached slide state first so
@@ -15965,7 +15970,22 @@ function HtmlViewer({
                   </button>
                 ) : null}
                 {deployMenuOpen && (rawCanShare || rawCanDownload) ? (
-                  <div className="share-menu-popover chrome-unified-popover" role="menu">
+                  /*
+                    * **同一块菜单,只是可能换个地方开。**
+                    *
+                    * `menuAnchorId` 为空 = 工具栏点开的,原地渲染,和搬动之前逐字一致;
+                    * 有值 = 产物卡上那枚胶囊点开的,portal 到 body 贴着那枚按钮开
+                    * (产品 2026-08-27:「为啥这个发布弹窗是这样的?? 为啥不直接复用
+                    *  现在那个分享弹窗??」「导出这个样式也不对呢, 为啥不直接复用?」)。
+                    *
+                    * 下面两块面板一行都没动 —— 这正是「一份实现」的意思。
+                    */
+                  <AnchoredMenuShell
+                    anchorId={menuAnchorId}
+                    wrapperClassName="share-menu chrome-share-menu chrome-share-menu--unified"
+                    className="share-menu-popover chrome-unified-popover"
+                    portalRef={anchoredMenuRef}
+                  >
                     {unifiedActionTab === 'share' && rawCanShare ? (
                       <div className="chrome-unified-panel chrome-unified-panel--share">
                       {/* Team-only, same as ReactComponentViewer's copy of this card above —
@@ -16341,7 +16361,7 @@ function HtmlViewer({
                   ) : null}
                       </div>
                     ) : null}
-                  </div>
+                  </AnchoredMenuShell>
                 ) : null}
               </div>
               {viewerOnly ? null : (

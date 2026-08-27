@@ -12,8 +12,6 @@ import {
   type PointerEvent as ReactPointerEvent,
   type SetStateAction,
 } from 'react';
-import type { ArtifactExportFormat } from '../runtime/chat/artifact-export';
-import type { ArtifactPublishTarget } from '../runtime/chat/artifact-publish';
 import { AnimatePresence } from 'motion/react';
 import { createHtmlArtifactManifest, inferLegacyManifest } from '../artifacts/manifest';
 import { resolveHtmlPointerArtifactTarget } from '../artifacts/pointer';
@@ -2610,11 +2608,11 @@ export function ProjectView({
   // file's Share/Export menu. Drives the "Share" next-step action: it reuses the
   // existing export/deploy surface rather than introducing a new share backend.
   const [shareRequest, setShareRequest] = useState<
-    { name: string; nonce: number; target?: ArtifactPublishTarget } | null
+    { name: string; nonce: number; anchorId?: string } | null
   >(null);
   // Parallel to shareRequest, but opens the workspace's Download/Export menu.
   const [downloadRequest, setDownloadRequest] = useState<
-    { name: string; nonce: number; format?: ArtifactExportFormat } | null
+    { name: string; nonce: number; anchorId?: string } | null
   >(null);
   const [designSystemEditRequest, setDesignSystemEditRequest] =
     useState<{ module: 'logo'; nonce: number } | null>(null);
@@ -10335,9 +10333,9 @@ export function ProjectView({
   // workspace's existing Share/Export menu. The featured design-toolbox rows are
   // driven by ChatPane's composer ref, so ProjectView no longer wires them here.
   const handleArtifactShare = useCallback(
-    (fileName: string, target?: ArtifactPublishTarget) => {
+    (fileName: string, anchorId?: string) => {
       requestOpenFile(fileName);
-      setShareRequest({ name: fileName, nonce: Date.now(), ...(target ? { target } : {}) });
+      setShareRequest({ name: fileName, nonce: Date.now(), ...(anchorId ? { anchorId } : {}) });
     },
     [requestOpenFile],
   );
@@ -10350,9 +10348,9 @@ export function ProjectView({
    * 展开导出菜单。
    */
   const handleArtifactDownload = useCallback(
-    (fileName: string, format?: ArtifactExportFormat) => {
+    (fileName: string, anchorId?: string) => {
       requestOpenFile(fileName);
-      setDownloadRequest({ name: fileName, nonce: Date.now(), ...(format ? { format } : {}) });
+      setDownloadRequest({ name: fileName, nonce: Date.now(), ...(anchorId ? { anchorId } : {}) });
     },
     [requestOpenFile],
   );

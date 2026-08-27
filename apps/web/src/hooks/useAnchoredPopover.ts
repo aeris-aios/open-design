@@ -39,7 +39,7 @@ export interface AnchoredPopover {
 export function useAnchoredPopover(
   open: boolean,
   anchorRef: RefObject<HTMLElement | null>,
-  panelRef: RefObject<HTMLElement | null>,
+  panelRef: RefObject<HTMLElement | null> | null,
   options: { estimatedHeight: number; estimatedWidth: number; gap?: number } = {
     estimatedHeight: 0,
     estimatedWidth: 0,
@@ -60,7 +60,7 @@ export function useAnchoredPopover(
     const rect = anchor.getBoundingClientRect();
     const { estimatedHeight: estH, estimatedWidth: estW, gap: g } = optionsRef.current;
     // 面板一旦挂上就用真实尺寸;第一帧还没有,退回估值。
-    const panelRect = panelRef.current?.getBoundingClientRect?.();
+    const panelRect = panelRef?.current?.getBoundingClientRect?.();
     const height = panelRect && panelRect.height > 0 ? panelRect.height : estH;
     const width = panelRect && panelRect.width > 0 ? panelRect.width : estW;
 
@@ -84,7 +84,10 @@ export function useAnchoredPopover(
         : rect.bottom + g;
 
     setState({ placement, style: { position: 'fixed', top, left } });
-  }, [anchorRef, panelRef]);
+    // `anchorRef` / `panelRef` 是稳定的 ref 对象,不进依赖 —— 进了就等于把
+    // 「每帧新建一个 ref-like 对象」的调用方拖进死循环。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useLayoutEffect(() => {
     if (!open) return;
