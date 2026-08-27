@@ -3,6 +3,7 @@ import { useCallback, useEffect, useId, useRef, useState, type RefObject , useSy
 import { createPortal } from 'react-dom';
 
 import { useI18n, type Locale } from '../i18n';
+import { issueStatusObservation } from '../providers/status-observation';
 import {
   clearAnonymousState,
   findGoPlanSunsetMessage,
@@ -239,6 +240,9 @@ export function MessageCenter({
     // to clear and let a signed-out session survive the sign-in.
     const anonSeqAtStart = currentAnonymousWriteSeq();
     if (messagesRef.current.length === 0) setSyncState('loading');
+    // Taken before the read goes out — which of two answers is newer is a
+    // question about the requests, not about when they were consumed.
+    const issuedStatusObservation = issueStatusObservation();
     const authMode = await readAmrAuthMode();
     const account = authMode === 'signed-in';
     // Before the writes, not after them. `account` describes the authority the
@@ -264,7 +268,12 @@ export function MessageCenter({
     if (authMode !== 'unavailable') {
       // Recorded for every host, not just this one: snapshot admission needs the
       // latest authoritative answer, and a non-answer must not overwrite it.
-      noteAuthoritativeAuthMode(account);
+      //
+      // Ordered against the app's status reads as well as against this
+      // component's own, because both publish here. If this read was overtaken
+      // while it was on the wire it no longer describes the session, and the
+      // rest of the run is working from it.
+      if (!noteAuthoritativeAuthMode(account, issuedStatusObservation)) return;
       loggedInRef.current = account;
       setLoggedIn(account);
     }

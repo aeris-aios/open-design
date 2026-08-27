@@ -111,12 +111,38 @@ export function subscribeAuthoritativeAuthMode(listener: () => void): () => void
  * observed to have ended was overtaken just the same.
  */
 let authModeEpoch = 0;
+let lastAppliedAuthObservation = 0;
 
 export function currentAuthModeEpoch(): number {
   return authModeEpoch;
 }
 
-export function noteAuthoritativeAuthMode(loggedIn: boolean): void {
+/**
+ * Publish what the session is, and say whether the observation was accepted.
+ *
+ * There is more than one reader of the session status — the app's status effect
+ * and the surfaces that feed it, and `MessageCenter.sync`, which reads the auth
+ * mode itself — and they answer in whatever order the daemon manages. Ordering
+ * each reader against its own previous requests does not order it against the
+ * OTHER reader, so this is where the single order has to be applied: it is the
+ * one place an observation becomes the truth about the session.
+ *
+ * `observation` is the issue order from `providers/status-observation`, taken
+ * before the read went out. An observation older than the one already applied
+ * says nothing about the session any more and is refused; the caller should
+ * drop everything else it was going to do with that answer, which is what the
+ * boolean is for. An observation of `null` is treated as current — nothing
+ * synthesises one today, and failing closed there would reject a reader that
+ * never raced.
+ */
+export function noteAuthoritativeAuthMode(
+  loggedIn: boolean,
+  observation: number | null = null,
+): boolean {
+  if (observation !== null) {
+    if (observation < lastAppliedAuthObservation) return false;
+    lastAppliedAuthObservation = observation;
+  }
   const changed = lastAuthoritativeLoggedIn !== null && lastAuthoritativeLoggedIn !== loggedIn;
   if (lastAuthoritativeLoggedIn !== loggedIn) authModeEpoch += 1;
   lastAuthoritativeLoggedIn = loggedIn;
@@ -130,7 +156,7 @@ export function noteAuthoritativeAuthMode(loggedIn: boolean): void {
     lastSyncSnapshot = null;
     inFlightSync = null;
   }
-  if (!changed) return;
+  if (!changed) return true;
   for (const listener of [...authModeListeners]) {
     try {
       listener();
@@ -138,6 +164,7 @@ export function noteAuthoritativeAuthMode(loggedIn: boolean): void {
       console.error('[message-center] auth-mode subscriber failed', error);
     }
   }
+  return true;
 }
 
 let lastSyncSnapshot: MessageCenterSnapshot | null = null;
@@ -171,6 +198,7 @@ export function resetMessageCenterSnapshot(): void {
   lastSyncSnapshot = null;
   lastAuthoritativeLoggedIn = null;
   authModeEpoch = 0;
+  lastAppliedAuthObservation = 0;
   authModeListeners.clear();
   inFlightSync = null;
   snapshotWriteToken = 0;

@@ -25,6 +25,7 @@ import {
 import { AMR_LOGIN_STATUS_EVENT } from '../../src/components/amrLoginPolling';
 import {
   currentAuthoritativeLoggedIn,
+  noteAuthoritativeAuthMode,
   resetMessageCenterSnapshot,
 } from '../../src/components/message-center-snapshot';
 
@@ -316,6 +317,78 @@ describe('App AMR polling', () => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
     vi.clearAllMocks();
+  });
+
+  it('keeps the authoritative auth mode signed out when the message centre observed the end first', async () => {
+    // `applyAmrLoginStatus` is not the only publisher of the authority:
+    // `MessageCenter.sync` reads the auth mode itself and publishes what it got.
+    // Ordering the two publishers separately does not order them against EACH
+    // OTHER — a stamped app request issued while signed in could still land
+    // after the message centre had already observed and published the end of
+    // the session, and take the authority back to signed-in.
+    resetMessageCenterSnapshot();
+    mockedFetchAmrModels.mockReset();
+    mockedFetchAmrModels.mockResolvedValue({
+      source: 'remote',
+      refreshing: false,
+      models: [{ id: 'remote-a', label: 'remote-a' }],
+    });
+
+    const signedIn = {
+      loggedIn: true,
+      loginInFlight: false,
+      profile: 'local',
+      user: { id: 'user-1', email: 'user-1@example.com' },
+      configPath: '/tmp/amr-config.json',
+    };
+    let releaseStale: (() => void) | null = null;
+    let holdNext = false;
+    let call = 0;
+    // Held by flag rather than by call index: settling the app issues several
+    // status reads of its own, and holding one of those means holding a request
+    // from an effect instance that has already been cancelled — which drops the
+    // response for a reason that has nothing to do with ordering.
+    mockedFetchVelaLoginStatus.mockImplementation(async () => {
+      call += 1;
+      const observation = issueStatusObservation();
+      if (holdNext) {
+        holdNext = false;
+        await new Promise<void>((resolve) => { releaseStale = resolve; });
+      }
+      return stampStatusObservation({ ...signedIn }, observation) as never;
+    });
+
+    render(<App />);
+    // Settle first: `daemonLive` flipping re-runs the effect, and its
+    // `cancelled` flag would drop the held response for a reason that has
+    // nothing to do with ordering.
+    await waitFor(() => expect(currentAuthoritativeLoggedIn()).toBe(true));
+    await act(async () => { await new Promise((r) => setTimeout(r, 30)); });
+
+    // The latest app request goes out while the session is still valid, and is
+    // held. Nothing app-side is issued after it, so only the message centre's
+    // publication is newer.
+    const callsBeforeHold = call;
+    holdNext = true;
+    await act(async () => {
+      window.dispatchEvent(new Event(AMR_LOGIN_STATUS_EVENT));
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    expect(releaseStale).not.toBeNull();
+    expect(call).toBe(callsBeforeHold + 1);
+
+    // The message centre reads the auth mode and publishes the end of the
+    // session — this is exactly the call `MessageCenter.sync` makes.
+    noteAuthoritativeAuthMode(false, issueStatusObservation());
+    expect(currentAuthoritativeLoggedIn()).toBe(false);
+
+    // The older app request finally answers signed-in.
+    await act(async () => {
+      releaseStale!();
+      await new Promise((r) => setTimeout(r, 30));
+    });
+
+    expect(currentAuthoritativeLoggedIn()).toBe(false);
   });
 
   it('keeps the authoritative auth mode signed out when a child surface pushes an older status', async () => {

@@ -1687,32 +1687,27 @@ function AppInner() {
   // snapshot updates `agents`, which makes Settings fetch status again and
   // creates a status -> models -> agents request loop.
   const amrLoginStatusRef = useRef<VelaLoginStatus | null>(null);
-  const latestAppliedStatusObservationRef = useRef(0);
   const applyAmrLoginStatus = useCallback((
     status: VelaLoginStatus,
     options: { forceModelRefresh?: boolean; restartOnSignIn?: boolean } = {},
   ) => {
-    // Ordering lives here rather than in each reader because this is the one
-    // place that publishes an observation as authoritative, and every reader —
-    // this effect, the entry shell's landing read and login poll, the settings
-    // card — funnels into it. An observation that was overtaken while it was on
-    // the wire says nothing about the session any more; applying it re-publishes
-    // an authority that has already moved on, which re-authorises exactly the
-    // message-centre pull a sign-out was meant to refuse. Dropped before any
-    // side effect, including the authoritative note.
-    const observation = statusObservationOrder(status);
-    if (observation !== null) {
-      if (observation < latestAppliedStatusObservationRef.current) return;
-      latestAppliedStatusObservationRef.current = observation;
-    }
     const previousStatus = amrLoginStatusRef.current;
     const wasLoggedIn = isAmrSessionAuthenticated(previousStatus);
     const isLoggedIn = isAmrSessionAuthenticated(status);
     // The message centre caches rows per authority for a few seconds, and this
-    // is the one place that learns about a session ending REMOTELY — an expired
-    // or revoked session never goes through the sign-out handler, so nothing
-    // else would tell that cache its contents no longer belong to anyone.
-    noteAuthoritativeAuthMode(isLoggedIn);
+    // is one of the two places that learn about a session ending REMOTELY — an
+    // expired or revoked session never goes through the sign-out handler, so
+    // nothing else would tell that cache its contents no longer belong to
+    // anyone.
+    //
+    // It also decides whether this observation is still worth anything: several
+    // surfaces read the status independently and answer out of order, and the
+    // message centre publishes its own reads too, so being newer than this
+    // reader's previous request is not enough. A refused observation says
+    // nothing about the session any more — nothing below it should run either,
+    // or a status read from before the session ended goes on to restart model
+    // polling and repaint the signed-in surfaces.
+    if (!noteAuthoritativeAuthMode(isLoggedIn, statusObservationOrder(status))) return;
     const pendingRetry = amrAuthRetryContinuationRef.current;
     const accountChangedWhileAuthorizing = Boolean(
       pendingRetry

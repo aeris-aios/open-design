@@ -16,12 +16,14 @@ import { I18nProvider, useI18n } from '../../src/i18n';
 import { MessageCenter } from '../../src/components/MessageCenter';
 import { recordAnonymousRead } from '../../src/message-center-client';
 import {
+  currentAuthoritativeLoggedIn,
   currentSnapshotWriteToken,
   noteAuthoritativeAuthMode,
   resetMessageCenterSnapshot,
   subscribeMessageCenterReads,
 } from '../../src/components/message-center-snapshot';
 import { advanceWorkspaceAccountGeneration } from '../../src/collab/workspace-identity';
+import { issueStatusObservation } from '../../src/providers/status-observation';
 
 let statusCalls = 0;
 let messageCalls = 0;
@@ -1788,6 +1790,45 @@ describe('MessageCenter remount snapshot', () => {
     await new Promise((r) => setTimeout(r, 20));
     expect(screen.queryByRole('button', { name: /PRIOR-ACCOUNT-row/ })).toBeNull();
     expect(pending[pending.length - 1] ?? false).toBe(false);
+  });
+
+  it('does not publish an auth read that was overtaken by the app\'s newer one', async () => {
+    // The other direction of the same race. This component reads the auth mode
+    // itself and publishes what it got, so ordering it only against its own
+    // previous reads leaves it free to overwrite a NEWER answer that the app's
+    // status effect published while this read was on the wire — taking the
+    // authority back to a session that has ended.
+    let releaseStatus!: () => void;
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/integrations/vela/status')) {
+        statusCalls += 1;
+        await new Promise<void>((resolve) => { releaseStatus = resolve; });
+        return Response.json({ loggedIn: true });
+      }
+      if (url.includes('/message-center') && url.includes('/messages')) {
+        messageCalls += 1;
+        return Response.json({ messages: [], nextCursor: null, unreadCount: 0 });
+      }
+      return Response.json({});
+    }));
+
+    render(
+      <I18nProvider initial="zh-CN">
+        <MessageCenter />
+      </I18nProvider>,
+    );
+    await waitFor(() => expect(releaseStatus).toBeTypeOf('function'));
+
+    // The app's status effect answers first, with a newer read: the session has
+    // ended. This is the call `applyAmrLoginStatus` makes.
+    expect(noteAuthoritativeAuthMode(false, issueStatusObservation())).toBe(true);
+
+    // This component's older read finally comes back saying signed-in.
+    releaseStatus();
+    await new Promise((r) => setTimeout(r, 40));
+
+    expect(currentAuthoritativeLoggedIn()).toBe(false);
   });
 
   it('does not commit a pull that was answered for a session which has since ended', async () => {
