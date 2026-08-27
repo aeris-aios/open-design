@@ -156,7 +156,7 @@ export const uk: Dict = {
   'chat.runError.agentCrashedMessage': '{agent} завершив роботу, не пояснивши причину. Повторна спроба зазвичай допомагає; якщо це повторюється, надішліть нам журнали.',
   'chat.runError.title.accountSuspended': 'Обліковий запис тимчасово призупинено',
   'chat.runError.accountSuspendedMessage': 'Ми виявили незвичний платіжний ризик за цим обліковим записом. Якщо це помилка, зверніться до нас — ми розберемося.',
-  'chat.runError.fallbackMessage': 'Цього разу не вийшло. Початкова помилка — нижче, у розділі «Докладніше»; якщо це повторюється, надішліть нам журнали.',
+  'chat.runError.fallbackMessage': 'Цього разу не вийшло. Якщо це повторюється, надішліть нам журнали.',
   'common.cancel': 'Скасувати',
   'chat.selectFromLibrary': 'Імпортувати з бібліотеки',
   'chat.importFigma': 'Імпортувати з Figma',

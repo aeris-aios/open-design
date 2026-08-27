@@ -156,7 +156,7 @@ export const ja: Dict = {
   'chat.runError.agentCrashedMessage': '{agent} が理由を告げずに終了しました。もう一度実行すれば大抵は復旧します。繰り返す場合はログをお送りください。',
   'chat.runError.title.accountSuspended': 'アカウントを一時停止中です',
   'chat.runError.accountSuspendedMessage': 'このアカウントで異常な支払いリスクを検知しました。誤検知だと思われる場合はご連絡ください。こちらで調査します。',
-  'chat.runError.fallbackMessage': '今回はうまくいきませんでした。元のエラーは下の「詳細を表示」にあります。繰り返す場合はログをお送りください。',
+  'chat.runError.fallbackMessage': '今回はうまくいきませんでした。繰り返す場合はログをお送りください。',
   'common.cancel': 'キャンセル',
   'chat.selectFromLibrary': 'ライブラリからインポート',
   'chat.importFigma': 'Figma からインポート',

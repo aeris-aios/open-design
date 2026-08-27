@@ -134,13 +134,6 @@ describe('ChatPane resume-on-failure', () => {
       source_agent_provider_id: 'claude_code',
     });
 
-    const detailsToggle = screen.getByRole('button', { name: 'brand.viewDetails' });
-    const disclosure = container.querySelector('[data-user-action-card="run-recovery"] .accordion-collapsible');
-    expect(detailsToggle.getAttribute('aria-expanded')).toBe('false');
-    expect(disclosure?.classList.contains('open')).toBe(false);
-    fireEvent.click(detailsToggle);
-    expect(disclosure?.classList.contains('open')).toBe(true);
-
     fireEvent.click(continueBtn);
     expect(trackRunRecoveryActionClick).toHaveBeenCalledTimes(1);
     expect(vi.mocked(trackRunRecoveryActionClick).mock.calls[0]![1]).toMatchObject({

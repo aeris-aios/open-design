@@ -156,7 +156,7 @@ export const hu: Dict = {
   'chat.runError.agentCrashedMessage': 'A(z) {agent} indoklás nélkül leállt. Az újrapróbálkozás általában megoldja; ha ismétlődik, küldd el nekünk a naplókat.',
   'chat.runError.title.accountSuspended': 'A fiók átmenetileg felfüggesztve',
   'chat.runError.accountSuspendedMessage': 'Szokatlan fizetési kockázatot észleltünk ennél a fióknál. Ha szerinted ez tévedés, keress minket, és utánanézünk.',
-  'chat.runError.fallbackMessage': 'Ezúttal nem sikerült. Az eredeti hibaüzenet lent, a „Részletek megtekintése” alatt található; ha ismétlődik, küldd el nekünk a naplókat.',
+  'chat.runError.fallbackMessage': 'Ezúttal nem sikerült. Ha ismétlődik, küldd el nekünk a naplókat.',
   'common.cancel': 'Mégse',
   'chat.selectFromLibrary': 'Importálás a könyvtárból',
   'chat.importFigma': 'Importálás Figmából',

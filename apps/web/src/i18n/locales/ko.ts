@@ -156,7 +156,7 @@ export const ko: Dict = {
   'chat.runError.agentCrashedMessage': '{agent}이(가) 이유를 남기지 않고 종료됐습니다. 다시 시도하면 대개 복구됩니다. 계속 발생하면 로그를 보내 주세요.',
   'chat.runError.title.accountSuspended': '계정이 일시 정지되었습니다',
   'chat.runError.accountSuspendedMessage': '이 계정에서 비정상적인 결제 위험이 감지됐습니다. 잘못된 판단이라고 생각되면 저희에게 연락해 주세요. 확인해 드리겠습니다.',
-  "chat.runError.fallbackMessage": "이번에는 완료하지 못했습니다. 원본 오류는 아래 '자세히 보기'에 있습니다. 계속 발생하면 로그를 보내 주세요.",
+  "chat.runError.fallbackMessage": "이번에는 완료하지 못했습니다. 계속 발생하면 로그를 보내 주세요.",
   'common.cancel': '취소',
   'chat.selectFromLibrary': '라이브러리에서 가져오기',
   'chat.importFigma': 'Figma에서 가져오기',

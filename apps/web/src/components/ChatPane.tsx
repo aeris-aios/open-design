@@ -1672,8 +1672,8 @@ export function ChatPane({
       }
     : runFailureUi?.messageVars;
   // 卡面上只放人话。命中映射表的用它自己的文案;没命中的用兜底那一句 ——
-  // **不再把上游原文摊在卡上**(设计原则五)。原文没有丢:它仍旧进
-  // `errorDiagnosticText`,收在下面折叠的「诊断原文」里,那段是给工程看的。
+  // **不再把上游原文摊在卡上**(设计原则五)。卡上也不再收着它:曾经那个
+  // 「错误详情」折叠已经整块下线(用户 2026-08-27),要原始日志走〔导出日志〕。
   //
   // 兜底只接手**这一轮自己的原始报错**。两个条件缺一不可:
   //  · `runFailureUi` —— 这条助手消息确实是终态失败,不然凭空多出一张卡;
@@ -1696,21 +1696,6 @@ export function ChatPane({
       : runFailureUi && !currentGlobalError && rawError
         ? t(RUN_FAILURE_FALLBACK_MESSAGE_KEY)
         : rawError;
-  const errorDiagnosticText = displayError
-    ? buildRunErrorDiagnosticText({
-        message: displayError,
-        rawMessage: rawError,
-        errorCode: failedRunErrorEvent?.code,
-        // 兜底那句人话把上游原文顶掉之后,真因只剩这一份 —— agent 自己打在
-        // stderr 上的东西。daemon 已经截断并脱敏过了(failureCardStderrTail)。
-        stderrTail: failedRunErrorEvent?.stderrTail,
-        traceId: retryAssistant?.runId,
-        projectId,
-        conversationId: activeConversationId,
-        assistantMessageId: retryAssistant?.id,
-        agentId: retryAssistant?.agentId,
-      })
-    : null;
   // Brand (accent) for AMR sign-in/top-up, warning for a self-healing
   // connection drop, danger for everything else. The shared action card only
   // tints its icon; the surface itself stays neutral.
@@ -1724,29 +1709,6 @@ export function ChatPane({
         : 'danger';
   // 阶梯第 4 档的唯一外显:常驻次级的〔联系支持〕升格成主按钮。
   const contactSupportIsPrimary = runFailureUi?.primaryAction === 'contact-support';
-  const [copiedErrorDiagnostic, setCopiedErrorDiagnostic] = useState(false);
-  // Collapsed by default: the error source area shows one line until expanded.
-  const [errorSourceOpen, setErrorSourceOpen] = useState(false);
-  const errorDiagnosticCopyTimerRef = useRef<number | null>(null);
-  const copyErrorDiagnostic = useCallback(async () => {
-    if (!errorDiagnosticText) return;
-    const ok = await copyToClipboard(errorDiagnosticText);
-    if (!ok) return;
-    if (errorDiagnosticCopyTimerRef.current != null) {
-      window.clearTimeout(errorDiagnosticCopyTimerRef.current);
-    }
-    setCopiedErrorDiagnostic(true);
-    errorDiagnosticCopyTimerRef.current = window.setTimeout(() => {
-      errorDiagnosticCopyTimerRef.current = null;
-      setCopiedErrorDiagnostic(false);
-    }, 1600);
-  }, [errorDiagnosticText]);
-  useEffect(() => () => {
-    if (errorDiagnosticCopyTimerRef.current != null) {
-      window.clearTimeout(errorDiagnosticCopyTimerRef.current);
-      errorDiagnosticCopyTimerRef.current = null;
-    }
-  }, []);
   // The failed run whose error this top-level card represents. AssistantMessage
   // suppresses only THIS message's per-message error pill (to avoid the
   // duplicate); other failed turns — older history, or once a follow-up makes
@@ -3256,9 +3218,11 @@ export function ChatPane({
                   /*
                    * 报错卡(稿子组件 19)。终于接回产品 —— 之前 `RunErrorCard` 抽出来了
                    * 却只有验收陈列页在用,产品这一格仍是 `UserActionCard`:
-                   * 说明被藏在「查看详情」折叠里,而稿子的 `errb` 是**一句话直接可见**。
+                   * 说明被藏在折叠里,而稿子的 `errb` 是**一句话直接可见**。
                    *
-                   * 折叠留给**诊断原文**(那段给工程看的堆栈),不是给用户的那句人话。
+                   * 卡上再没有第二层:标题 + 一句人话 + 一排动作,到此为止。
+                   * 曾经挂在这里的「错误详情」折叠(诊断原文)已经整块下线
+                   * (用户 2026-08-27);要原始日志走那一排里的〔导出日志〕。
                    */
                   <RunErrorCard
                     dataKind="run-recovery"
@@ -3511,44 +3475,7 @@ export function ChatPane({
                         ) : null}
                       </>
                     )}
-                  >
-                    {errorDiagnosticText ? (
-                      <div className="run-error__source">
-                        {/* 诊断原文仍然收在折叠里 —— 稿子的卡上不摆堆栈,
-                            那段是给工程看的;给用户的那句人话已经在上面直接可见了 */}
-                        <button
-                          type="button"
-                          className="run-error__source-toggle"
-                          aria-expanded={errorSourceOpen}
-                          onClick={() => setErrorSourceOpen(!errorSourceOpen)}
-                        >
-                          <span>{t('brand.viewDetails')}</span>
-                          <Icon name="chevron-down" size={13} className={`run-error__source-chevron${errorSourceOpen ? ' is-open' : ''}`} />
-                        </button>
-                      </div>
-                    ) : null}
-                    {errorDiagnosticText ? (
-                      <div className={`accordion-collapsible${errorSourceOpen ? ' open' : ''}`}>
-                        <div className="accordion-collapsible-inner">
-                      <div className="run-error__diagnostic">
-                        <div className="run-error__diagnostic-head">
-                          <span>{t('chat.runError.sourceLabel')}</span>
-                          <button
-                            type="button"
-                            className="run-error__source-copy"
-                            onClick={() => void copyErrorDiagnostic()}
-                            aria-label={copiedErrorDiagnostic ? t('chat.copyDone') : t('chat.copyErrorDiagnostic')}
-                            title={copiedErrorDiagnostic ? t('chat.copyDone') : t('chat.copyErrorDiagnostic')}
-                          >
-                            <Icon name={copiedErrorDiagnostic ? 'check' : 'copy'} size={13} />
-                          </button>
-                        </div>
-                        <pre>{errorDiagnosticText}</pre>
-                      </div>
-                        </div>
-                      </div>
-                    ) : null}
-                  </RunErrorCard>
+                  />
                 ) : null}
                 {showAmrGuidance && amrSwitchPayload ? (
                   <AmrGuidance

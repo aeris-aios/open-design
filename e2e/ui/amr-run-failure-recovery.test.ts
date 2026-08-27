@@ -884,11 +884,10 @@ test('[P1] zh-CN run failure guidance shows actionable copy and expandable raw s
   await expect(page.getByRole('button', { name: /^重试$/ }).first()).toBeVisible();
   await expect(page.getByRole('button', { name: /Switch to OpenDesign Cloud & retry/i })).toHaveCount(0);
 
-  const sourceToggle = card.getByRole('button', { name: /查看详情/ });
-  await expect(sourceToggle).toHaveAttribute('aria-expanded', 'false');
-  await sourceToggle.click();
-  await expect(sourceToggle).toHaveAttribute('aria-expanded', 'true');
-  await expect(card.locator('.run-error__diagnostic')).toContainText(rawDetail);
+  // 卡上不再有「错误详情」折叠(用户 2026-08-27):既没有那颗〔查看详情〕,
+  // 上游原文也不出现在卡上的任何地方。
+  await expect(card.getByRole('button', { name: /查看详情/ })).toHaveCount(0);
+  await expect(card).not.toContainText(rawDetail);
 });
 
 test('[P0] antigravity rate limits offer terminal model switching without promoting AMR', async ({ page }) => {

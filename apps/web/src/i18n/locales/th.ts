@@ -156,7 +156,7 @@ export const th: Dict = {
   'chat.runError.agentCrashedMessage': '{agent} ปิดตัวลงโดยไม่บอกเหตุผล ลองใหม่มักจะกลับมาทำงานได้ หากเกิดซ้ำ ๆ ให้ส่งบันทึกมาให้เรา',
   'chat.runError.title.accountSuspended': 'บัญชีถูกระงับชั่วคราว',
   'chat.runError.accountSuspendedMessage': 'เราตรวจพบความเสี่ยงด้านการชำระเงินที่ผิดปกติในบัญชีนี้ หากคุณคิดว่าเป็นความเข้าใจผิด ติดต่อเราแล้วเราจะตรวจสอบให้',
-  'chat.runError.fallbackMessage': 'ครั้งนี้ยังไม่สำเร็จ ข้อผิดพลาดต้นทางอยู่ใน “ดูรายละเอียด” ด้านล่าง หากเกิดซ้ำ ๆ ให้ส่งบันทึกมาให้เรา',
+  'chat.runError.fallbackMessage': 'ครั้งนี้ยังไม่สำเร็จ หากเกิดซ้ำ ๆ ให้ส่งบันทึกมาให้เรา',
   'common.cancel': 'ยกเลิก',
   'chat.selectFromLibrary': 'นำเข้าจากไลบรารี',
   'chat.importFigma': 'นำเข้าจาก Figma',
