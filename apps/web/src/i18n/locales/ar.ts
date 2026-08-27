@@ -5348,6 +5348,7 @@ export const ar: Dict = {
   'chat.record.slowUpstream': 'المزوّد بطيء في الاستجابة — بالانتظار منذ {seconds} ثانية',
   'chat.record.running': "قيد التنفيذ",
   'chat.record.thinking': "يفكّر",
+  'chat.record.thoughts': "مسار التفكير",
   'chat.record.done': "تم",
   'chat.record.failedTurn': "فشل التشغيل",
   'chat.record.plan': "الخطة · {count} خطوات",

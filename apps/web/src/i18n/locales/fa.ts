@@ -5343,6 +5343,7 @@ export const fa: Dict = {
   'chat.record.slowUpstream': 'پاسخ سرویس‌دهنده کند است — {seconds} ثانیه در انتظار',
   'chat.record.running': "در حال اجرا",
   'chat.record.thinking': "در حال فکر کردن",
+  'chat.record.thoughts': "روند تفکر",
   'chat.record.done': "انجام شد",
   'chat.record.failedTurn': "اجرا ناموفق بود",
   'chat.record.plan': "برنامه · {count} مرحله",

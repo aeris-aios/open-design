@@ -5348,6 +5348,7 @@ export const de: Dict = {
   'chat.record.slowUpstream': 'Der Anbieter antwortet langsam – seit {seconds}s in Wartestellung',
   'chat.record.running': "Läuft",
   'chat.record.thinking': "Denkt nach",
+  'chat.record.thoughts': "Gedankengang",
   'chat.record.done': "Fertig",
   'chat.record.failedTurn': "Lauf fehlgeschlagen",
   'chat.record.plan': "Plan · {count} Schritte",

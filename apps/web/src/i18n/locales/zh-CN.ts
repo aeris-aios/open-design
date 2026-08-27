@@ -5797,6 +5797,7 @@ export const zhCN: Dict = {
   'chat.record.slowUpstream': '上游响应慢，已等 {seconds} 秒',
   'chat.record.running': "进行中",
   'chat.record.thinking': "思考中",
+  'chat.record.thoughts': "思考过程",
   'chat.record.done': "已完成",
   'chat.record.failedTurn': "运行失败",
   'chat.record.plan': "执行计划 · {count} 步",

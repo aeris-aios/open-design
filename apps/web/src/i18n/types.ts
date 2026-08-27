@@ -5534,6 +5534,7 @@ export interface Dict {
   'chat.record.slowUpstream': string;
   'chat.record.running': string;
   'chat.record.thinking': string;
+  'chat.record.thoughts': string;
   'chat.record.done': string;
   'chat.record.failedTurn': string;
   'chat.record.plan': string;

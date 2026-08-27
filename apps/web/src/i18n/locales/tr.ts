@@ -5348,6 +5348,7 @@ export const tr: Dict = {
   'chat.record.slowUpstream': 'Sağlayıcı yavaş yanıt veriyor — {seconds}sn bekleniyor',
   'chat.record.running': "Sürüyor",
   'chat.record.thinking': "Düşünüyor",
+  'chat.record.thoughts': "Düşünce süreci",
   'chat.record.done': "Tamamlandı",
   'chat.record.failedTurn': "Çalıştırma başarısız",
   'chat.record.plan': "Plan · {count} adım",

@@ -163,16 +163,37 @@
   background: var(--chat-border);
   pointer-events: none;
 }
+/* 这张壳带清单 —— 只作层叠判据用。给一个没人读的自定义属性而不是留空块:
+   空规则会被 CSS Module 优化掉,`styles.hasTodo` 就成了 undefined,标记静默失效。 */
+.hasTodo { --has-todo: 1; }
+
 /*
  * 夹在两条步骤**中间**的那段叙述也要接上线,并且整段右移 22px 让开线的位置。
  * 稿子:`.fold.mod-flat > .body.mod-stack > .fold ~ .think:has(~ .fold)`(以及它的 ::before)。
  * `:has(~ .fold)` 是「后面还有步骤」的判据 —— 收尾那段叙述后面没有步骤,不接线。
+ *
+ * **两处偏离稿子,都是量出来的**(2026-08-27):
+ *
+ * ① `:is(.fold, .tool)` 而不是只认 `.fold`。步骤有**两种 DOM**:能展开的(命令、
+ *    有输出)走 `Foldable` → `details.fold`;不能展开的(读取 / 改写 / 搜索)是
+ *    `ToolRow` 直接返回的 `div.tool`。把真实录制喂进渲染,壳内实际是
+ *    `p.think │ div.tool ×4 │ details.fold ×2 │ div.tool │ …` —— 稿子 demo 里步骤
+ *    大多可展开所以照不出来,真实产品里没输出的调用占多数,夹心正文**一条都匹配不上**,
+ *    于是全部贴最左、工具行独自缩进。稿子注释写的意图是「**前后都还有步骤**,中间这段
+ *    才该接上」,说的是「步骤」,不是「可折叠的步骤」。
+ *
+ * ② `:not(.hasTodo)` —— **有清单的壳不参与**(用户裁决 2026-08-27:「缩进你要看看
+ *    有没有 todo,如果文本不在 todo 下面,你看是这样的」,配图是有清单的壳、开场白贴左)。
+ *    清单壳里顶层正文只会出现在清单**之前**(开场白)或**全关之后**,它不在那条链上;
+ *    稿子自己也写了「开头那句…不动:它是整块的开场白,不在链上,线也没穿过它」。
+ *
+ * 详见 `specs/current/chat-panel-feedback.md` §F-11。
  */
-.fold.flat > .body.stack > .fold ~ .think:has(~ .fold) {
+.fold.flat:not(.hasTodo) > .body.stack > :is(.fold, .tool) ~ .think:has(~ :is(.fold, .tool)) {
   position: relative;
   padding-inline-start: 22px;
 }
-.fold.flat > .body.stack > .fold ~ .think:has(~ .fold)::before {
+.fold.flat:not(.hasTodo) > .body.stack > :is(.fold, .tool) ~ .think:has(~ :is(.fold, .tool))::before {
   content: '';
   position: absolute;
   inset-inline-start: 7.5px;

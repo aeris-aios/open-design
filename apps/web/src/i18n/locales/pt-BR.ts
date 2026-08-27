@@ -5348,6 +5348,7 @@ export const ptBR: Dict = {
   'chat.record.slowUpstream': 'O provedor está lento para responder — aguardando {seconds}s',
   'chat.record.running': "Em andamento",
   'chat.record.thinking': "Pensando",
+  'chat.record.thoughts': "Raciocínio",
   'chat.record.done': "Concluído",
   'chat.record.failedTurn': "Execução falhou",
   'chat.record.plan': "Plano · {count} etapas",

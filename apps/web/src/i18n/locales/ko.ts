@@ -5348,6 +5348,7 @@ export const ko: Dict = {
   'chat.record.slowUpstream': '업스트림 응답이 느립니다 — {seconds}초 대기 중',
   'chat.record.running': "진행 중",
   'chat.record.thinking': "생각 중",
+  'chat.record.thoughts': "사고 과정",
   'chat.record.done': "완료",
   'chat.record.failedTurn': "실행 실패",
   'chat.record.plan': "실행 계획 · {count}단계",

@@ -30,8 +30,9 @@ export function Foldable({
   scroll,
   stream,
   bodyRef,
+  className,
   children,
-}: FoldableProps & { stream?: boolean; bodyRef?: Ref<HTMLDivElement> }): ReactElement {
+}: FoldableProps & { stream?: boolean; bodyRef?: Ref<HTMLDivElement>; className?: string }): ReactElement {
   const [selfOpen, setSelfOpen] = useState(Boolean(defaultOpen));
   const controlled = open != null;
   const hasBody = children != null && children !== false;
@@ -54,6 +55,7 @@ export function Foldable({
     styles.fold,
     variant === 'flat' ? styles.flat : null,
     expandable && hasBody ? null : styles.leaf,
+    className ?? null,
   ].filter(Boolean).join(' ');
 
   return (

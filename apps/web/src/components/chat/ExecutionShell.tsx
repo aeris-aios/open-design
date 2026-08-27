@@ -18,6 +18,7 @@ import { useT } from '../../i18n';
 import type { ExecutionShell as ShellData, ImageRow as ImageRowData, ShellItem, TodoSegment } from '../../runtime/chat/contract';
 import { isExpandable, isStruck } from '../../runtime/chat/contract';
 import { formatElapsed, formatShellElapsed } from '../../runtime/chat/format';
+import { groupThinking, type GroupedShellItem } from '../../runtime/chat/group-thinking';
 import { Foldable } from './primitives/Foldable';
 import { ImageRow } from './primitives/ImageRow';
 import { useThinkingStream } from './primitives/useThinkingStream';
@@ -109,7 +110,18 @@ export function ExecutionShell({ shell, onOpenFile, onRetryImage }: ExecutionShe
     return <span>{t('chat.record.done')}</span>;
   })();
 
-  const items = shell.items;
+  /**
+   * 跑完之后把连续的推理收成「思考过程」那一格(用户裁决,见 `groupThinking` 的注释)。
+   * 还在思考时原样返回 —— 那一段归上面那个 96px 的流式窗管。
+   */
+  const items = groupThinking(shell.items, Boolean(streaming));
+  /**
+   * 这张壳有没有清单 —— 夹心正文对不对齐那条竖线全看它(用户裁决 2026-08-27)。
+   * 有清单时顶层正文是清单上面的开场白,不在链上,贴左;没清单时正文和工具行交替
+   * 往下走,夹在中间那几段要落回 22px 并接线。判据只挂在 CSS 上,见
+   * `record.module.css` 的 `:not(.hasTodo)`。
+   */
+  const hasTodo = shell.items.some((item) => item.kind === 'todo' || item.kind === 'plan');
 
   return (
     <Foldable
@@ -121,6 +133,7 @@ export function ExecutionShell({ shell, onOpenFile, onRetryImage }: ExecutionShe
       expandable={items.length > 0}
       stream={streaming}
       bodyRef={bodyRef}
+      className={hasTodo ? styles.hasTodo : undefined}
     >
       {items.length ? items.map((item, i) => renderItem(item, i, { t, onOpenFile, onRetryImage })) : null}
     </Foldable>
@@ -133,7 +146,10 @@ interface RenderCtx {
   onRetryImage?: (row: ImageRowData, index: number) => void;
 }
 
-function renderItem(item: ShellItem, index: number, ctx: RenderCtx): ReactElement | null {
+function renderItem(item: GroupedShellItem, index: number, ctx: RenderCtx): ReactElement | null {
+  if (item.kind === 'thoughts') {
+    return <ThoughtsRow key={`thoughts-${index}`} texts={item.texts} t={ctx.t} />;
+  }
   if (item.kind === 'tool') {
     return <ToolRow key={`tool-${item.id}-${index}`} row={item} onOpenFile={ctx.onOpenFile} />;
   }
@@ -147,6 +163,22 @@ function renderItem(item: ShellItem, index: number, ctx: RenderCtx): ReactElemen
     return <PlanRow key={`plan-${index}`} steps={item.steps} t={ctx.t} />;
   }
   return <TodoRow key={`todo-${item.segment.content}-${index}`} segment={item.segment} ctx={ctx} />;
+}
+
+/**
+ * 「思考过程」:跑完之后收起来的那几段推理,点开才读得到细节。
+ *
+ * 默认收起 —— 这一格存在的**全部理由**就是别让推理在思考结束的瞬间原地铺开。
+ * 用 `Foldable` 的默认(非 flat)形态,和普通工具行同一副壳,与用户原话
+ * 「变成普通工具调用的状态」一致。不挂耗时:推理的时长在壳头的总耗时里,
+ * 这一格再报一次等于把同一段时间说两遍。
+ */
+function ThoughtsRow({ texts, t }: { texts: string[]; t: RenderCtx['t'] }): ReactElement {
+  return (
+    <Foldable summary={<><StatusMark status="ok" /><span>{t('chat.record.thoughts')}</span></>}>
+      {texts.map((text, i) => <SayText key={i} text={text} />)}
+    </Foldable>
+  );
 }
 
 /** 「执行计划 · N 步」:清单刚到时的全貌。每一步只有序号,还没跑,没有「哪类调用」可标 */

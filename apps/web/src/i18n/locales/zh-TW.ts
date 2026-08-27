@@ -5804,6 +5804,7 @@ export const zhTW: Dict = {
   'chat.record.slowUpstream': '上游回應慢，已等 {seconds} 秒',
   'chat.record.running': "進行中",
   'chat.record.thinking': "思考中",
+  'chat.record.thoughts': "思考過程",
   'chat.record.done': "已完成",
   'chat.record.failedTurn': "執行失敗",
   'chat.record.plan': "執行計畫 · {count} 步",

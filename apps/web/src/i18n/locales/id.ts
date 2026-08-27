@@ -5348,6 +5348,7 @@ export const id: Dict = {
   'chat.record.slowUpstream': 'Penyedia lambat merespons — menunggu {seconds}d',
   'chat.record.running': "Berjalan",
   'chat.record.thinking': "Berpikir",
+  'chat.record.thoughts': "Proses berpikir",
   'chat.record.done': "Selesai",
   'chat.record.failedTurn': "Gagal dijalankan",
   'chat.record.plan': "Rencana · {count} langkah",
