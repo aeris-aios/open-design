@@ -4,6 +4,7 @@ import { ExecutionShell } from "./chat/ExecutionShell";
 import { buildTurnBlocks } from "../runtime/chat/build-turn-blocks";
 import type { ExecutionShell as ExecutionShellData } from "../runtime/chat/contract";
 import { upstreamActivityAt } from "../runtime/chat/upstream-activity";
+import type { RecordFileScope } from "../runtime/chat/record-file-open";
 import { FileOpsSummary } from "./FileOpsSummary";
 import {
   renderMarkdown,
@@ -672,6 +673,17 @@ function AssistantMessageImpl({
    */
   /** 壳头那颗秒表的「现在」+ S12 的静默起点,每秒同刻取一次(见 `useTickingNow`)。 */
   const { nowMs, lastEventAtMs } = useTickingNow(streaming, message.runId);
+
+  /**
+   * 执行记录里的文件名要判归属才决定做不做链接(产品 2026-08-27:
+   * 「这些文件不要变成可点击的.. 因为读的不一定是我们项目文件夹下的文件....」)。
+   * 这三样就是正文 markdown 链接判归属用的同一套(见 `chatFileLinkClickHandler`),
+   * 判据本身在 `runtime/chat/record-file-open.ts`,这里只负责递过去。
+   */
+  const recordFileScope = useMemo<RecordFileScope>(
+    () => ({ projectId, projectFileNames, projectResolvedDir }),
+    [projectId, projectFileNames, projectResolvedDir],
+  );
   const nextTurn = useMemo(() => {
     const turn = buildTurnBlocks({
       events: displayEvents,
@@ -1171,7 +1183,15 @@ function AssistantMessageImpl({
       ) : null}
       <div className="assistant-flow" data-testid="assistant-flow">
         {nextTurn.shells.map((shell) => (
-          <ExecutionShell key={shell.id} shell={shell} onOpenFile={onRequestOpenFile} />
+          <ExecutionShell
+            key={shell.id}
+            shell={shell}
+            onOpenFile={onRequestOpenFile}
+            /* 执行记录里的文件名要判「这个路径是不是当前项目的」才决定做不做链接。
+               这三样正是正文 markdown 链接判归属用的同一套(见 chatFileLinkClickHandler),
+               判据本身在 `runtime/chat/record-file-open.ts`。 */
+            fileScope={recordFileScope}
+          />
         ))}
         {outerBlocks.map((b, i) => {
           if (b.kind === "text")

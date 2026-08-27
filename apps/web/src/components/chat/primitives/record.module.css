@@ -367,6 +367,11 @@
   transition: text-decoration-color var(--chat-dur-quick) var(--chat-ease-out);
 }
 .file:hover code { text-decoration: underline; text-decoration-color: var(--chat-text-soft); }
+/* 打不开的那一档(读取到的文件、搜索模式、命令)—— 同一副等宽外观,
+   但不给手型、不给悬停下划线:看起来能点、点了没反应比一开始就不像链接更糟。
+   判据见 `runtime/chat/record-file-open.ts`,渲染分叉在 `FileButton.tsx`。 */
+.fileStatic { cursor: default; }
+.fileStatic:hover code { text-decoration: none; }
 .tool.fail .file code { color: var(--chat-text); }
 
 /* ── 状态记号 ───────────────────────────────────────────────── */

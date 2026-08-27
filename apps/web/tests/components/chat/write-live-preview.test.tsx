@@ -78,6 +78,14 @@ describe('Write 只落一行(N4 / D3)', () => {
         projectKind="prototype"
         conversationId="conv-1"
         projectId="project-1"
+        /* 文件名按钮要成立得凑齐两样:一个打开回调,和「这个路径属于当前项目」的
+           正面证据(产品 2026-08-27:读取的文件一律不做链接,写 / 改要正面取证 ——
+           `runtime/chat/record-file-open.ts`)。原来这两样一样都没给也照样能捞到
+           一颗按钮,因为 `FileButton` 无论如何都吐 `<button>`,只是不挂 onClick。
+           这一条测的是「Write 只落一行」,所以两样都给足,让那句断言测得到它
+           本来要测的东西 —— 顺带守住「写 / 改这一档没被一起拆掉」。 */
+        projectResolvedDir="/repo"
+        onRequestOpenFile={() => {}}
         streaming={false}
         message={message([
           {

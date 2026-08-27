@@ -14,6 +14,7 @@ import { useEffect, useRef, type ReactElement, type ReactNode } from 'react';
 import { useT } from '../../../i18n';
 import type { ToolRow as ToolRowData } from '../../../runtime/chat/contract';
 import { formatElapsed } from '../../../runtime/chat/format';
+import { openableRecordFilePath, type RecordFileScope } from '../../../runtime/chat/record-file-open';
 import { FileButton } from './FileButton';
 import { Foldable } from './Foldable';
 import { toolIcon } from './icons';
@@ -22,14 +23,36 @@ import styles from './record.module.css';
 export interface ToolRowProps {
   row: ToolRowData;
   onOpenFile?: (path: string) => void;
+  /**
+   * 判「这个文件名该不该做成打开入口」需要的作用域。不传 = 只有相对路径的写 / 改
+   * 还能成链接;判据与理由全在 `runtime/chat/record-file-open.ts`。
+   */
+  fileScope?: RecordFileScope;
   /** 点「失败」看原因;不传就不出那颗按钮 */
   onShowFailure?: (row: ToolRowData) => void;
 }
 
-export function ToolRow({ row, onOpenFile, onShowFailure }: ToolRowProps): ReactElement {
+export function ToolRow({ row, onOpenFile, fileScope, onShowFailure }: ToolRowProps): ReactElement {
   const t = useT();
   const elapsed = formatElapsed(row.elapsedMs);
   const icon = <span className={styles.icon}>{toolIcon(row.tool)}</span>;
+
+  /*
+   * 这一行的文件名能不能打开,以及打开的是**哪个项目相对路径**(不是 agent 给的
+   * 那个绝对路径 —— 打开回调按项目相对文件名匹配)。算不出来就不做链接:
+   * 读取一律不做,写 / 改要拿得到「这个路径属于当前项目」的正面证据。
+   */
+  const openPath = openableRecordFilePath(row, fileScope);
+  const fileName = (): ReactElement | null => (row.file
+    ? (
+      <FileButton
+        path={openPath ?? row.file.path}
+        label={row.file.label}
+        onOpen={openPath ? onOpenFile : undefined}
+        elide
+      />
+    )
+    : null);
 
   const failButton = row.failed && onShowFailure
     ? <button type="button" className={styles.why} onClick={() => onShowFailure(row)}>{t('chat.record.failed')}</button>
@@ -62,7 +85,7 @@ export function ToolRow({ row, onOpenFile, onShowFailure }: ToolRowProps): React
       <div className={rowClass}>
         {icon}
         <span className={styles.name}>
-          {verb} <FileButton path={row.file.path} label={row.file.label} onOpen={onOpenFile} elide />
+          {verb} {fileName()}
         </span>
         {row.delta
           ? <span className={styles.delta}><i>+{row.delta.added}</i><i>−{row.delta.removed}</i></span>
@@ -78,7 +101,7 @@ export function ToolRow({ row, onOpenFile, onShowFailure }: ToolRowProps): React
         {icon}
         <span className={styles.name}>
           {verb ?? t('chat.record.verb.write')}{' '}
-          <FileButton path={row.file.path} label={row.file.label} onOpen={onOpenFile} elide />
+          {fileName()}
           {' · '}{row.failReason}
         </span>
         {elapsed ? <span className={styles.meta}>{elapsed}</span> : null}
@@ -93,7 +116,7 @@ export function ToolRow({ row, onOpenFile, onShowFailure }: ToolRowProps): React
         {icon}
         <span className={styles.name}>
           {verb ?? t('chat.record.verb.write')}{' '}
-          <FileButton path={row.file.path} label={row.file.label} onOpen={onOpenFile} elide />
+          {fileName()}
         </span>
         {failButton}
         {elapsed ? <span className={styles.meta}>{elapsed}</span> : null}
