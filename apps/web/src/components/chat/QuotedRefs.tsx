@@ -8,6 +8,7 @@ import type { ReactElement } from 'react';
 import { Icon } from '../Icon';
 import { useT } from '../../i18n';
 import type { ChatQuote } from '../../runtime/chat/quote-selection';
+import { STROKE_ICON } from './primitives/icons';
 import styles from './QuotedRefs.module.css';
 
 export interface QuotedRefsProps {
@@ -24,7 +25,11 @@ export function QuotedRefs({ quotes, onClear }: QuotedRefsProps): ReactElement |
           原来这里画的是 ❝ —— 用户第一眼就问「注释的样式怎么是这样的??」。
           气泡说的是「这是从对话里摘出来的一段」,引号说的是「这是引文」;
           稿子选的是前者,而这一族的其它记号(浮条、芯片)也都是描边的。 */}
-      <svg className={styles.icon} viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden>
+      {/* 笔画走 chat 描边图标的同一份基线(`STROKE_ICON`)——
+          自己再写一遍 `fill/stroke` 就会漏掉粗细,那正是这枚气泡原来
+          掉回浏览器默认 1 用户单位、13px 上只剩 0.54px 的原因。
+          尺寸和颜色仍由 `.icon` 给。 */}
+      <svg {...STROKE_ICON} className={styles.icon}>
         <path d="M20 15a2 2 0 01-2 2H8l-4 4V5a2 2 0 012-2h12a2 2 0 012 2z" />
       </svg>
       <span>{t('chat.quote.count', { count: quotes.length })}</span>
