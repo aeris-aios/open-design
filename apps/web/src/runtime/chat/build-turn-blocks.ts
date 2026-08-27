@@ -366,11 +366,23 @@ export function buildTurnBlocks(input: BuildTurnInput): TurnBlock[] {
    *
    * thinking 事件一个时刻都不带,所以推理的时长只能靠**它填掉的那段空白**反推:
    * 上一件带时刻的事结束(`from`)到下一件带时刻的事开始(`stamp` 的实参)。
-   * `arr` 用来判「这段空白里有没有别的东西」—— 结算那一刻这段推理**仍然是数组
-   * 末尾**,才说明这段空白确实只有它;中间落过正文 / 工具行就不认,那时候这段
-   * 空白是几件事分掉的,谁都说不出自己占了多少(§2.2b「拿不到就不显示,不估算」)。
+   * `arr` 与 `gapLanded` 一起回答「这段空白是不是它一个人的」—— 见 `ownsGap`。
+   * 不是它一个人的就不认:那时候这段空白是几件事分掉的,谁都说不出自己占了多少
+   * (§2.2b「拿不到就不显示,不估算」)。
    */
   let openThink: OpenThink | null = null;
+  /**
+   * **这一段空白里已经落过哪些条目** —— 每次时刻推进(`stamp`)时清空。
+   *
+   * 只记**自己没有时刻的事件**落下的条目,也就是 `thinking` 与 `text` 这两种
+   * (`pushInside` / `pushProse` 两个落点)。工具行 / 清单行 / 生图行不记:
+   * 它们背后的事件刚刚推进过时刻,那段时间已经在钟上了,不是空白里的债。
+   *
+   * 为什么光靠「我是不是这摞的末尾」不够:那个问法只看得见落在推理**后面**的东西。
+   * `正文 → 思考 → 工具` 里那段正文落在推理**前面**,末尾判据看不见它 ——
+   * 于是同样一段空白,换个顺序就报满整段(见 `ownsGap`)。
+   */
+  let gapLanded: unknown[] = [];
   /** 壳外正在累积的结论 */
   let openProse: ProseBlock | null = null;
   let doneSeen = false;
@@ -419,6 +431,8 @@ export function buildTurnBlocks(input: BuildTurnInput): TurnBlock[] {
   const stamp = (at?: number): void => {
     if (at == null) return;
     closeThink(at);
+    // 钟往前走了 = 上一段空白到此为止,下一段空白从零记账
+    gapLanded = [];
     if (firstStartedAt == null || at < firstStartedAt) firstStartedAt = at;
     if (lastEndedAt == null || at > lastEndedAt) lastEndedAt = at;
     stampShell(at);
@@ -431,10 +445,32 @@ export function buildTurnBlocks(input: BuildTurnInput): TurnBlock[] {
   const thinkMs = new Map<ShellText, number | null>();
 
   /**
+   * 这一截空白**是不是这段推理一个人的**。
+   *
+   * 问的是「这段空白里除了它还落过别的东西吗」,**不是**「它现在是不是末尾」。
+   * 末尾那个问法只看得见落在推理**后面**的东西,看不见落在它**前面**的,于是
+   * 同一段空白换个顺序就换个结论 —— 两个偏大的假数都从这儿来:
+   *
+   *  · `正文 → 思考 → 工具`:正文在推理之前落下,末尾判据看不见,推理报满整段;
+   *    而 `思考 → 正文 → 工具` 正确拒绝。同一段空白,顺序不该改变结论。
+   *  · `思考A → 正文 → 思考B`:A 和正文都在 B 之前落下,B 于是把「A 那一份 +
+   *    正文那一份 + 自己那一份」一起认领走 —— 兄弟被作废了,时间却被它吞了。
+   *
+   * 偏大的假数比不给数更糟:偏小还看得出「怎么这么快」,偏大是一个用户会信的数字。
+   */
+  function ownsGap(open: OpenThink): boolean {
+    // 落在它后面、又不经 `gapLanded` 记账的(没有时刻的调用推下来的行)
+    if (open.arr[open.arr.length - 1] !== open.item) return false;
+    // 落在它前面的,以及落在**别的摞**里的(done 之后的结论走的是 `blocks`)
+    return gapLanded.every((landed) => landed === open.item);
+  }
+
+  /**
    * 给还开着的那段推理结账:它填掉的空白到 `at` 为止。
    *
-   * 只有这段推理**仍然是它那个数组的末尾**才算这一截 —— 中间要是落过别的东西
-   * (正文、工具行、清单行),那段空白就是几件事分掉的,给谁都是编。
+   * 这段空白不是它一个人的(`ownsGap`)就**整段作废**,而不是跳过这一截 ——
+   * 一段推理可能被结账好几次,只把算得出的那几截加起来会得到一个偏小的假数,
+   * 和偏大的假数一样违反 §2.2b。
    *
    * 一段推理可能被结账**好几次**:中间夹着不落行的事件(`TodoWrite`,或者调用发出去
    * 但结果还没回来的工具)时,推理被切成几截却仍是同一段文字。相邻两截共用同一个
@@ -444,10 +480,9 @@ export function buildTurnBlocks(input: BuildTurnInput): TurnBlock[] {
     const open = openThink;
     openThink = null;
     if (!open) return;
-    // 这一截不是它一个人的:别人已经落到它后面了
-    if (open.arr[open.arr.length - 1] !== open.item) return;
     const prev = thinkMs.get(open.item);
     if (prev === null) return; // 已经作废,不再往上加
+    if (!ownsGap(open)) { thinkMs.set(open.item, null); return; }
     const ms = open.from == null ? -1 : at - open.from;
     thinkMs.set(open.item, ms < 0 ? null : (prev ?? 0) + ms);
   }
@@ -485,6 +520,8 @@ export function buildTurnBlocks(input: BuildTurnInput): TurnBlock[] {
       ? { kind: 'text', text: text.replace(/^\s+/, ''), thinking: true }
       : { kind: 'text', text: text.replace(/^\s+/, '') };
     arr.push(openText);
+    // thinking / text 都不带时刻 —— 它们占掉的是这段空白里的时间,记上账(见 `gapLanded`)
+    gapLanded.push(openText);
   };
 
   const pushProse = (text: string): void => {
@@ -495,6 +532,8 @@ export function buildTurnBlocks(input: BuildTurnInput): TurnBlock[] {
     if (!text.trim()) return;
     openProse = { kind: 'prose', text: text.replace(/^\s+/, '') };
     blocks.push(openProse);
+    // 壳外的结论也是没有时刻的正文,同样占掉这段空白(见 `gapLanded`)
+    gapLanded.push(openProse);
   };
   /**
    * done **之前**的一切都收进卡片(2026-08-26 用户裁决,推翻了当天早些时候那条
