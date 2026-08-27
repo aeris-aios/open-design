@@ -3,13 +3,8 @@ import { useCharReveal } from "./chat/useCharReveal";
 import { ExecutionShell } from "./chat/ExecutionShell";
 import { buildTurnBlocks } from "../runtime/chat/build-turn-blocks";
 import type { ExecutionShell as ExecutionShellData } from "../runtime/chat/contract";
-import {
-  ArtifactCards,
-  artifactCardKind,
-  producedArtifactCardKind,
-  FileOpsSummary,
-  type ArtifactCardItem,
-} from "./FileOpsSummary";
+import { FileOpsSummary } from "./FileOpsSummary";
+import type { ArtifactExportFormat } from "../runtime/chat/artifact-export";
 import {
   renderMarkdown,
   type MarkdownLinkClickHandler,
@@ -443,7 +438,17 @@ interface Props {
    * menu — which is why the rows carry no trailing chevron.
    */
   onNextStepSuggestion?: (text: string) => void;
-  onArtifactDownload?: (fileName: string) => void;
+  /**
+   * 导出这份产物。
+   *
+   * `format` **只有产物卡的格式浮层会传** —— 多格式产物(HTML)在卡上就把格式
+   * 选完了,不该再把人送进预览区的导出菜单里选第二遍。不带 `format` 的调用
+   * (「下一步引导」那一行的〔下载〕)沿用原来的语义:打开文件并展开导出菜单。
+   *
+   * 单格式产物(md / 图片 / 视频 / 其它)压根不调这个回调 —— 卡上那枚就是
+   * 一条 `<a download>`,见 `runtime/chat/artifact-export.ts`。
+   */
+  onArtifactDownload?: (fileName: string, format?: ArtifactExportFormat) => void;
   nextStepSkills?: SkillSummary[];
   nextStepVariant?: NextStepActionsVariant;
 }
@@ -756,6 +761,24 @@ function AssistantMessageImpl({
     () => summaryArtifactOpsForProducedFiles(fileOps, produced),
     [fileOps, produced],
   );
+  /**
+   * 这一轮的产物面板喂什么 —— **一条消息只算一次**,交给唯一那个组件。
+   *
+   * 两条来源仍在,但它们现在只是同一个面板的两种输入:
+   *  1. 这一轮真有 write/edit 工具行 → 用那份清单(它已经按 daemon 的
+   *     `producedFiles` 对齐过,见 `summaryArtifactOpsForProducedFiles`);
+   *  2. 没有工具行 → 用产出 / 从正文里找回来的文件,翻成同一种记录形状。
+   *
+   * 第 2 条要求 `!streaming`:流式过程中「产出」还没定,`displayedProduced` 里
+   * 的东西会一边跳一边变形(这是原来 `ProducedFiles` 那道 `!streaming` 闸的
+   * 用意,原样保留)。第 1 条不受这道闸约束 —— 工具行本身带 `pending` 态,
+   * 边跑边出卡是设计要的(D37)。
+   */
+  const turnArtifactPanelEntries = useMemo(() => {
+    if (summaryArtifactOps.length > 0) return summaryArtifactOps;
+    if (streaming) return [];
+    return producedFilesAsFileOps(displayedProduced);
+  }, [displayedProduced, streaming, summaryArtifactOps]);
   // The single artifact the "next step" affordance anchors to: prefer the HTML
   // produced by THIS turn; if the final turn emitted none (a summary / continue
   // message) fall back to the most recently modified HTML in the project so
@@ -1171,34 +1194,36 @@ function AssistantMessageImpl({
             disclosure, so `fileOps` — not `turnFileOps` — feeds this row.
             Read-only entries are filtered out (they stay in the execution
             record); the summary lists artifacts, not inspected inputs. */}
-        {summaryArtifactOps.length > 0 ? (
+        {/*
+          「这一轮的产物」**只有一个面板,也只有一份实现**。
+          ------------------------------------------------------------
+          原来这里是两个互斥的组件:有 write/edit 工具行走 `FileOpsSummary`,
+          没有就走 `ProducedFiles`。互斥是 P0 `recvqaerXd82bE` 的补丁 ——
+          它解决的是「同时出两块、同一个标题不同的计数」,**没有**解决两块长得
+          不一样:卡片准入、音频画法、按钮集合、导出行为各写了一份,于是同一份
+          `plan.md` / `theme.mp3` 在两条路上是两副长相。
+
+          现在只留 `FileOpsSummary`,产出回退那条支把 `ProjectFile[]` 翻成
+          `FileOpEntry[]` 再喂给它(`producedFilesAsFileOps`,复用
+          `mergeProducedFilesIntoFileOps` 那条已经在用的映射)。互斥仍然成立,
+          而且是**结构上**的:一条消息只调用一次这个组件。
+
+          `onPublish` / `onExport` 不再按 `isLast` 发放 —— 设计稿组件 14 里没有
+          这一档:动作是这张卡自己的属性(「这张卡能不能发布」一眼可见),不是
+          「这一轮是不是最后一轮」的属性。按轮次发放的结果是同一种产物在历史
+          轮次里少一枚按钮,截图里两张卡不一样。**「下一步引导」那一块仍然是
+          最后一轮限定**(它讲的是「接下来做什么」,天然只对当前这一轮成立),
+          那一处的 `isLast` 原样留着。
+        */}
+        {turnArtifactPanelEntries.length > 0 ? (
           <FileOpsSummary
-            entries={summaryArtifactOps}
+            entries={turnArtifactPanelEntries}
             projectFileNames={projectFileNames}
             onRequestOpenFile={onRequestOpenFile}
             projectId={projectId ?? undefined}
-            onPublish={isLast ? onArtifactShare : undefined}
-            onExport={isLast ? onArtifactDownload : undefined}
+            onPublish={onArtifactShare}
+            onExport={onArtifactDownload}
             turnIsLive={streaming || turnRunStatus === 'running'}
-          />
-        ) : null}
-        {/* Exactly one "files from this turn" panel per message. When the
-            turn tracked explicit write/edit tool calls, FileOpsSummary above
-            already covers it; ProducedFiles is the fallback surface (with
-            Download) for turns that produced/recovered files without any
-            tracked tool call. Rendering both at once — which happened when a
-            message had real tool ops AND additional recovered files from its
-            prose — showed two panels with the identical "Files from this
-            turn" header and different file counts, reported as a P0 (Feishu
-            recvqaerXd82bE). See AssistantMessage.test.tsx "never shows the
-            tool-op summary and the produced-files block at once". */}
-        {summaryArtifactOps.length === 0 && !streaming && displayedProduced.length > 0 && projectId ? (
-          <ProducedFiles
-            files={displayedProduced}
-            projectId={projectId}
-            onRequestOpenFile={onRequestOpenFile}
-            onPublish={isLast ? onArtifactShare : undefined}
-            onExport={isLast ? onArtifactDownload : undefined}
           />
         ) : null}
         {!streaming && projectId && pluginActionFolders.length > 0 ? (
@@ -1460,6 +1485,17 @@ function mergeProducedFilesIntoFileOps(
     });
   }
   return merged;
+}
+
+/**
+ * `ProjectFile[]` → `FileOpEntry[]`,给「没有工具行的那一轮」用。
+ *
+ * 直接复用 `mergeProducedFilesIntoFileOps` 的空底座:这条映射(名字、全路径、
+ * 记成一次 write、`status: 'done'`)本来就已经在 `turnFileOps` 那条路上跑了,
+ * 再写一份只会得到第二种记录形状 —— 而两种形状正是这次要消掉的东西。
+ */
+function producedFilesAsFileOps(produced: ProjectFile[]): FileOpEntry[] {
+  return mergeProducedFilesIntoFileOps([], produced);
 }
 
 function summaryArtifactOpsForProducedFiles(
@@ -2492,111 +2528,6 @@ function feedbackReasonLabel(
       return t("assistant.feedbackReasonOther");
   }
   return code;
-}
-
-/**
- * Fallback "files from this turn" surface.
- *
- * Component 14 (design matrix grids 30-33): anything a 16:10 thumbnail can
- * answer "is this the version I wanted?" for — HTML, image, video — leaves the
- * text list and becomes an artifact card. `.md` / `.csv` / source files are not
- * primary artifacts (W12) and audio belongs to component 24's own player, so
- * both keep the name / size / Open / Download row they have today.
- */
-function ProducedFiles({
-  files,
-  projectId,
-  onRequestOpenFile,
-  onPublish,
-  onExport,
-}: {
-  files: ProjectFile[];
-  projectId: string;
-  onRequestOpenFile?: (name: string) => void;
-  /** D28 "publish" — HTML artifacts only. */
-  onPublish?: (name: string) => void;
-  /** D28 "export". Without it the card exports through a direct download. */
-  onExport?: (name: string) => void;
-}) {
-  const t = useT();
-  const { workspaceContext } = useProjectCollabContext();
-  /*
-   * 本轮产出**一律出卡**(用户 2026-08-26:「变成上面卡片形式才对」)——
-   * 拿不出预览图的走 `doc` 档,不再退化成一行灰列表。
-   * `rowFiles` 因此永远是空的,留着是为了下面那段回退分支还在(万一以后又要分流)。
-   */
-  const cardItems: ArtifactCardItem[] = [];
-  const rowFiles: ProjectFile[] = [];
-  for (const file of files) {
-    cardItems.push({ name: file.name, kind: producedArtifactCardKind(file.name) });
-  }
-  const cards =
-    cardItems.length > 0 ? (
-      <ArtifactCards
-        items={cardItems}
-        projectId={projectId}
-        onOpen={onRequestOpenFile}
-        onPublish={onPublish}
-        onExport={onExport}
-      />
-    ) : null;
-  if (rowFiles.length === 0) return cards;
-  return (
-    <>
-    {cards}
-    <div className="produced-files" data-testid="produced-files">
-      <div className="produced-files-label">{t("assistant.producedFiles")}</div>
-      <div className="produced-files-list">
-        {rowFiles.map((f) => (
-          <div
-            key={f.name}
-            className={`produced-file${onRequestOpenFile ? " produced-file-openable" : ""}`}
-            role={onRequestOpenFile ? "button" : undefined}
-            tabIndex={onRequestOpenFile ? 0 : undefined}
-            aria-label={onRequestOpenFile ? `${t("assistant.openFile")}: ${f.name}` : undefined}
-            onClick={onRequestOpenFile ? () => onRequestOpenFile(f.name) : undefined}
-            onKeyDown={onRequestOpenFile ? (event) => {
-              if (event.target !== event.currentTarget) return;
-              if (event.key !== "Enter" && event.key !== " ") return;
-              event.preventDefault();
-              onRequestOpenFile(f.name);
-            } : undefined}
-          >
-            <span className="produced-file-icon" aria-hidden>
-              <Icon name={kindIconName(f.kind)} size={14} />
-            </span>
-            <span className="produced-file-name" title={f.name}>
-              {f.name}
-            </span>
-            <span className="produced-file-size">{humanBytes(f.size)}</span>
-            <div className="produced-file-actions">
-              {onRequestOpenFile ? (
-                <button
-                  type="button"
-                  className="ghost"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onRequestOpenFile(f.name);
-                  }}
-                >
-                  {t("assistant.openFile")}
-                </button>
-              ) : null}
-              <a
-                className="ghost-link"
-                href={projectFileUrl(projectId, f.name, workspaceContext)}
-                download={f.name}
-                onClick={(event) => event.stopPropagation()}
-              >
-                {t("assistant.downloadFile")}
-              </a>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-    </>
-  );
 }
 
 // Pure renderer. State (busyKey, notices) and the action runner live in the

@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type CSSProperties, type DragEvent as ReactDragEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
+import type { ArtifactExportFormat } from '../runtime/chat/artifact-export';
 import { createPortal, flushSync } from 'react-dom';
 import { Button, Input, Select } from '@open-design/components';
 import {
@@ -1770,7 +1771,7 @@ interface Props {
   shareRequest?: { nonce: number } | null;
   // Bumped nonce asking this viewer to open its Download/Export menu (chat-side
   // "Download" next-step action).
-  downloadRequest?: { nonce: number } | null;
+  downloadRequest?: { nonce: number; format?: ArtifactExportFormat } | null;
   // Bumped nonce asking a deck preview to flip to `slideIndex` (a queued chat
   // send for this file just started processing).
   slideNavRequest?: { slideIndex: number; nonce: number } | null;
@@ -7374,7 +7375,7 @@ function HtmlViewer({
   commentPortalId?: string;
   onCommentModeChange?: (active: boolean) => void;
   shareRequest?: { nonce: number } | null;
-  downloadRequest?: { nonce: number } | null;
+  downloadRequest?: { nonce: number; format?: ArtifactExportFormat } | null;
   slideNavRequest?: { slideIndex: number; nonce: number } | null;
   // Read-only viewer of a team-shared project: comment-only, no edit/export.
   viewerOnly?: boolean;
@@ -14220,9 +14221,20 @@ function HtmlViewer({
     consumedDownloadNonceRef.current = nonce;
     setExportReadyNudge(false);
     markExportReadyNudgeSeen(projectId, file.name);
+    /*
+     * 带着格式来的请求**直接导那一种** —— 产物卡上那枚浮层已经让人选过了
+     * (产品 2026-08-27)。再把菜单展开一次等于让人选第二遍。
+     * 不带格式的(「下一步引导」那行〔下载〕)照旧展开菜单。
+     */
+    const format = downloadRequest?.format;
+    if (format) {
+      runExportFormat(format);
+      return;
+    }
     setUnifiedActionTab('export');
     setDeployMenuOpen(true);
-  }, [downloadRequest?.nonce, canDownload, projectId, file.name]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [downloadRequest?.nonce, downloadRequest?.format, canDownload, projectId, file.name]);
 
   // A queued chat send for this deck just started: flip the preview to the
   // slide its marked element lives on. We write the cached slide state first so
@@ -14471,6 +14483,80 @@ function HtmlViewer({
 
   const changeImageExportFormat = (format: ImageExportFormat) => {
     setImageExportFormat(format);
+  };
+
+  /*
+   * 一种导出格式一段动作 —— 菜单项和「产物卡格式浮层直接点名的那一种」共用同一份。
+   *
+   * 原来这四段各自内联在菜单项的 `onClick` 里,只有从这个菜单点进来才跑得到。
+   * 产物卡上的〔导出〕现在会带着选好的格式过来(`downloadRequest.format`),
+   * 它需要**同一段**动作而不是「把菜单展开让人再选一次」;两份实现必然分叉,
+   * 所以先收成一处。
+   *
+   * PPTX / Markdown 不在这里:前者要先开导出参数弹窗,后者只有 markdown 产物
+   * 才有,而 markdown 根本不走这个 viewer —— 两条都留在菜单里各自的入口。
+   */
+  const runExportFormat = (format: ArtifactExportFormat) => {
+    if (format === 'image') {
+      void openImageExportModal();
+      return;
+    }
+    setDeployMenuOpen(false);
+    if (format === 'zip') {
+      fireShareExport('zip', () => exportProjectAsZip({
+        projectId,
+        filePath: file.name,
+        fallbackHtml: source ?? '',
+        fallbackTitle: exportTitle,
+        workspaceContext,
+      }));
+      return;
+    }
+    if (format === 'html') {
+      fireShareExport('html', () => exportProjectAsHtml({
+        projectId,
+        filePath: file.name,
+        fallbackTitle: exportTitle,
+        workspaceContext,
+      }));
+      return;
+    }
+    // Pixel-perfect screenshot PDF (matches the preview, same renderer as
+    // image/PPTX). Chosen over Chromium's vector printToPDF because that path
+    // drops CJK glyphs in the packaged runtime (no embedded fonts) —
+    // unacceptable for a Chinese-first product. Falls back to the
+    // vector/browser print path on web or on failure.
+    fireShareExport('pdf', async () => {
+      if (isOpenDesignHostAvailable()) {
+        const res = await exportProjectScreenshotPdf({
+          projectId,
+          fileName: file.name,
+          title: exportTitle,
+          workspaceContext,
+          // Broader deck signal than the viewer's nav so runtime-managed decks
+          // (<deck-stage>) paginate per slide; the vector fallback below uses
+          // the SAME signal, so an artifact exports identically with or without
+          // a desktop host (no per-host divergence).
+          deck: deckExportSignal,
+        });
+        if (res.ok) return;
+        // A SEMANTIC failure (bad deck routing, unreadable renderer output,
+        // renderer 502, …) must surface — NOT silently downgrade to the vector
+        // PDF, which can reintroduce the CJK-glyph / fidelity bugs the
+        // screenshot path exists to avoid. Only a genuinely unavailable
+        // renderer (no host / 501 / transport) falls through to the vector path
+        // below.
+        if (!('unavailable' in res)) throw new Error(res.error);
+      }
+      await exportProjectAsPdf({
+        deck: deckExportSignal,
+        fallbackPdf: () => exportAsPdf(source ?? '', exportTitle, { deck: deckExportSignal, onProgress: onExportProgress }),
+        filePath: file.name,
+        projectId,
+        title: exportTitle,
+        workspaceContext,
+      });
+    });
   };
 
   // Component-scoped so both the save flow and the modal Cancel button can
@@ -16159,48 +16245,7 @@ function HtmlViewer({
                     role="menuitem"
                     disabled={viewerOnly}
                     title={viewerOnly ? viewerOnlyDisabledTitle : undefined}
-                    onClick={() => {
-                      setDeployMenuOpen(false);
-                      // Pixel-perfect screenshot PDF (matches the preview, same
-                      // renderer as image/PPTX). Chosen over Chromium's vector
-                      // printToPDF because that path drops CJK glyphs in the
-                      // packaged runtime (no embedded fonts) — unacceptable for a
-                      // Chinese-first product. Falls back to the vector/browser
-                      // print path on web or on failure.
-                      fireShareExport('pdf', async () => {
-                        if (isOpenDesignHostAvailable()) {
-                          const res = await exportProjectScreenshotPdf({
-                            projectId,
-                            fileName: file.name,
-                            title: exportTitle,
-                            workspaceContext,
-                            // Broader deck signal than the viewer's nav so
-                            // runtime-managed decks (<deck-stage>) paginate per
-                            // slide; the vector fallback below uses the SAME
-                            // signal, so an artifact exports identically with or
-                            // without a desktop host (no per-host divergence).
-                            deck: deckExportSignal,
-                          });
-                          if (res.ok) return;
-                          // A SEMANTIC failure (bad deck routing, unreadable
-                          // renderer output, renderer 502, …) must surface — NOT
-                          // silently downgrade to the vector PDF, which can
-                          // reintroduce the CJK-glyph / fidelity bugs the
-                          // screenshot path exists to avoid. Only a genuinely
-                          // unavailable renderer (no host / 501 / transport)
-                          // falls through to the vector path below.
-                          if (!('unavailable' in res)) throw new Error(res.error);
-                        }
-                        await exportProjectAsPdf({
-                          deck: deckExportSignal,
-                          fallbackPdf: () => exportAsPdf(source ?? '', exportTitle, { deck: deckExportSignal, onProgress: onExportProgress }),
-                          filePath: file.name,
-                          projectId,
-                          title: exportTitle,
-                          workspaceContext,
-                        });
-                      });
-                    }}
+                    onClick={() => runExportFormat('pdf')}
                   >
                     <span className="share-menu-icon"><RemixIcon name="file-line" size={15} /></span>
                     <span>{t('fileViewer.exportPdf')}</span>
@@ -16231,9 +16276,7 @@ function HtmlViewer({
                       type="button"
                       className="share-menu-item"
                       role="menuitem"
-                      onClick={() => {
-                        void openImageExportModal();
-                      }}
+                      onClick={() => runExportFormat('image')}
                     >
                       <span className="share-menu-icon"><RemixIcon name="image-line" size={15} /></span>
                       <span>{t('fileViewer.exportImage')}</span>
@@ -16249,16 +16292,7 @@ function HtmlViewer({
                     role="menuitem"
                     disabled={viewerOnly}
                     title={viewerOnly ? viewerOnlyDisabledTitle : undefined}
-                    onClick={() => {
-                      setDeployMenuOpen(false);
-                      fireShareExport('zip', () => exportProjectAsZip({
-                        projectId,
-                        filePath: file.name,
-                        fallbackHtml: source ?? '',
-                        fallbackTitle: exportTitle,
-                        workspaceContext,
-                      }));
-                    }}
+                    onClick={() => runExportFormat('zip')}
                   >
                     <span className="share-menu-icon"><RemixIcon name="file-zip-line" size={15} /></span>
                     <span>{t('fileViewer.exportZip')}</span>
@@ -16269,15 +16303,7 @@ function HtmlViewer({
                     role="menuitem"
                     disabled={viewerOnly}
                     title={viewerOnly ? viewerOnlyDisabledTitle : undefined}
-                    onClick={() => {
-                      setDeployMenuOpen(false);
-                      fireShareExport('html', () => exportProjectAsHtml({
-                        projectId,
-                        filePath: file.name,
-                        fallbackTitle: exportTitle,
-                        workspaceContext,
-                      }));
-                    }}
+                    onClick={() => runExportFormat('html')}
                   >
                     <span className="share-menu-icon"><RemixIcon name="file-code-line" size={15} /></span>
                     <span>{t('fileViewer.exportHtml')}</span>

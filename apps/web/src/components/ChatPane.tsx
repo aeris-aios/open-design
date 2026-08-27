@@ -16,6 +16,7 @@ import {
   type MutableRefObject,
   type ReactNode,
 } from 'react';
+import type { ArtifactExportFormat } from '../runtime/chat/artifact-export';
 import { createPortal } from 'react-dom';
 import { hasOdCard } from '@open-design/contracts';
 import { useAnalytics } from '../analytics/provider';
@@ -661,7 +662,8 @@ interface Props {
   // The featured design-toolbox rows are driven directly off the composer ref
   // owned here, so they need no handler from ProjectView (unlike onArtifactShare).
   onArtifactShare?: (fileName: string) => void;
-  onArtifactDownload?: (fileName: string) => void;
+  /** `format` 由产物卡的格式浮层带上;不带就是「打开文件 + 展开导出菜单」。 */
+  onArtifactDownload?: (fileName: string, format?: ArtifactExportFormat) => void;
   onForkFromMessage?: (assistantMessage: ChatMessage) => void;
   forkingMessageId?: string | null;
   // Header "+" button — kicks off ProjectView's create-conversation flow.
@@ -3914,7 +3916,8 @@ function ChatRows({
   onPickSkill?: (skillId: string) => void;
   /** 把一条「下一步引导」当作用户的下一条消息直接发出去 */
   onNextStepSuggestion?: (text: string) => void;
-  onArtifactDownload?: (fileName: string) => void;
+  /** `format` 由产物卡的格式浮层带上;不带就是「打开文件 + 展开导出菜单」。 */
+  onArtifactDownload?: (fileName: string, format?: ArtifactExportFormat) => void;
   nextStepSkills?: SkillSummary[];
   nextStepVariant?: NextStepActionsVariant;
   onForkFromMessage?: (message: ChatMessage) => void;

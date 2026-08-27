@@ -26,10 +26,15 @@ import {
   type FileOpEntry,
   type FileOpKind,
 } from '../runtime/file-ops';
+import {
+  artifactExportNeedsFormatChoice,
+  type ArtifactExportFormat,
+} from '../runtime/chat/artifact-export';
 import { Icon, type IconName } from './Icon';
 import { PixelLiquid } from './PixelLiquid';
 import { HtmlProjectCoverFrame } from './project-cover';
 import { AudioArtifact } from './chat/AudioArtifact';
+import { ArtifactExportPopover } from './chat/ArtifactExportPopover';
 
 interface Props {
   entries: FileOpEntry[];
@@ -44,8 +49,12 @@ interface Props {
   projectId?: string | undefined;
   /** D28 "publish" — HTML artifacts only. */
   onPublish?: ((name: string) => void) | undefined;
-  /** D28 "export". Falls back to a direct `download` link when absent. */
-  onExport?: ((name: string) => void) | undefined;
+  /**
+   * D28 "export" —— **只对多格式产物调用**,而且一定带上选中的格式。
+   * 单格式产物(md / 图片 / 视频 / 其它)在卡上直接下载原件,不走这里
+   * (`runtime/chat/artifact-export.ts`)。
+   */
+  onExport?: ((name: string, format: ArtifactExportFormat) => void) | undefined;
   /** 这一轮还在跑吗 —— 决定产物卡能不能是「还在写」的 loading 态(见 cardItems) */
   turnIsLive?: boolean;
 }
@@ -64,6 +73,21 @@ const ARTIFACT_OP_ICON: Record<ArtifactOpKind, IconName> = {
 
 const COLLAPSE_AFTER_ENTRY_COUNT = 4;
 
+/**
+ * 把原件直接拉到本地 —— 单格式产物那一档的「导出」。
+ *
+ * 卡上的〔导出〕本身就是一枚 `<a download>`,不需要这个;这里是给音频胶囊
+ * 那枚下载键用的,它在组件 24 里是一枚 `<button>`。
+ */
+function downloadProjectFile(href: string, name: string): void {
+  const a = document.createElement('a');
+  a.href = href;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
 export function FileOpsSummary({
   entries,
   projectFileNames,
@@ -80,14 +104,24 @@ export function FileOpsSummary({
 
   if (entries.length === 0) return null;
 
-  // Component 14 (grids 30-33): a produced artifact is a picture, not a path.
-  // Everything the card cannot answer with a thumbnail — .md, .csv, source
-  // files, deletions — stays in the text list below it.
+  /*
+   * Component 14(grids 30-33)。
+   *
+   * 准入用 `producedArtifactCardKind`,**不是** `artifactCardKind` —— 两者的差别
+   * 就是 md / csv / 源码那一档:前者给它们一张 `doc` 卡,后者把它们丢回文本行。
+   * 这里原来用的是后者,而「没有工具行」那条回退支用的是前者,于是同一份
+   * `plan.md` 在有工具行的轮次里是一行灰字、在没有的轮次里是一张卡 —— 同一个
+   * 面板两副长相。2026-08-26 用户对着灰列表拍过板:「变成上面卡片形式才对」,
+   * 所以两边一起按卡走。
+   *
+   * 删除掉的文件仍然不出卡(在这一行之前就被筛掉了):一张带预览的卡说的是
+   * 「这份东西在这儿」,对一个已经不在的文件是假话。
+   */
   const cardItems: ArtifactCardItem[] = projectId
     ? entries.flatMap((entry) => {
         if (entry.ops.includes('delete')) return [];
-        const kind = artifactCardKind(entry.path);
-        if (!kind) return [];
+        if (artifactKind(entry.path) === 'audio') return [];
+        const kind = producedArtifactCardKind(entry.path);
         /*
          * **轮次还在跑的时候才算「还在写」**。
          *
@@ -133,7 +167,17 @@ export function FileOpsSummary({
           key={entry.path}
           src={projectFileUrl(projectId, entry.path, workspaceContext)}
           name={entry.path}
-          {...(onExport ? { onDownload: () => onExport(entry.path) } : {})}
+          /*
+           * 音频是**单格式**产物 —— 没有第二种导法,所以那枚下载键直接把原件
+           * 拉下来,不绕道预览区的导出菜单(它对 `.mp3` 根本不存在:
+           * `downloadRequest` 只发给 `HtmlViewer`)。原来这里挂的是
+           * `onExport(entry.path)`,点下去只会把文件在预览区打开,然后什么
+           * 都不发生。
+           */
+          onDownload={() => downloadProjectFile(
+            projectFileUrl(projectId, entry.path, workspaceContext),
+            entry.path,
+          )}
         />
       ))}
     </div>
@@ -400,7 +444,7 @@ export function ArtifactCards({
   projectId: string;
   onOpen?: ((name: string) => void) | undefined;
   onPublish?: ((name: string) => void) | undefined;
-  onExport?: ((name: string) => void) | undefined;
+  onExport?: ((name: string, format: ArtifactExportFormat) => void) | undefined;
 }) {
   if (items.length === 0) return null;
   return (
@@ -430,7 +474,7 @@ function ArtifactCard({
   projectId: string;
   onOpen?: ((name: string) => void) | undefined;
   onPublish?: ((name: string) => void) | undefined;
-  onExport?: ((name: string) => void) | undefined;
+  onExport?: ((name: string, format: ArtifactExportFormat) => void) | undefined;
 }) {
   const t = useT();
   const { workspaceContext } = useProjectCollabContext();
@@ -440,6 +484,7 @@ function ArtifactCard({
   // an `.html` card carries two. The row is flex/end aligned precisely so that
   // unevenness stays right-aligned instead of shifting the export button.
   const canPublish = !pending && item.kind === 'html' && !!onPublish;
+  const needsFormatChoice = artifactExportNeedsFormatChoice(item.name);
 
   return (
     <div
@@ -511,21 +556,31 @@ function ArtifactCard({
               onClick={() => onPublish?.(item.name)}
               data-testid={`artifact-card-publish-${item.name}`}
             >
-              <ArtifactPublishIcon />
+              {/* 稿子里「发布」是**纯文字**,那枚圈中箭头只给「导出」——
+                  `components.css` 把理由写死了:「两个方向相反的动作并排,给其中
+                  一个加上方向,那一排就不必逐字读了」。两枚都上图标等于把这条
+                  取消掉。 */}
               {t('chat.artifact.publish')}
             </button>
           ) : null}
-          {onExport ? (
-            <button
-              type="button"
+          {needsFormatChoice && onExport ? (
+            /* 多格式(今天等价于 HTML):贴着按钮开一枚格式浮层 */
+            <ArtifactExportPopover
+              name={item.name}
+              onExport={onExport}
               className="artifact-card-act"
-              onClick={() => onExport(item.name)}
-              data-testid={`artifact-card-export-${item.name}`}
+              testId={`artifact-card-export-${item.name}`}
             >
               <ArtifactExportIcon />
               {t('chat.artifact.export')}
-            </button>
+            </ArtifactExportPopover>
           ) : (
+            /*
+             * 单格式:**直接下载原件**,不弹任何东西(产品 2026-08-27)。
+             * 这一支原来只在「调用方没给 onExport」时才走;给了 onExport 的时候
+             * md / png / mp4 会走进预览区的导出菜单 —— 而那个菜单只发给
+             * `HtmlViewer`,对这几类根本收不到,点下去只是把文件打开然后没下文。
+             */
             <a
               className="artifact-card-act"
               href={src}
@@ -542,19 +597,16 @@ function ArtifactCard({
   );
 }
 
-// Both glyphs are lifted verbatim from `docs/design/chat-panel-next.html`
-// rather than routed through `Icon`: the export ring-arrow is not one of the
-// 152 glyphs in `remix-icon-paths.ts`, and keeping its sibling inline means the
-// pair cannot drift apart. Sizing lives in CSS (12px, -1px inline start) so the
-// ring and the label read as the same height (D39).
-function ArtifactPublishIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-      <path d="M4 19H20V12H22V20C22 20.5523 21.5523 21 21 21H3C2.44772 21 2 20.5523 2 20V12H4V19ZM13 9V16H11V9H6L12 3L18 9H13Z" />
-    </svg>
-  );
-}
-
+/*
+ * 这枚圈中向下箭头逐字取自 `docs/design/chat-panel-next.html`,不走 `Icon`:
+ * 它不在 `remix-icon-paths.ts` 那 152 个字形里。尺寸在 CSS 里(12px、
+ * inline-start -1px),让圈和字看起来一样高(D39)。
+ *
+ * 稿子里**只有这一枚**图标 —— 「发布」是纯文字。原来这里还有一枚
+ * `ArtifactPublishIcon`,用的其实是组件 19「导出日志」那条路径(上传箭头),
+ * 摆在「发布」前面既不是稿子上的东西,也把「一排里只给一个动作方向」那条
+ * 取巧取消掉了。
+ */
 function ArtifactExportIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">

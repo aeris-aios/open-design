@@ -263,8 +263,12 @@ describe('FileOpsSummary artifact cards', () => {
 
     fireEvent.click(acts[0] as HTMLElement);
     expect(onPublish).toHaveBeenCalledWith('landing.html');
+    // HTML 是**多格式**产物 —— 点〔导出〕先开格式浮层,选完那一条才真的导出
+    // (产品 2026-08-27;判据在 `runtime/chat/artifact-export.ts`)。
     fireEvent.click(acts[1] as HTMLElement);
-    expect(onExport).toHaveBeenCalledWith('landing.html');
+    expect(onExport).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId('artifact-export-format-pdf'));
+    expect(onExport).toHaveBeenCalledWith('landing.html', 'pdf');
   });
 
   it('leaves a non-HTML artifact with export alone (grid 32)', () => {
@@ -333,7 +337,21 @@ describe('FileOpsSummary artifact cards', () => {
     expect(screen.queryByTestId('artifact-card-open-result.html')).toBeNull();
   });
 
-  it('keeps non-artifact files and deletions in the text list', () => {
+  /**
+   * 拿不出缩略图的产出(md / csv / 源码)走 `doc` 卡,**不是**文本行。
+   *
+   * 这一条原来断言的是「notes.md 留在文本列表里」。那是两条产物面板路径里的
+   * 一条:同一份 `notes.md` 在「没有工具行」的那一轮里是一张 `doc` 卡
+   * (`producedArtifactCardKind`),在这一轮里却是一行灰字 —— 同一个面板两副
+   * 长相。收口的时候按用户 2026-08-26 对着灰列表的裁决走:「变成上面卡片形式
+   * 才对」。
+   *
+   * ⚠️ 这一处与设计稿组件 13 的散文有张力(「顺手生成的文件(组件、样式、
+   * csv、md)都不是这一轮的主产物,不给它们各来一张大卡」)。稿子里确实没有
+   * `doc` 卡这一档 —— 它只画了缩略图能答话的那三种。翻回去只要把
+   * `producedArtifactCardKind` 换回 `artifactCardKind` 一行,等产品裁决。
+   */
+  it('cards non-thumbnail artifacts too, and keeps deletions out of the cards', () => {
     render(
       <FileOpsSummary
         entries={[
@@ -350,9 +368,10 @@ describe('FileOpsSummary artifact cards', () => {
     );
 
     expect(screen.getByTestId('artifact-card-result.html')).toBeTruthy();
-    expect(screen.queryByTestId('artifact-card-notes.md')).toBeNull();
+    expect(screen.getByTestId('artifact-card-notes.md')).toBeTruthy();
+    expect(screen.getByTestId('artifact-card-notes.md').getAttribute('data-kind')).toBe('doc');
+    // 删掉的文件**不出卡** —— 一张带预览的卡对一个已经不在的文件是假话
     expect(screen.queryByTestId('artifact-card-old.png')).toBeNull();
-    expect(screen.getByTestId('file-ops-row-notes.md')).toBeTruthy();
     expect(screen.getByTestId('file-ops-row-old.png')).toBeTruthy();
   });
 });

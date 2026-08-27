@@ -234,7 +234,10 @@ describe('AssistantMessage next-step affordance', () => {
     // 2026-08-26:拿不出预览图的产出(md/txt)也走产物卡了(`doc` 档),
     // 不再退化成一行灰列表 —— 所以这里改看卡片。
     expect(document.querySelector('[data-testid="artifact-card-notes.md"]')).toBeTruthy();
-    expect(screen.queryByTestId('file-ops-summary')).toBeNull();
+    // 「不是那张可折叠的工具摘要」现在看的是**没有文本清单**:两条产物面板路径
+    // 收成一个组件之后,`file-ops-summary` 标的是面板身份,两条路上都有。
+    expect(document.querySelector('.file-ops-list')).toBeNull();
+    expect(document.querySelectorAll('[data-testid="file-ops-summary"]')).toHaveLength(1);
     expect(screen.getByTestId('next-step-actions')).toBeTruthy();
     expect(screen.getByText(en['nextStep.projectGenerateArtifactTitle'])).toBeTruthy();
     fireEvent.click(screen.getByTestId('next-step-project-action-project-generate-artifact'));
