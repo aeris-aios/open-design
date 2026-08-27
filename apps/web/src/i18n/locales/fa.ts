@@ -3616,6 +3616,7 @@ export const fa: Dict = {
   "chat.edge.reconnectDetail": "مشاهده جزئیات",
   "chat.edge.reconnectFailed": "اتصال ناموفق بود",
   "chat.edge.reconnecting": "در حال اتصال مجدد",
+  "chat.edge.retrying": "در حال تلاش مجدد",
   "qf.visualNext": "سبک بعدی",
   "qf.visualPrev": "سبک قبلی",
   "qf.visualRandom": "تصادفی",

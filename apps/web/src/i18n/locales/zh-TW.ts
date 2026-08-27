@@ -3813,6 +3813,7 @@ export const zhTW: Dict = {
   "chat.edge.reconnectDetail": "查看詳情",
   "chat.edge.reconnectFailed": "連線失敗",
   "chat.edge.reconnecting": "正在重新連線",
+  "chat.edge.retrying": "正在重試",
   "qf.visualNext": "下一張",
   "qf.visualPrev": "上一張",
   "qf.visualRandom": "隨機",

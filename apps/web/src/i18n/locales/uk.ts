@@ -3616,6 +3616,7 @@ export const uk: Dict = {
   "chat.edge.reconnectDetail": "Переглянути деталі",
   "chat.edge.reconnectFailed": "Не вдалося підключитися",
   "chat.edge.reconnecting": "Повторне підключення",
+  "chat.edge.retrying": "Повторна спроба",
   "qf.visualNext": "Наступний стиль",
   "qf.visualPrev": "Попередній стиль",
   "qf.visualRandom": "Випадково",

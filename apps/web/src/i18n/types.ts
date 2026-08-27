@@ -4500,6 +4500,7 @@ export interface Dict {
   'chat.edge.reconnectDetail': string;
   'chat.edge.reconnectFailed': string;
   'chat.edge.reconnecting': string;
+  'chat.edge.retrying': string;
   'qf.visualNext': string;
   'qf.visualPrev': string;
   'qf.visualRandom': string;

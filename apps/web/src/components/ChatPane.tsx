@@ -1677,9 +1677,18 @@ export function ChatPane({
   //
   // 兜底只接手**这一轮自己的原始报错**。两个条件缺一不可:
   //  · `runFailureUi` —— 这条助手消息确实是终态失败,不然凭空多出一张卡;
-  //  · 没有 `currentGlobalError` —— 面板级那条错误(会话加载失败之类)本来就是
+  //  · 面板级那条错误不是**这一轮自己填的** —— 面板错误(会话加载失败之类)本来就是
   //    我们自己写的人话,而且优先级更高(见上面 `rawError` 的取值顺序)。少了这一条,
   //    「一边是面板错误、一边有条失败的旧运行」时,那句人话会被兜底句顶掉。
+  //
+  //    判据不能是「面板里有没有错误」:面板那个槽是**共用**的,运行失败自己也会
+  //    往里填(`setRunError(err.message, assistantId)`,ProjectView 三处)。按
+  //    「有没有」判,这一轮自己的上游原文就正好绕过兜底,从最后那条 `: rawError`
+  //    漏到卡面上 —— 用户 2026-08-27 看到的那串 JSON-RPC 走的就是这条路。
+  //
+  //    真正的判据是**谁填的**:`setRunError` 带 `sourceAssistantId`,`setError`
+  //    一律置 null。所以「来源就是这条失败的助手消息」= 那段字是这一轮的上游原文,
+  //    该由兜底句接手;来源为空或指向别的助手,那句话跟这一轮无关,原样留着。
   //
   // R9:断线是唯一一条**整张卡都不出**的 —— 流水最后一行的重连行(第 84 格 ·
   // S29)已经在说同一件事,而且给的是对的那颗按钮〔重新连接〕。两块 UI 说一件事、
@@ -1689,11 +1698,16 @@ export function ChatPane({
   const reconnectOwnsFailure =
     runFailureUi?.suppressCard === true
     || isReconnectOwnedFailure(failedRunErrorEvent?.code, rawError);
+  // 面板里那段字是不是**这一轮自己**的上游原文。见上面兜底那两条件的说明。
+  const globalErrorIsThisRunsRawText =
+    !!currentGlobalError
+    && errorSourceAssistantId != null
+    && errorSourceAssistantId === retryAssistant?.id;
   const displayError = reconnectOwnsFailure
     ? null
     : runFailureUi?.messageKey
       ? t(runFailureUi.messageKey, { agent: failedAgentLabel, ...runFailureMessageVars })
-      : runFailureUi && !currentGlobalError && rawError
+      : runFailureUi && (!currentGlobalError || globalErrorIsThisRunsRawText) && rawError
         ? t(RUN_FAILURE_FALLBACK_MESSAGE_KEY)
         : rawError;
   // Brand (accent) for AMR sign-in/top-up, warning for a self-healing
@@ -3527,7 +3541,11 @@ export function ChatPane({
                     attempt={reconnect.attempt}
                     max={reconnect.max}
                     exhausted={reconnect.exhausted}
-                    onReconnect={onManualReconnect}
+                    reason={reconnect.reason}
+                    /* 〔重新连接〕只属于传输层那一行:线断了才有东西可重连。
+                       daemon 重跑一轮时连接是通的,给一颗「重新连接」既没有对应的
+                       动作,也会让用户以为是自己网络的问题。 */
+                    onReconnect={reconnect.reason === 'transport' ? onManualReconnect : undefined}
                   />
                 ) : userStoppedTurn ? (
                   /* 「已手动暂停任务」那一行(交付稿第 81 格)。判据见 `userStoppedTurn`;

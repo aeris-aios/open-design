@@ -3803,6 +3803,7 @@ export const zhCN: Dict = {
   "chat.edge.reconnectDetail": "查看详情",
   "chat.edge.reconnectFailed": "连接失败",
   "chat.edge.reconnecting": "正在重新连接",
+  "chat.edge.retrying": "正在重试",
   "qf.visualNext": "下一张",
   "qf.visualPrev": "上一张",
   "qf.visualRandom": "随机",

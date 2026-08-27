@@ -3616,6 +3616,7 @@ export const th: Dict = {
   "chat.edge.reconnectDetail": "ดูรายละเอียด",
   "chat.edge.reconnectFailed": "การเชื่อมต่อล้มเหลว",
   "chat.edge.reconnecting": "กำลังเชื่อมต่อใหม่",
+  "chat.edge.retrying": "กำลังลองใหม่",
   "qf.visualNext": "สไตล์ถัดไป",
   "qf.visualPrev": "สไตล์ก่อนหน้า",
   "qf.visualRandom": "สุ่ม",

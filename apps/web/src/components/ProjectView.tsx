@@ -20,6 +20,7 @@ import { recoverHtmlDocumentFromMarkdownFence, recoverStandaloneHtmlDocument, re
 import { createArtifactParser } from '../artifacts/parser';
 import { useI18n } from '../i18n';
 import {
+  type DaemonAgentRetryState,
   type DaemonReconnectState,
   fetchChatRunStatus,
   GENERIC_DAEMON_DISCONNECT_CODE,
@@ -5882,6 +5883,17 @@ export function ProjectView({
                 phase: state.phase,
               });
             },
+            // daemon 把这一轮重跑了 —— 同一行、同一套规矩,只有那句话不同。
+            onAgentRetry: (state: DaemonAgentRetryState) => {
+              pushReconnectSignal({
+                kind: 'agent-retry',
+                runId,
+                conversationId: reattachConversationId,
+                attempt: state.attempt,
+                max: state.max,
+                phase: state.phase,
+              });
+            },
             onDone: async () => {
               // A reattached run interrupted by a "send now" still receives a
               // late onDone from the daemon. Decide ownership first, then bail
@@ -7637,6 +7649,19 @@ export function ProjectView({
           if (!currentRunId) return;
           pushReconnectSignal({
             kind: 'transport',
+            runId: currentRunId,
+            conversationId: runConversationId,
+            attempt: state.attempt,
+            max: state.max,
+            phase: state.phase,
+          });
+        },
+        // 自动重试:daemon 把 agent 那一轮重跑了。走同一行(交付稿 4058 不许为
+        // 同一件事再立第三个模块),读数与预算取运行层自己的那一份。
+        onAgentRetry: (state: DaemonAgentRetryState) => {
+          if (!currentRunId) return;
+          pushReconnectSignal({
+            kind: 'agent-retry',
             runId: currentRunId,
             conversationId: runConversationId,
             attempt: state.attempt,

@@ -563,6 +563,35 @@ function switchModelWithGuidance(
 }
 
 /**
+ * Rung 3 — "switch to the Open Design agent" — is not an answer for a run that
+ * is ALREADY on that agent: the card would recommend the very thing that just
+ * failed, and the switch card underneath would advertise it a second time.
+ *
+ * The ladder's own docblock already claims this ("a run that is ALREADY on
+ * Cloud never trips rung 3, so it degrades to the Cloud answer on its own — no
+ * second table"). Until now nothing executed that claim, because the AMR branch
+ * returned a catch-all before any rung-3 mapping could be reached. This
+ * function is where the claim becomes true, so the AMR branch no longer has to
+ * swallow the rest of the table to stay honest.
+ *
+ * Removing rung 3 leaves nothing below it, so such a card lands on rung 4
+ * (contact support) — never on a Retry, which principle 4 forbids for the
+ * quota/entitlement failures that reach rung 3 in the first place.
+ */
+function withoutCloudSelfPromotion(ui: RunFailureUi): RunFailureUi {
+  if (!ui.showSwitchCard && ui.primaryAction !== 'switch-to-cloud') return ui;
+  return {
+    ...ui,
+    showSwitchCard: false,
+    primaryAction:
+      ui.primaryAction === 'switch-to-cloud' ? 'contact-support' : ui.primaryAction,
+  };
+}
+
+/** The hosted agent — the one every rung-3 mapping points at. */
+const CLOUD_NATIVE_AGENT_ID = 'amr';
+
+/**
  * Nothing on this card can move the run forward and retrying is futile
  * (ladder rung 4). 〔Contact support〕 — a standing secondary on every failure
  * card — is promoted to primary so the card is never a dead end.
@@ -815,12 +844,27 @@ const AGENT_AGNOSTIC_DETAIL_FAILURE_UI: Record<string, RunFailureUi> = {
 //   - AMR agent, auth required      → authorize-and-retry button, clearer copy
 //   - AMR agent, insufficient funds → recharge button + manual retry, clearer copy
 //   - AMR agent, tier entitlement   → upgrade button + manual retry
-//   - AMR agent, anything else      → plain retry
+//   - AMR agent, anything else      → keeps walking the table below
 //   - fine-grained failure_detail (hard quota, workspace credits, text-detected
 //     cli-missing) → named type + fix, overriding a too-coarse code
 //   - non-AMR agent, model/auth/quota error → plain retry + promotion card
-//   - non-AMR agent, generic failure        → plain retry
+//   - any agent, generic failure            → plain retry
+//
+// AMR is the DEFAULT hosted agent, so anything its branch fails to hand on is a
+// gap on the most-used path. The branch therefore names only what is genuinely
+// AMR-specific and then falls through; `withoutCloudSelfPromotion` at the exit
+// keeps that safe by making rung 3 unreachable for a run already on Cloud.
 export function resolveRunFailureUi(
+  code: string | null | undefined,
+  detail: string | null | undefined,
+  agentId: string | null | undefined,
+  rawMessage?: string | null,
+): RunFailureUi {
+  const ui = resolveRunFailureUiIgnoringSelfPromotion(code, detail, agentId, rawMessage);
+  return agentId === CLOUD_NATIVE_AGENT_ID ? withoutCloudSelfPromotion(ui) : ui;
+}
+
+function resolveRunFailureUiIgnoringSelfPromotion(
   code: string | null | undefined,
   detail: string | null | undefined,
   agentId: string | null | undefined,
@@ -858,8 +902,19 @@ export function resolveRunFailureUi(
   const agnosticDetail =
     typeof detail === 'string' ? AGENT_AGNOSTIC_DETAIL_FAILURE_UI[detail] : undefined;
   if (agnosticDetail) return agnosticDetail;
-  if (agentId === 'amr') {
-    if (code === 'AMR_AUTH_REQUIRED') {
+  if (agentId === CLOUD_NATIVE_AGENT_ID) {
+    // The daemon's classifier already treats these three codes as ONE class
+    // (`run-failure-classification.ts` → category `auth`, user_action `login`).
+    // Web only recognised the AMR-branded one, so an AMR run whose auth failure
+    // arrived under the generic code fell through to the catch-all — and after
+    // the catch-all is gone it would pick up the non-AMR card below, whose copy
+    // ("run the login command in your terminal") is wrong for an agent that
+    // signs in inside the app. Alias them here instead.
+    if (
+      code === 'AMR_AUTH_REQUIRED' ||
+      code === 'AGENT_AUTH_REQUIRED' ||
+      code === 'UNAUTHORIZED'
+    ) {
       // Rung 1: we can sign the user in from inside the card. PRD「需要登录」type
       // — shared title with the non-AMR sign-in case. No AMR promotion (the
       // agent already IS AMR); the authorize action reuses the inline
@@ -888,7 +943,26 @@ export function resolveRunFailureUi(
         { secondaryRetry: true },
       );
     }
-    return failureCard({ transient: true }, 'chat.runError.title.generic', null);
+    // Workspace credits are OUR credits, so topping them up is a rung-1 action
+    // we can run from inside the card — the same one `AMR_INSUFFICIENT_BALANCE`
+    // offers, and the same one the daemon itself names (user_action `recharge`,
+    // `run-failure-classification.ts`). The shared `DETAIL_FAILURE_UI` row below
+    // answers rung 3 ("switch to Cloud"), which is right for a BYOK run and
+    // meaningless here. Retry stays as a secondary because the top-up lands
+    // out-of-band, exactly as in the balance case.
+    if (detail === 'workspace_credits_exhausted') {
+      return failureCard(
+        { directFix: 'recharge' },
+        'chat.runError.title.quotaExhausted',
+        'chat.runError.workspaceCreditsMessage',
+        { secondaryRetry: true },
+      );
+    }
+    // No catch-all. Everything past this point — S11 connection dropped, S09
+    // rate limit, S10 upstream unavailable, S08 provider quota, S01 missing CLI
+    // — is agent-neutral and was dead code for AMR while this branch ended in a
+    // generic card. The exit-point invariant strips the AMR promotion those
+    // shared mappings carry for BYOK agents.
   }
   // Antigravity's auth flow is terminal-only — see the
   // `launch-terminal-auth` action comment for why. Without this branch

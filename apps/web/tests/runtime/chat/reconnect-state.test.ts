@@ -42,6 +42,10 @@ describe('nextChatReconnectView · 82 重连中', () => {
   it('carries the transport reading straight through', () => {
     const view = nextChatReconnectView(null, reconnecting(2));
     expect(view).toEqual<ChatReconnectView>({
+      // 这一行现在还要说清它在说哪一件自救 —— 传输层重连,还是 daemon 重跑了
+      // 一轮(见 `ChatSelfHealReason`)。整形状断言留着:多长出一个字段就该
+      // 在这里被看见。
+      reason: 'transport',
       runId: RUN,
       conversationId: CONV,
       attempt: 2,

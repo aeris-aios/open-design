@@ -3616,6 +3616,7 @@ export const ko: Dict = {
   "chat.edge.reconnectDetail": "세부 정보 보기",
   "chat.edge.reconnectFailed": "연결에 실패했습니다",
   "chat.edge.reconnecting": "다시 연결하는 중",
+  "chat.edge.retrying": "다시 시도하는 중",
   "qf.visualNext": "다음 스타일",
   "qf.visualPrev": "이전 스타일",
   "qf.visualRandom": "랜덤",

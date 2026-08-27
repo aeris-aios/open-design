@@ -21,6 +21,7 @@
 import type { ReactElement } from 'react';
 import { Button } from '@open-design/components';
 import { useT } from '../../i18n';
+import type { ChatSelfHealReason } from '../../runtime/chat/reconnect-state';
 import { ChevronIcon } from './primitives/icons';
 import { Orb } from './primitives/Orb';
 import record from './primitives/record.module.css';
@@ -35,8 +36,21 @@ export interface ReconnectProps {
    * `<= 0` = 此刻没在掉线,整行不渲染。
    */
   attempt: number;
-  /** 共几次。取传输层的重连预算 `DaemonReconnectState.max`。 */
+  /**
+   * 共几次。取**当前这条读数自己的**预算:传输层是 `DaemonReconnectState.max`
+   * (5),自动重试是那一轮的 `retry_max_attempts`(今天是 1)。两个预算不会混,
+   * 因为一行只说一件事 —— 见 `reason`。
+   */
   max: number;
+  /**
+   * 这一行在说哪一件「系统在自救」。默认是传输层重连(组件 22 的原义)。
+   *
+   * 为什么同一个组件说两件事:交付稿 4058 写死了「断线由 22 · 重连全程接管……
+   * 再单立一个模块只会多出第三个说法」。用户体感里「线在重连」和「这一轮在重跑」
+   * 是同一件事,形态也该一样。换掉的只有那句话 —— 重跑一轮时连接是通的,
+   * 说「正在重新连接」既不准确,又会把「线真的断了」这句话说漏。
+   */
+  reason?: ChatSelfHealReason;
   /** 次数用尽:停止自动重连,交回给人(22-3)。 */
   exhausted?: boolean;
   /** 「重新连接」按下去做什么。不传就不出那颗按钮。 */
@@ -55,6 +69,7 @@ export function Reconnect({
   attempt,
   max,
   exhausted = false,
+  reason = 'transport',
   onReconnect,
   onShowDetail,
 }: ReconnectProps): ReactElement | null {
@@ -79,15 +94,28 @@ export function Reconnect({
   if (attempt <= 0) return null;
 
   const shown = Math.min(Math.max(attempt, 1), max);
+  /*
+   * 预算只有一次时不写分数。
+   *
+   * 「1/1」读起来像倒计时,而且一个信息都没给:一共就一次,而这一次正在用掉。
+   * 设计稿那句「正在重试 1/2」预设的是两次预算,可 daemon 今天给的是一次
+   * (`apps/daemon/src/run-retry-policy.ts` 的
+   * `DEFAULT_SAFE_RUN_RETRY_MAX_ATTEMPTS = 1`,自建仓以来没变过;放宽到 2 是
+   * `specs/current/run-error-catalog.md` 的 Q-11,**还没裁**)。
+   *
+   * 写成条件而不是写死「自动重试不显示分数」:预算真的放宽到 2 之后,同一段代码
+   * 自动开始显示「1/2」,不用等谁想起来再改一次。传输层的 5 不受影响。
+   */
+  const showCount = max > 1;
 
   return (
     <div className={styles.row} data-testid="chat-reconnect">
-      {/* 不给标签:紧挨着的就是「正在重新连接」那句话,读屏念一遍就够 */}
+      {/* 不给标签:紧挨着的就是那句话,读屏念一遍就够 */}
       <Orb state="searching" box={24} className={styles.orb} />
       <span className={styles.name}>
         <span className={record.shimmer}>
-          {t('chat.edge.reconnecting')}
-          <span className={styles.count}>{shown}/{max}</span>
+          {t(reason === 'agent-retry' ? 'chat.edge.retrying' : 'chat.edge.reconnecting')}
+          {showCount ? <span className={styles.count}>{shown}/{max}</span> : null}
         </span>
       </span>
       {onShowDetail
