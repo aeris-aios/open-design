@@ -17,6 +17,11 @@
  *
  * 夹具全部照抄真机记录:`produced_files_json` 里的 `ProjectFile` 是**对象**,
  * 不是字符串(塞字符串会在 `f.name.toLowerCase()` 上炸掉整个会话视图)。
+ *
+ * 三条夹具都带一枚 `<od-focus show="…">`,**包括打招呼那一条**。产物卡改成
+ * 「声明出来的」之后,不带声明的回合本来就一张卡都没有 —— 那样第 1 条会变成
+ * 恒真,把它要论证的「本轮没产出」整个空过。声明照发、卡仍然不出,才说明拦住
+ * 它的是轮次归属,不是缺一枚声明。
  */
 
 import { cleanup, render, screen } from '@testing-library/react';
@@ -119,6 +124,8 @@ function greetingTurn(overrides: Partial<ChatMessage> = {}): ChatMessage {
       { kind: 'status', label: 'starting', detail: 'claude' },
       { kind: 'thinking', text: '用户只是说了"你好"。这是一个问候。' },
       { kind: 'text', text: GREETING_REPLY },
+      // agent 声明「这份文件值一张卡」。它是否真的出卡,仍由轮次归属说了算。
+      { kind: 'artifact_focus', show: [ARTIFACT_NAME] },
     ] as ChatMessage['events'],
     // daemon 的权威结论:这一轮什么都没产出
     producedFiles: [],

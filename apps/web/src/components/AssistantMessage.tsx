@@ -51,6 +51,7 @@ import {
 } from "../artifacts/question-form";
 import {
   foldArtifactFocusSelections,
+  declaredArtifactCards,
   hasOdCard,
   narrowProducedFilesToFocus,
   splitOnOdCards,
@@ -744,8 +745,10 @@ function AssistantMessageImpl({
    * 好几枚(`open` 早发、`show` 晚发),所以**按字段**取最后一个,而不是按事件
    * 整条覆盖 —— 否则晚到的 `show` 会把早到的 `open` 抹掉。
    *
-   * 没有这个事件时 `show` 是 undefined,下面每一处收窄都退化成恒等 ——
-   * 「不发标记就按现在的规则展示」是产品拍的板,也是所有旧会话的样子。
+   * 没有这个事件时 `show` 是 undefined,两处消费点对此的回答**故意不一样**:
+   * 交付清单(`displayedProduced`,喂 Share / Download / 下一步锚点)退化成恒等,
+   * 对话里的产物卡(`declaredArtifactFiles`)则一张都不出。后者是产品拍的板 ——
+   * 「一张都不显示那就不显示呗」—— 也意味着旧会话不再列产物卡。
    */
   const artifactFocus = useMemo(() => {
     const selections: { open?: string; show?: string[] }[] = [];
@@ -762,7 +765,7 @@ function AssistantMessageImpl({
    * `produced` 保持原样 —— 它是 daemon 结算出的**权威清单**,语义不能动。
    *
    * 收窄发生在两个**消费点**,不是在这里:结果面板有两条互斥的输入路 ——
-   * 有写 / 改工具记录时用 `summaryArtifactOps`,没有时用 `displayedProduced`
+   * 有写 / 改工具记录时用 `summaryArtifactOps`,没有时用 `declaredArtifactFiles`
    * (见下面 `turnArtifactPanelEntries` 的三分支)。两条各收窄一次,各有各的
    * 测试和各自的 ablation;在这里收窄会让其中一条被收两遍,那条的测试就永远
    * 红不了。
@@ -796,15 +799,34 @@ function AssistantMessageImpl({
        * 收窄放在**合并之后**,不是合并之前。
        *
        * `baseFiles` 有两个来源(daemon 结算的清单 / 本地推断),`linkedFiles`
-       * 是从正文里捞回来的第三个来源。三条都能往面板里塞卡片,所以只有在它们
-       * 汇成一条之后收窄,才是「这一轮显示哪些卡」的唯一出口 —— 收在任何一条
-       * 支流上,另外两条都会绕过去。
+       * 是从正文里捞回来的第三个来源。三条都能往下游塞东西,所以只有在它们汇成
+       * 一条之后收窄,才是唯一出口 —— 收在任何一条支流上,另外两条都会绕过去。
+       *
+       * 这里用的是 `narrowProducedFilesToFocus`(没声明就原样保留),不是
+       * `declaredArtifactCards`(没声明就清空):这条值喂的是 Share / Download /
+       * 下一步锚点和插件目录扫描,它们在没声明的回合里必须还有目标。产物卡那条
+       * 相反的规则挂在 `declaredArtifactFiles` 上。
        */
       const merged = mergeProjectFiles(baseFiles, linkedFiles);
       const narrowed = narrowProducedFilesToFocus(merged, artifactFocus.show);
       return narrowed === merged ? merged : [...narrowed];
     },
     [artifactFocus.show, blocks, fileOps, message, produced, projectFiles, projectId, streaming],
+  );
+  /**
+   * 这一轮**对话里列出来**的产物 —— 只有 agent 声明过的那些。
+   *
+   * 产品拍的板(逐字):「一张都不显示那就不显示呗, 如果有重要的新创建的没给用户
+   * 展示那是问题, 但如果没什么重要的或者要让用户看的, 那就不展示呗没啥问题吧?」
+   *
+   * 所以这里**不是** `displayedProduced` 的别名:后者是「这一轮交付了什么」,
+   * 喂 Share / Download / 下一步锚点和插件目录扫描 —— 那几处在没声明时必须
+   * 保住推断清单,否则按钮没有目标。这里是「对话列出什么」,没声明就一个不列。
+   * 两个答案在「没声明」这一格上必然不同,所以它们是两个值。
+   */
+  const declaredArtifactFiles = useMemo(
+    () => [...declaredArtifactCards(displayedProduced, artifactFocus.show)],
+    [artifactFocus.show, displayedProduced],
   );
   const turnFileOps = useMemo(
     () => mergeProducedFilesIntoFileOps(fileOps, displayedProduced),
@@ -825,7 +847,8 @@ function AssistantMessageImpl({
   const summaryArtifactOps = useMemo(
     () => summaryArtifactOpsForProducedFiles(
       fileOps,
-      [...narrowProducedFilesToFocus(produced, artifactFocus.show)],
+      [...declaredArtifactCards(produced, artifactFocus.show)],
+      artifactFocus.show,
     ),
     [artifactFocus.show, fileOps, produced],
   );
@@ -843,10 +866,16 @@ function AssistantMessageImpl({
    * 边跑边出卡是设计要的(D37)。
    */
   const turnArtifactPanelEntries = useMemo(() => {
+    /*
+     * 卡片是**声明**出来的,不是推断出来的。这里没有第四道「有没有声明」的闸 ——
+     * 两条支各自已经按声明收过一次(`summaryArtifactOps` / `declaredArtifactFiles`),
+     * 再加一道闸会是一条**永远红不了**的分支:没声明时两条支本来就都是空的。
+     * 一条规则,一处实现,一次 ablation。
+     */
     if (summaryArtifactOps.length > 0) return summaryArtifactOps;
     if (streaming) return [];
-    return producedFilesAsFileOps(displayedProduced);
-  }, [displayedProduced, streaming, summaryArtifactOps]);
+    return producedFilesAsFileOps(declaredArtifactFiles);
+  }, [declaredArtifactFiles, streaming, summaryArtifactOps]);
   // The single artifact the "next step" affordance anchors to: prefer the HTML
   // produced by THIS turn; if the final turn emitted none (a summary / continue
   // message) fall back to the most recently modified HTML in the project so
@@ -1569,11 +1598,24 @@ function producedFilesAsFileOps(produced: ProjectFile[]): FileOpEntry[] {
 function summaryArtifactOpsForProducedFiles(
   fileOps: FileOpEntry[],
   produced: ProjectFile[],
+  declared: readonly string[] | null | undefined,
 ): FileOpEntry[] {
   const artifactOps = fileOps.filter(
     (entry) => entry.ops.includes('write') || entry.ops.includes('edit'),
   );
-  if (artifactOps.length === 0 || produced.length === 0) return artifactOps;
+  if (artifactOps.length === 0) return artifactOps;
+  /*
+   * 没有权威产出清单的那一轮(daemon 没结算,或者老消息)卡片来自工具行本身。
+   * 这条支原来把**全部** write/edit 行端出去 —— 在「卡片是声明出来的」之后,
+   * 那等于同一个「什么都显示」从另一扇门溜回来。所以这里照样按声明收一次:
+   * 收的对象是工具行,不是产出清单,因为这条支上根本没有产出清单。
+   */
+  if (produced.length === 0) {
+    return declaredArtifactCards(
+      artifactOps.map((entry) => ({ name: entry.path, path: entry.fullPath, entry })),
+      declared,
+    ).map((candidate) => candidate.entry);
+  }
 
   const unused = new Set(artifactOps);
   return produced.map((file) => {

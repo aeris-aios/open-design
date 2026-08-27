@@ -39,8 +39,19 @@ beforeEach(() => {
   window.sessionStorage.clear();
 });
 
+/**
+ * 一枚 `<od-focus show="…">` 事件。
+ *
+ * 产物卡改成 agent **声明**出来的之后,不带声明的回合一张卡都没有。下面凡是
+ * 讲「这一轮算不算产出了这个文件」的用例,夹具都得先把声明发出来 —— 包括
+ * 反面用例:声明照发、卡仍然不出,才说明拦住它的是归属判断而不是缺一枚声明。
+ */
+function declareTurnCards(...names: string[]): ChatMessage['events'][number] {
+  return { kind: 'artifact_focus', show: names } as ChatMessage['events'][number];
+}
+
 function baseMessage(overrides: Partial<ChatMessage> = {}): ChatMessage {
-  return {
+  const message = {
     id: 'msg-1',
     role: 'assistant',
     content: 'Done.',
@@ -51,6 +62,15 @@ function baseMessage(overrides: Partial<ChatMessage> = {}): ChatMessage {
     producedFiles: [],
     ...overrides,
   } as ChatMessage;
+  // 产出清单非空的夹具自动带上声明:那些用例讲的是卡片长相和动作,不是声明协议。
+  const produced = message.producedFiles ?? [];
+  if (produced.length > 0) {
+    message.events = [
+      ...(message.events ?? []),
+      declareTurnCards(...produced.map((file) => file.name)),
+    ] as ChatMessage['events'];
+  }
+  return message;
 }
 
 function producedFile(name: string): ProjectFile {
@@ -1366,7 +1386,10 @@ describe('AssistantMessage recovered produced files', () => {
         <AssistantMessage
           message={baseMessage({
             content,
-            events: [{ kind: 'text', text: content } as ChatMessage['events'][number]],
+            events: [
+              { kind: 'text', text: content } as ChatMessage['events'][number],
+              declareTurnCards('browser-war-deck-outline.md'),
+            ],
             producedFiles: [],
           })}
           streaming={false}
@@ -1425,6 +1448,8 @@ describe('AssistantMessage recovered produced files', () => {
               name: 'Write',
               input: { file_path: 'index.html' },
             } as ChatMessage['events'][number],
+            // 两个都声明:logo.svg 不出卡必须是「不是这一轮的产出」造成的
+            declareTurnCards('index.html', 'logo.svg'),
           ],
           producedFiles: [],
         })}
@@ -1512,7 +1537,10 @@ describe('AssistantMessage recovered produced files', () => {
       <AssistantMessage
         message={baseMessage({
           content,
-          events: [{ kind: 'text', text: content } as ChatMessage['events'][number]],
+          events: [
+            { kind: 'text', text: content } as ChatMessage['events'][number],
+            declareTurnCards('browser-war-deck-outline.md'),
+          ],
           producedFiles: [],
         })}
         streaming={false}
@@ -1541,7 +1569,10 @@ describe('AssistantMessage recovered produced files', () => {
       <AssistantMessage
         message={baseMessage({
           content,
-          events: [{ kind: 'text', text: content } as ChatMessage['events'][number]],
+          events: [
+            { kind: 'text', text: content } as ChatMessage['events'][number],
+            declareTurnCards('README.md'),
+          ],
           producedFiles: [],
         })}
         streaming={false}
@@ -1570,6 +1601,7 @@ describe('AssistantMessage recovered produced files', () => {
           events: [
             { kind: 'status', label: 'starting', detail: 'Claude' } as ChatMessage['events'][number],
             { kind: 'status', label: 'initializing', detail: 'claude-opus' } as ChatMessage['events'][number],
+            declareTurnCards('iphone-device-reveal.mp4'),
           ],
           producedFiles: [],
         })}
@@ -1601,6 +1633,7 @@ describe('AssistantMessage recovered produced files', () => {
           events: [
             { kind: 'status', label: 'starting', detail: 'Claude' } as ChatMessage['events'][number],
             { kind: 'status', label: 'initializing', detail: 'claude-opus' } as ChatMessage['events'][number],
+            declareTurnCards('board.sketch.json'),
           ],
           producedFiles: [],
         })}
@@ -1630,6 +1663,7 @@ describe('AssistantMessage recovered produced files', () => {
           events: [
             { kind: 'status', label: 'starting', detail: 'Claude' } as ChatMessage['events'][number],
             { kind: 'status', label: 'initializing', detail: 'claude-opus' } as ChatMessage['events'][number],
+            declareTurnCards('diagram.svg', 'board.sketch.json'),
           ],
           producedFiles: [],
         })}

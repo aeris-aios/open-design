@@ -7,7 +7,12 @@
  *   「这一轮显示哪些产物卡片也交给 agent 吧? 目的就是显示的精简一些并且是主要的
  *     产物,比如一个 html 可能会有 js 或 css 文件或者一堆图片文件,但最终主要的
  *     是这个 html,而不是其他杂七杂八的东西,所以让 agent 只显示这个 html」
- *   「不发标记要么按现在规则展示?」
+ *   「一张都不显示那就不显示呗, 如果有重要的新创建的没给用户展示那是问题,
+ *     但如果没什么重要的或者要让用户看的, 那就不展示呗没啥问题吧?」
+ *
+ * 后一句推翻了本文件最初钉的那条「不发标记 = 按现在规则展示」:**产物卡片是
+ * 声明出来的,不是推断出来的**。没声明就一张不出 —— 文件仍然在右侧文件列表里
+ * 拿得到,只是对话不再替它列一遍。
  *
  * 结果面板有**两条互斥的渲染路**,两条都得收窄,否则会出现「卡片精简了、
  * 汇总行还写着 6 个文件」这种自相矛盾:
@@ -182,11 +187,9 @@ describe('agent 声明的 show,决定这一轮出哪些卡', () => {
    * 反面 / 正面成对出现。少了「不发标记」那一条,把实现改成「永远只出第一张卡」
    * 也能让下面几条全绿。
    */
-  it('不发标记 —— 六个文件全在,和今天一模一样', () => {
+  it('不发标记 —— 一张卡都不出', () => {
     renderTurn(turn());
-    expect(resultPanelNames()).toEqual(
-      ALL_PRODUCED.map((f) => f.name).sort(),
-    );
+    expect(resultPanelNames()).toEqual([]);
   });
 
   it('声明只显示那个 html —— 汇总行里就只剩它一条', () => {
@@ -204,11 +207,15 @@ describe('agent 声明的 show,决定这一轮出哪些卡', () => {
     expect(resultPanelNames()).toEqual(['index.html', 'report.md']);
   });
 
-  it('声明的全都对不上 —— 退回完整清单,不是把面板清空', () => {
+  /*
+   * 打错字比不声明还多出六张卡,那条悬崖是说不通的:声明了什么就出什么,
+   * 一个都对不上就一个都不出。
+   */
+  it('声明的全都对不上 —— 一张卡都不出', () => {
     renderTurn(
       turn({ events: [...(writeEvents(ALL_PRODUCED) ?? []), focusEvent(['nothing-here.html'])] }),
     );
-    expect(resultPanelNames()).toEqual(ALL_PRODUCED.map((f) => f.name).sort());
+    expect(resultPanelNames()).toEqual([]);
   });
 
   it('声明里混了一个没产出的文件 —— 只留下真产出的那个,不会凭空多一张卡', () => {
@@ -233,7 +240,11 @@ describe('agent 声明的 show,决定这一轮出哪些卡', () => {
     expect(resultPanelNames()).toEqual(['index.html']);
   });
 
-  it('只声明 open、没声明 show —— 卡片清单不动', () => {
+  /*
+   * `open` 管预览、`show` 管卡片,两件事各自独立 —— 只发 `open` 不等于顺带
+   * 声明了卡片。
+   */
+  it('只声明 open、没声明 show —— 一张卡都不出', () => {
     renderTurn(
       turn({
         events: [
@@ -242,7 +253,7 @@ describe('agent 声明的 show,决定这一轮出哪些卡', () => {
         ],
       }),
     );
-    expect(resultPanelNames()).toEqual(ALL_PRODUCED.map((f) => f.name).sort());
+    expect(resultPanelNames()).toEqual([]);
   });
 });
 
@@ -253,15 +264,12 @@ describe('另一条渲染路:没有写 / 改工具记录时的产物卡', () => 
     { kind: 'text', text: '已完成。' },
   ] as ChatMessage['events'];
 
-  it('不发标记 —— 卡片和今天一样多', () => {
+  it('不发标记 —— 一张卡都不出,面板整块不渲染', () => {
     renderTurn(turn({ events: noToolEvents }));
-    /* 这里原来断言 `file-ops-summary` **不存在** —— 那是「没有工具行时走
-       `ProducedFiles`」那套结构下的写法。产物卡片对齐那一轮把两条路汇进了同一个
-       `FileOpsSummary`(`ProducedFiles` 已删),所以面板现在**应该在**。
-       两条路仍然互斥、仍然各收窄一次,变的只是终点。
-       真正要钉的那条是下面的卡数:不发标记时和今天一样多。 */
-    expect(document.querySelector('[data-testid="file-ops-summary"]')).toBeTruthy();
-    expect(document.querySelectorAll('[data-artifact-card]').length).toBe(ALL_PRODUCED.length);
+    expect(document.querySelectorAll('[data-artifact-card]').length).toBe(0);
+    /* 卡片清单空了,`FileOpsSummary` 就没有内容可渲染,整块跟着消失 ——
+       钉住这一条,免得留下一个空标题栏。 */
+    expect(document.querySelector('[data-testid="file-ops-summary"]')).toBeNull();
   });
 
   it('声明只显示那个 html —— 只出一张卡,而且就是它', () => {
@@ -272,11 +280,11 @@ describe('另一条渲染路:没有写 / 改工具记录时的产物卡', () => 
     expect(screen.getByTestId('artifact-card-index.html')).toBeTruthy();
   });
 
-  it('声明的全都对不上 —— 退回完整清单', () => {
+  it('声明的全都对不上 —— 一张卡都不出', () => {
     renderTurn(
       turn({ events: [...(noToolEvents ?? []), focusEvent(['nope.html'])] as never }),
     );
-    expect(document.querySelectorAll('[data-artifact-card]').length).toBe(ALL_PRODUCED.length);
+    expect(document.querySelectorAll('[data-artifact-card]').length).toBe(0);
   });
 });
 

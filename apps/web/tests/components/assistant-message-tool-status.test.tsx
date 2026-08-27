@@ -186,6 +186,8 @@ describe('AssistantMessage 执行记录', () => {
           { kind: 'tool_use', id: 'tool-1', name: 'Write', input: { file_path: '/repo/index.html', content: '<main />' } },
           { kind: 'tool_use', id: 'tool-1', name: 'Write', input: { file_path: '/repo/index.html', content: '<main />' } },
           { kind: 'tool_result', toolUseId: 'tool-1', content: 'ok', isError: false },
+          // 产物卡是声明出来的;这条测的是「同一份文件只出一张卡」,所以先把它声明出来
+          { kind: 'artifact_focus', show: ['index.html'] },
         ])}
         streaming={false}
         projectId="project-1"

@@ -1699,22 +1699,40 @@ const liveUser = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-/** 一条真实的助手消息。`events` 是唯一的内容来源,和产线一样。 */
-const liveAssistant = (events: PersistedAgentEvent[], over: Record<string, unknown> = {}) => ({
-  id: 'live-a1',
-  role: 'assistant' as const,
-  content: '',
-  runId: 'live-r1',
-  agentId: 'claude',
-  agentName: 'Claude Code',
-  runStatus: 'succeeded' as const,
-  startedAt: LIVE_REPLY_AT,
-  endedAt: LIVE_REPLY_AT + 72_000,
-  createdAt: LIVE_REPLY_AT + 72_000,
-  producedFiles: [] as unknown[],
-  events,
-  ...over,
-});
+/**
+ * 一条真实的助手消息。`events` 是唯一的内容来源,和产线一样。
+ *
+ * 产线上产物卡是 agent 用 `<od-focus show="…">` **声明**出来的,不再从产出清单
+ * 推断;所以带产出的格子这里替它把声明补上,陈列页照的才是产线上真会出现的样子。
+ */
+const liveAssistant = (events: PersistedAgentEvent[], over: Record<string, unknown> = {}) => {
+  const message = {
+    id: 'live-a1',
+    role: 'assistant' as const,
+    content: '',
+    runId: 'live-r1',
+    agentId: 'claude',
+    agentName: 'Claude Code',
+    runStatus: 'succeeded' as const,
+    startedAt: LIVE_REPLY_AT,
+    endedAt: LIVE_REPLY_AT + 72_000,
+    createdAt: LIVE_REPLY_AT + 72_000,
+    producedFiles: [] as unknown[],
+    events,
+    ...over,
+  };
+  const produced = message.producedFiles as { name?: string }[];
+  if (produced.length > 0) {
+    message.events = [
+      ...message.events,
+      {
+        kind: 'artifact_focus',
+        show: produced.map((file) => file.name).filter(Boolean),
+      } as unknown as PersistedAgentEvent,
+    ];
+  }
+  return message;
+};
 
 /** `ProjectFile` 形状的产出条目 —— `producedFiles` 走的就是这一份。 */
 const producedFile = (name: string, kind: string, mime: string, sizeKb: number) => ({
