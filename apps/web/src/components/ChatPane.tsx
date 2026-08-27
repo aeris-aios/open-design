@@ -4816,7 +4816,6 @@ function writeContinuedTodoSnapshotKey(storageKey: string, snapshotKey: string):
               <span className="chat-queued-send-index" data-testid="chat-queued-send-index" aria-hidden>{index + 1}</span>
               <div className="chat-queued-send-main">
                 <span className="chat-queued-send-title">{summarizeQueuedPrompt(item, t)}</span>
-                <QueuedSendMetaChips item={item} />
               </div>
               {/* 稿子这一组是 `编辑 → 移除 → 第三颗`,而且「编辑」用的是**魔杖**不是铅笔。
                   原来我们排的是 编辑 → 立即发送 → 移除,三枚图形和顺序全和稿子对不上。 */}
@@ -4958,66 +4957,6 @@ function reorderQueuedSendIds(
   function summarizeQueuedPrompt(item: QueuedSendItem, t: TranslateFn): string {
   return item.prompt.replace(/\s+/g, ' ').trim() || t('chat.queuedFollowUpFallback');
   }
-
-/**
- * The two dictionary keys that spell one counted chip. Which of the pair is
- * used is the ONLY plural decision this component makes — the words themselves
- * live in the dictionary, so a locale that has no plural form (zh / ja / ko)
- * simply ships the same string twice, and one that has several (ru / pl / uk /
- * ar) picks its own split. Appending an `s` here would be wrong in most of the
- * 19 locales, which is why the noun never appears in this file.
- */
-type CountedChipKeys = readonly [one: keyof Dict, many: keyof Dict];
-
-// Surfaces what a queued turn carries — attachments, visual marks, and the
-// staged plugin / skill / MCP / connector context from its meta — as compact
-// chips so the user can see (and trust) what will be sent without expanding it.
-function QueuedSendMetaChips({ item }: { item: QueuedSendItem }) {
-  const t = useT();
-  const ctx = item.meta?.context;
-  const files = item.attachments?.length ?? 0;
-  const marks = item.commentAttachments?.length ?? 0;
-  const plugins = item.meta?.appliedPluginSnapshot ? 1 : ctx?.pluginIds?.length ?? 0;
-  const skills = ctx?.skillIds?.length ?? 0;
-  const mcp = ctx?.mcpServerIds?.length ?? 0;
-  const connectors = ctx?.connectorIds?.length ?? 0;
-  // `workspaceItems` is the wire field; to the user these are the things the
-  // "Add context" picker stages, so the copy calls them context items.
-  const workspace = ctx?.workspaceItems?.length ?? 0;
-  const counted = (n: number, [one, many]: CountedChipKeys) => t(n === 1 ? one : many, { n });
-  const chips: Array<{ key: string; label: string }> = [];
-  if (files > 0) {
-    chips.push({ key: 'files', label: counted(files, ['chat.queuedChipFilesOne', 'chat.queuedChipFilesMany']) });
-  }
-  if (marks > 0) {
-    chips.push({ key: 'marks', label: counted(marks, ['chat.queuedChipMarksOne', 'chat.queuedChipMarksMany']) });
-  }
-  if (plugins > 0) {
-    chips.push({ key: 'plugins', label: counted(plugins, ['chat.queuedChipPluginsOne', 'chat.queuedChipPluginsMany']) });
-  }
-  if (skills > 0) {
-    chips.push({ key: 'skills', label: counted(skills, ['chat.queuedChipSkillsOne', 'chat.queuedChipSkillsMany']) });
-  }
-  if (mcp > 0) {
-    chips.push({ key: 'mcp', label: counted(mcp, ['chat.queuedChipMcpOne', 'chat.queuedChipMcpMany']) });
-  }
-  if (connectors > 0) {
-    chips.push({ key: 'connectors', label: counted(connectors, ['chat.queuedChipConnectorsOne', 'chat.queuedChipConnectorsMany']) });
-  }
-  if (workspace > 0) {
-    chips.push({ key: 'workspace', label: counted(workspace, ['chat.queuedChipContextOne', 'chat.queuedChipContextMany']) });
-  }
-  if (chips.length === 0) return null;
-  return (
-    <div className="chat-queued-send-chips">
-      {chips.map((chip) => (
-        <span key={chip.key} className="chat-queued-send-chip">
-          {chip.label}
-        </span>
-      ))}
-    </div>
-  );
-}
 
 function CommentsPanel({
   comments,

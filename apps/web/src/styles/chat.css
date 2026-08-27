@@ -2499,38 +2499,6 @@
   white-space: nowrap;
 }
 
-.chat-queued-send-chips {
-  display: flex;
-  /* #90: wrap instead of clip. With nowrap + overflow:hidden the container
-     hard-cut the last visible chip mid-word ("1 workspace cont…") and the
-     crowded single line read as colliding with the row's action buttons.
-     Wrapping keeps every chip legible; each chip still ellipsizes its own
-     long label via max-width below. */
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 3px;
-  min-width: 0;
-}
-
-.chat-queued-send-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  height: 18px;
-  min-width: 0;
-  max-width: 124px;
-  padding: 0 5px;
-  border-radius: var(--radius-sm);
-  border: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
-  background: color-mix(in srgb, var(--bg) 78%, transparent);
-  color: var(--text-muted);
-  font-size: 12px;
-  line-height: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .chat-queued-send-actions {
   display: inline-flex;
   align-items: center;

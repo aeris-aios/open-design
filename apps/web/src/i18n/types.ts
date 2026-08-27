@@ -3523,20 +3523,6 @@ export interface Dict {
   /** This queued item carries attachments, which a mid-turn message cannot deliver. */
   'chat.queuedSteerTextOnly': string;
   'chat.queuedFollowUpFallback': string;
-  'chat.queuedChipFilesOne': string;
-  'chat.queuedChipFilesMany': string;
-  'chat.queuedChipMarksOne': string;
-  'chat.queuedChipMarksMany': string;
-  'chat.queuedChipPluginsOne': string;
-  'chat.queuedChipPluginsMany': string;
-  'chat.queuedChipSkillsOne': string;
-  'chat.queuedChipSkillsMany': string;
-  'chat.queuedChipMcpOne': string;
-  'chat.queuedChipMcpMany': string;
-  'chat.queuedChipConnectorsOne': string;
-  'chat.queuedChipConnectorsMany': string;
-  'chat.queuedChipContextOne': string;
-  'chat.queuedChipContextMany': string;
   'chat.send': string;
   'chat.stop': string;
   'chat.removeAria': string;
