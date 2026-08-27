@@ -237,6 +237,11 @@ export function createClaudeStreamHandler(
       const row = TASK_LIST_ROW_RE.exec(line.trim());
       if (!row) continue;
       const [, id, status, subject] = row;
+      // The pattern has three groups, so a match always fills them — but this
+      // project builds with `noUncheckedIndexedAccess`, where indexing a match
+      // yields `string | undefined`. Narrow once here rather than asserting at
+      // each of the six uses below.
+      if (id === undefined || status === undefined || subject === undefined) continue;
       const slot = runtimeTaskSlotById.get(id) ?? `task:${id}`;
       const existing = runtimeTasks.get(slot);
       const next: RuntimeTask = {
