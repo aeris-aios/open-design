@@ -805,11 +805,17 @@ export function buildTurnBlocks(input: BuildTurnInput): TurnBlock[] {
       seg.elapsedMs = ms > 0 ? ms : null;
     }
 
+    /*
+     * 这一轮**只有一张壳**吗 —— 轮次跨度能不能借给壳,全看这一条(见 `turnElapsed`)。
+     * `todoCard` 常常就是 `top` 本人(D50 之后清单不另起卡),所以要去重再数。
+     */
+    const soleShell = new Set([top, todoCard].filter(Boolean)).size === 1;
+
     for (const shell of [top, todoCard]) {
       if (!shell) continue;
       // 只有**还在跑的那张**跟着 now 走;先结束的那张定在自己的最后一刻
       const live = running && shell === activeShell();
-      shell.elapsedMs = shellElapsed(live, shell);
+      shell.elapsedMs = shellElapsed(live, shell, soleShell);
       shell.quietMs = shellQuiet(live, shell);
     }
 
@@ -851,15 +857,53 @@ export function buildTurnBlocks(input: BuildTurnInput): TurnBlock[] {
     return ms > 0 ? ms : null;
   }
 
-  function shellElapsed(running: boolean, shell?: ExecutionShell): number | null {
+  /**
+   * 最后一层兜底:**这一轮自己的起止**(`startedAtMs` → `endedAtMs`,跑着时终点是 `nowMs`)。
+   *
+   * 为什么需要它:壳头的耗时全靠事件上的时刻推,而**一大批 agent 根本不发工具事件** ——
+   * 规格 §2.2 点名的 `qwen` / `deepseek` / `grok-build` / `aider` / `antigravity` /
+   * `atomcode`(plain-stream)与 `qoder`(qoder-stream)两个解析器里 `tool_use` 均为 0 处,
+   * claude 的 `thinking` 也一条时刻都不带。这些轮次事件流里一个带时刻的事都没有,
+   * 于是壳头永远只有一句光秃秃的「已完成」。而消息自己是带 `startedAt` / `endedAt` 的,
+   * 那是这一轮**最权威**的跨度,之前没人问过它。
+   *
+   * **只在这一轮只有一张壳时借**。两张壳时轮次跨度对谁都不成立:它描述的是整轮,
+   * 而每张壳只占其中一截,轮次跨度里没有任何信息能说出那一截在哪儿开始、哪儿结束。
+   * 两张都写上同一个数,正是 T34 那张坏画面 —— 规格 `chat-panel-feedback.md`
+   * 「被推翻的两条」记着:「两张卡头**显示同一个耗时**……陈列页的端到端格照出来过」。
+   * 分不出来就不显示,和规格 §2.2「无耗时:不显示,不用 `0s` / `—` 假值」是同一条纪律。
+   */
+  function turnElapsed(running: boolean, soleShell: boolean): number | null {
+    if (!soleShell) return null;
+    const from = input.startedAtMs;
+    if (from == null) return null;
+    // 跑着的时候终点是「现在」,秒表照旧一格一格往前走;终止了才认轮次自己的收尾时刻
+    const end = running ? input.nowMs : input.endedAtMs;
+    if (end == null) return null;
+    const ms = end - from;
+    return ms > 0 ? ms : null;
+  }
+
+  function shellElapsed(running: boolean, shell: ExecutionShell | undefined, soleShell: boolean): number | null {
     // 有自己的跨度就用自己的;没有(比如壳里一件带时刻的事都没有)再退回轮次跨度
     const span = shell ? shellSpan.get(shell) : undefined;
     const from = span ? span.from : firstStartedAt;
     const last = span ? span.to : lastEndedAt;
-    if (from == null) return null;
-    const end = running ? Math.max(input.nowMs ?? 0, last ?? 0) : (last ?? 0);
-    const ms = end - from;
-    return ms > 0 ? ms : null;
+    if (from != null) {
+      const end = running ? Math.max(input.nowMs ?? 0, last ?? 0) : (last ?? 0);
+      const ms = end - from;
+      /*
+       * 事件真的给出跨度了 —— 它比轮次跨度**窄**,说的又正是这张壳,所以它说了算。
+       *
+       * 门槛用 `UNKNOWN_ELAPSED_BELOW_MS` 而不是 `> 0`:整张壳的跨度不到 100ms,
+       * 意思是壳里所有带时刻的事**同一批到达**(codex 的 `tool_use` 与 `tool_result`
+       * 间隔 p50 4ms),那不是「跑得快」,是「不知道」—— 和 `format.ts` 开头给
+       * 单条工具行定的判据是同一条。这个门槛只会**多**显示一个数、不会少显示:
+       * 壳头的 `formatShellElapsed` 本来就把 1000ms 以下当未知,不显示任何东西。
+       */
+      if (ms >= UNKNOWN_ELAPSED_BELOW_MS) return ms;
+    }
+    return turnElapsed(running, soleShell);
   }
 }
 
