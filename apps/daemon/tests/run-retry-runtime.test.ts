@@ -213,8 +213,8 @@ describe('same-run retry runtime', () => {
     delete process.env.OPEN_DESIGN_TELEMETRY_RELAY_URL;
     process.env.VELA_RUNTIME_KEY = `fake-runtime-key-${randomUUID()}`;
     process.env.VELA_LINK_URL = 'https://amr-link.open-design.ai/v1';
-    // The heartbeats keep both legacy inactivity watchdogs alive. Only the
-    // absolute first-output deadline may terminate attempt 0.
+    // Pre-output heartbeats update diagnostics without arming inactivity. ACP
+    // has transferred prompt-wait ownership to the absolute first-output deadline.
     process.env.OD_CHAT_RUN_FIRST_OUTPUT_TIMEOUT_MS = '100';
     process.env.OD_CHAT_RUN_INACTIVITY_TIMEOUT_MS = STALL_WATCHDOG_TIMEOUT_MS;
     process.env.OD_ACP_STAGE_TIMEOUT_MS = STALL_WATCHDOG_TIMEOUT_MS;

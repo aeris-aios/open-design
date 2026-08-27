@@ -220,7 +220,7 @@ describe('copilotAgentDef.inactivityTimeoutMs', () => {
 });
 
 describe('amrAgentDef.inactivityTimeoutMs', () => {
-  it('ships a 30-minute inactivity hint so the outer chat watchdog matches ACP stage timeouts for slow upstream providers', () => {
+  it('ships a 30-minute post-output inactivity window for slow upstream providers', () => {
     expect(amrAgentDef.inactivityTimeoutMs).toBe(THIRTY_MINUTES_MS);
   });
 

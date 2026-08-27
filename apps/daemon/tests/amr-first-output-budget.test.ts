@@ -30,9 +30,9 @@ import { startServer } from '../src/server.js';
  *
  * The fake vela stalls the way production does — it keeps emitting protocol
  * heartbeats forever without ever producing text, thinking, a tool call, or a
- * terminal prompt result. That deliberately feeds the sliding inactivity
- * watchdog. ACP transfers ownership after prompt dispatch, so the ONLY watchdog
- * that can end these runs is the absolute first-output budget under test.
+ * terminal prompt result. Pre-output heartbeats update diagnostics but do not
+ * arm sliding inactivity. ACP transfers ownership after prompt dispatch, so the
+ * only active watchdog is the absolute first-output budget under test.
  *
  * The budget itself is injected through `OD_CHAT_RUN_FIRST_OUTPUT_TIMEOUT_MS`
  * (the operator escape hatch `resolveChatRunFirstOutputTimeoutMs` already
@@ -65,8 +65,8 @@ const FAKE_VELA = fileURLToPath(new URL('./fixtures/fake-vela.mjs', import.meta.
 /**
  * First-output budget for these specs. Long enough that a loaded CI host
  * cannot cross it during subprocess cold-start (which would make the
- * "still alive before the budget" assertion flaky), short enough that two
- * attempts plus retry backoff stay well inside the suite timeout.
+ * "still alive before the budget" assertion flaky), short enough that the one
+ * terminal attempt and its process teardown stay inside the suite timeout.
  */
 const FIRST_OUTPUT_BUDGET_MS = 3_000;
 
