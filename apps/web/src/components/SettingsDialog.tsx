@@ -4211,9 +4211,9 @@ export function SettingsDialog({
         onClick={pageMode ? undefined : (e) => e.stopPropagation()}
       >
         {/* Autosave feedback is viewport-level rather than part of the
-            top-right dialog chrome. Local CLI pickers and the page-mode
-            content both occupy that upper band, so keeping this passive
-            status at the bottom avoids obscuring the active controls. */}
+            top-right dialog chrome: it rides the app's own top chrome row, so
+            a passive status never covers the Local CLI pickers that occupy the
+            panel's upper band (OPEND-2148). */}
         <div className="settings-autosave-layer">
           <div
             className={`settings-autosave is-${autosaveStatus}`}
