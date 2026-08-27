@@ -4029,6 +4029,22 @@ function buildBlocks(events: AgentEvent[]): Block[] {
         ev.label === "requesting" ||
         ev.label === "thinking" ||
         ev.label === "empty_response" ||
+        /*
+         * `model` —— **AMR(ACP)独有**的一条运行时标记,不是助手内容。
+         *
+         * `apps/daemon/src/agent-protocol/acp/session.ts` 在 `session/new`、
+         * `session/set_model` 完成、以及选型失败回落时各发一次
+         * `{ label: 'model', model: <当前模型> }`;`providers/daemon.ts` 把
+         * `model` 折进 `detail`。走 stdout 协议的 runtime(claude / codex /
+         * opencode …)一条都不发,所以这一行只在 AMR 那一路冒出来。
+         *
+         * 它无条件戳在**一轮的最下面**,内容是模型 id —— 而模型身份输入区的
+         * 模型芯片上已经写着了。用户 2026-08-27:「这个模型的标识可以去掉」。
+         *
+         * 只是不画:事件照发照存,daemon 的 `run-analytics-observability.ts`
+         * 仍按 `label === 'model'` 归因,那一路不受影响。
+         */
+        ev.label === "model" ||
         // Transient ACP tool-call markers (#4618). On the live SSE path the
         // daemon normalizes these to `running` (TRANSIENT_ACP_STATUS_LABELS in
         // providers/daemon.ts), which is already skipped above; the persisted-
@@ -4041,14 +4057,16 @@ function buildBlocks(events: AgentEvent[]): Block[] {
         continue;
       const last = out[out.length - 1];
       if (last && last.kind === "status" && last.label === ev.label) {
-        // Update detail to the latest value rather than skip. When an agent
-        // emits multiple status events with the same label (notably
-        // `label: 'model'` — fired once after `session/new` with the agent's
-        // initial default, then again after the explicit model-selection
-        // call completes), the badge UI must reflect the most recent detail,
-        // not the first one. Without this update the post-selection model
-        // (e.g. `claude-opus-4-7-high`) is silently replaced in the badge
-        // by the stale initial default (`swe-1-6-fast`).
+        // Update detail to the latest value rather than skip. An agent can
+        // emit the same label several times in one turn (a workflow badge
+        // that re-reports progress, for instance); the badge UI must reflect
+        // the most recent detail, not the first one, or a later, truer value
+        // is silently replaced by the stale initial one.
+        //
+        // `label: 'model'` used to be the worked example here — it fires once
+        // after `session/new` and again once model selection settles. It no
+        // longer reaches this branch: it is skipped above as AMR transport
+        // telemetry.
         last.detail = ev.detail;
         continue;
       }
