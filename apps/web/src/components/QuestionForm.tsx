@@ -278,14 +278,17 @@ export const QuestionFormView = forwardRef<QuestionFormHandle, Props>(function Q
   ) {
     const on = customChoiceExpanded(q);
     const label = q.customLabel ?? t('qf.ownAnswer');
+    // 到顶了就跟别的选项走同一套(`qf-chip-disabled` + 不可点),不再是这一行里
+    // 唯一还亮着的那颗 —— 见 `customChoiceMaxed`。
+    const maxed = customChoiceMaxed(q);
     // 收起态:稿子和别的选项一模一样,是 `<button class="opt mod-own">`
     if (!on) {
       return (
         <button
           type="button"
-          className="qf-chip qf-chip-other"
+          className={`qf-chip qf-chip-other${maxed ? ' qf-chip-disabled' : ''}`}
           aria-pressed={false}
-          disabled={locked}
+          disabled={locked || maxed}
           onClick={() => toggleOther(q)}
         >
           <span className="qf-chip-box"><ChipCheck /></span>
@@ -395,11 +398,39 @@ export const QuestionFormView = forwardRef<QuestionFormHandle, Props>(function Q
     onAnswerChange?.(id, next);
   }
 
+  /**
+   * 「自己填」写进来的条目和固定选项**共用同一个上限**。
+   *
+   * 上限是提交的硬条件(`withinSelectionLimits` → `ready`),而分步表单的
+   * 「下一步」只看这一题有没有答案 —— 越过上限也放行。所以这里一旦让答案超出
+   * `maxSelections`,人就能一路翻到最后一题,发现「开始设计」永久置灰,
+   * 而越界的那一题早就翻过去了,屏幕上没有任何东西说明原因。
+   *
+   * 逗号/换行会把一次输入拆成多条(`splitCustomEntries`),所以裁剪按**条数**
+   * 算,不是「顶多再加一条」。
+   */
   function updateCheckboxCustom(q: QuestionForm['questions'][number], raw: string) {
     if (locked) return;
     const current = Array.isArray(answers[q.id]) ? (answers[q.id] as string[]) : [];
     const fixed = current.filter((entry) => questionValueIsKnown(q, entry));
-    update(q.id, [...fixed, ...splitCustomEntries(raw)]);
+    const custom = splitCustomEntries(raw);
+    const room =
+      q.maxSelections === undefined
+        ? custom.length
+        : Math.max(0, q.maxSelections - fixed.length);
+    update(q.id, [...fixed, ...custom.slice(0, room)]);
+  }
+
+  /**
+   * 到顶之后「自己填」也得跟着置灰 —— 否则它是这一行里唯一还能点的一颗,
+   * 点开写字就把答案顶过上限。已经写了自定义答案的那一条不算到顶:
+   * 那句话本身就占着一格,人得能改它。
+   */
+  function customChoiceMaxed(q: QuestionForm['questions'][number]): boolean {
+    if (q.type !== 'checkbox' || q.maxSelections === undefined) return false;
+    if (hasCustomAnswer(q)) return false;
+    const current = currentAnswers[q.id];
+    return Array.isArray(current) && current.length >= q.maxSelections;
   }
 
   function finalizeSubmission(

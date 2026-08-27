@@ -428,6 +428,83 @@ describe('QuestionFormView', () => {
     });
   });
 
+  /*
+   * 「最多选 2 项」这条上限,原来只有那几颗固定选项在守 —— 「自己填」这一路
+   * 完全没人管。而提示词又要求模型给每道题**预填**推荐答案(`defaultValue`),
+   * 于是线上真实发出来的 tone 题一进来就是 2/2:固定选项全灰,「自己填」还亮着。
+   * 用户点开写一句,答案变成 3 条,越过上限 —— 分步表单的「下一步」只看这一题
+   * 有没有答案,照样放行;等走到最后一题,「开始设计」永久置灰,而越界的那一题
+   * 已经翻过去了,屏幕上没有任何东西说明为什么。
+   *
+   * 守两件事:上限对「自己填」同样成立(到顶就跟别的选项一样置灰),
+   * 以及答案永远越不过上限 —— 表单不会走进提交不了的死角。
+   */
+  it('holds the selection cap across the custom entry and never blocks submit', () => {
+    const onSubmit = vi.fn();
+    const cappedForm = {
+      id: 'discovery',
+      title: 'Quick brief',
+      questions: [
+        {
+          ...checkboxObjectForm.questions[0]!,
+          maxSelections: 2,
+          allowCustom: true,
+          defaultValue: ['editorial', 'modern-minimal'],
+        },
+      ],
+    } as QuestionForm;
+    render(<QuestionFormView form={cappedForm} interactive onSubmit={onSubmit} />);
+
+    // 预填就把两格占满了:固定选项到顶置灰,「自己填」不该是唯一还能点的那颗。
+    expect((chip('Soft gradients') as HTMLButtonElement).disabled).toBe(true);
+    const own = screen.getByRole('button', { name: 'Write your own' }) as HTMLButtonElement;
+    expect(own.disabled).toBe(true);
+
+    // 让出一格,「自己填」才重新可用 —— 和别的选项同一条规则。
+    fireEvent.click(chip('Editorial / magazine'));
+    expect((screen.getByRole('button', { name: 'Write your own' }) as HTMLButtonElement).disabled)
+      .toBe(false);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Write your own' }));
+    // 逗号会被拆成多条:一次写三条也不能把答案顶过上限。
+    fireEvent.change(screen.getByTestId('qf-input'), {
+      target: { value: 'Neo-museum, Field notebook, Chrome' },
+    });
+
+    const submit = screen.getByRole('button', { name: 'Next' }) as HTMLButtonElement;
+    expect(submit.disabled).toBe(false);
+    fireEvent.click(submit);
+
+    const answered = onSubmit.mock.calls[0]?.[1] as { tone: string[] } | undefined;
+    expect(answered?.tone).toEqual(['modern-minimal', 'Neo-museum']);
+  });
+
+  /*
+   * 「最多选 2 项」到底能不能选到 2 —— 光断言「点得动」在单选实现上也会绿,
+   * 所以第二颗必须**留得住**,第三颗必须**被拒**,两条一起断言才算守住。
+   */
+  it('lets a capped tone question hold two picks and refuses the third', () => {
+    const onSubmit = vi.fn();
+    const cappedForm = {
+      id: 'discovery',
+      title: 'Quick brief',
+      questions: [{ ...checkboxObjectForm.questions[0]!, maxSelections: 2 }],
+    } as QuestionForm;
+    render(<QuestionFormView form={cappedForm} interactive onSubmit={onSubmit} />);
+
+    fireEvent.click(chip('Editorial / magazine'));
+    fireEvent.click(chip('Soft gradients'));
+    expect(chip('Editorial / magazine').getAttribute('aria-checked')).toBe('true');
+    expect(chip('Soft gradients').getAttribute('aria-checked')).toBe('true');
+
+    fireEvent.click(chip('Modern minimal'));
+    expect(chip('Modern minimal').getAttribute('aria-checked')).toBe('false');
+    expect(chosen(document.body)).toHaveLength(2);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+    expect(onSubmit.mock.calls[0]?.[1]).toEqual({ tone: ['editorial', 'soft-gradients'] });
+  });
+
   it('can hide custom choice input for exact machine-id pickers', () => {
     const exactForm = {
       ...selectObjectForm,
