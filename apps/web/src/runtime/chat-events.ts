@@ -23,13 +23,25 @@ export function runFailureFieldsFromError(
   };
 }
 
+/** Read the bounded, secret-redacted stderr tail the streaming layer stamped
+ *  onto a surfaced run error (see daemonSseError in providers/daemon.ts).
+ *  Returns undefined for an absent or blank tail so callers stamp nothing —
+ *  a failure with no stderr must not grow an empty diagnostics section. */
+export function stderrTailFromError(err: unknown): string | undefined {
+  const tail = (err as { stderrTail?: unknown } | null)?.stderrTail;
+  if (typeof tail !== 'string' || !tail.trim()) return undefined;
+  return tail;
+}
+
 export function appendErrorStatusEvent(
   message: ChatMessage,
   detail: string,
   code?: string,
   failure?: RunFailureClassificationFields,
+  stderrTail?: string | null,
 ): ChatMessage {
   if (!detail.trim()) return message;
+  const tail = typeof stderrTail === 'string' && stderrTail.trim() ? stderrTail : undefined;
   const events = message.events ?? [];
   const lastIndex = events.length - 1;
   const last = events[lastIndex];
@@ -46,6 +58,7 @@ export function appendErrorStatusEvent(
       ...(code ? { code } : {}),
       ...(failure?.failureCategory ? { failureCategory: failure.failureCategory } : {}),
       ...(failure?.failureDetail ? { failureDetail: failure.failureDetail } : {}),
+      ...(tail ? { stderrTail: tail } : {}),
     };
     if (JSON.stringify(merged) === JSON.stringify(last)) return message;
     const nextEvents = events.slice();
@@ -63,6 +76,7 @@ export function appendErrorStatusEvent(
         ...(code ? { code } : {}),
         ...(failure?.failureCategory ? { failureCategory: failure.failureCategory } : {}),
         ...(failure?.failureDetail ? { failureDetail: failure.failureDetail } : {}),
+        ...(tail ? { stderrTail: tail } : {}),
       },
     ],
   };

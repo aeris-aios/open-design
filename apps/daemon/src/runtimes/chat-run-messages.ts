@@ -355,11 +355,15 @@ export function runSseEventToPersistedAgentEvent(
       : typeof record.message === 'string'
         ? record.message
         : '';
+    // The stderr tail rides along so a reloaded conversation shows the same
+    // original cause the live stream did (see withFailureStderrTail).
+    const stderrTail = typeof record.stderrTail === 'string' ? record.stderrTail.trim() : '';
     return {
       kind: 'status',
       label: 'error',
       ...(message ? { detail: message } : {}),
       ...(typeof error.code === 'string' ? { code: error.code } : {}),
+      ...(stderrTail ? { stderrTail } : {}),
     };
   }
   if (event !== 'agent') return null;

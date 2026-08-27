@@ -138,6 +138,7 @@ import {
   appendErrorStatusEvent,
   removeErrorStatusEvent,
   runFailureFieldsFromError,
+  stderrTailFromError,
 } from '../runtime/chat-events';
 import type { RunFailureClassificationFields } from '../runtime/chat-events';
 import {
@@ -4849,11 +4850,12 @@ export function ProjectView({
       message: string,
       code?: string,
       failure?: RunFailureClassificationFields,
+      stderrTail?: string,
     ) => {
       if (!message) return;
       updateMessageById(
         messageId,
-        (prev) => appendErrorStatusEvent(prev, message, code, failure),
+        (prev) => appendErrorStatusEvent(prev, message, code, failure, stderrTail),
         true,
       );
     },
@@ -6045,7 +6047,13 @@ export function ProjectView({
               unregisterTextBuffer();
               if (runMayFinalize) {
                 setRunError(err.message, message.id);
-                appendAssistantErrorEvent(message.id, err.message, errorCode, failure);
+                appendAssistantErrorEvent(
+                  message.id,
+                  err.message,
+                  errorCode,
+                  failure,
+                  stderrTailFromError(err),
+                );
                 updateMessageById(
                   message.id,
                   (prev) => ({
@@ -7864,7 +7872,13 @@ export function ProjectView({
           cancelSendTextBuffer();
           if (runMayFinalize) {
             setRunError(err.message, assistantId);
-            appendAssistantErrorEvent(assistantId, err.message, errorCode, failure);
+            appendAssistantErrorEvent(
+              assistantId,
+              err.message,
+              errorCode,
+              failure,
+              stderrTailFromError(err),
+            );
             updateAssistant((prev) => ({
               ...prev,
               endedAt,

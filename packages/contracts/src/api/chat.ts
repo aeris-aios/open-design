@@ -828,6 +828,15 @@ export type PersistedAgentEvent =
       code?: string;
       failureCategory?: RunFailureCategory;
       failureDetail?: RunFailureDetail;
+      /**
+       * `label: 'error'` only. Bounded, secret-redacted tail of the agent
+       * process's stderr for this run — the original cause behind a generic
+       * `detail`. Kept separate from `detail` on purpose: `detail` is the
+       * string the failure classifiers pattern-match on, so mixing raw agent
+       * output into it would change which card a failure resolves to.
+       * Absent when the run wrote no stderr.
+       */
+      stderrTail?: string;
     }
   | { kind: 'text'; text: string }
   /**

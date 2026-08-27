@@ -862,6 +862,14 @@ interface RunErrorDiagnosticInput {
   message: string;
   rawMessage?: string | null;
   errorCode?: string;
+  /**
+   * What the agent process actually printed before it died — already bounded
+   * and secret-redacted by the daemon (`failureCardStderrTail`). This is the
+   * "original error" the card's copy promises: for a whole family of failures
+   * the daemon's own sentence is generic ("…exited without a terminal result")
+   * and the real cause exists nowhere else the user can reach.
+   */
+  stderrTail?: string | null;
   traceId?: string;
   projectId?: string | null;
   conversationId?: string | null;
@@ -1671,6 +1679,9 @@ export function ChatPane({
         message: displayError,
         rawMessage: rawError,
         errorCode: failedRunErrorEvent?.code,
+        // 兜底那句人话把上游原文顶掉之后,真因只剩这一份 —— agent 自己打在
+        // stderr 上的东西。daemon 已经截断并脱敏过了(failureCardStderrTail)。
+        stderrTail: failedRunErrorEvent?.stderrTail,
         traceId: retryAssistant?.runId,
         projectId,
         conversationId: activeConversationId,
@@ -4916,6 +4927,16 @@ export function buildRunErrorDiagnosticText(input: RunErrorDiagnosticInput): str
   const sourceText = input.rawMessage?.trim() || input.message.trim();
   if (sourceText) {
     lines.push(sourceText, '');
+  }
+
+  // The captured agent output goes above the id block: it is the answer to
+  // "why did this fail", the ids are only what a support thread needs to look
+  // the run up. Omitted entirely when the run wrote nothing — an empty
+  // labelled section reads as "there is no more information here", which is a
+  // different (and wrong) claim than saying nothing at all.
+  const stderrTail = input.stderrTail?.trim();
+  if (stderrTail) {
+    lines.push('agent_stderr_tail:', stderrTail, '');
   }
 
   lines.push(

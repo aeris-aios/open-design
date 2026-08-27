@@ -1437,6 +1437,68 @@ describe('ProjectView daemon reattach restore', () => {
     });
   });
 
+  it('threads the captured stderr tail onto a reattached run that fails', async () => {
+    // Same promise as the live send path, different entry: a run whose failure
+    // arrives on reattach must also carry the daemon-captured stderr onto the
+    // assistant message, or the card that greets the user after a reconnect can
+    // only show the generic sentence.
+    const stderrTail =
+      'Error: dsh: plugin tree failed to load: credentials-local: the value for "version" in /Users/tester/.dsh/.credentials.yaml must be a string';
+    const startedAt = Date.now();
+    listConversations.mockResolvedValue([{ id: 'conv-1', title: 'Conversation' }]);
+    listMessages.mockResolvedValue([
+      {
+        id: 'msg-stderr-tail',
+        role: 'assistant',
+        content: '',
+        createdAt: startedAt,
+        startedAt,
+        runId: 'run-stderr-tail',
+        runStatus: 'running',
+        preTurnFileNames: [],
+      } satisfies ChatMessage,
+    ]);
+    fetchPreviewComments.mockResolvedValue([]);
+    loadTabs.mockResolvedValue({ tabs: [], activeTabId: null });
+    fetchProjectFiles.mockResolvedValue([]);
+    fetchLiveArtifacts.mockResolvedValue([]);
+    fetchSkill.mockResolvedValue(null);
+    fetchDesignSystem.mockResolvedValue(null);
+    getTemplate.mockResolvedValue(null);
+    fetchChatRunStatus.mockResolvedValue({
+      id: 'run-stderr-tail',
+      status: 'running',
+      createdAt: startedAt,
+      updatedAt: startedAt,
+      exitCode: null,
+      signal: null,
+    });
+    listActiveChatRuns.mockResolvedValue([]);
+
+    reattachDaemonRun.mockImplementation(async (options: any) => {
+      const error = new Error(
+        'DeepSeek Harness profile exited without a terminal result.',
+      ) as Error & { code: string; stderrTail: string };
+      error.code = 'DSH_PROFILE_MISSING_RESULT';
+      error.stderrTail = stderrTail;
+      options.handlers.onError(error);
+    });
+
+    renderProjectView();
+
+    await waitFor(() => expect(reattachDaemonRun).toHaveBeenCalledTimes(1));
+    await waitFor(() => {
+      const finalSave = saveMessage.mock.calls
+        .map((call) => call[2] as ChatMessage)
+        .filter((m) => m?.id === 'msg-stderr-tail' && m.runStatus === 'failed')
+        .at(-1);
+      const errorEvent = finalSave?.events?.find(
+        (event) => event.kind === 'status' && event.label === 'error',
+      ) as { stderrTail?: string } | undefined;
+      expect(errorEvent?.stderrTail).toBe(stderrTail);
+    });
+  });
+
   it('preserves canceled runStatus when onRunStatus records cancellation before onDone fires', async () => {
     const startedAt = Date.now();
     listConversations.mockResolvedValue([{ id: 'conv-1', title: 'Conversation' }]);

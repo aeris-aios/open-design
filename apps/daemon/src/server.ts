@@ -138,6 +138,7 @@ import {
   persistRunFailureClassification,
   pinAssistantMessageOnRunCreate,
 } from './runtimes/chat-run-messages.js';
+import { withFailureStderrTail } from './run-diagnostics.js';
 import {
   createRunSideEffectLedger,
   foldEventIntoRunSideEffectLedger,
@@ -10807,6 +10808,16 @@ export async function startServer({
     // by the artifact finalizer (see the emit handler below). 8 MiB comfortably
     // covers realistic artifact-bearing runs while bounding per-run memory.
     const PLAIN_ARTIFACT_STDOUT_CAP = 8 * 1024 * 1024;
+    // Everything this attempt put on stderr, kept as a bounded rolling window so
+    // the terminal `error` frame can carry the ORIGINAL cause and not only the
+    // daemon's own generic sentence. The window is deliberately larger than the
+    // tail the card shows, so the tail is always computed over a full slice of
+    // final output rather than over whatever happened to arrive last. Scoped to
+    // one spawn attempt: a same-run retry re-enters startChatRun and gets a
+    // fresh closure, so a failed attempt's output can never be attributed to the
+    // next one's error frame.
+    const FAILURE_STDERR_WINDOW_CAP = 32 * 1024;
+    let failureStderrWindow = '';
     const send = (event, data) => {
       const lifecycleMarkers = runLifecycleMarkersForStreamEvent(event, data);
       if (lifecycleMarkers.firstModelEventType) {
@@ -10872,8 +10883,17 @@ export async function startServer({
             ((run.plainArtifactStdout ?? '') + data.chunk).slice(0, PLAIN_ARTIFACT_STDOUT_CAP);
         }
       }
-      persistRunEventToAssistantMessage(db, run, event, data);
-      design.runs.emit(run, event, data);
+      if (event === 'stderr' && data && typeof data.chunk === 'string' && data.chunk) {
+        failureStderrWindow = `${failureStderrWindow}${data.chunk}`.slice(
+          -FAILURE_STDERR_WINDOW_CAP,
+        );
+      }
+      // One decoration point for both consumers below: the live SSE client and
+      // the persisted assistant message get the same error payload, so a reload
+      // shows exactly what the run showed.
+      const outgoing = withFailureStderrTail(event, data, failureStderrWindow);
+      persistRunEventToAssistantMessage(db, run, event, outgoing);
+      design.runs.emit(run, event, outgoing);
     };
     const retryAnalyticsBase = (decision, failure, errorCode) => {
       const runProjectKind = resolveRunProjectKindForAnalytics({
