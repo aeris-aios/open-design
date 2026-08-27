@@ -8,6 +8,15 @@
 .refs {
   position: relative;
   display: inline-flex;
+  /*
+   * 不撑满一行。`inline-flex` 一旦成为 flex 项目会被**块化**成 `flex`
+   * (CSS 规范如此),再叠上 `.composer-shell` 那个纵向容器默认的
+   * `align-items: normal`(= stretch),芯片就被拉到整行宽
+   * (用户 2026-08-27 真机量到 457px)。稿子那边 `.refs` 的父容器不是
+   * stretch 容器,所以它天然保持内容宽 —— 这条差异在**父容器**,不在芯片。
+   * 不动父容器(它还有别的孩子),让芯片自己声明对齐:换个容器也不会再坏一次。
+   */
+  align-self: flex-start;
   align-items: center;
   gap: 5px;
   margin: 9px 9px 0;

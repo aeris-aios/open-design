@@ -3714,8 +3714,18 @@ export function ChatPane({
             </div>
             {shouldPortalComposer && composerPortalTarget && composerPortalRect
               ? createPortal(
+                  /*
+                   * portal 出去的那一层要**自带 `--chat-*` 接缝**。
+                   *
+                   * 自定义属性按 DOM 树继承,而这一层挂在 `<body>` 下 —— 落在页面
+                   * 那个接缝之外,输入框里每一个消费 `--chat-*` 的组件同时失效,
+                   * 而且**不报错**:真机上注释芯片的边框、底色、关闭键的圆圈全没了,
+                   * 只有 `border-radius: 50%` 活着(它是字面量,不走变量)。
+                   * `ChatRoot.tsx` 的注释预言过这条;今天这是第三次
+                   * (联系支持弹窗、产物卡浮层、输入框)。
+                   */
                   <div
-                    className="chat-composer-fixed-layer"
+                    {...chatSeam('chat-composer-fixed-layer')}
                     ref={composerLayerRef}
                     style={{
                       left: composerPortalRect.left,

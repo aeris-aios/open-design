@@ -135,3 +135,40 @@ describe('引用芯片 · 「×」照稿子共用的 .del 基类', () => {
     expect(icon?.getAttribute('height')).toBe('10');
   });
 });
+
+/**
+ * 芯片**贴着内容**,不撑满一行。
+ *
+ * 用户 2026-08-27 真机:「你这个怎么撑满一行了」。量到宽度 457px = 整行。
+ *
+ * 机制是 **blockification**:`.refs` 写的是 `display: inline-flex`(和稿子逐字相同),
+ * 但它是 `.composer-shell` 这个**纵向 flex 容器**的项目,按 CSS 规范 inline 级的
+ * `display` 会被块化成 `flex`;再叠上容器默认的 `align-items: normal`(即 stretch),
+ * 就被拉满了宽度。计算值确实是 `flex` —— 所以只查 CSS 文本里写没写 `inline-flex`
+ * 是查不出来的,那一行是对的。
+ *
+ * 稿子那边 `.refs` 的父容器是 `.composer`,不是这种 stretch 容器,所以它天然保持内容宽。
+ * 我们不动父容器(它还有别的孩子),给芯片自己 `align-self: flex-start` ——
+ * 这条不依赖父容器怎么摆,换个容器也不会再坏一次。
+ */
+describe('芯片不撑满一行', () => {
+  it('自己声明了 align-self,不靠父容器的对齐方式', () => {
+    const css = readFileSync(
+      resolve(__dirname, '../../../src/components/chat/QuotedRefs.module.css'),
+      'utf8',
+    );
+    const i = css.indexOf('.refs');
+    const block = css.slice(i, css.indexOf('}', i));
+    expect(block).toMatch(/align-self:\s*flex-start/);
+  });
+
+  it('inline-flex 那一行还在 —— 不许为了修宽度把它换成 block', () => {
+    const css = readFileSync(
+      resolve(__dirname, '../../../src/components/chat/QuotedRefs.module.css'),
+      'utf8',
+    );
+    const i = css.indexOf('.refs');
+    const block = css.slice(i, css.indexOf('}', i));
+    expect(block).toMatch(/display:\s*inline-flex/);
+  });
+});
