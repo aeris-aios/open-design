@@ -41,6 +41,30 @@ let savedDescriptors: Record<
   PropertyDescriptor | undefined
 >;
 let originalResizeObserver: typeof ResizeObserver | undefined;
+let originalMutationObserver: typeof MutationObserver | undefined;
+
+/**
+ * 把 MutationObserver 摘掉,好让**只剩** anchor 那一帧自己的收尾。
+ *
+ * 子树变动那条路也会去重算(见 ChatPane 里的 `scheduleFollowSync`),两条路都排 rAF,
+ * 谁后跑没有保证 —— 而只有 anchor 那一帧是跑在 `scrollAnchorToTop()` **之后**的。
+ * 想验「那一帧自己会收尾」,就得先把另一条路挪开,否则测的是谁都说不清。
+ */
+function disableMutationObserver() {
+  originalMutationObserver = globalThis.MutationObserver;
+  class NoopMutationObserver {
+    observe() {}
+    disconnect() {}
+    takeRecords(): MutationRecord[] {
+      return [];
+    }
+  }
+  Object.defineProperty(globalThis, 'MutationObserver', {
+    configurable: true,
+    writable: true,
+    value: NoopMutationObserver,
+  });
+}
 
 function isChatLog(el: HTMLElement): boolean {
   return typeof el?.classList?.contains === 'function' && el.classList.contains('chat-log');
@@ -146,6 +170,14 @@ afterEach(() => {
     });
   } else {
     delete (globalThis as unknown as { ResizeObserver?: unknown }).ResizeObserver;
+  }
+  if (originalMutationObserver) {
+    Object.defineProperty(globalThis, 'MutationObserver', {
+      configurable: true,
+      writable: true,
+      value: originalMutationObserver,
+    });
+    originalMutationObserver = undefined;
   }
   for (const key of ['scrollTop', 'scrollHeight', 'clientHeight', 'offsetHeight'] as const) {
     const original = savedDescriptors[key];
@@ -322,6 +354,60 @@ describe('流式输出时的滚动跟随(用户 2026-08-27)', () => {
     expect(geom.scrollTop).toBe(5200);
   });
 
+  it('滚轮往上拨一下就停手 —— 哪怕浏览器把这一格滚动整个吃掉', async () => {
+    /*
+     * 快速流式时,同一帧里只要我们写过 `scrollTop`,浏览器就会把这一次滚轮滚动
+     * **直接取消**:位置纹丝不动,连 scroll 事件都不发。只看 scroll 事件的话,
+     * 用户的手在这一帧就凭空消失了 —— 这正是「连向上滚动都不行」的手感来源之一。
+     * 所以 wheel 事件本身要能松开跟随。
+     */
+    geom = { contentHeight: 5000, clientHeight: 400, scrollTop: 0 };
+    let text = 'chunk';
+    const { rerender } = render(chatPaneEl(longConversation(text), { streaming: true }));
+    await flushFrames();
+    expect(geom.scrollTop).toBe(4600);
+
+    // 滚轮往上 —— 位置**没有**变化,浏览器把这一格吃了。
+    await act(async () => {
+      fireEvent.wheel(chatLog(), { deltaY: -40 });
+      await Promise.resolve();
+    });
+
+    text += ' more';
+    geom.contentHeight += 120;
+    await act(async () => {
+      rerender(chatPaneEl(longConversation(text), { streaming: true }));
+    });
+    await triggerResize();
+    await flushFrames();
+
+    // 没被拽到新的底(4720)。
+    expect(geom.scrollTop).toBe(4600);
+  });
+
+  it('手指下拉也算停手(触屏)', async () => {
+    geom = { contentHeight: 5000, clientHeight: 400, scrollTop: 0 };
+    let text = 'chunk';
+    const { rerender } = render(chatPaneEl(longConversation(text), { streaming: true }));
+    await flushFrames();
+
+    await act(async () => {
+      fireEvent.touchStart(chatLog(), { touches: [{ clientY: 200 }] });
+      fireEvent.touchMove(chatLog(), { touches: [{ clientY: 280 }] });
+      await Promise.resolve();
+    });
+
+    text += ' more';
+    geom.contentHeight += 120;
+    await act(async () => {
+      rerender(chatPaneEl(longConversation(text), { streaming: true }));
+    });
+    await triggerResize();
+    await flushFrames();
+
+    expect(geom.scrollTop).toBe(4600);
+  });
+
   it('向上滚开之后再滚回底部,跟随要重新接上', async () => {
     geom = { contentHeight: 5000, clientHeight: 400, scrollTop: 0 };
     let text = 'chunk';
@@ -369,17 +455,20 @@ describe('「回到最新」什么时候该在(用户 2026-08-27:「总是在不
      * 于是它挂在一屏根本滚不动的对话上。
      */
     geom = { contentHeight: 5000, clientHeight: 400, scrollTop: 0 };
-    const { rerender } = render(chatPaneEl(longConversation('chunk'), { streaming: true }));
+    render(chatPaneEl(longConversation('chunk'), { streaming: true }));
     await flushFrames();
     await userScrollTo(1000);
     expect(jumpBtnShown()).toBe(true);
 
-    // 执行记录收起:内容比视口还矮,滚都滚不动了。消息条数没变。
+    /*
+     * 执行记录收起来了:内容比视口还矮,滚都滚不动了。
+     *
+     * **刻意不重渲染** —— 折叠是组件自己的内部状态,消息数组一个字没变。这里只有
+     * 一次 ResizeObserver 回调,没有 React 更新、也没有 scroll 事件。如果观察者
+     * 那条路只在「正在跟随」时才做事(老写法就是),这一拍就没人去重算,浮标挂着不走。
+     */
     geom.contentHeight = 300;
     geom.scrollTop = 0;
-    await act(async () => {
-      rerender(chatPaneEl(longConversation('chunk'), { streaming: true }));
-    });
     await triggerResize();
     await flushFrames();
 
@@ -423,43 +512,56 @@ describe('「回到最新」什么时候该在(用户 2026-08-27:「总是在不
     expect(jumpBtnShown()).toBe(false);
   });
 
-  it('刚发出的一轮里,底下只有预留空白时不该给入口', async () => {
-    /*
-     * 用户截图里的那一屏:**一条用户消息 + 一个「进行中」头**,面板下面大半是空的,
-     * 浮标却贴在输入框上方。那片「空」不是内容,是 anchor-to-top 给回复预留的
-     * 尾部占位块 —— 浮标把这块预留空白当成了「底下还有东西」。
-     *
-     * 触发形态是**一帧里长了一大截**(一张工具卡 / 一段长 markdown 一次性渲染出来):
-     * 那一帧占位块还没来得及缩,`distance` 于是等于「这一帧长了多少」,浮标被点亮;
-     * 下一帧占位块缩回去、`distance` 归零,却**没有任何人回来重算**,于是它就那么挂着。
-     */
-    geom = { contentHeight: 1200, clientHeight: 400, scrollTop: 0 };
-    const priorTurns: ChatMessage[] = [
-      { id: 'u0', role: 'user', content: 'first request', createdAt: 1 },
-      { id: 'a0', role: 'assistant', content: 'first reply', createdAt: 2 },
-    ];
-    const { container, rerender } = render(chatPaneEl(priorTurns));
+
+  const priorTurns: ChatMessage[] = [
+    { id: 'u0', role: 'user', content: 'first request', createdAt: 1 },
+    { id: 'a0', role: 'assistant', content: 'first reply', createdAt: 2 },
+  ];
+
+  const sentTurn: ChatMessage[] = [
+    ...priorTurns,
+    { id: 'u1', role: 'user', content: 'make the hero punchier', createdAt: 3 },
+    { id: 'a1', role: 'assistant', content: '', createdAt: 4, runStatus: 'running' },
+  ];
+
+  /**
+   * 走真实的发送路径(Lexical 编辑器 + Enter),把 anchor-to-top 真正点着。
+   * `anchorPendingRef` 只有 ChatComposer 的 onSend 会点,绕不过去。
+   *
+   * `contentAfterSend` 是这一轮渲染出来之后的**真内容高**(不含预留空白);
+   * `userMsgTop` 是这条用户消息在内容里的起始位置 —— jsdom 没有排版,只能喂进去,
+   * 否则 anchor 的全部算术都塌成 `scrollTop` 本身。
+   */
+  async function sendAnchoredTurn(opts: { contentAfterSend: number; userMsgTop: number }) {
+    const view = render(chatPaneEl(priorTurns));
     await flushFrames();
-    expect(geom.scrollTop).toBe(800);
 
     await flushMounts();
     typeInComposer('make the hero punchier');
     pressEnter();
 
-    // 新的一轮渲染出来:用户消息 + 「进行中」头,内容从 1200 长到 1460。
-    const sentTurn: ChatMessage[] = [
-      ...priorTurns,
-      { id: 'u1', role: 'user', content: 'make the hero punchier', createdAt: 3 },
-      { id: 'a1', role: 'assistant', content: '', createdAt: 4, runStatus: 'running' },
-    ];
-    geom.contentHeight = 1460;
+    geom.contentHeight = opts.contentAfterSend;
     await act(async () => {
-      rerender(chatPaneEl(sentTurn, { streaming: true }));
+      view.rerender(chatPaneEl(sentTurn, { streaming: true }));
     });
-    // 这条用户消息在内容里的位置:jsdom 没有排版,只能把它喂进去,
-    // 否则 anchor 的全部算术都塌成 scrollTop 本身。
-    stubUserMessageTop(container, 1200);
+    stubUserMessageTop(view.container, opts.userMsgTop);
     await flushFrames();
+    return view;
+  }
+
+  it('刚发出的一轮里,底下只有预留空白时不该给入口', async () => {
+    /*
+     * 用户截图里的那一屏:**一条用户消息 + 一个「进行中」头**,面板下面大半是空的,
+     * 浮标却贴在输入框上方。
+     *
+     * 那片「空」不是内容,是 anchor-to-top 给回复预留的尾部占位块;占位块的尺寸
+     * 恰好让这条用户消息顶到视口顶端,也就是说视图**正正好停在底部**,底下一个像素的
+     * 真内容都没有。老写法在 anchor 接管的那一行无条件 `setScrolledFromBottom(true)`,
+     * 之后再没人回来问一句「底下到底有没有东西」。
+     */
+    geom = { contentHeight: 1200, clientHeight: 400, scrollTop: 0 };
+    // 新的一轮渲染出来:用户消息 + 「进行中」头,内容从 1200 长到 1460。
+    const { rerender } = await sendAnchoredTurn({ contentAfterSend: 1460, userMsgTop: 1200 });
 
     // 先确认 anchor-to-top 真的接管了 —— 否则下面那条断言就是空的:
     // 预留空白被撑起来了(400 - 260 - 12),视图停在这条用户消息顶到头的位置。
@@ -495,8 +597,86 @@ describe('「回到最新」什么时候该在(用户 2026-08-27:「总是在不
     await triggerResize();
     await flushFrames();
 
-    // 占位块缩完之后,可视区底下**没有**真内容:回复还没长过一屏。
-    expect(geom.contentHeight - geom.scrollTop - geom.clientHeight).toBeLessThanOrEqual(0);
+    // 占位块缩完之后,底下那点真内容(72px)离「很上面」差得远,不该给入口。
+    expect(geom.contentHeight - geom.scrollTop - geom.clientHeight).toBe(72);
+    expect(jumpBtnShown()).toBe(false);
+
+    // 反面:回复真长过一屏之后,最新的输出确实跑到视口下面去了 —— 这时必须给入口。
+    geom.contentHeight = 2100;
+    await act(async () => {
+      rerender(
+        chatPaneEl(
+          [
+            ...priorTurns,
+            { id: 'u1', role: 'user', content: 'make the hero punchier', createdAt: 3 },
+            {
+              id: 'a1',
+              role: 'assistant',
+              content: 'a much longer reply that runs well past one screen',
+              createdAt: 4,
+              runStatus: 'running',
+              events: [
+                { kind: 'tool_use', id: 'call-1', name: 'Read', input: { file_path: '/tmp/a.txt' } },
+                { kind: 'tool_use', id: 'call-2', name: 'Write', input: { file_path: '/tmp/b.txt' } },
+              ],
+            },
+          ],
+          { streaming: true },
+        ),
+      );
+    });
+    await triggerResize();
+    await flushFrames();
+
+    expect(geom.contentHeight - geom.scrollTop - geom.clientHeight).toBe(512);
+    expect(jumpBtnShown()).toBe(true);
+  });
+
+  it('预留空白不算「底下还有内容」—— 在 anchor 轮里往上滚不该唤出浮标', async () => {
+    /*
+     * 这一条钉的是「量几何时把预留空白扣掉」。
+     *
+     * anchor 轮进行中,用户往上滚去看更早的内容。他离**内容**底部 260px,离
+     * **含预留空白**的底部 388px。400px 高的面板里,「很上面」的门槛是 300px
+     * (0.75 视口,再夹到 [320, 1200] → 320)—— 260 不到,388 超了。
+     * 不扣掉那块空白,浮标就会因为一屏根本不存在的东西冒出来。
+     */
+    geom = { contentHeight: 1200, clientHeight: 400, scrollTop: 0 };
+    await sendAnchoredTurn({ contentAfterSend: 1460, userMsgTop: 1200 });
+    expect(tailSpacerHeight()).toBe(128);
+    expect(maxScrollTop()).toBe(1188);
+
+    await userScrollTo(800);
+
+    expect(scrollHeightOf() - geom.scrollTop - geom.clientHeight).toBe(388);
+    expect(geom.contentHeight - geom.scrollTop - geom.clientHeight).toBe(260);
+    expect(jumpBtnShown()).toBe(false);
+
+    // 反面:再往上滚到真内容也确实剩一大截时,入口必须出现。
+    await userScrollTo(700);
+    expect(geom.contentHeight - geom.scrollTop - geom.clientHeight).toBe(360);
+    expect(jumpBtnShown()).toBe(true);
+  });
+
+  it('一轮发出时这一帧长了一大截 —— 视图落到 anchor 位置之后浮标要跟着收回去', async () => {
+    /*
+     * 这一条钉的是「占位块改完尺寸之后要重算一次」。
+     *
+     * 发送的那一帧,React 的 effect 先跑:那时占位块还是 0、视图还停在旧内容的底部,
+     * 于是「底下还有 400px」—— 浮标按几何点亮,**这是对的**。紧接着的那一帧里
+     * 占位块定尺寸、视图滚到这条用户消息顶到头的位置,底下只剩 12px —— 浮标就该收回去。
+     *
+     * 占位块自己是**不被 ResizeObserver 观察的**(观察它会把它自己的尺寸变化喂回给
+     * 跟随逻辑),所以这一拍没有观察者会替我们补算:那一帧里必须自己叫一次。
+     */
+    disableMutationObserver();
+    geom = { contentHeight: 1200, clientHeight: 400, scrollTop: 0 };
+    // 这一轮的用户消息 + 「进行中」头一次性撑出 400px。
+    await sendAnchoredTurn({ contentAfterSend: 1600, userMsgTop: 1200 });
+
+    expect(tailSpacerHeight()).toBe(0);
+    expect(geom.scrollTop).toBe(1188);
+    expect(geom.contentHeight - geom.scrollTop - geom.clientHeight).toBe(12);
     expect(jumpBtnShown()).toBe(false);
   });
 });

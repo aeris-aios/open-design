@@ -1,5 +1,11 @@
 import { QuoteBar } from './chat/QuoteBar';
 import { shouldShowJumpToLatest } from '../runtime/chat/jump-to-latest';
+import {
+  isNearBottom as isSampleNearBottom,
+  nextFollowIntent,
+  type FollowIntent,
+  type ScrollSample,
+} from '../runtime/chat/stick-to-bottom';
 import { appendQuote, type ChatQuote } from '../runtime/chat/quote-selection';
 import {
   Fragment,
@@ -1109,13 +1115,21 @@ export function ChatPane({
   const didInitialScrollRef = useRef(false);
   const runFailedToastSurfaceKeysRef = useRef<Set<string>>(new Set());
   const runRecoverySurfaceKeysRef = useRef<Set<string>>(new Set());
-  // Tracks whether the user is glued close enough to the bottom that
-  // streamed content should auto-follow. Distinct from the jump-button
-  // state below, which uses a wider threshold (120px) so the affordance
-  // stays visible for short scroll-ups. Auto-follow needs the tighter
-  // 80px cutoff: scrolling ~90px up is an intentional pause that
-  // shouldn't be yanked back the moment the next chunk streams in.
-  const pinnedToBottomRef = useRef(true);
+  /*
+   * 「还跟着最新输出吗」的**意图**,以及上一次已知的滚动几何(判方向要用)。
+   * 规则全在 `runtime/chat/stick-to-bottom.ts`,那里也写了为什么不能像以前那样
+   * 从 `distance < 80` 反推 —— 反推会在流式输出下锁死,用户就滚不上去了。
+   *
+   * 这两个都是 ref:它们每帧都可能被读写,进 state 会把整个面板重渲一遍
+   * (`use-stick-to-bottom` 抱怨最多的 issue #14 就是这个)。给屏幕看的那一个
+   * 布尔量(浮标显不显示)才是 state。
+   */
+  const followIntentRef = useRef<FollowIntent>({ following: true, escaped: false });
+  const lastScrollSampleRef = useRef<ScrollSample>({
+    scrollTop: 0,
+    scrollHeight: 0,
+    clientHeight: 0,
+  });
   const scrolledToFormRef = useRef<Set<string>>(new Set());
   const refreshInlineAmrLoginStatus = useCallback(async (options: { refresh?: boolean } = {}) => {
     const next = await fetchVelaLoginStatus(options).catch(() => null);
@@ -1240,10 +1254,12 @@ export function ChatPane({
     (message: ChatMessage, messageIndex: number) => {
       const log = logRef.current;
       if (!log) return;
-      pinnedToBottomRef.current = false;
+      releaseFollow();
       anchorActiveRef.current = false;
-      setScrolledFromBottom(true);
       scrollChatLogToMessage(log, displayMessages, message.id, messageIndex);
+      // 浮标由几何说了算,不在这里硬点亮:这次跳转可能落在一条**已经在底部**的
+      // 消息上(短会话里点最后一条),那时底下没有可回的东西。
+      syncFollowState();
       setChatRailHighlightedMessageId(message.id);
       if (chatRailHighlightTimerRef.current) {
         clearTimeout(chatRailHighlightTimerRef.current);
@@ -1957,6 +1973,13 @@ export function ChatPane({
     anchorActiveRef.current = false;
     anchorPendingRef.current = false;
     resetTailSpacer();
+    /*
+     * 跟随意图也归位。它是**上一条会话**的阅读状态:在长会话里滚上去挣脱过,
+     * 切到另一条会话时那份「已挣脱」不该跟着走 —— 老写法里它跟着走了,于是浮标
+     * 挂在一条一屏都装得下的新会话上。
+     */
+    armFollow();
+    lastScrollSampleRef.current = { scrollTop: 0, scrollHeight: 0, clientHeight: 0 };
   }, [activeConversationId]);
 
   // ChatComposer's internal `seededRef` latches after the first
@@ -2035,18 +2058,17 @@ export function ChatPane({
           scrolledToFormRef.current.add(formEl.dataset.formId!);
           const distance = distanceFromBottomAfterAligningTop(el, formEl);
           formEl.scrollIntoView({ block: 'start', behavior: 'smooth' });
-          pinnedToBottomRef.current = distance < 80;
-          setScrolledFromBottom((prev) => shouldShowJumpToLatest({ distance, clientHeight: el.clientHeight, scrollHeight: el.scrollHeight, shown: prev }));
+          settleFollowAfterPredictedScroll(el, distance);
           return;
         }
         // Already handled by the auto-scroll effect — don't bottom-scroll.
         if (formEl) return;
       }
       // Initial-load bottom-pin must be instant — smooth scrollTo emits
-      // intermediate scroll events that flip pinnedToBottomRef to false.
-      el.scrollTop = el.scrollHeight;
-      setScrolledFromBottom(false);
-      pinnedToBottomRef.current = true;
+      // intermediate scroll events that read as a user scroll and break follow.
+      armFollow();
+      writeLogScrollTop(el, el.scrollHeight);
+      syncFollowState();
     });
     // `tab` is in the deps so that switching conversations while
     // Comments is open doesn't strand the new conversation at scrollTop:
@@ -2081,7 +2103,7 @@ export function ChatPane({
     if (!el) return;
     // Auto-scroll only when the user was already pinned near the bottom,
     // so a scrollback session reading earlier output isn't yanked to the
-    // latest message. We key off the pre-content `pinnedToBottomRef`
+    // latest message. We key off the pre-content follow intent
     // (a ref so it doesn't itself re-fire this effect on scroll) instead
     // of recomputing distance from the just-grown scrollHeight: a single
     // streamed chunk can add 100+ px in one render, which made the
@@ -2100,11 +2122,32 @@ export function ChatPane({
       anchorPendingRef.current = false;
       resetTailSpacer();
       anchorActiveRef.current = true;
-      pinnedToBottomRef.current = false;
-      setScrolledFromBottom(true);
+      /*
+       * anchor-to-top 接管 = 用户这一轮的阅读位置在**顶端**,不是底部。松开跟随,
+       * 这样回合结束、占位块收掉之后,一段长回复不会突然被拽到最底下。
+       * (短回合会在 `syncFollowState` 里因为「本来就贴着底」自动重新挂上。)
+       */
+      releaseFollow();
+      /*
+       * 浮标**不在这里点亮**。老写法在这里无条件 `setScrolledFromBottom(true)`,
+       * 而这一刻底下压根没有东西可回:占位块马上会把空白撑到「这条用户消息刚好顶到
+       * 视口顶端」,也就是**正正好在底部**。用户截图里那颗压在输入框上的浮标就是这么来的。
+       * 现在交给 `syncFollowState` 按几何算 —— 预留空白已经被扣掉了。
+       */
       requestAnimationFrame(() => {
         sizeAnchorSpacer();
         scrollAnchorToTop();
+        /*
+         * 占位块刚定完尺寸、视图刚落到 anchor 位置 —— 几何整个换了,必须重算一次。
+         *
+         * 上一拍(React effect 里)量到的是**旧**几何:占位块还是 0、视图还停在
+         * 旧内容的底部。一轮的用户消息 + 「进行中」头如果一次撑出大半屏,那一拍
+         * 就会算出「底下还有一大截」并把浮标点亮 —— 而这一帧过后底下只剩十几个像素。
+         *
+         * 子树变动那条路(`scheduleFollowSync`)也会重算,但两条都排 rAF、谁后跑
+         * 没有保证;只有这一帧是确定跑在 `scrollAnchorToTop()` **之后**的。
+         */
+        syncFollowState();
       });
       return;
     }
@@ -2112,11 +2155,14 @@ export function ChatPane({
     // it changes), so we only shrink the spacer as the reply grows — never
     // re-scroll. This is what keeps scrolling down and the final settle smooth.
     if (anchorActiveRef.current) {
-      requestAnimationFrame(sizeAnchorSpacer);
+      requestAnimationFrame(() => {
+        sizeAnchorSpacer();
+        syncFollowState();
+      });
       return;
     }
 
-    if (pinnedToBottomRef.current) {
+    if (isFollowingTail()) {
       // If the last assistant message contains a question form, scroll to
       // the form instead of the bottom, so the user lands on the form.
       const lastAssistantMsg = [...displayMessages].reverse().find((m) => m.role === 'assistant');
@@ -2128,8 +2174,7 @@ export function ChatPane({
           scrolledToFormRef.current.add(formEl.dataset.formId!);
           const distance = distanceFromBottomAfterAligningTop(el, formEl);
           formEl.scrollIntoView({ block: 'start', behavior: 'smooth' });
-          pinnedToBottomRef.current = distance < 80;
-          setScrolledFromBottom((prev) => shouldShowJumpToLatest({ distance, clientHeight: el.clientHeight, scrollHeight: el.scrollHeight, shown: prev }));
+          settleFollowAfterPredictedScroll(el, distance);
           return;
         }
         // Form tag in content but the DOM element isn't ready yet (partial
@@ -2138,10 +2183,11 @@ export function ChatPane({
         if (streaming) return;
       }
       // Streaming bottom-pin must be instant — smooth scrollTo emits
-      // intermediate scroll events that flip pinnedToBottomRef to false,
-      // breaking auto-follow for subsequent chunks.
-      el.scrollTop = el.scrollHeight;
+      // intermediate scroll events that read as a user scroll and break
+      // auto-follow for subsequent chunks.
+      writeLogScrollTop(el, el.scrollHeight);
     }
+    syncFollowState();
   }, [displayMessages, error, streaming]);
 
   // Saved chat-log scroll state, preserved across tab switches. The
@@ -2186,30 +2232,27 @@ export function ChatPane({
         const target = logRef.current;
         if (!target) return;
         if (saved.pinnedToBottom) {
-          target.scrollTop = target.scrollHeight;
+          armFollow();
+          writeLogScrollTop(target, target.scrollHeight);
         } else {
-          target.scrollTop = saved.scrollTop;
+          releaseFollow();
+          writeLogScrollTop(target, saved.scrollTop);
         }
         syncScrollable(target);
-        // Resync the jump-to-latest affordance with the restored
-        // position. Without this, a user who left Chat ~60px from the
-        // bottom and returns to find new messages stacked underneath
-        // would land hundreds of pixels above the latest turn while
-        // scrolledFromBottom remained false until they scrolled.
-        const distance =
-          target.scrollHeight - target.scrollTop - target.clientHeight;
-        setScrolledFromBottom((prev) => shouldShowJumpToLatest({ distance, clientHeight: target.clientHeight, scrollHeight: target.scrollHeight, shown: prev }));
-        pinnedToBottomRef.current = distance < 80;
+        // Resync the jump-to-latest affordance with the restored position.
+        // Without this, a user who left Chat ~60px from the bottom and returns
+        // to find new messages stacked underneath would land hundreds of pixels
+        // above the latest turn while the pill stayed hidden until they scrolled.
+        syncFollowState();
       });
     }
 
     function snapshot(target: HTMLDivElement) {
-      const distance =
-        target.scrollHeight - target.scrollTop - target.clientHeight;
-      savedChatScrollRef.current =
-        distance < 50
-          ? { pinnedToBottom: true }
-          : { pinnedToBottom: false, scrollTop: target.scrollTop };
+      // 存**意图**而不是「离底部够近吗」:用户离开 Chat 时如果正在跟随,回来就该
+      // 还在跟随;如果他停在某个位置读东西,回来就该还在那个位置。
+      savedChatScrollRef.current = followIntentRef.current.following
+        ? { pinnedToBottom: true }
+        : { pinnedToBottom: false, scrollTop: target.scrollTop };
     }
 
     function onScroll() {
@@ -2230,32 +2273,80 @@ export function ChatPane({
       }
       syncScrollable(target);
       markScrolling();
+      /*
+       * 意图**只在这里**跟着用户的手改。方向 + 「`scrollHeight` 没变」两条一起,
+       * 把我们自己写的 `scrollTop`、浏览器夹取、原生 scroll anchoring 的修正
+       * 全都排除在「用户滚动」之外(见 `stick-to-bottom.ts`)。
+       */
+      const sample = readLogSample(target);
+      followIntentRef.current = nextFollowIntent(
+        followIntentRef.current,
+        lastScrollSampleRef.current,
+        sample,
+      );
+      lastScrollSampleRef.current = sample;
       snapshot(target);
-      const distance =
-        target.scrollHeight - target.scrollTop - target.clientHeight;
-      // Functional updater bails out when the value is unchanged so a flood
-      // of scroll events (e.g. programmatic scrollTop + ResizeObserver
-      // follow-up during streaming) does not schedule a re-render per tick
-      // and trip React's "Maximum update depth exceeded" guard.
-      setScrolledFromBottom((prev) => {
-        const next = shouldShowJumpToLatest({
-          distance,
-          clientHeight: target.clientHeight,
-          scrollHeight: target.scrollHeight,
-          shown: prev,
-        });
-        return prev === next ? prev : next;
-      });
-      pinnedToBottomRef.current = distance < 80;
+      // `syncFollowState` 里的函数式更新在值没变时原地返回,所以流式期间那一串
+      // scroll 事件不会每一跳都排一次重渲,也就不会撞上 React 的
+      // "Maximum update depth exceeded"。
+      syncFollowState();
     }
+
+    /*
+     * 滚轮往上 = 立刻松手,不等 scroll 事件。
+     *
+     * 这一条是给**快速流式**准备的:同一帧里我们如果写了 `scrollTop`,浏览器会把
+     * 这一次滚轮滚动**直接取消掉**,于是那一格滚动连 scroll 事件都不会发 —— 用户的手
+     * 在物理上被吃掉了。`use-stick-to-bottom` 也是为此单独挂了 wheel 监听。
+     */
+    function onWheel(event: WheelEvent) {
+      const target = logRef.current;
+      if (!target) return;
+      if (event.deltaY >= 0) return;
+      if (target.scrollHeight <= target.clientHeight) return;
+      const { following, escaped } = followIntentRef.current;
+      if (!following && escaped) return; // 已经松开了,不用每一格滚轮都重算一次
+      releaseFollow();
+      syncFollowState();
+    }
+
+    /*
+     * 触屏同理:**手指往下拖**(内容跟着往下走 = 去看更早的东西)就松手。
+     * `use-stick-to-bottom` 压根没挂 touch —— 它的 issue #9「Bad on iOS」就是这个:
+     * 惯性滚动会把纯位移判据带偏,而移动端又没有 wheel 事件可依。
+     */
+    let touchStartY: number | null = null;
+    function onTouchStart(event: TouchEvent) {
+      touchStartY = event.touches[0]?.clientY ?? null;
+    }
+    function onTouchMove(event: TouchEvent) {
+      const target = logRef.current;
+      if (!target || touchStartY === null) return;
+      const y = event.touches[0]?.clientY;
+      if (y === undefined) return;
+      // 手指往下拖 = 内容往下走 = 看更早的内容。
+      if (y - touchStartY > 8 && target.scrollHeight > target.clientHeight) {
+        releaseFollow();
+        syncFollowState();
+        touchStartY = null;
+      }
+    }
+
     syncScrollable(el);
+    rememberScrollSample(el);
     el.addEventListener('scroll', onScroll);
+    el.addEventListener('wheel', onWheel, { passive: true });
+    el.addEventListener('touchstart', onTouchStart, { passive: true });
+    el.addEventListener('touchmove', onTouchMove, { passive: true });
     return () => {
       // Capture final scroll state before unmount; the ref normally
       // tracks via onScroll, but programmatic scrolls or layout shifts
       // right before unmount can leave it stale.
       snapshot(el);
       el.removeEventListener('scroll', onScroll);
+      el.removeEventListener('wheel', onWheel);
+      el.removeEventListener('touchstart', onTouchStart);
+      el.removeEventListener('touchmove', onTouchMove);
       if (chatLogScrollIdleTimerRef.current !== null) {
         window.clearTimeout(chatLogScrollIdleTimerRef.current);
         chatLogScrollIdleTimerRef.current = null;
@@ -2265,32 +2356,15 @@ export function ChatPane({
   }, [tab]);
 
   /**
-   * 内容变了就重算一次「回到最新」该不该在。
+   * 切标签 / 换会话 / 开始收尾一个 run 之后重算一次。
    *
-   * 为什么非要有这一条:那颗浮标的判据只在 **scroll 事件**里跑。可它显不显示的前提
-   * ——「还能往下滚多远」——**会在没有任何滚动的情况下改变**:
-   *  · 切到另一条会话(短的那条根本滚不动,一个 scroll 事件都不会发)
-   *  · run 结束、执行记录自动收起,内容一下矮了一大截
-   * 这两种情况下状态就那么挂着,于是浮标压在一屏没有滚动条的对话上
-   * (用户 2026-08-27:「没法滚动时不要出现这个吧??」)。
-   *
-   * 判据本身还兜了一层不变量(见 `shouldShowJumpToLatest` 里的 `scrollHeight`),
-   * 两条一起才完整:那条管「算的时候别算错」,这条管「变了要去算」。
+   * 这几件事都可能在**没有任何 scroll 事件**的情况下改变几何(短会话根本滚不动,
+   * 一个事件都不会发)。日常的高度变化由下面那组 Resize/Mutation 观察者兜住;
+   * 这条只补那几个「观察者还没来得及重挂」的切换时刻。
    */
   useEffect(() => {
-    const el = logRef.current;
-    if (!el) return;
-    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
-    setScrolledFromBottom((prev) => {
-      const next = shouldShowJumpToLatest({
-        distance,
-        clientHeight: el.clientHeight,
-        scrollHeight: el.scrollHeight,
-        shown: prev,
-      });
-      return prev === next ? prev : next;
-    });
-  }, [tab, displayMessages.length, streaming]);
+    syncFollowState();
+  }, [tab, activeConversationId, displayMessages.length, streaming]);
 
   useEffect(() => {
     if (tab !== 'chat') return;
@@ -2298,26 +2372,22 @@ export function ChatPane({
     if (!el) return;
 
     let followFrame: number | null = null;
-    const followLatestIfPinned = () => {
-      // While anchored, only shrink the tail spacer as the reply grows
-      // (resize-only, never scroll) so the user message stays put without
-      // fighting a manual scroll-down.
-      if (anchorActiveRef.current) {
-        if (followFrame !== null) return;
-        followFrame = requestAnimationFrame(() => {
-          followFrame = null;
-          if (!anchorActiveRef.current) return;
-          sizeAnchorSpacer();
-        });
-        return;
-      }
-      if (!pinnedToBottomRef.current || followFrame !== null) return;
+    /*
+     * 几何变了(内容长高/变矮、面板改尺寸)之后归拢到一帧里处理一次。
+     *
+     * **这里不碰跟随意图**,只把意图落到屏幕上:该贴底就贴底,浮标该收就收。
+     * 老写法在这里只在「正跟随」时做事,于是**用户停住时的高度变化压根没人管** ——
+     * 浮标就那么挂在一屏已经滚不动的对话上。
+     */
+    const scheduleFollowSync = () => {
+      if (followFrame !== null) return;
       followFrame = requestAnimationFrame(() => {
         followFrame = null;
-        const target = logRef.current;
-        if (!target || !pinnedToBottomRef.current) return;
-        target.scrollTop = target.scrollHeight;
-        setScrolledFromBottom(false);
+        // While anchored, only shrink the tail spacer as the reply grows
+        // (resize-only, never scroll) so the user message stays put without
+        // fighting a manual scroll-down.
+        if (anchorActiveRef.current) sizeAnchorSpacer();
+        syncFollowState();
       });
     };
 
@@ -2330,7 +2400,7 @@ export function ChatPane({
               setChatLogScrollable((prev) => (prev === next ? prev : next));
               if (!next) setChatLogScrolling(false);
             }
-            followLatestIfPinned();
+            scheduleFollowSync();
           })
         : null;
     const observedChildren = new Set<Element>();
@@ -2375,6 +2445,12 @@ export function ChatPane({
     const syncQueuedSendStrip = outsideLog(queuedSendStripRef);
     const syncPlanPill = outsideLog(planPillRef);
 
+    /*
+     * 滚动容器**自己**也要观察:输入框长高、软键盘弹出、旁边的 flex 兄弟变大,
+     * 都只改可视高度、不改内容高度 —— 只盯内容就会静默失准
+     * (`use-stick-to-bottom` 至今没修的 issue #40 就是这个)。
+     */
+    resizeObserver?.observe(el);
     syncObservedChildren();
     syncQueuedSendStrip();
     syncPlanPill();
@@ -2385,7 +2461,7 @@ export function ChatPane({
             syncObservedChildren();
             syncQueuedSendStrip();
             syncPlanPill();
-            followLatestIfPinned();
+            scheduleFollowSync();
           })
         : null;
     // childList + subtree only — NOT characterData. Auto-follow during
@@ -2447,6 +2523,134 @@ export function ChatPane({
   function resetTailSpacer() {
     const s = tailSpacerRef.current;
     if (s) s.style.height = '0px';
+  }
+
+  /*
+   * 尾部占位块此刻占了多少 —— **读内联样式,不读 `offsetHeight`**。
+   * 这块高度是本组件自己写上去的(anchor-to-top 的预留空白),内联样式就是权威,
+   * 而且省掉一次强制重排。
+   */
+  function reservedTailHeight(): number {
+    const spacer = tailSpacerRef.current;
+    if (!spacer) return 0;
+    const parsed = Number.parseFloat(spacer.style.height);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  /*
+   * 量滚动状态时**把预留空白扣掉**。
+   *
+   * 这是「回到最新」误报的另一半病根:anchor-to-top 会在回复下面撑一块空白,好让
+   * 刚发出的那条用户消息能顶到视口顶端。那块空白是**预留的空**,不是内容 —— 可
+   * 「离底部还有多远」照单全收,于是浮标被一屏空白点亮,而屏幕上明明就是最新的东西
+   * (用户 2026-08-27 的截图:一条用户消息 + 一个「进行中」头,下面大半空着,浮标在)。
+   */
+  function readLogSample(el: HTMLDivElement): ScrollSample {
+    const clientHeight = el.clientHeight;
+    return {
+      scrollTop: el.scrollTop,
+      scrollHeight: Math.max(clientHeight, el.scrollHeight - reservedTailHeight()),
+      clientHeight,
+    };
+  }
+
+  /** 把当前几何记成基线。**我们自己写完 `scrollTop` 之后必须叫一次**,否则下一次用户滚动的方向会算反。 */
+  function rememberScrollSample(el: HTMLDivElement) {
+    lastScrollSampleRef.current = readLogSample(el);
+  }
+
+  /** 唯一的 `scrollTop` 写入口:写完就记基线。 */
+  function writeLogScrollTop(el: HTMLDivElement, top: number) {
+    el.scrollTop = top;
+    rememberScrollSample(el);
+  }
+
+  /** 此刻是不是真的在跟着最新输出跑。anchor-to-top 期间不是:那时用户消息钉在顶端,回复在下面长。 */
+  function isFollowingTail(): boolean {
+    return followIntentRef.current.following && !anchorActiveRef.current;
+  }
+
+  /**
+   * 把跟随意图落到屏幕上:该贴底就贴底,该给入口就给入口。
+   *
+   * **任何会改变几何的事情之后都要叫它一次** —— 滚动、内容长高/变矮、切标签、切会话、
+   * 面板改尺寸、折叠块展开收起、占位块重新定尺寸。这条是「浮标该不该在」的另一半:
+   * 判据本身管「算的时候别算错」,这里管「变了要去算」。老写法只在 scroll 事件和
+   * 「消息条数变了」时重算,于是内容在没有滚动事件的情况下变矮之后,浮标就那么挂着。
+   *
+   * 它**不改意图**。意图只由用户的动作改(见 `stick-to-bottom.ts`)。
+   */
+  function syncFollowState() {
+    const el = logRef.current;
+    if (!el) return;
+    if (isFollowingTail()) {
+      // 瞬时贴底,不用平滑滚动:平滑滚动会吐出一串中间 scroll 事件,
+      // 那些事件看起来就像用户在滚,会把跟随打断(这也是当初写死 instant 的原因)。
+      if (el.scrollTop !== el.scrollHeight) writeLogScrollTop(el, el.scrollHeight);
+    }
+    const sample = readLogSample(el);
+    /*
+     * 这里**一个字都不改跟随意图**。
+     *
+     * 试过在这里补一条「已经贴着底了就重新挂上跟随」—— 当场就把滚轮那条逃逸路径
+     * 废掉了:快速流式时浏览器会把那一格滚轮滚动整个吃掉,位置纹丝不动,于是
+     * 「贴着底」永远成立,刚松开的手立刻又被按回去。同理,在一屏装得下的对话里
+     * 展开折叠块也会被判回跟随,接着折叠块一长高就把刚点的那一行顶走。
+     *
+     * 意图只由用户的动作改。「滚不动的对话上不该有浮标」由判据里那条不变量兜着
+     * (`shouldShowJumpToLatest` 的 `scrollHeight <= clientHeight + 1`),不需要在这里
+     * 反过来改意图。
+     */
+    setScrolledFromBottom((prev) => {
+      const next = shouldShowJumpToLatest({
+        distance: Math.max(0, sample.scrollHeight - sample.scrollTop - sample.clientHeight),
+        clientHeight: sample.clientHeight,
+        scrollHeight: sample.scrollHeight,
+        shown: prev,
+        following: isFollowingTail(),
+      });
+      return prev === next ? prev : next;
+    });
+  }
+
+  /** 显式动作(点「回到最新」、发消息、切会话)重新挂上跟随。 */
+  function armFollow() {
+    followIntentRef.current = { following: true, escaped: false };
+  }
+
+  /**
+   * 表单/消息滚到位之后,按**预测的**落点定跟随意图和浮标。
+   *
+   * 为什么用预测而不是等真实滚动落地:`scrollIntoView` 可能是平滑的,也可能因为目标
+   * 本来就在底部而**根本不产生滚动** —— 后一种情况永远等不到 scroll 事件来纠正,
+   * 浮标就会挂着没东西可回(recvqajMdAnfmd)。
+   */
+  function settleFollowAfterPredictedScroll(el: HTMLDivElement, distance: number) {
+    const clientHeight = el.clientHeight;
+    const scrollHeight = Math.max(clientHeight, el.scrollHeight - reservedTailHeight());
+    const sample: ScrollSample = {
+      scrollTop: Math.max(0, scrollHeight - clientHeight - distance),
+      scrollHeight,
+      clientHeight,
+    };
+    lastScrollSampleRef.current = sample;
+    followIntentRef.current = isSampleNearBottom(sample)
+      ? { following: true, escaped: false }
+      : { following: false, escaped: true };
+    setScrolledFromBottom((prev) =>
+      shouldShowJumpToLatest({
+        distance,
+        clientHeight,
+        scrollHeight,
+        shown: prev,
+        following: isFollowingTail(),
+      }),
+    );
+  }
+
+  /** 显式动作(展开折叠块、anchor-to-top 接管)松开跟随。 */
+  function releaseFollow() {
+    followIntentRef.current = { following: false, escaped: true };
   }
 
   // Content offset (distance from the top of the scroll content) of the most
@@ -2514,9 +2718,13 @@ export function ChatPane({
     const el = logRef.current;
     if (!el) return;
     anchorActiveRef.current = false;
-    pinnedToBottomRef.current = true;
+    armFollow();
     resetTailSpacer();
+    // 这一下用平滑滚动是刻意的:它是用户点出来的一次大跳,平滑更好读。
+    // 中间那串 scroll 事件方向都是**向下**,按 `stick-to-bottom.ts` 的判据
+    // 不会被误当成挣脱,所以不需要额外的「这是程序滚的」标记。
     el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+    syncFollowState();
   }
 
   useEffect(() => {
@@ -2632,7 +2840,7 @@ export function ChatPane({
       commentAttachments={commentsToAttachments(attachedComments)}
       onRemoveCommentAttachment={onDetachComment}
       onSend={(prompt, attachments, commentAttachments, meta) => {
-        pinnedToBottomRef.current = true;
+        armFollow();
         scrolledToFormRef.current = new Set();
         if (editingQueuedSendId && onUpdateQueuedSend) {
           const original = queuedItems.find((item) => item.id === editingQueuedSendId);
@@ -2897,9 +3105,11 @@ export function ChatPane({
                     'summary, .thinking-toggle, .action-card-toggle, button.op-card-head, [aria-expanded]',
                   );
                   if (toggle && logRef.current?.contains(toggle)) {
-                    pinnedToBottomRef.current = false;
+                    releaseFollow();
                     anchorActiveRef.current = false;
-                    setScrolledFromBottom(true);
+                    // 浮标交给几何判 —— 老写法在这里无条件点亮它,于是在一屏装得下、
+                    // 根本滚不动的对话里展开一个折叠块,也会冒出一颗「回到最新」。
+                    syncFollowState();
                   }
                 }}
               >

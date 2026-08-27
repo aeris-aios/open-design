@@ -37,6 +37,11 @@ export interface JumpToLatestInput {
   scrollHeight?: number;
   /** 此刻是不是已经显示着 —— 迟滞要用。 */
   shown: boolean;
+  /**
+   * 此刻是不是正跟着最新输出跑(见 `stick-to-bottom.ts`)。
+   * 跟着跑就没有「回到最新」这回事 —— 你就在最新上。
+   */
+  following?: boolean;
 }
 
 export function shouldShowJumpToLatest({
@@ -44,7 +49,16 @@ export function shouldShowJumpToLatest({
   clientHeight,
   scrollHeight,
   shown,
+  following,
 }: JumpToLatestInput): boolean {
+  /*
+   * **正在跟随就不给入口**。这一条压在最前面,而且不看 `shown`。
+   *
+   * 它替掉的是老写法里那一堆「在这里把浮标点亮 / 在那里把浮标熄掉」的散装赋值:
+   * 发消息时无条件点亮、展开折叠块时无条件点亮 —— 都没问过「底下到底有没有东西」。
+   * 现在浮标只是跟随意图的影子,散装赋值全部删掉了。
+   */
+  if (following) return false;
   const height = Number.isFinite(clientHeight) && clientHeight > 0 ? clientHeight : 0;
   /*
    * **滚不动就没有「最新」可回**(用户 2026-08-27:「没法滚动时不要出现这个吧??」)。
