@@ -73,7 +73,18 @@ export function createClaudeStreamHandler(
   let currentMessageStreamedThinking = false;
   // Per-message role-marker guards for cross-chunk detection (#3247).
   const roleGuards = new Map<string, RoleMarkerGuard>();
+  // Task rows in the order the runtime declared them. The key is a slot handle
+  // this module owns, NOT the runtime's task id — the id can be rebound once
+  // the runtime reports it (see `bindRuntimeTaskId`), and re-keying a Map moves
+  // the entry to the end, which would silently reorder the user's plan.
   const runtimeTasks = new Map<string, RuntimeTask>();
+  // Runtime task id -> slot handle. The only lookup `TaskUpdate` may use.
+  const runtimeTaskSlotById = new Map<string, string>();
+  // Slot handles for `TaskCreate` calls still waiting on their tool_result,
+  // which is where the runtime's real id arrives.
+  const pendingTaskCreateSlots = new Map<string, string>();
+  // `TaskList` calls whose result we still want to read as a task snapshot.
+  const pendingTaskListToolUseIds = new Set<string>();
   const canonicalTaskToolUseIds = new Set<string>();
   let nextRuntimeTaskId = 1;
   let suppressNextArtifactText = false;
@@ -95,7 +106,7 @@ export function createClaudeStreamHandler(
   }
 
   function nextGeneratedRuntimeTaskId(): string {
-    while (runtimeTasks.has(String(nextRuntimeTaskId))) {
+    while (runtimeTaskSlotById.has(String(nextRuntimeTaskId))) {
       nextRuntimeTaskId += 1;
     }
     const id = String(nextRuntimeTaskId);
@@ -103,19 +114,67 @@ export function createClaudeStreamHandler(
     return id;
   }
 
+  function noteRuntimeTaskId(id: string): void {
+    const numericId = Number(id);
+    if (Number.isSafeInteger(numericId) && numericId >= nextRuntimeTaskId) {
+      nextRuntimeTaskId = numericId + 1;
+    }
+  }
+
   function runtimeTaskIdFromCreate(input: Record<string, unknown>): string {
     if (typeof input.taskId === 'string' && input.taskId) {
-      const numericId = Number(input.taskId);
-      if (Number.isSafeInteger(numericId) && numericId >= nextRuntimeTaskId) {
-        nextRuntimeTaskId = numericId + 1;
-      }
+      noteRuntimeTaskId(input.taskId);
       return input.taskId;
     }
     return nextGeneratedRuntimeTaskId();
   }
 
+  /**
+   * Point `id` at `slot`, retiring whatever id that slot answered to before.
+   *
+   * Retiring the old alias is the load-bearing half. A `TaskCreate` is placed
+   * under a locally minted id because its tool_result — the only place the
+   * runtime states the real one — has not arrived yet. Leaving that placeholder
+   * resolvable after the real id lands is what lets a `TaskUpdate` naming a task
+   * from an EARLIER run land on a row created in THIS one.
+   */
+  function bindRuntimeTaskId(slot: string, id: string): void {
+    const task = runtimeTasks.get(slot);
+    if (!task) return;
+    noteRuntimeTaskId(id);
+    if (task.id !== id) {
+      if (runtimeTaskSlotById.get(task.id) === slot) runtimeTaskSlotById.delete(task.id);
+      // Re-setting an existing key keeps its position, so the plan keeps the
+      // order the runtime declared it in.
+      runtimeTasks.set(slot, { ...task, id });
+    }
+    runtimeTaskSlotById.set(id, slot);
+  }
+
+  function emitTaskSnapshot(eventId: string): void {
+    onEvent({
+      type: 'tool_use',
+      id: eventId,
+      name: 'TodoWrite',
+      input: {
+        todos: Array.from(runtimeTasks.values()).map(({ content, status, activeForm }) => ({
+          content,
+          status,
+          ...(activeForm ? { activeForm } : {}),
+        })),
+      },
+    });
+  }
+
   function emitCanonicalTaskSnapshot(toolUseId: unknown, name: unknown, input: unknown): boolean {
-    if (typeof toolUseId !== 'string' || typeof name !== 'string' || !isRecord(input)) return false;
+    if (typeof toolUseId !== 'string' || typeof name !== 'string') return false;
+    if (name === 'TaskList') {
+      // The call itself still renders as an ordinary tool row; we only want to
+      // read what comes back (see `absorbTaskToolResult`).
+      pendingTaskListToolUseIds.add(toolUseId);
+      return false;
+    }
+    if (!isRecord(input)) return false;
     if (canonicalTaskToolUseIds.has(toolUseId)) return true;
     let changed = false;
     if (name === 'TaskCreate') {
@@ -126,25 +185,32 @@ export function createClaudeStreamHandler(
           : '';
       if (!content) return false;
       const id = runtimeTaskIdFromCreate(input);
+      const slot = `create:${toolUseId}`;
       const activeForm = typeof input.activeForm === 'string' ? input.activeForm : undefined;
-      runtimeTasks.set(id, {
+      runtimeTasks.set(slot, {
         id,
         content,
         status: normalizeTaskStatus(input.status),
         ...(activeForm ? { activeForm } : {}),
       });
+      runtimeTaskSlotById.set(id, slot);
+      pendingTaskCreateSlots.set(toolUseId, slot);
       changed = true;
     } else if (name === 'TaskUpdate') {
       if (typeof input.taskId !== 'string') return false;
-      const existing = runtimeTasks.get(input.taskId);
-      if (!existing) return false;
+      const slot = runtimeTaskSlotById.get(input.taskId);
+      const existing = slot ? runtimeTasks.get(slot) : undefined;
+      // An id this stream never saw belongs to an earlier run of the same
+      // resumed session. Guessing which local row it meant is how the card ends
+      // up reporting work nobody finished, so let it go by unapplied.
+      if (!slot || !existing) return false;
       const content = typeof input.subject === 'string'
         ? input.subject
         : typeof input.description === 'string'
           ? input.description
           : existing.content;
       const activeForm = typeof input.activeForm === 'string' ? input.activeForm : existing.activeForm;
-      runtimeTasks.set(input.taskId, {
+      runtimeTasks.set(slot, {
         ...existing,
         content,
         status: normalizeTaskStatus(input.status),
@@ -156,19 +222,68 @@ export function createClaudeStreamHandler(
     }
     canonicalTaskToolUseIds.add(toolUseId);
     if (!changed || runtimeTasks.size === 0) return false;
-    onEvent({
-      type: 'tool_use',
-      id: `${toolUseId}:todo-task`,
-      name: 'TodoWrite',
-      input: {
-        todos: Array.from(runtimeTasks.values()).map(({ content, status, activeForm }) => ({
-          content,
-          status,
-          ...(activeForm ? { activeForm } : {}),
-        })),
-      },
-    });
+    emitTaskSnapshot(`${toolUseId}:todo-task`);
     return true;
+  }
+
+  /** `Task #7 created successfully: Draft copy` — the runtime stating the id. */
+  const TASK_CREATED_RESULT_RE = /\bTask\s+#([A-Za-z0-9_-]+)\s+created successfully/;
+  /** `#7 [in_progress] Draft copy` — one row of a `TaskList` result. */
+  const TASK_LIST_ROW_RE = /^#([A-Za-z0-9_-]+)\s+\[([^\]]*)\]\s*(.*)$/;
+
+  function mergeTaskListResult(content: string): boolean {
+    let changed = false;
+    for (const line of content.split('\n')) {
+      const row = TASK_LIST_ROW_RE.exec(line.trim());
+      if (!row) continue;
+      const [, id, status, subject] = row;
+      const slot = runtimeTaskSlotById.get(id) ?? `task:${id}`;
+      const existing = runtimeTasks.get(slot);
+      const next: RuntimeTask = {
+        id,
+        content: subject.trim() || existing?.content || '',
+        status: normalizeTaskStatus(status.trim()),
+        ...(existing?.activeForm ? { activeForm: existing.activeForm } : {}),
+      };
+      if (!next.content) continue;
+      if (
+        existing
+        && existing.content === next.content
+        && existing.status === next.status
+      ) {
+        continue;
+      }
+      runtimeTasks.set(slot, next);
+      runtimeTaskSlotById.set(id, slot);
+      noteRuntimeTaskId(id);
+      changed = true;
+    }
+    return changed;
+  }
+
+  /**
+   * Read the runtime's answer to a task tool call.
+   *
+   * Two things only reach us here and nowhere else: the id a `TaskCreate` was
+   * actually given, and the full list a `TaskList` reports — which is how a plan
+   * written in an earlier run of this resumed session gets back onto the card
+   * instead of the card showing only what this turn happened to create.
+   */
+  function absorbTaskToolResult(toolUseId: unknown, content: string, isError: boolean): void {
+    if (typeof toolUseId !== 'string') return;
+    // Retire the pending entry either way — a failed call is still answered, and
+    // leaving it pending would keep the slot waiting for a result that already
+    // came. Only a successful result gets to change the plan.
+    const pendingSlot = pendingTaskCreateSlots.get(toolUseId);
+    if (pendingSlot !== undefined) {
+      pendingTaskCreateSlots.delete(toolUseId);
+      if (isError) return;
+      const createdId = TASK_CREATED_RESULT_RE.exec(content)?.[1];
+      if (createdId) bindRuntimeTaskId(pendingSlot, createdId);
+      return;
+    }
+    if (!pendingTaskListToolUseIds.delete(toolUseId) || isError) return;
+    if (mergeTaskListResult(content)) emitTaskSnapshot(`${toolUseId}:todo-task`);
   }
 
   function emitToolUse(id: unknown, name: unknown, input: unknown): void {
@@ -489,11 +604,14 @@ export function createClaudeStreamHandler(
       for (const block of obj.message.content) {
         if (!isRecord(block)) continue;
         if (block.type === 'tool_result') {
+          const content = stringifyToolResult(block.content);
+          const isError = Boolean(block.is_error);
+          absorbTaskToolResult(block.tool_use_id, content, isError);
           onEvent({
             type: 'tool_result',
             toolUseId: block.tool_use_id,
-            content: stringifyToolResult(block.content),
-            isError: Boolean(block.is_error),
+            content,
+            isError,
           });
         }
       }

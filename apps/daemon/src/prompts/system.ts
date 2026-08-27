@@ -1442,7 +1442,17 @@ export function composeSystemPrompt({
  * precedence war and let `<todo-list>` / `[读取 X]` pseudo-tool markup
  * leak into the chat.
  */
-const CLAUDE_PLAN_TOOL_NOTE = `Your plan tool is \`TodoWrite\` — use it for the plan step above; the host renders it as a live Todos card. Mark each item \`in_progress\` when started and \`completed\` as it lands.`;
+/**
+ * Which plan tool a Claude-family session actually has depends on its build.
+ * Claude Code >= 2.1.x retired `TodoWrite` and moved the capability to
+ * `TaskCreate` / `TaskUpdate` (verified on 2.1.247: the init frame's `tools`
+ * array carries no `TodoWrite` on any model). The daemon reduces both dialects
+ * into one canonical `TodoWrite` snapshot before the client ever sees them
+ * (`emitCanonicalTaskSnapshot` in ../runtimes/claude-stream.ts), so the note
+ * names both and lets the session use whichever it was given. Naming only the
+ * retired one pointed newer builds at a tool that does not exist.
+ */
+const CLAUDE_PLAN_TOOL_NOTE = `Your plan tool is \`TodoWrite\`, or \`TaskCreate\` plus \`TaskUpdate\` on builds that ship those instead — use whichever your session actually exposes for the plan step above; the host renders either as the same live Todos card. Mark each item \`in_progress\` when started and \`completed\` as it lands.`;
 
 const API_MODE_OVERRIDE = `# API mode — no tools available (read first — overrides every rule below)
 

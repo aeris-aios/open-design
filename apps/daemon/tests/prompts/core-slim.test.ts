@@ -582,6 +582,25 @@ describe('slim core — regression-audit fixes vs classic', () => {
       .not.toContain('Your plan tool is');
   });
 
+  /*
+   * Claude Code >= 2.1.x renamed the capability: `TodoWrite` is gone and the
+   * plan lives in `TaskCreate` / `TaskUpdate` (measured on 2.1.247 — the init
+   * frame's `tools` array carries no `TodoWrite` on any model). The daemon
+   * reduces either dialect into the same Todos card, so the note has to name
+   * both or it points half the installed base at a tool that does not exist.
+   */
+  it('names both plan-tool dialects so the note survives the Claude Code rename', () => {
+    const note = composeSystemPrompt({
+      metadata: { kind: 'other' as const },
+      executionProfile: 'filesystem' as const,
+      promptCoreVariant: 'slim' as const,
+      streamFormat: 'claude-stream-json',
+    });
+    expect(note).toContain('`TodoWrite`');
+    expect(note).toContain('`TaskCreate`');
+    expect(note).toContain('`TaskUpdate`');
+  });
+
   it('carries the multi-turn edit-adherence invariants (DS binding + locked constraints)', () => {
     // Production feedback: DS tokens and explicit user constraints drift during
     // multi-turn edits. The charter must state, in the edit path, that (a) the
