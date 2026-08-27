@@ -1,0 +1,60 @@
+/* 产物卡上〔发布〕/〔导出〕点开的浮层。
+   ------------------------------------------------------------
+   产品口径(2026-08-27):**不是居中弹窗,也不是跑到视口角上的那块面板**。
+   要选的只是「发到哪儿 / 导成哪种」——三四条的清单;把它放到别处会盖住刚
+   生成的那张卡,而人正是对着它在做判断。实测出事那次:按钮在 (129, 2287),
+   弹层在 (1436, 94)。
+
+   面板 portal 到 body、`position: fixed`,坐标由 `useAnchoredPopover` 算 ——
+   就地 absolute 会被 `.artifact-card-acts`(z-index:2 的层叠上下文)困住,
+   压不过同样 portal 出去的提示层。 */
+.anchor {
+  position: relative;
+  display: inline-flex;
+}
+
+.popover {
+  /* 菜单层 —— 与 `.od-select-menu` 同一档,在提示层之上。理由见 tokens.css。 */
+  z-index: var(--z-menu);
+  min-width: 180px;
+  max-width: min(280px, calc(100vw - 24px));
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  box-shadow: var(--shadow-lg);
+}
+
+.item {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  height: auto;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: calc(var(--radius) - 2px);
+  background: transparent;
+  color: var(--text);
+  font-size: var(--t-mini);
+  line-height: normal;
+  text-align: start;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--duration-faster) var(--ease-out);
+}
+
+.item:hover {
+  background: var(--bg-subtle);
+}
+
+.item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.icon {
+  display: inline-flex;
+  flex: none;
+  color: var(--text-soft);
+}

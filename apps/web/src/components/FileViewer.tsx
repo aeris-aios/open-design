@@ -1,5 +1,6 @@
 import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type CSSProperties, type DragEvent as ReactDragEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import type { ArtifactExportFormat } from '../runtime/chat/artifact-export';
+import { PUBLIC_LINK_TARGET, type ArtifactPublishTarget } from '../runtime/chat/artifact-publish';
 import { createPortal, flushSync } from 'react-dom';
 import { Button, Input, Select } from '@open-design/components';
 import {
@@ -1768,7 +1769,7 @@ interface Props {
   onCommentModeChange?: (active: boolean) => void;
   // Bumped nonce asking this viewer to open its Share/Export menu (chat-side
   // "Share" next-step action). Only HTML artifacts expose a Share menu.
-  shareRequest?: { nonce: number } | null;
+  shareRequest?: { nonce: number; target?: ArtifactPublishTarget } | null;
   // Bumped nonce asking this viewer to open its Download/Export menu (chat-side
   // "Download" next-step action).
   downloadRequest?: { nonce: number; format?: ArtifactExportFormat } | null;
@@ -7374,7 +7375,7 @@ function HtmlViewer({
   onOpenFileReplacing?: (openName: string, closeName: string) => void;
   commentPortalId?: string;
   onCommentModeChange?: (active: boolean) => void;
-  shareRequest?: { nonce: number } | null;
+  shareRequest?: { nonce: number; target?: ArtifactPublishTarget } | null;
   downloadRequest?: { nonce: number; format?: ArtifactExportFormat } | null;
   slideNavRequest?: { slideIndex: number; nonce: number } | null;
   // Read-only viewer of a team-shared project: comment-only, no edit/export.
@@ -14205,9 +14206,25 @@ function HtmlViewer({
     consumedShareNonceRef.current = nonce;
     setExportReadyNudge(false);
     markExportReadyNudgeSeen(projectId, file.name);
+    /*
+     * 带着目的地来的请求**直接发那一处** —— 产物卡上那枚浮层已经让人选过了
+     * (产品 2026-08-27)。再把这块面板展开一次,等于让人在**视口右上角**重选
+     * 一遍刚在卡上选过的东西:实测按钮在 (129, 2287),这块面板在 (1436, 94)。
+     * 不带目的地的(「下一步引导」那行〔分享〕)照旧展开面板。
+     */
+    const target = shareRequest?.target;
+    if (target) {
+      if (target === PUBLIC_LINK_TARGET) {
+        void publishCurrentFilePublic();
+      } else {
+        void openDeployModal(target);
+      }
+      return;
+    }
     setUnifiedActionTab('share');
     setDeployMenuOpen(true);
-  }, [shareRequest?.nonce, canShare, projectId, file.name]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shareRequest?.nonce, shareRequest?.target, canShare, projectId, file.name]);
 
   // Parallel to shareRequest, but opens the Download / Export menu instead — the
   // assistant "next step" card's Download row routes here so it surfaces the same

@@ -261,10 +261,17 @@ describe('FileOpsSummary artifact cards', () => {
     expect(acts[0]).toBe(screen.getByTestId('artifact-card-publish-landing.html'));
     expect(acts[1]).toBe(screen.getByTestId('artifact-card-export-landing.html'));
 
+    /*
+     * 两枚都是**先开一枚贴着按钮的浮层**,选完那一条才真的动作
+     * (产品 2026-08-27:「html 的导出和发布的弹窗,都直接显示在卡片导出发布的
+     *  按钮附近」)。发布那枚原来是点下去就把请求甩给预览区,于是面板在视口
+     * 右上角展开,离按钮两千像素。
+     */
     fireEvent.click(acts[0] as HTMLElement);
-    expect(onPublish).toHaveBeenCalledWith('landing.html');
-    // HTML 是**多格式**产物 —— 点〔导出〕先开格式浮层,选完那一条才真的导出
-    // (产品 2026-08-27;判据在 `runtime/chat/artifact-export.ts`)。
+    expect(onPublish).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId('artifact-publish-target-vercel-self'));
+    expect(onPublish).toHaveBeenCalledWith('landing.html', 'vercel-self');
+
     fireEvent.click(acts[1] as HTMLElement);
     expect(onExport).not.toHaveBeenCalled();
     fireEvent.click(screen.getByTestId('artifact-export-format-pdf'));

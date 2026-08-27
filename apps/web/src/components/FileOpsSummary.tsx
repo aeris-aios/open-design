@@ -27,14 +27,21 @@ import {
   type FileOpKind,
 } from '../runtime/file-ops';
 import {
+  artifactExportFormats,
   artifactExportNeedsFormatChoice,
   type ArtifactExportFormat,
 } from '../runtime/chat/artifact-export';
+import {
+  artifactPublishTargetLabelKey,
+  artifactPublishTargets,
+  type ArtifactPublishTarget,
+} from '../runtime/chat/artifact-publish';
+import { canPublishPublicFile } from '../collab/public-file-publish';
 import { Icon, type IconName } from './Icon';
 import { PixelLiquid } from './PixelLiquid';
 import { HtmlProjectCoverFrame } from './project-cover';
 import { AudioArtifact } from './chat/AudioArtifact';
-import { ArtifactExportPopover } from './chat/ArtifactExportPopover';
+import { ArtifactActionPopover, type ArtifactActionItem } from './chat/ArtifactActionPopover';
 
 interface Props {
   entries: FileOpEntry[];
@@ -47,8 +54,12 @@ interface Props {
    *  thumbnail and the export href are both project-scoped URLs, so without a
    *  project id every entry keeps rendering as a text row. */
   projectId?: string | undefined;
-  /** D28 "publish" — HTML artifacts only. */
-  onPublish?: ((name: string) => void) | undefined;
+  /**
+   * D28 "publish" —— **只对 HTML 产物出现**,而且一定带上选中的目的地。
+   * 卡上那枚点开一枚贴着按钮的浮层(产品 2026-08-27),选完才调这里
+   * (`runtime/chat/artifact-publish.ts`)。
+   */
+  onPublish?: ((name: string, target: ArtifactPublishTarget) => void) | undefined;
   /**
    * D28 "export" —— **只对多格式产物调用**,而且一定带上选中的格式。
    * 单格式产物(md / 图片 / 视频 / 其它)在卡上直接下载原件,不走这里
@@ -72,6 +83,22 @@ const ARTIFACT_OP_ICON: Record<ArtifactOpKind, IconName> = {
 };
 
 const COLLAPSE_AFTER_ENTRY_COUNT = 4;
+
+/* 导出格式的文案复用预览区导出菜单的既有 key —— 同一件事在两处出现,不该有
+   两套说法,也不必为此新开 19 个语言的键。 */
+const EXPORT_FORMAT_LABEL_KEY: Record<ArtifactExportFormat, keyof Dict> = {
+  pdf: 'fileViewer.exportPdf',
+  image: 'fileViewer.exportImage',
+  zip: 'fileViewer.exportZip',
+  html: 'fileViewer.exportHtml',
+};
+
+const EXPORT_FORMAT_ICON: Record<ArtifactExportFormat, IconName> = {
+  pdf: 'file',
+  image: 'image',
+  zip: 'download',
+  html: 'file-code',
+};
 
 /**
  * 把原件直接拉到本地 —— 单格式产物那一档的「导出」。
@@ -443,7 +470,7 @@ export function ArtifactCards({
   items: ArtifactCardItem[];
   projectId: string;
   onOpen?: ((name: string) => void) | undefined;
-  onPublish?: ((name: string) => void) | undefined;
+  onPublish?: ((name: string, target: ArtifactPublishTarget) => void) | undefined;
   onExport?: ((name: string, format: ArtifactExportFormat) => void) | undefined;
 }) {
   if (items.length === 0) return null;
@@ -473,7 +500,7 @@ function ArtifactCard({
   item: ArtifactCardItem;
   projectId: string;
   onOpen?: ((name: string) => void) | undefined;
-  onPublish?: ((name: string) => void) | undefined;
+  onPublish?: ((name: string, target: ArtifactPublishTarget) => void) | undefined;
   onExport?: ((name: string, format: ArtifactExportFormat) => void) | undefined;
 }) {
   const t = useT();
@@ -485,6 +512,25 @@ function ArtifactCard({
   // unevenness stays right-aligned instead of shifting the export button.
   const canPublish = !pending && item.kind === 'html' && !!onPublish;
   const needsFormatChoice = artifactExportNeedsFormatChoice(item.name);
+  /*
+   * 两枚浮层的内容都在这儿定,壳子共用 `ArtifactActionPopover` ——
+   * 「贴着按钮开、上下自适应、选完即关」两枚是同一件事。
+   */
+  const publishItems: ArtifactActionItem<ArtifactPublishTarget>[] = artifactPublishTargets({
+    // 没有工作区身份就发不出 OD 公开链接,那一条不出;部署商永远在。
+    canPublishPublicLink: canPublishPublicFile(workspaceContext),
+  }).map((target) => ({
+    id: target,
+    labelKey: artifactPublishTargetLabelKey(target),
+    icon: target === 'cloudflare-pages' ? 'globe' : target === 'public-link' ? 'link' : 'upload',
+  }));
+  const exportItems: ArtifactActionItem<ArtifactExportFormat>[] = artifactExportFormats(
+    item.name,
+  ).map((format) => ({
+    id: format,
+    labelKey: EXPORT_FORMAT_LABEL_KEY[format],
+    icon: EXPORT_FORMAT_ICON[format],
+  }));
 
   return (
     <div
@@ -549,31 +595,37 @@ function ArtifactCard({
       ) : null}
       {pending ? null : (
         <span className="artifact-card-acts">
-          {canPublish ? (
-            <button
-              type="button"
-              className="artifact-card-act"
-              onClick={() => onPublish?.(item.name)}
-              data-testid={`artifact-card-publish-${item.name}`}
+          {canPublish && onPublish ? (
+            <ArtifactActionPopover
+              items={publishItems}
+              onPick={(target) => onPublish(item.name, target)}
+              triggerClassName="artifact-card-act"
+              triggerTestId={`artifact-card-publish-${item.name}`}
+              popoverTestId="artifact-publish-popover"
+              itemTestIdPrefix="artifact-publish-target-"
+              triggerLabel={t('chat.artifact.publish')}
             >
               {/* 稿子里「发布」是**纯文字**,那枚圈中箭头只给「导出」——
                   `components.css` 把理由写死了:「两个方向相反的动作并排,给其中
                   一个加上方向,那一排就不必逐字读了」。两枚都上图标等于把这条
                   取消掉。 */}
               {t('chat.artifact.publish')}
-            </button>
+            </ArtifactActionPopover>
           ) : null}
           {needsFormatChoice && onExport ? (
             /* 多格式(今天等价于 HTML):贴着按钮开一枚格式浮层 */
-            <ArtifactExportPopover
-              name={item.name}
-              onExport={onExport}
-              className="artifact-card-act"
-              testId={`artifact-card-export-${item.name}`}
+            <ArtifactActionPopover
+              items={exportItems}
+              onPick={(format) => onExport(item.name, format)}
+              triggerClassName="artifact-card-act"
+              triggerTestId={`artifact-card-export-${item.name}`}
+              popoverTestId="artifact-export-popover"
+              itemTestIdPrefix="artifact-export-format-"
+              triggerLabel={t('chat.artifact.export')}
             >
               <ArtifactExportIcon />
               {t('chat.artifact.export')}
-            </ArtifactExportPopover>
+            </ArtifactActionPopover>
           ) : (
             /*
              * 单格式:**直接下载原件**,不弹任何东西(产品 2026-08-27)。
