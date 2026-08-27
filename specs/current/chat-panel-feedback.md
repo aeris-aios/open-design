@@ -394,6 +394,58 @@
 |---|---|---|
 | S12 | 等待期间**一句回音都没有** | ✅ **已实现并真机确认** —— 壳带上 `quietMs`(上一件事之后过了多久,纯函数层从已有的秒级 tick 推,组件不自己起计时器);超过 60 秒壳头换成稿子逐字的「上游响应慢，已等 N 秒」,一有东西落下来自动退回。`startedAtMs` 专为「卡在首个 token」那一格服务(每月 5,547 次,事件流里一个带时刻的事都没有)。**〔停止〕那一半不新加控件** —— 输入框那颗停止键一直都在。**超时判定一个字没动。** 红测两份,并撤掉实现复验过。真机:第 61 秒准时出现 |
 
+### F-8 用户真机连点名的一批(2026-08-27 下午)
+
+> 这一批全部是用户在自己 Chrome 里边用边指出来的,不是我扫出来的。
+> **已修的**都红测先行 + 真机复验;**没修的**在下面 F-9,别当成已完成。
+
+| # | 用户原话 / 现象 | 根因 | 状态 |
+|---|---|---|---|
+| U1 | 「音频产物外面不要套大卡片了啊,只有一个音频的横的这个就行了呀」 | 我把音频塞进了缩略图卡壳:252px 空方框 + 卡壳自带的〔导出〕浮层压住右端时长 | ✅ 音频不再是一种 `artifactCardKind`,单独走 `audioEntries` 画裸胶囊(42px),并同时排除出文本行,免得一个文件出现两次 |
+| U2 | 「这个总是有事没事就出现…只有在很上面时才出现不行吗」(回到最新) | 判据是写死的 `distance > 120`,**同一个门槛在 ChatPane 里写了四遍** | ✅ 抽成 `runtime/chat/jump-to-latest.ts`:门槛按视口高度算(0.75,下限 320 上限 1200),出/收两档迟滞防闪。真机实测 200px 不出、900px 才出 |
+| U3 | 「hover 不是应该变成稍微亮一点点的颜色吗…而不是一整个按钮全变成白色」 | **特异性**,不是哪个组件写错:裸的 `button:hover:not(:disabled)` 是 (0,2,1),压过组件自己的单类 hover (0,2,0) | ✅ 两份都包进 `:where()` 归零。⚠️**那条规则有两份拷贝**(`apps/web/src/styles/primitives.css` 和 `packages/components/src/styles.css`),我先只改了前者,在真机上量出来两条规则都还在、还是白的 —— 测试现在两份一起钉 |
+| U4 | 「之前不是说如果 done 之前,没有任何工具调用或 thinking 或普通文案,就不出现这个了吗?」 | B47 把 `failed` 和 `canceled` 一起留了空壳。可那条理由(壳头是唯一说得出「出事了」的地方)**只对 failed 成立** —— 取消那档壳头写的是「进行中」,压在底下那行「已取消」上面 | ✅ 空壳只在 `failed` 时保留 |
+| U5 | 「为什么还会有这种错误样式?? 你的错误卡片呢??」「设计稿里哪有这种状态行」 | `.status-pill.is-error` 只在「这条消息**正好拥有**报错卡」时才藏,于是**任何历史失败轮次**都把上游英文原文顶着红框戳在对话里 | ✅ `error` 一律不出。`warning` / `initializing` 早就按同一道理去掉了,这是漏网的一档 |
+
+**U5 顺带回答了他追问的那句「难道还有错误没有梳理并包成错误卡片的????」**:
+有 —— `retryableAssistantMessage` 只认**最后一条**消息,所以报错卡只给最后一轮
+(和「回合状态行只在最后一轮出」是同一条产品裁决)。历史失败轮次现在由壳头那句
+「运行失败」承担,上游原文归卡上的「查看详情」,不再裸奔。
+
+### F-9 ⚠️ 用户已提出、**尚未修**的(接手请从这里开始)
+
+| # | 用户原话 / 现象 | 已查到的根因 | 下一步 |
+|---|---|---|---|
+| **N1** | 「为什么我们已完成旁边没显示耗时??」 | **根因已定位**:`shellElapsed()` 只从**事件上的时刻**推跨度(`shellSpan` / `firstStartedAt` / `lastEndedAt`),而很多 agent 根本不给事件打时刻 —— 真机上一条 succeeded 的 run 26 个事件里**只有 9 个带时刻**。可 `message` 自己是有 `startedAt` **和** `endedAt` 的,那才是最权威的跨度,却没人用 | 给 `BuildTurnInput` 补 `endedAtMs`(`startedAtMs` 我做 S12 时已经加了),让 `shellElapsed` 在事件推不出跨度时回落到「消息自己的起止」。注意 `formatShellElapsed` 有 **1000ms 地板**,低于 1 秒一律不显示 —— 我那条 100ms 的夹具就是这么消失的,别被它误导 |
+| **N2** | 「thinking 也要包裹在进行中的下拉卡片里,其次 thinking 完成后就变成普通工具调用的状态,可以下拉展开看思考细节」 | 现在 thinking 落成 `ShellText{thinking:true}`,由 `SayText` 画成**裸段落**,一轮结束就把全文摊开。**设计稿是支持他这个说法的**:`chat-panel-next.html` 的组件 3 就叫「Thinking」,原话「Thinking 那块用的是**同一副壳**、里面也是 `.think`」,而且「Thinking」和「进行中 / 已完成 / 运行失败」并列被称作**分段头** | 把 thinking 段渲染成 `Foldable`(头= Thinking,默认收起,展开看推理),**流式中那一条除外** —— 稿子里「进行中的一行」是另一样东西(`.thinking-live`),它「不套框、不挂耗时」,只活到第一个字落地 |
+| **N3** | 「你这左右/下面的间距呢? 去看看设计稿」(截图是 question-form 的输入框,红框标着左右和下方几乎没有留白) | 未查 | 拿 `<question-form>` 那一格去比设计稿的内边距。**记住教训**:必须在浏览器里量计算样式,只 diff CSS 文本会漏掉层叠反转 |
+| **N4** | 「这又是啥啊,不应该是一个普通工具调用的样式吗? 创建 xxx?」(截图是 `写入 design-manifesto-parchment.html` 底下摊着一大块 HTML 源码预览) | 未查 | Write 类工具应该只落**一行**(「写入 <文件名>」),不该把文件内容摊成代码块。查 `ToolRow` / `build-turn-blocks` 里 write 的落行逻辑 |
+
+### F-10 claude 为什么写不出 todo(查清了)
+
+**不是我们限制的。** `apps/daemon/src/runtimes/defs/claude.ts` 给的参数里没有
+`--allowedTools` / `--disallowedTools`,`~/.claude/settings.json` 的 `deny` 也是空的。
+
+直接跑一次 daemon 用的同一条命令、抓它自己的 `system/init` 帧:
+
+```bash
+printf '%s' '{"type":"user","message":{"role":"user","content":[{"type":"text","text":"hi"}]}}' \
+  | claude -p --input-format stream-json --output-format stream-json --verbose \
+  | python3 -c "import sys,json;[print(len(d.get('tools',[])), 'TodoWrite' in d.get('tools',[])) for d in (json.loads(l) for l in sys.stdin) if d.get('subtype')=='init']"
+```
+
+结果:**它声明了 68 个工具,里面没有 TodoWrite。** 这台机器上装的 claude 构建
+(工具表里有 `Workflow` / `CronCreate` / `EnterWorktree` / `ScheduleWakeup` 这些)
+就是不带它。所以落盘的 18 条真实 `TodoWrite` 事件**全部来自 codex**。
+
+⚠️ **我先前判断错过一次**:看到有 18 条就断定 claude 在瞎说 —— 那 18 条不是它的。
+教训已存记忆(`feedback_dont_trust_agent_self_reported_tools` 需要更正:自述不可信
+成立,但**反证也要看清是谁的证据**)。
+
+**顺带一个 daemon 侧的缺口**:`claude-stream.ts:380` 处理 `system/init` 时只留了
+`model` 和 `session_id`,**把 `tools` 数组丢掉了**。所以事后完全无法从落盘数据回答
+「那一轮 agent 到底有哪些工具」。要查只能像上面那样重新跑一次。
+
 ### F-7 真机验到哪一步(2026-08-27)
 
 | 面 | 结果 |

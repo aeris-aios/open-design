@@ -283,6 +283,18 @@ describe('AssistantMessage 执行记录', () => {
               name: 'Bash',
               input: { command: 'pnpm guard', description: 'Execute guard' },
             },
+            /*
+             * 配上结果,壳里才**有东西** —— 取消掉的空壳现在整个不渲染
+             * (B47,见 `runtime/chat/empty-shell.test.ts`:壳头写着「进行中」
+             * 压在「已取消」上面,既没信息又自相矛盾)。这一条要验的是
+             * 「壳头在手动停止时仍是进行中」,所以得给它一行内容才谈得上壳头。
+             */
+            {
+              kind: 'tool_result',
+              toolUseId: 'tool-1',
+              content: 'ok',
+              isError: false,
+            },
           ]),
           runStatus: 'canceled',
         }}

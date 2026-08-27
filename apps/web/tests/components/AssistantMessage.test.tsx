@@ -507,11 +507,15 @@ describe('AssistantMessage status badge updates (Bug A)', () => {
     render(
       <AssistantMessage
         message={baseMessage({
-          runStatus: 'failed',
+          runStatus: 'succeeded',
           events: [
             {
               kind: 'status',
-              label: 'error',
+              // `error` 那一档已经整档不渲染了(稿子里没有那种状态行,见
+              // `AssistantMessage.no-error-pill.test.tsx`),所以这一条改用一个
+              // **还会出**的 label 来验链接化 —— 它守的是 `renderStatusDetail`,
+              // 不是某一个 label。
+              label: 'context_compaction',
               detail:
                 'AMR Cloud reported insufficient balance. Top up at https://open-design.ai/amr/dashboard, then retry.',
             } as ChatMessage['events'][number],
