@@ -2391,11 +2391,14 @@ function createProjectPreviewScopeRegistry() {
       return create(projectId, workspace, options, false);
     },
     // Reuse the live scope for this exact (project, workspace) instead of
-    // minting a new one, renewing its TTL. The preview transport injects the
-    // scope into a `<base href>`, so a fresh id per request makes the SAME
-    // artifact serve different bytes every read: the web client rebuilds its
-    // srcDoc, React assigns a new string, and the iframe reloads -- the
-    // artifact visibly disappears and comes back (OPEND-2283).
+    // minting a new one, and do NOT renew it while doing so. The preview
+    // transport injects the scope into a `<base href>` AND serializes its
+    // expiry into the bridge script, so anything that moves per request --
+    // a fresh id or a bumped expiry -- makes the SAME artifact serve different
+    // bytes every read: the web client rebuilds its srcDoc, React assigns a
+    // new string, and the iframe reloads; the artifact visibly disappears and
+    // comes back (OPEND-2283). `options.ttlMs` applies only to a scope this
+    // call has to create; keeping one alive is `renew`'s job.
     //
     // Deliberately NOT folded into `mint`: export flows mint a scope and
     // `revoke` it when the render finishes, and sharing one id with a live
