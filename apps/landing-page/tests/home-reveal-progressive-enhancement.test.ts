@@ -8,6 +8,10 @@ const sharedEnhancerSource = readFileSync(
   new URL('../app/_components/home-enhancer.astro', import.meta.url),
   'utf8',
 );
+const canonicalTemplateSource = readFileSync(
+  new URL('../../../design-templates/open-design-landing/example.html', import.meta.url),
+  'utf8',
+);
 
 test('keeps reveal content visible until the animation observer is ready', () => {
   assert.match(
@@ -23,6 +27,37 @@ test('keeps reveal content visible until the animation observer is ready', () =>
     /\.blur-word\s*\{[\s\S]*?opacity:\s*1;[\s\S]*?filter:\s*none;[\s\S]*?transform:\s*none;/,
   );
   assert.match(stylesSource, /\.reveal-ready \.blur-word\s*\{[\s\S]*?opacity:\s*0;/);
+});
+
+test('preserves the hero and mobile CTA reveal exceptions after readiness', () => {
+  assert.match(
+    stylesSource,
+    /\.reveal-ready \.hero h1\.hero-title\[data-reveal\]\s*\{[\s\S]*?opacity:\s*1;[\s\S]*?translate:\s*0 0;/,
+  );
+  assert.match(
+    stylesSource,
+    /@media \(max-width:\s*720px\)[\s\S]*?\.reveal-ready \.cta-window\[data-reveal\]:not\(\[data-revealed='true'\]\)\s*\{\s*translate:\s*0 0;/,
+  );
+});
+
+test('keeps the canonical design template in the progressive-enhancement contract', () => {
+  assert.match(
+    canonicalTemplateSource,
+    /\[data-reveal\]\s*\{[\s\S]*?opacity:\s*1;[\s\S]*?translate:\s*0 0;[\s\S]*?\}/,
+  );
+  assert.match(
+    canonicalTemplateSource,
+    /\.reveal-ready \[data-reveal\]:not\(\[data-revealed='true'\]\)\s*\{[\s\S]*?opacity:\s*0;/,
+  );
+  const observeIndex = canonicalTemplateSource.indexOf('observer.observe(elements[j])');
+  const readyIndex = canonicalTemplateSource.indexOf("classList.add('reveal-ready')");
+
+  assert.notEqual(observeIndex, -1, 'canonical template does not bind reveal elements');
+  assert.ok(readyIndex > observeIndex, 'canonical template enables hidden states before binding');
+  assert.match(
+    canonicalTemplateSource,
+    /catch \(error\)[\s\S]*?classList\.remove\('reveal-ready'\)/,
+  );
 });
 
 for (const [name, source] of [

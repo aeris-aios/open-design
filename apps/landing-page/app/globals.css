@@ -1906,7 +1906,8 @@ a.nav-mega-col-head.is-active {
  * its `data-reveal`, so the IntersectionObserver in home-enhancer.astro flips it
  * to `data-revealed='true'` on scroll-in and the cascade begins. The keyframes
  * mirror the component's blur(10→5→0) + opacity(0→.5→1) + translateY steps. */
-.hero h1.hero-title[data-reveal] {
+.hero h1.hero-title[data-reveal],
+.reveal-ready .hero h1.hero-title[data-reveal] {
   /* Let the per-word blur be the whole motion: cancel the generic block reveal
      translate/opacity so the frame itself doesn't slide or fade. */
   opacity: 1;
@@ -6214,7 +6215,8 @@ footer .container {
     border-radius: 10px;
   }
   /* cancel the translate-up reveal so the static image isn't shifted */
-  .cta-window[data-reveal] { translate: 0 0; }
+  .cta-window[data-reveal],
+  .reveal-ready .cta-window[data-reveal]:not([data-revealed='true']) { translate: 0 0; }
   /* Copy block (title → tag → buttons) leads the stack; the window follows via
      its base order:1 (inner stays at the default order:0). */
   .cta-dance-inner { padding: 0; align-items: center; }
