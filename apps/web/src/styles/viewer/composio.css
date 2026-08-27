@@ -1356,6 +1356,26 @@
   background: none;
   color: var(--text-strong);
 }
+/* 禁用态也**不铺灰** —— 这一行的次要动作在任何状态下都只是一句可点的话。
+   ------------------------------------------------------------
+   共享 Button 的 `.button:disabled` 给所有档位刷一层 `--bg-subtle`。对实心的
+   「下一步」是对的(稿子 `.btn:disabled { background: var(--bg-subtle) }`),
+   但底栏左边这几颗 ghost 按稿子**没有形状**:上面那条 hover 规则已经为此把灰底
+   摘掉了,理由(顶掉左内距之后那层灰会漫到卡的内边距上,看着像凭空多出一张小卡片)
+   对禁用态一字不差地成立 —— 而且这里内距是 0,那层灰会紧贴文字缩成一枚椭圆。
+
+   为什么这条一直在发作:底栏**只要这一轮还在跑就是禁用的**
+   (`questionFormSubmitDisabled` ← `currentConversationActionDisabled`,会话忙即为真),
+   外加提交在飞时 `FormBlock` 自己的 `submitting`。所以表单流式落地时是这样、
+   点完提交按钮之后又是这样,跑完才变回一行字 —— 用户两次指认的就是这个来回变形。
+
+   只写 `background`:禁用的**颜色**照旧由上面那条 `.question-form-foot button.ghost`
+   决定(它 (0,2,1) 压过 `.button:disabled` 的 (0,2,0)),所以两态连字色都一致;
+   「你现在动不了」由同一行那颗实心的「下一步」照稿子铺灰来说,不必每颗都说一遍。
+   特异性 (0,3,1) 压过共享原语的 (0,2,0)。 */
+.question-form-foot button.ghost:disabled {
+  background: none;
+}
 .qf-foot-gap {
   flex: 1;
 }
