@@ -172,6 +172,7 @@ import {
 import { copyToClipboard } from '../lib/copy-to-clipboard';
 import { buildReactComponentSrcdoc } from '../runtime/react-component';
 import { shouldConsumeSlideNav } from '../runtime/slide-nav';
+import { actionRequestKey, shouldConsumeActionRequest } from '../runtime/action-request';
 import { findHtmlEntriesReferencing } from '../runtime/jsx-module-refs';
 import {
   buildLazySrcdocTransport,
@@ -9262,6 +9263,12 @@ function HtmlViewer({
    * 每帧都会再调一次关闭。行为上无害(幂等),但白烧一遍,而且把「翻真时发
    * 一次」变成「只要还真就一直发」,读起来会误导。
    */
+  /*
+   * 只关「开」这一个状态就够了 —— `menuAnchorId` 不用在这里清:每一条会把菜单
+   * 打开的路都会自己设它(卡片那两条 effect 各自设成锚点 id,工具栏那条设成
+   * null),所以不存在「带着上一次的锚点被重新打开」的路径。
+   * 试过在这里也清一遍,消融时没有任何用例因此变红 —— 那就是没用的代码,不留。
+   */
   const closeDeployMenu = useCallback(() => setDeployMenuOpen(false), []);
   // portal 出去的那一份要单独算「点在里面」,否则外点关闭会把它自己关掉
   const anchoredMenuRef = useRef<HTMLDivElement | null>(null);
@@ -14226,13 +14233,20 @@ function HtmlViewer({
   // different intent. The artifact source may still be loading when the request
   // lands (the file was just auto-opened), so we defer until `canShare` flips
   // true and only consume each nonce once.
-  const consumedShareNonceRef = useRef<number | null>(null);
   useEffect(() => {
     const nonce = shareRequest?.nonce;
     if (nonce == null) return;
-    if (consumedShareNonceRef.current === nonce) return;
     if (!canShare) return;
-    consumedShareNonceRef.current = nonce;
+    /*
+     * 消费记录放在**组件外面**(`runtime/action-request`),不是组件内的 ref ——
+     * ref 随组件一起死,`FileViewer` 一重挂就归零,而父组件里那个 nonce 从来不
+     * 清空,于是旧请求被当成新请求重放,菜单自己弹出来(用户 2026-08-27:
+     * 「这个弹窗动不动自己弹出来」)。`slide-nav` 早就是这么修的。
+     *
+     * 顺序也要紧:`canShare` 的判断必须在消费之前 —— 否则文件还没加载完那一轮
+     * 就把 nonce 吃掉了,等真能分享时反而不开了。
+     */
+    if (!shouldConsumeActionRequest(actionRequestKey('share', projectId, file.name), nonce)) return;
     setExportReadyNudge(false);
     markExportReadyNudgeSeen(projectId, file.name);
     /*
@@ -14249,13 +14263,12 @@ function HtmlViewer({
   // Parallel to shareRequest, but opens the Download / Export menu instead — the
   // assistant "next step" card's Download row routes here so it surfaces the same
   // PDF / image / zip / standalone-HTML / template options the toolbar exposes.
-  const consumedDownloadNonceRef = useRef<number | null>(null);
   useEffect(() => {
     const nonce = downloadRequest?.nonce;
     if (nonce == null) return;
-    if (consumedDownloadNonceRef.current === nonce) return;
     if (!canDownload) return;
-    consumedDownloadNonceRef.current = nonce;
+    // 同分享那条:消费记录在组件外,重挂之后不重放。
+    if (!shouldConsumeActionRequest(actionRequestKey('download', projectId, file.name), nonce)) return;
     setExportReadyNudge(false);
     markExportReadyNudgeSeen(projectId, file.name);
     /* 与分享同一条路,换成导出菜单。 */
@@ -14297,10 +14310,26 @@ function HtmlViewer({
     fireArtifactHeaderClick(sourceLabel);
     setExportReadyNudge(false);
     markExportReadyNudgeSeen(projectId, file.name);
+    /*
+     * 工具栏这条路**永远开在原地**,所以先把上一次卡片留下的锚点清掉。
+     * `menuAnchorId` 只在卡片那条路上被设过,以前没有任何地方清它:于是卡上开过
+     * 一次之后再点工具栏,菜单会去找卡上那枚按钮 —— 卡还在就开错地方,卡滚走了
+     * 就 `findAnchor` 落空、什么都不画,表现为**点了没反应**。
+     */
+    setMenuAnchorId(null);
     setDeployMenuOpen((v) => {
       const nextTab = tab === 'share' && !rawCanShare ? 'export' : tab;
       setUnifiedActionTab(nextTab);
-      return !(v && unifiedActionTab === nextTab);
+      /*
+       * 「再点一次 = 关掉」只在**同一条路、同一个页签**上成立。
+       *
+       * 上一次开在产物卡上时(`menuAnchorId` 有值),点工具栏是「换个地方开」,
+       * 不是关 —— 何况那一份此刻多半根本不可见(卡滚走了 / 锚点还没挂上),
+       * 把它当成「开着」再取反,用户就会看到**点了没反应**:第一下悄悄关掉了
+       * 一块看不见的菜单,得再点一下才出来。
+       */
+      const wasOpenOnThisSurface = v && menuAnchorId === null;
+      return !(wasOpenOnThisSurface && unifiedActionTab === nextTab);
     });
   };
   const openShareMenu = () => openUnifiedActionMenu('share', 'share_dropdown');

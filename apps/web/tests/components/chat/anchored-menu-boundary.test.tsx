@@ -382,3 +382,93 @@ describe('重复重算不会把自己抖回去', () => {
     expect(after.left).toBeGreaterThanOrEqual(200);
   });
 });
+
+/* ------------------------------------------------------------------ *
+ * 走了就是走了 —— 不许回来
+ * ------------------------------------------------------------------ *
+ * 用户 2026-08-27:「如果 publish 按钮出画面再回来, 就不再重新显示吧,
+ * 感觉这里重新显示会有 bug」。
+ *
+ * 要区分的是两种「现在拿不到锚点」,它们的正确行为相反:
+ *  · **从来没出现过,在等** —— 点卡片会先把文件开进工作区,菜单要等 viewer
+ *    挂好、`canShare` 翻真才出现,这中间锚点可能还没进 DOM。这一档要**继续等**。
+ *  · **出现过、又走了** —— 消息被虚拟化、卡片重渲染、文件被关。这一档要**收掉**,
+ *    而且回来也不自己恢复。
+ *
+ * 两者的分界就是「有没有解析到过」:一旦解析到,组件就攥着那个节点,它离开
+ * 文档时 `isConnected` 立刻为假 —— 这是个确定信号,不是超时猜的。
+ */
+describe('锚点走了就不许再画', () => {
+  const ANCHOR_ID2 = 'publish:gone.html';
+
+  function mountWithAnchor(present: boolean) {
+    const onAnchorHidden = vi.fn();
+    if (present) {
+      const a = document.createElement('button');
+      a.setAttribute('data-artifact-anchor', ANCHOR_ID2);
+      a.getBoundingClientRect = () => box(100, 300, 60, 21);
+      document.body.appendChild(a);
+    }
+    render(
+      <AnchoredMenuShell anchorId={ANCHOR_ID2} wrapperClassName={WRAP_CLS} className={MENU_CLS}
+        testId="unified-action-menu" onAnchorHidden={onAnchorHidden}>
+        <button type="button">row</button>
+      </AnchoredMenuShell>,
+    );
+    return { onAnchorHidden };
+  }
+
+  it('锚点离开文档后,菜单不再渲染 —— 即使又插回来一枚同 id 的', () => {
+    const { onAnchorHidden } = mountWithAnchor(true);
+    expect(screen.queryByTestId('unified-action-menu'), '一开始就没画,这条对照是空的').not.toBeNull();
+
+    const anchor = document.querySelector(`[data-artifact-anchor="${ANCHOR_ID2}"]`)!;
+    act(() => {
+      anchor.remove();
+      window.dispatchEvent(new Event('resize'));
+    });
+    expect(onAnchorHidden, '锚点没了却没发信号').toHaveBeenCalled();
+    expect(
+      screen.queryByTestId('unified-action-menu'),
+      '锚点已经离开文档,却还照着那个游离节点画',
+    ).toBeNull();
+
+    // 卡片重新渲染,插回来一枚同 id 的按钮 —— 菜单**不许**自己回来
+    act(() => {
+      const fresh = document.createElement('button');
+      fresh.setAttribute('data-artifact-anchor', ANCHOR_ID2);
+      fresh.getBoundingClientRect = () => box(100, 300, 60, 21);
+      document.body.appendChild(fresh);
+      window.dispatchEvent(new Event('resize'));
+    });
+    expect(
+      screen.queryByTestId('unified-action-menu'),
+      '锚点回来之后菜单自己又冒出来了 —— 正是用户报的那个形状',
+    ).toBeNull();
+  });
+
+  it('**从来没出现过**时继续等,不发收起信号(反向对照)', () => {
+    const { onAnchorHidden } = mountWithAnchor(false);
+    // 还没画出来是对的 —— 但这是「在等」,不是「已经收掉」
+    expect(screen.queryByTestId('unified-action-menu')).toBeNull();
+    act(() => { window.dispatchEvent(new Event('resize')); });
+    expect(
+      onAnchorHidden,
+      '把「还没出现」误判成「已经走了」—— 首次打开的等待路径会被一起关掉',
+    ).not.toHaveBeenCalled();
+  });
+
+  it('等到锚点出现(anchorId 换成已在 DOM 里的那个)时照常打开(反向对照)', () => {
+    const a = document.createElement('button');
+    a.setAttribute('data-artifact-anchor', ANCHOR_ID2);
+    a.getBoundingClientRect = () => box(100, 300, 60, 21);
+    document.body.appendChild(a);
+    render(
+      <AnchoredMenuShell anchorId={ANCHOR_ID2} wrapperClassName={WRAP_CLS} className={MENU_CLS}
+        testId="unified-action-menu">
+        <button type="button">row</button>
+      </AnchoredMenuShell>,
+    );
+    expect(screen.queryByTestId('unified-action-menu'), '锚点在 DOM 里却没开').not.toBeNull();
+  });
+});
