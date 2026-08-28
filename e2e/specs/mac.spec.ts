@@ -447,7 +447,7 @@ macDescribe('packaged mac runtime smoke', () => {
       firstRunStarted = true;
       expect(start.source).toBe('installed');
       await waitForHealthyDesktop();
-      await assertFirstNativeChromeActionClick(firstRunInstalledAppPath);
+      await assertFirstNativeChromeActionClick();
 
       const setup = await runToolsPackJson<MacInspectResult>('inspect', [
         '--expr',
@@ -2313,43 +2313,33 @@ async function waitForHealthyDesktop(): Promise<MacInspectResult> {
   throw new Error(`packaged mac runtime did not become healthy: ${formatUnknown(lastResult)}`);
 }
 
-async function assertFirstNativeChromeActionClick(installedAppPath: string): Promise<void> {
-  const probeId = 'packaged-native-chrome-action-probe';
+async function assertFirstNativeChromeActionClick(): Promise<void> {
+  const probeKey = '__odPackagedNativeChromeActionProbe';
   const setup = await runToolsPackJson<MacInspectResult>('inspect', [
     '--expr',
     `(() => {
-      const host = document.querySelector('[data-testid="workspace-chrome-account-actions"]');
-      if (!(host instanceof HTMLElement)) {
-        throw new Error('workspace chrome account actions host is missing');
+      const target = document.querySelector('[data-testid="entry-top-right-github"]');
+      if (!(target instanceof HTMLElement)) {
+        throw new Error('first-render GitHub chrome action is missing');
       }
-      document.getElementById(${JSON.stringify(probeId)})?.remove();
-      const button = document.createElement('button');
-      button.id = ${JSON.stringify(probeId)};
-      button.type = 'button';
-      button.tabIndex = -1;
-      button.setAttribute('aria-hidden', 'true');
-      Object.assign(button.style, {
-        appearance: 'none',
-        border: '0',
-        height: '24px',
-        margin: '0',
-        opacity: '0.01',
-        padding: '0',
-        pointerEvents: 'auto',
-        width: '24px',
-        WebkitAppRegion: 'no-drag',
-      });
-      button.addEventListener('click', () => {
-        button.dataset.clickCount = String(Number(button.dataset.clickCount || '0') + 1);
-      });
-      button.dataset.clickCount = '0';
-      host.append(button);
-      const rect = button.getBoundingClientRect();
+      window[${JSON.stringify(probeKey)}]?.cleanup?.();
+      const probe = { clickCount: 0 };
+      const onClick = (event) => {
+        probe.clickCount += 1;
+        event.preventDefault();
+      };
+      target.addEventListener('click', onClick, true);
+      window[${JSON.stringify(probeKey)}] = {
+        cleanup: () => target.removeEventListener('click', onClick, true),
+        probe,
+      };
+      const rect = target.getBoundingClientRect();
       const clientX = rect.left + rect.width / 2;
       const clientY = rect.top + rect.height / 2;
+      const hitTarget = document.elementFromPoint(clientX, clientY);
       return {
         clickCount: 0,
-        targetMatches: document.elementFromPoint(clientX, clientY) === button,
+        targetMatches: hitTarget != null && target.contains(hitTarget),
         x: window.screenX + clientX,
         y: window.screenY + clientY,
       };
@@ -2364,8 +2354,6 @@ async function assertFirstNativeChromeActionClick(installedAppPath: string): Pro
   expect(Number.isFinite(probe.y)).toBe(true);
 
   try {
-    await execFileAsync('/usr/bin/open', ['-a', installedAppPath]);
-    await delay(250);
     const swiftSource = `
       import CoreGraphics
       import Darwin
@@ -2381,8 +2369,8 @@ async function assertFirstNativeChromeActionClick(installedAppPath: string): Pro
       const snapshot = await runToolsPackJson<MacInspectResult>('inspect', [
         '--expr',
         `(() => {
-          const button = document.getElementById(${JSON.stringify(probeId)});
-          return { clickCount: Number(button?.dataset.clickCount || '0') };
+          const state = window[${JSON.stringify(probeKey)}];
+          return { clickCount: Number(state?.probe?.clickCount || '0') };
         })()`,
       ]);
       expect((snapshot.eval?.value as { clickCount?: number } | undefined)?.clickCount).toBe(1);
@@ -2390,7 +2378,12 @@ async function assertFirstNativeChromeActionClick(installedAppPath: string): Pro
   } finally {
     await runToolsPackJson<MacInspectResult>('inspect', [
       '--expr',
-      `(() => { document.getElementById(${JSON.stringify(probeId)})?.remove(); return true; })()`,
+      `(() => {
+        const state = window[${JSON.stringify(probeKey)}];
+        state?.cleanup?.();
+        delete window[${JSON.stringify(probeKey)}];
+        return true;
+      })()`,
     ]).catch(() => undefined);
   }
 }
