@@ -7,6 +7,17 @@
  * coordinator can reuse the same create -> claim -> start transaction without
  * calling the daemon through HTTP.
  */
+import type { RunAnalyticsFacts } from './run-analytics-lifecycle.js';
+
+/**
+ * `RunAnalyticsFacts` is a REQUIRED argument of `start` on purpose. Analytics
+ * used to be installed by whichever caller remembered to do it, and four
+ * daemon-internal Run creators silently reported nothing (OPEND-2365). Making
+ * the facts part of the start contract means a new caller has to state its
+ * analytics identity — including stating that it has none — instead of dropping
+ * the Run. The type is owned by the lifecycle so the choke point and the
+ * lifecycle cannot drift apart.
+ */
 export interface InternalRunCreateInput extends Record<string, unknown> {
   projectId?: string;
   conversationId?: string;
@@ -34,36 +45,8 @@ export interface InternalPhysicalRun {
   status: string;
 }
 
-/**
- * The facts a physical Run's analytics lifecycle needs that cannot be read off
- * the Run itself. Declared here rather than imported so the seam stays free of
- * the route layer.
- *
- * It is a REQUIRED argument of `start` on purpose. Analytics used to be
- * installed by whichever caller remembered to do it, and four daemon-internal
- * Run creators silently reported nothing (OPEND-2365). Making the facts part
- * of the start contract means a new caller has to state its analytics identity
- * — including stating that it has none — instead of dropping the Run.
- */
-export interface InternalRunAnalyticsFacts {
-  /** The request body the Run was composed from. */
-  body: Record<string, unknown>;
-  /**
-   * Identity of whoever asked for this Run. `null` is a real answer: a Run
-   * nothing asked for (a scheduled Automation) has no caller to attribute to,
-   * and the lifecycle stays silent rather than inventing one.
-   */
-  requestAnalyticsContext?: unknown;
-  snapshot?: { ok?: boolean; snapshot?: unknown } | null;
-  /** The rollout decision the caller evaluated, when it differs from the Run's. */
-  rolloutDecision?: unknown;
-  creationKind?: 'created' | 'reused';
-  resumed?: boolean;
-  attributionMismatch?: boolean;
-}
-
 export interface InternalRunAnalyticsLifecycle<TRun> {
-  install(input: InternalRunAnalyticsFacts & { run: TRun }): void;
+  install(input: RunAnalyticsFacts & { run: TRun }): void;
 }
 
 export interface InternalRunRegistry<
@@ -120,7 +103,7 @@ export interface InternalRunCreationService<
   prepare(input: PrepareInternalRunInput<TMeta, TRun>): PreparedInternalRunResult<TRun>;
   start(
     run: TRun,
-    analytics: InternalRunAnalyticsFacts,
+    analytics: RunAnalyticsFacts,
     starter: (run: TRun) => Promise<unknown>,
   ): TRun;
 }

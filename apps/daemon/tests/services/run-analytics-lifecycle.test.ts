@@ -11,7 +11,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   createRunAnalyticsLifecycle,
   inheritedRunLineageHints,
-} from '../src/routes/run-analytics-lifecycle.js';
+} from '../../src/services/run-analytics-lifecycle.js';
 
 type Captured = {
   eventName: string;

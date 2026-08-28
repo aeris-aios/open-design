@@ -198,7 +198,7 @@ import {
   normalizeCommentAttachments,
   UPLOAD_DIR,
 } from '../runtimes/chat-prompt-inputs.js';
-import { createRunAnalyticsLifecycle } from './run-analytics-lifecycle.js';
+import { createRunAnalyticsLifecycle } from '../services/run-analytics-lifecycle.js';
 import {
   runTouchedArtifactPaths,
   toJsonRecord,
@@ -214,7 +214,7 @@ import {
   type ProjectRecord,
   type RunEventRecord,
   type SseClient,
-} from './run-records.js';
+} from '../runtimes/chat-run-records.js';
 
 // Keep in sync with the web uploader's `looksLikeImage` (apps/web registry):
 // omit-pin seeds must classify the same extensions as `image` so reload chips

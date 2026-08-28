@@ -506,7 +506,7 @@ import { createInternalRunCreationService } from './services/internal-run-servic
 import {
   createRunAnalyticsLifecycle,
   inheritedRunLineageHints,
-} from './routes/run-analytics-lifecycle.js';
+} from './services/run-analytics-lifecycle.js';
 import {
   createOdNextRunInputProjection,
   OdNextTaskInputSnapshotError,

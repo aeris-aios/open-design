@@ -76,7 +76,7 @@ import {
   runPreviewModuleCountForRun,
 } from '../runtimes/run-lifecycle-analytics.js';
 import { odNextRolloutAnalyticsProperties } from '../strategies/od-next/rollout-analytics.js';
-import type { ResolveSnapshotResult } from '../plugins/index.js';
+import type { AppliedPluginSnapshot } from '@open-design/contracts';
 import type { OdNextRolloutDecision } from '../strategies/od-next/rollout.js';
 import {
   runTouchedArtifactPaths,
@@ -92,7 +92,7 @@ import {
   type RunProjectKindInput,
   type RunRetryAnalyticsEvent,
   type TerminalRunStatus,
-} from './run-records.js';
+} from '../runtimes/chat-run-records.js';
 
 type AgentCliEnv = Parameters<typeof agentCliEnvForAgent>[0];
 
@@ -251,8 +251,7 @@ export interface RunAnalyticsTelemetryDeps {
  * immutable — a continuation cannot relabel the identity of the task it
  * continues.
  */
-export interface RunAnalyticsInstallInput {
-  run: ChatRun;
+export interface RunAnalyticsFacts {
   body: JsonRecord;
   /**
    * Identity of the caller that asked for this Run. Absent for a Run nothing
@@ -260,7 +259,13 @@ export interface RunAnalyticsInstallInput {
    * then finds no context and stays silent rather than inventing one.
    */
   requestAnalyticsContext?: AnalyticsContext | null;
-  snapshot?: ResolveSnapshotResult | null;
+  /**
+   * The resolved plugin snapshot, when the caller had one. Declared as the
+   * narrow shape this module actually reads rather than the resolver's full
+   * union, so a caller that only holds the successful resolution can hand it
+   * over without a cast.
+   */
+  snapshot?: { ok: boolean; snapshot: AppliedPluginSnapshot } | null;
   /**
    * The rollout decision the caller evaluated for this Run. Defaults to the
    * one stamped on the Run, which is what `run_finished` and the crash-recovery
@@ -271,6 +276,9 @@ export interface RunAnalyticsInstallInput {
   resumed?: boolean;
   attributionMismatch?: boolean;
 }
+
+/** The facts plus the Run they describe. */
+export type RunAnalyticsInstallInput = RunAnalyticsFacts & { run: ChatRun };
 
 export interface RunAnalyticsLifecycle {
   /**

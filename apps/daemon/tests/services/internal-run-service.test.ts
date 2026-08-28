@@ -103,7 +103,13 @@ describe('internal run creation service', () => {
     const starter = vi.fn(async () => undefined);
     const facts = {
       body: { projectId: 'project-1' },
-      requestAnalyticsContext: { deviceId: 'device-1' },
+      requestAnalyticsContext: {
+        deviceId: 'device-1',
+        sessionId: 'session-1',
+        clientType: 'web' as const,
+        locale: 'en',
+        requestId: null,
+      },
       creationKind: 'created' as const,
       resumed: false,
     };
