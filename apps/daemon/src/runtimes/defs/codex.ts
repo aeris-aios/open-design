@@ -388,15 +388,15 @@ export const codexAgentDef = {
 } satisfies RuntimeAgentDef;
 
 /* ------------------------------------------------------------------ *
- * app-server transport (opt-in, runtime-switched)
+ * app-server transport (runtime-switched, shipping default)
  * ------------------------------------------------------------------ */
 
 /**
  * `streamFormat` value that routes a codex run through the JSON-RPC
  * `codex app-server` transport instead of `exec --json`.
  *
- * The two transports coexist. `exec --json` remains the default and is
- * untouched; nothing in this file changes what an unswitched codex run does.
+ * The two transports coexist. `app-server` is the shipping default, while an
+ * operator can set `OD_CODEX_TRANSPORT=exec-json` for an immediate rollback.
  * The reason to have a second transport at all is that `exec --json` cannot
  * stream: `codex-rs/exec/src/event_processor_with_json_output.rs` has
  * suppressed `AgentMessageDelta` / `AgentReasoningDelta` since `rust-v0.8.0`,

@@ -153,7 +153,7 @@ dogfood artifacts.
 
 **唯一有实测收益的动作**:开 `OD_CODEX_TRANSPORT=app-server`,同一道题 exec 给 8 次批量、app-server 给 15 次逐条 —— 内容一样多,但**一条条落下来而不是一坨一坨**。
 
-**缺陷**:我们的 app-server 解析器**只接了 `summaryTextDelta`,没接 `textDelta` 和 `item.content`**。对 OpenAI 模型是空转;但**本地 OSS 模型把全部推理放 `content`**,那种情况会一个字都不显示。要中招需同时满足「手动改 codex 配置指向本地模型」+「开了新通道」,今天不可能有人碰到。
+**兼容缺口已补**:app-server 解析器现在同时接 `summaryTextDelta`、`textDelta` 和完成态 `item.content`;本地 OSS 模型把推理放在 `content` 时也会正常显示。summary 与 raw content 使用独立去重键,两者同时存在时不会互相截断。
 
 ---
 

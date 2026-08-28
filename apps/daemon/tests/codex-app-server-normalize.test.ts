@@ -194,6 +194,65 @@ describe('codex app-server -> OpenDesign event normalization', () => {
       ]);
       expect(events).toEqual([{ type: 'thinking_delta', delta: 'A\nB' }]);
     });
+
+    it('streams raw reasoning text deltas used by local OSS models', () => {
+      const { events } = drive([
+        {
+          method: 'item/reasoning/textDelta',
+          params: { ...THREAD, itemId: 'r1', contentIndex: 0, delta: 'Inspecting ' },
+        },
+        {
+          method: 'item/reasoning/textDelta',
+          params: { ...THREAD, itemId: 'r1', contentIndex: 0, delta: 'the files' },
+        },
+      ]);
+      expect(events).toEqual([
+        { type: 'thinking_delta', delta: 'Inspecting ' },
+        { type: 'thinking_delta', delta: 'the files' },
+      ]);
+    });
+
+    it('falls back to completed raw reasoning content without replaying streamed text', () => {
+      const { events } = drive([
+        {
+          method: 'item/reasoning/textDelta',
+          params: { ...THREAD, itemId: 'r1', contentIndex: 0, delta: 'Inspecting ' },
+        },
+        {
+          method: 'item/completed',
+          params: {
+            ...THREAD,
+            item: {
+              type: 'reasoning',
+              id: 'r1',
+              summary: [],
+              content: ['Inspecting the files'],
+            },
+          },
+        },
+      ]);
+      expect(events).toEqual([
+        { type: 'thinking_delta', delta: 'Inspecting ' },
+        { type: 'thinking_delta', delta: 'the files' },
+      ]);
+    });
+
+    it('keeps raw content visible when a summary is also present', () => {
+      const { events } = drive([
+        {
+          method: 'item/reasoning/summaryTextDelta',
+          params: { ...THREAD, itemId: 'r1', summaryIndex: 0, delta: '**Inspecting files**' },
+        },
+        {
+          method: 'item/reasoning/textDelta',
+          params: { ...THREAD, itemId: 'r1', contentIndex: 0, delta: 'I will inspect the files.' },
+        },
+      ]);
+      expect(events).toEqual([
+        { type: 'thinking_delta', delta: '**Inspecting files**' },
+        { type: 'thinking_delta', delta: '\n\nI will inspect the files.' },
+      ]);
+    });
   });
 
   describe('tool items', () => {

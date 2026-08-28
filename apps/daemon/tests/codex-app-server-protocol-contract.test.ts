@@ -56,6 +56,7 @@ const SERVER_NOTIFICATIONS = [
   'item/agentMessage/delta',
   'item/reasoning/summaryTextDelta',
   'item/reasoning/summaryPartAdded',
+  'item/reasoning/textDelta',
   'thread/tokenUsage/updated',
   'error',
   'warning',
@@ -85,6 +86,7 @@ const TYPE_SURFACE: Record<string, string[]> = {
   'v2/AgentMessageDeltaNotification.ts': ['itemId', 'delta'],
   'v2/ReasoningSummaryTextDeltaNotification.ts': ['itemId', 'delta', 'summaryIndex'],
   'v2/ReasoningSummaryPartAddedNotification.ts': ['itemId', 'summaryIndex'],
+  'v2/ReasoningTextDeltaNotification.ts': ['itemId', 'delta', 'contentIndex'],
   'v2/ThreadTokenUsageUpdatedNotification.ts': ['tokenUsage'],
   'v2/ThreadTokenUsage.ts': ['total', 'last'],
   'v2/TokenUsageBreakdown.ts': [
@@ -114,6 +116,7 @@ const TYPE_SURFACE: Record<string, string[]> = {
     'tool',
     'arguments',
     'summary',
+    'content',
   ],
   'WebSearchItem.ts': ['query', 'action'],
   'WebSearchAction.ts': ['"search"'],

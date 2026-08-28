@@ -12,11 +12,12 @@
  * the first time either side is touched; going through the original makes
  * transport parity a property of the code rather than a claim in a PR body.
  *
- * Exactly three things cannot round-trip through an `exec --json` frame,
+ * Exactly four things cannot round-trip through an `exec --json` frame,
  * because that stream has no shape for them, and are therefore owned here:
  *
  *   - assistant text deltas (`item/agentMessage/delta`)
  *   - reasoning summary deltas (`item/reasoning/summaryTextDelta`)
+ *   - raw reasoning deltas (`item/reasoning/textDelta`), used by local models
  *   - token usage (`thread/tokenUsage/updated` carries two counters the
  *     `exec --json` parser has never read)
  *
@@ -165,6 +166,10 @@ export function createCodexAppServerNormalizer(
   // shipping `emitCodexReasoningItem` can do the suffix diffing and the
   // cross-item blank-line join exactly as it does for `exec --json`.
   const reasoningParts = new Map<string, string[]>();
+  // Local OSS models may put their reasoning in `content` instead of summary.
+  // Keep it under a derived parser item id so a model that emits both forms
+  // shows both without one stream's length-based dedupe truncating the other.
+  const reasoningContentParts = new Map<string, string[]>();
 
   /** Route a synthesized `exec --json` frame; report whether it emitted. */
   function routeFrame(frame: JsonObject): boolean {
@@ -238,6 +243,29 @@ export function createCodexAppServerNormalizer(
     reasoningParts.set(itemId, parts);
   }
 
+  /** Push raw reasoning content through the same suffix/boundary logic. */
+  function flushReasoningContent(itemId: string): void {
+    if (!itemId) return;
+    const parts = reasoningContentParts.get(itemId) ?? [];
+    const text = parts.join('\n');
+    if (!text) return;
+    codex.handleFrame({
+      type: 'item.updated',
+      item: { id: `${itemId}:content`, type: 'reasoning', text },
+    });
+  }
+
+  function handleReasoningTextDelta(params: JsonObject): void {
+    const itemId = str(params.itemId);
+    if (!itemId) return;
+    const index = num(params.contentIndex) ?? 0;
+    const parts = reasoningContentParts.get(itemId) ?? [];
+    while (parts.length <= index) parts.push('');
+    parts[index] = `${parts[index] ?? ''}${str(params.delta)}`;
+    reasoningContentParts.set(itemId, parts);
+    flushReasoningContent(itemId);
+  }
+
   function handleReasoningCompleted(item: JsonObject): void {
     const itemId = str(item.id);
     if (!itemId) return;
@@ -249,6 +277,13 @@ export function createCodexAppServerNormalizer(
       reasoningParts.set(itemId, summary);
     }
     flushReasoning(itemId);
+
+    const content = Array.isArray(item.content) ? item.content.map(str) : [];
+    const existingContent = reasoningContentParts.get(itemId) ?? [];
+    if (content.join('\n').length >= existingContent.join('\n').length) {
+      reasoningContentParts.set(itemId, content);
+    }
+    flushReasoningContent(itemId);
   }
 
   function handleItem(params: JsonObject, lifecycle: 'item.started' | 'item.completed'): void {
@@ -381,6 +416,9 @@ export function createCodexAppServerNormalizer(
           return;
         case 'item/reasoning/summaryPartAdded':
           handleReasoningPartAdded(params);
+          return;
+        case 'item/reasoning/textDelta':
+          handleReasoningTextDelta(params);
           return;
         case 'thread/tokenUsage/updated':
           handleTokenUsage(params);
