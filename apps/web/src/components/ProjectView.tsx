@@ -5929,6 +5929,12 @@ export function ProjectView({
          * 权威结论,之后从同一条流里回放出来的 `start`(→ `running`)只是历史帧。
          */
         const reattachTerminalVerdict = isTerminalRunStatus(status.status) ? status.status : null;
+        /*
+         * 这次订阅**听到 daemon 说话了吗**。见 `.finally()` 里的封存判据。
+         * 只有三种声音算数:终态的 `onRunStatus`、`onDone`、`onError` ——
+         * 它们各自都会封存这条 run 或安排一次有节流的重试。
+         */
+        let reattachHeardFromDaemon = false;
         if (taskRunAdvanced) {
           updateMessageById(
             message.id,
@@ -6195,6 +6201,7 @@ export function ProjectView({
               });
             },
             onDone: async () => {
+              reattachHeardFromDaemon = true;
               // A reattached run interrupted by a "send now" still receives a
               // late onDone from the daemon. Decide ownership first, then bail
               // BEFORE any current-run side effect (committing buffered text,
@@ -6377,6 +6384,7 @@ export function ProjectView({
               onProjectsRefresh();
             },
             onError: async (err) => {
+              reattachHeardFromDaemon = true;
               const errorCode = (err as Error & { code?: string }).code;
               const resumable = (err as Error & { resumable?: boolean }).resumable === true;
               let skipFinalPersistNow = false;
@@ -6698,6 +6706,7 @@ export function ProjectView({
               true,
             );
             latestReattachRunStatus = runStatus;
+            if (isTerminalRunStatus(runStatus)) reattachHeardFromDaemon = true;
             if (runStatus === 'canceled') {
               textBuffer.cancel();
               unregisterTextBuffer();
@@ -6747,6 +6756,31 @@ export function ProjectView({
             textBuffer.cancel();
             unregisterTextBuffer();
             if (persistTimer) clearProjectTimeout(persistTimer);
+            /*
+             * **不变量:一次 daemon 一句话都没说的重挂,不构成「再试一次」的理由。**
+             *
+             * 这条 effect 的依赖里带着 `messages`,而重挂过程中每条回放事件都会
+             * `updateMessageById` —— 它的 `setMessages((curr) => curr.map(...))` 永远返回
+             * 新数组,所以每条事件都让 effect 重跑一次。正常收场时不要紧:`onDone` /
+             * `onError` / 终态 `onRunStatus` 都会 `completeReattachRuns()` 把这条 run 封存,
+             * 重跑时在封存那道闸上直接 `continue`。
+             *
+             * 但流**没给出任何裁定**就结束时,收尾只走这里的 `releaseReattachRuns()`:
+             * 认领被释放、又没被封存,于是下一次重跑立刻又订阅一次、又回放一整份日志、
+             * 又改一遍 `messages` —— 实测约 120 次/秒,每次都带一次 SSE 订阅和一次
+             * `saveMessage`,栈就落在用户报的 `onRunEventId → updateMessageById` 和
+             * `persistSoon → persistMessageById` 上。
+             *
+             * 封存不是死路:重连行的手动重试(`handleManualReconnect`)会把这条 run 从
+             * `completedReattachRunsRef` 里删掉,用户始终有出路。
+             *
+             * 我们自己 abort 掉的那次除外 —— 那是卸载/切会话/按停的收尾,不是
+             * 「daemon 没说话」;那些路径各自会重挂或把这一行落终态,封存反而会让
+             * 切回来时接不上。
+             */
+            if (!reattachHeardFromDaemon && !controller.signal.aborted) {
+              completeReattachRuns();
+            }
             releaseReattachRuns();
             clearActiveRunRefs(reattachConversationId, controller, cancelController);
           });

@@ -3854,7 +3854,7 @@ function ChatMessageRail({
   onNavigate: (message: ChatMessage, messageIndex: number) => void;
   t: TranslateFn;
 }) {
-  const userMessages = useMemo<ChatRailMessage[]>(
+  const railMessages = useMemo<ChatRailMessage[]>(
     () =>
       messages.reduce<ChatRailMessage[]>((items, message, messageIndex) => {
         if (message.role !== 'user') return items;
@@ -3867,6 +3867,35 @@ function ChatMessageRail({
       }, []),
     [messages],
   );
+  /**
+   * 导轨的输入认**内容**,不认数组引用。
+   *
+   * **不变量:用户消息没有变化时,`userMessages` 必须保持同一个引用。**
+   *
+   * `messages` 在流式期间每帧都是新数组 —— `updateMessageById` 的
+   * `setMessages((curr) => curr.map(...))` 无条件返回新数组,而缓冲文本按
+   * `requestAnimationFrame` 提交(见 `ProjectView.tsx` 的 `createBufferedTextUpdates`)。
+   * 长在助手那条消息上的正文,和导轨没有半点关系。
+   *
+   * 直接 `useMemo(..., [messages])` 会把那份每帧换引用的数组喂给下面三条 effect:
+   * 「会话复位」那条每帧把活动点写回**第一条**,滚动侦听那条每帧重挂、rAF 里又写成
+   * **离滚动位置最近**的那条 —— 两个值不同,`Object.is` 短路不了,活动点每帧来回跳两次。
+   * 每一次 passive flush 都排一次新更新,React 的 `nestedPassiveUpdateCount` 因此
+   * 永不归零,约 51 帧后报 `Maximum update depth exceeded`(真机 2026-08-28)。
+   * 「滚轮」那条还会每帧重发一次 `scrollTo({behavior:'smooth'})`,平滑滚动永远到不了终点。
+   *
+   * 签名带上 id、正文和它在整条消息流里的下标 —— 导轨读的就是这三样
+   * (`onNavigate` 只用 `message.id` 与 `messageIndex`),所以按签名复用旧对象
+   * 不会读到过期的东西。
+   */
+  const railSignature = railMessages
+    .map((item) => [item.messageIndex, item.message.id, item.message.content].join('\u0001'))
+    .join('\u0002');
+  const userMessages = useMemo<ChatRailMessage[]>(
+    () => railMessages,
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 见上:刻意只认签名
+    [railSignature],
+  );
   const [preview, setPreview] = useState<{ id: string; y: number } | null>(null);
   const [activeMessageId, setActiveMessageId] = useState<string | null>(null);
   // Picking a message retracts the module until the pointer leaves it, so the
@@ -3875,11 +3904,19 @@ function ChatMessageRail({
   const navRef = useRef<HTMLElement | null>(null);
   const trackRef = useRef<HTMLDivElement | null>(null);
 
+  /*
+   * 换会话就把上一段的选择忘掉 —— 判据只有会话本身。
+   *
+   * `userMessages` 曾经也在依赖里,那是这条 effect 和下面滚动侦听那条抢同一个
+   * `activeMessageId` 的原因:新会话的第一条 vs 当前滚动位置最近的一条,
+   * 两个值不同,于是每次消息列表换引用就来回改一次。会话没换的时候,
+   * 这条 effect 本来就没有事可做。
+   */
   useEffect(() => {
     setPreview(null);
     setRetracted(false);
-    setActiveMessageId(userMessages[0]?.message.id ?? null);
-  }, [activeConversationKey, userMessages]);
+    setActiveMessageId(null);
+  }, [activeConversationKey]);
 
   // Roll the wheel: keep the active dot at the vertical middle of the track
   // viewport, so the dot column scrolls under the top/bottom fade masks as
@@ -3934,7 +3971,9 @@ function ChatMessageRail({
         .sort((a, b) => a.distance - b.distance)[0];
 
       if (visible) {
-        setActiveMessageId(visible.id);
+        // 值没变就原地返回:同一个滚动位置在流式期间会被反复重新测量,
+        // 每次都排一次重渲会把 React 的嵌套更新计数顶到上限。同 `syncFollowState`。
+        setActiveMessageId((prev) => (prev === visible.id ? prev : visible.id));
         return;
       }
 
@@ -3946,7 +3985,8 @@ function ChatMessageRail({
         userMessages.length - 1,
         Math.max(0, index),
       );
-      setActiveMessageId(userMessages[boundedIndex]?.message.id ?? null);
+      const fallbackId = userMessages[boundedIndex]?.message.id ?? null;
+      setActiveMessageId((prev) => (prev === fallbackId ? prev : fallbackId));
     };
     const scheduleUpdate = () => {
       if (frame) return;
