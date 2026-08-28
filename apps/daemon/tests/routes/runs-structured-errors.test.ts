@@ -2,6 +2,7 @@ import express, { type Response } from 'express';
 import type http from 'node:http';
 import { describe, expect, it, vi } from 'vitest';
 
+import { sendApiError } from '../../src/http/api-errors.js';
 import {
   registerRunCreateRoute,
   sendStructuredRunCreateFailure,
@@ -17,9 +18,7 @@ describe('Run creation structured failures', () => {
       async () => {
         throw Object.assign(new Error('secret input at C:\\private\\prompt.txt'), { code: 'EPERM' });
       },
-      (res, status, code, message, details) => res.status(status).json({
-        error: { code, message, details },
-      }),
+      sendApiError as Parameters<typeof registerRunCreateRoute>[2],
     );
     const server = await new Promise<http.Server>((resolve) => {
       const listening = app.listen(0, '127.0.0.1', () => resolve(listening));
@@ -41,7 +40,7 @@ describe('Run creation structured failures', () => {
         error: {
           code: 'INTERNAL_ERROR',
           message: 'Run preparation failed.',
-          details: { requestId: expect.any(String) },
+          requestId: expect.any(String),
         },
       });
       expect(text).not.toContain('private');
