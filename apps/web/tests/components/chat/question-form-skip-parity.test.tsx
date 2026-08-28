@@ -40,7 +40,7 @@
  * 会在解析器瞎了的时候假绿。
  */
 import { afterEach, describe, expect, it } from 'vitest';
-import { cleanup, render } from '@testing-library/react';
+import { cleanup, fireEvent, render } from '@testing-library/react';
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -129,6 +129,17 @@ function submitButton(container: HTMLElement): HTMLButtonElement {
   const last = buttons[buttons.length - 1];
   if (!last) throw new Error('底栏里一颗按钮都没有');
   return last as HTMLButtonElement;
+}
+
+function advanceToSecondStep(container: HTMLElement): HTMLButtonElement {
+  const option = container.querySelector('.qf-chip');
+  if (!option) throw new Error('分步夹具第一题没有选项');
+  fireEvent.click(option);
+  fireEvent.click(submitButton(container));
+  const back = [...container.querySelectorAll<HTMLButtonElement>('.question-form-foot button')]
+    .find((button) => button.textContent?.trim() === 'Back');
+  if (!back) throw new Error('第二步没有渲染 Back');
+  return back;
 }
 
 /* ── 微型层叠解析器 ───────────────────────────────────────────────── */
@@ -361,12 +372,28 @@ const DESIGN_SKIP: Record<Prop, string> = {
   'box-shadow': '<unset>',
 };
 
+const DESIGN_RIGHT_GHOST: Record<Prop, string> = {
+  ...DESIGN_SKIP,
+  'padding-right': '11px',
+  'padding-left': '11px',
+};
+
 describe('question-form 底栏「跳过」两态一致', () => {
   it('主按钮在平铺和分步底栏都保持设计稿的 32px 高度', () => {
     for (const form of [FLAT, STEPPED]) {
       expect(resolved(submitButton(mount(form, false))).height).toBe('32px');
       cleanup();
     }
+  });
+
+  it('分步首屏不画无效的上一步,第二步才出现且沿用稿子右侧 ghost 档', () => {
+    const container = mount(STEPPED, false);
+    expect(
+      [...container.querySelectorAll<HTMLButtonElement>('.question-form-foot button')]
+        .some((button) => button.textContent?.trim() === 'Back'),
+    ).toBe(false);
+
+    expect(resolved(advanceToSecondStep(container))).toEqual(DESIGN_RIGHT_GHOST);
   });
 
   it('正向对照:两态都真的渲染出了那颗按钮,而且都是同一个共享原语', () => {

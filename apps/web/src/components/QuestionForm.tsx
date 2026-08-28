@@ -916,15 +916,17 @@ export const QuestionFormView = forwardRef<QuestionFormHandle, Props>(function Q
                   {t('questionForm.skip')}
                 </Button>
                 <span className="qf-submit-actions">
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    onClick={handlePreviousQuestion}
-                    disabled={submitDisabled || activeQuestionIndex === 0}
-                  >
-                    {t('settings.onboardingBack')}
-                  </Button>
+                  {activeQuestionIndex > 0 ? (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      onClick={handlePreviousQuestion}
+                      disabled={submitDisabled}
+                    >
+                      {t('settings.onboardingBack')}
+                    </Button>
+                  ) : null}
                   <Button
                     type="button"
                     size="sm"

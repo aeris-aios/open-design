@@ -803,6 +803,15 @@ describe('QuestionFormView', () => {
     const nextStep = screen.getByRole('button', { name: 'Next step' }) as HTMLButtonElement;
     expect(nextStep.disabled).toBe(true);
     expect(nextStep.title).toBe('Fill in the required fields first');
+    // The delivered first-step footer is Skip | spacer | Next. A disabled
+    // Back action here both invents a fourth state and looks actionable once
+    // the footer's ghost-button styling removes disabled chrome.
+    expect(screen.queryByRole('button', { name: 'Back' })).toBeNull();
+    expect(
+      Array.from(document.querySelectorAll('.question-form-foot button')).map((button) =>
+        button.textContent?.trim(),
+      ),
+    ).toEqual(['Skip', 'Next step']);
     expect(screen.getByText('required')).toBeTruthy();
 
     fireEvent.change(screen.getByRole('textbox'), {
@@ -812,6 +821,12 @@ describe('QuestionFormView', () => {
 
     expect(screen.getByText('2 / 3')).toBeTruthy();
     expect(screen.queryByText('Who will see this deck?')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Back' })).toBeTruthy();
+    expect(
+      Array.from(document.querySelectorAll('.question-form-foot button')).map((button) =>
+        button.textContent?.trim(),
+      ),
+    ).toEqual(['Skip', 'Back', 'Next step']);
     fireEvent.click(chip('Standard · 12 slides'));
     fireEvent.click(screen.getByRole('button', { name: 'Back' }));
     expect(onInteraction).toHaveBeenCalledWith({
@@ -1082,6 +1097,11 @@ describe('QuestionFormView', () => {
     expect(firstPage).toHaveLength(VISUAL_STYLE_BATCH_SIZE);
     expect(screen.queryByTestId('qf-input')).toBeNull();
     expect(screen.queryByText('+21')).toBeNull();
+    expect(
+      Array.from(container.querySelectorAll('.qf-visual-foot button')).map((button) =>
+        button.textContent?.trim(),
+      ),
+    ).toEqual(['Shuffle', 'Random', 'Next']);
 
     // 「换一批」在新稿子里是页脚左侧那个动作，不再是右上角的刷新图标。
     fireEvent.click(container.querySelector('[data-action="reshuffle"]')!);
