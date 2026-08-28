@@ -24,7 +24,7 @@ import type { RecordFileScope } from '../../runtime/chat/record-file-open';
 import { Foldable } from './primitives/Foldable';
 import { ImageRow } from './primitives/ImageRow';
 import { useThinkingStream } from './primitives/useThinkingStream';
-import { useCharReveal } from './useCharReveal';
+import { ThinkingMarkdown } from './ThinkingMarkdown';
 import { Orb } from './primitives/Orb';
 import { SayText } from './primitives/SayText';
 import { StatusMark } from './primitives/StatusMark';
@@ -293,15 +293,6 @@ function ThoughtsRow({ texts, elapsedMs, live, t }: {
   const elapsed = live ? null : formatElapsed(elapsedMs);
   const bodyRef = useRef<HTMLDivElement>(null);
   useThinkingStream(bodyRef, live);
-  /*
-   * 推理也逐字化开(用户 2026-08-27:「能不能 thinking 还是用有个流式输出的效果…
-   * 包括我们所有普通文本, 都应该有这个流式输出的效果才对, 不能直接刷一下子整个出来」)。
-   *
-   * 挂在**整只 body** 上而不是每个 `SayText` 上:新字总是落在最后一段的末尾,
-   * 一只 host 就能一路跟下去;分给每段各挂一只反而要在段与段之间交接状态。
-   * 想完了(`live` 翻假)那一格是用户点开来读的,不再化开 —— 化开是「正在写」的表达。
-   */
-  useCharReveal(bodyRef, live);
 
   /*
    * 两态的行首都占**同一只 15px 图标槽**(`.icon`)。这是「左边缘不会跳」的另一半:
@@ -344,7 +335,7 @@ function ThoughtsRow({ texts, elapsedMs, live, t }: {
          本机 14 条 claude 共 1786 帧、非空 0 帧),此时这一行只报「在想」,
          给一只空的 96px 窗是在骗人。 */
     >
-      {texts.length ? texts.map((text, i) => <SayText key={i} text={text} />) : null}
+      {texts.length ? <ThinkingMarkdown texts={texts} live={live} /> : null}
     </Foldable>
   );
 }

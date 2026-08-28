@@ -62,6 +62,18 @@ describe('renderMarkdown', () => {
     expect(out).toContain('>here</a>');
   });
 
+  it('keeps relative project links but renders executable schemes as inert text', () => {
+    const relative = html('Open [brief](docs/brief.md).');
+    expect(relative).toContain('href="docs/brief.md"');
+
+    for (const href of ['javascript:alert(1)', 'vbscript:msgbox(1)', 'file:///tmp/secret']) {
+      const out = html(`[unsafe](${href})`);
+      expect(out).not.toContain('<a');
+      expect(out).not.toContain('href=');
+      expect(out).toContain('unsafe');
+    }
+  });
+
   it('marks bare URLs with the bare-link class so CSS can apply URL-specific wrapping', () => {
     const out = html('See https://example.com/very/long/path?with=long&query=string');
     expect(out).toContain('md-link-bare');
