@@ -37,6 +37,7 @@ beforeAll(() => {
 });
 afterEach(() => {
   cleanup();
+  restoreSessionStorage();
   window.localStorage.clear();
   window.sessionStorage.clear();
   vi.restoreAllMocks();
@@ -54,9 +55,17 @@ const FORM = [
   '</question-form>',
 ].join('\n');
 
+// The lock is keyed on the form occurrence and deliberately outlives the
+// component, so each test needs its own occurrence rather than a shared one a
+// reset would have to undo — the same way two real forms never collide.
+let occurrence = 0;
+beforeEach(() => {
+  occurrence += 1;
+});
+
 function formMessage(): ChatMessage {
   return {
-    id: 'msg-form',
+    id: `msg-form-${occurrence}`,
     role: 'assistant',
     content: FORM,
     startedAt: 1700000000,
@@ -77,6 +86,32 @@ function renderForm(onSubmitQuestionForm: (text: string) => unknown): HTMLElemen
     />,
   );
   return container;
+}
+
+/**
+ * Make every session-storage access throw, as a denied-storage context does.
+ *
+ * jsdom's `sessionStorage` is a host object whose methods `vi.spyOn` does not
+ * intercept, so the accessor itself has to be replaced; `restoreSessionStorage`
+ * puts the real one back for the suite's own teardown.
+ */
+let realSessionStorage: PropertyDescriptor | undefined;
+function denySessionStorage(): void {
+  realSessionStorage =
+    Object.getOwnPropertyDescriptor(window, 'sessionStorage')
+    ?? Object.getOwnPropertyDescriptor(Object.getPrototypeOf(window), 'sessionStorage');
+  const deny = () => {
+    throw new Error('storage denied');
+  };
+  Object.defineProperty(window, 'sessionStorage', {
+    configurable: true,
+    value: { clear: () => {}, getItem: deny, removeItem: deny, setItem: deny },
+  });
+}
+function restoreSessionStorage(): void {
+  if (!realSessionStorage) return;
+  Object.defineProperty(window, 'sessionStorage', realSessionStorage);
+  realSessionStorage = undefined;
 }
 
 function answerAndSend(container: HTMLElement, value: string): void {
@@ -141,6 +176,42 @@ describe('inline question form resubmission', () => {
       expect(
         (screen.getByRole('button', { name: 'Send answers' }) as HTMLButtonElement).disabled,
       ).toBe(true),
+    );
+  });
+
+  it('stays locked across an in-flight remount when storage is denied', async () => {
+    // Private windows and embedded contexts refuse session storage. That may
+    // cost the lock its survival across a reload, but not its survival across
+    // a remount — otherwise the duplicate submit is simply back for those
+    // users.
+    denySessionStorage();
+    let settleSubmit: ((accepted: boolean) => void) | null = null;
+    const onSubmit = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          settleSubmit = resolve;
+        }),
+    );
+
+    answerAndSend(renderForm(onSubmit), 'Designers');
+    await vi.waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+
+    cleanup();
+    const container = renderForm(onSubmit);
+
+    expect(
+      (screen.getByRole('button', { name: 'Send answers' }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+    answerAndSend(container, 'Designers');
+    await Promise.resolve();
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+
+    // A refusal still hands the form back, storage or no storage.
+    settleSubmit!(false);
+    await vi.waitFor(() =>
+      expect(
+        (screen.getByRole('button', { name: 'Send answers' }) as HTMLButtonElement).disabled,
+      ).toBe(false),
     );
   });
 

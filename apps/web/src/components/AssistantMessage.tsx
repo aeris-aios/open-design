@@ -3291,12 +3291,21 @@ function inlineQuestionFormSubmittedStorageKey(
  * started it, a release has to reach whichever form is mounted by the time it
  * lands — hence the listeners, without which an answer refused after the user
  * navigated away would leave the form locked with no way back.
+ *
+ * Session storage is what carries the lock, so it also survives a reload. When
+ * a context denies storage (a private window, an embedded frame) the write
+ * throws and the lock falls back to a page-lived set: without it every remount
+ * there would read "never submitted" and hand those users the duplicate submit
+ * back, which is the whole defect.
  */
+const deniedStorageInlineQuestionFormSubmissions = new Set<string>();
 const inlineQuestionFormSubmissionListeners = new Map<string, Set<() => void>>();
 
 function readInlineQuestionFormSubmitted(formKey: string | null): boolean {
   const key = inlineQuestionFormSubmittedStorageKey(formKey);
-  if (!key || typeof window === "undefined") return false;
+  if (!key) return false;
+  if (deniedStorageInlineQuestionFormSubmissions.has(key)) return true;
+  if (typeof window === "undefined") return false;
   try {
     return window.sessionStorage.getItem(key) !== null;
   } catch {
@@ -3329,22 +3338,29 @@ function notifyInlineQuestionFormSubmitted(key: string): void {
 
 function markInlineQuestionFormSubmitted(formKey: string | null): void {
   const key = inlineQuestionFormSubmittedStorageKey(formKey);
-  if (!key || typeof window === "undefined") return;
-  try {
-    window.sessionStorage.setItem(key, "1");
-  } catch {
-    // Without storage the lock degrades to this mount, as it was before.
+  if (!key) return;
+  if (typeof window !== "undefined") {
+    try {
+      window.sessionStorage.setItem(key, "1");
+    } catch {
+      // Denied storage costs the lock its reload survival, not the lock.
+      deniedStorageInlineQuestionFormSubmissions.add(key);
+    }
   }
   notifyInlineQuestionFormSubmitted(key);
 }
 
 function clearInlineQuestionFormSubmitted(formKey: string | null): void {
   const key = inlineQuestionFormSubmittedStorageKey(formKey);
-  if (!key || typeof window === "undefined") return;
-  try {
-    window.sessionStorage.removeItem(key);
-  } catch {
-    // A stale lock only blocks re-answering one already-sent form.
+  if (!key) return;
+  deniedStorageInlineQuestionFormSubmissions.delete(key);
+  if (typeof window !== "undefined") {
+    try {
+      window.sessionStorage.removeItem(key);
+    } catch {
+      // A stale stored lock only blocks re-answering one already-sent form,
+      // and the denied-storage fallback has already released it.
+    }
   }
   notifyInlineQuestionFormSubmitted(key);
 }
