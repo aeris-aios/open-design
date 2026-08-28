@@ -14,13 +14,15 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   buildOdNextTaskConfigurationV1,
   createOdNextRunInputProjection,
   createOdNextTaskInputSnapshot,
   loadOdNextTaskInputSnapshot,
   OdNextTaskInputSnapshotError,
+  removeOdNextTaskInputSnapshot,
+  removeOdNextTaskInputSnapshotBestEffort,
   removeOdNextRunInputProjection,
 } from '../../src/strategies/od-next/task-input-snapshot.js';
 
@@ -61,6 +63,83 @@ afterEach(() => {
 });
 
 describe('OD Next task-scoped input snapshots', () => {
+  it('removes a read-only canonical snapshot idempotently', () => {
+    const f = fixture();
+    const snapshotDir = path.join(f.snapshotsRoot, 'odnext_cleanup');
+    mkdirSync(path.join(snapshotDir, 'attachments'), { recursive: true });
+    writeFileSync(path.join(snapshotDir, 'manifest.json'), '{}', { mode: 0o400 });
+    writeFileSync(
+      path.join(snapshotDir, 'attachments', 'attachment-001.txt'),
+      'immutable brief',
+      { mode: 0o400 },
+    );
+    const descriptor = {
+      taskExecutionId: 'odnext_cleanup',
+      snapshotDir,
+      manifestSha256: 'a'.repeat(64),
+    };
+
+    removeOdNextTaskInputSnapshot(descriptor, f.snapshotsRoot);
+    expect(existsSync(descriptor.snapshotDir)).toBe(false);
+    expect(() => removeOdNextTaskInputSnapshot(descriptor, f.snapshotsRoot)).not.toThrow();
+  });
+
+  it('refuses to remove a descriptor outside the managed snapshot root', () => {
+    const f = fixture();
+    const outside = path.join(f.root, 'outside-snapshot');
+    mkdirSync(outside);
+    const sentinel = path.join(outside, 'sentinel.txt');
+    writeFileSync(sentinel, 'keep');
+
+    expect(() => removeOdNextTaskInputSnapshot({
+      taskExecutionId: 'odnext_outside',
+      snapshotDir: outside,
+      manifestSha256: 'a'.repeat(64),
+    }, f.snapshotsRoot)).toThrow(/outside its managed root/);
+    expect(readFileSync(sentinel, 'utf8')).toBe('keep');
+  });
+
+  it('keeps cleanup best-effort and reports only sanitized diagnostics', () => {
+    const f = fixture();
+    const outside = path.join(f.root, 'best-effort-outside');
+    mkdirSync(outside);
+    const sentinel = path.join(outside, 'sentinel.txt');
+    writeFileSync(sentinel, 'keep');
+    const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      expect(() => removeOdNextTaskInputSnapshotBestEffort({
+        taskExecutionId: 'odnext_best_effort',
+        snapshotDir: outside,
+        manifestSha256: 'b'.repeat(64),
+      }, f.snapshotsRoot, 'initial-bundle')).not.toThrow();
+      expect(readFileSync(sentinel, 'utf8')).toBe('keep');
+      expect(consoleWarn).toHaveBeenCalledWith(
+        '[od-next-task-input] cleanup failed phase=initial-bundle task=odnext_best_effort code=OD_NEXT_INPUT_SNAPSHOT_INVALID',
+      );
+      expect(JSON.stringify(consoleWarn.mock.calls)).not.toContain(outside);
+    } finally {
+      consoleWarn.mockRestore();
+    }
+  });
+
+  it('refuses links inside a managed snapshot without touching their targets', () => {
+    const f = fixture();
+    const snapshotDir = path.join(f.snapshotsRoot, 'odnext_link');
+    const outside = path.join(f.root, 'outside-link-target');
+    mkdirSync(snapshotDir, { recursive: true });
+    mkdirSync(outside);
+    const sentinel = path.join(outside, 'sentinel.txt');
+    writeFileSync(sentinel, 'keep');
+    symlinkSync(outside, path.join(snapshotDir, 'linked'), 'junction');
+
+    expect(() => removeOdNextTaskInputSnapshot({
+      taskExecutionId: 'odnext_link',
+      snapshotDir,
+      manifestSha256: 'c'.repeat(64),
+    }, f.snapshotsRoot)).toThrow(/symbolic links or reparse points/);
+    expect(readFileSync(sentinel, 'utf8')).toBe('keep');
+  });
+
   it('freezes ordered document/image bytes and survives source mutation or deletion', () => {
     const f = fixture();
     writeFileSync(path.join(f.projectRoot, 'brief.pdf'), Buffer.from('%PDF-1.7\nbrief'));

@@ -111,6 +111,108 @@ function safeTaskId(value: string): string {
   return value;
 }
 
+function cleanupErrorCode(error: unknown): string {
+  if (error instanceof OdNextTaskInputSnapshotError) return error.code;
+  const code = (error as NodeJS.ErrnoException)?.code;
+  return typeof code === 'string' && /^[A-Z0-9_]+$/.test(code) ? code : 'UNKNOWN';
+}
+
+function warnSnapshotCleanupFailure(
+  phase: OdNextTaskInputCleanupPhase,
+  taskExecutionId: string,
+  error: unknown,
+): void {
+  console.warn(
+    `[od-next-task-input] cleanup failed phase=${phase} task=${taskExecutionId} code=${cleanupErrorCode(error)}`,
+  );
+}
+
+export type OdNextTaskInputCleanupPhase =
+  | 'create'
+  | 'replace-partial'
+  | 'initial-bundle'
+  | 'run-claim'
+  | 'non-ready';
+
+/**
+ * Remove a managed immutable tree without following links. Windows maps the
+ * snapshot's 0400/0444 modes to the ReadOnly attribute, so every entry must be
+ * made owner-writable before unlinking it. A link or special file fails closed
+ * instead of allowing cleanup to escape the daemon-owned tree.
+ */
+function removeWritableTreeWithoutFollowingLinks(target: string): void {
+  let stat: fs.Stats;
+  try {
+    stat = fs.lstatSync(target);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return;
+    throw error;
+  }
+  if (stat.isSymbolicLink()) {
+    throw new OdNextTaskInputSnapshotError(
+      'OD Next task input cleanup refuses symbolic links or reparse points.',
+    );
+  }
+  if (stat.isDirectory()) {
+    fs.chmodSync(target, 0o700);
+    for (const entry of fs.readdirSync(target)) {
+      removeWritableTreeWithoutFollowingLinks(path.join(target, entry));
+    }
+    fs.rmdirSync(target);
+    return;
+  }
+  if (!stat.isFile()) {
+    throw new OdNextTaskInputSnapshotError(
+      'OD Next task input cleanup refuses non-file entries.',
+    );
+  }
+  fs.chmodSync(target, 0o600);
+  fs.unlinkSync(target);
+}
+
+function removeManagedSnapshotDir(input: {
+  snapshotsRoot: string;
+  taskExecutionId: string;
+  snapshotDir: string;
+}): void {
+  const snapshotsRoot = path.resolve(input.snapshotsRoot);
+  const taskExecutionId = safeTaskId(input.taskExecutionId);
+  const expectedSnapshotDir = path.join(snapshotsRoot, taskExecutionId);
+  const snapshotDir = path.resolve(input.snapshotDir);
+  if (path.relative(expectedSnapshotDir, snapshotDir) !== '') {
+    throw new OdNextTaskInputSnapshotError(
+      'OD Next task input snapshot is outside its managed root.',
+    );
+  }
+
+  let rootStat: fs.Stats;
+  try {
+    rootStat = fs.lstatSync(snapshotsRoot);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return;
+    throw error;
+  }
+  if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
+    throw new OdNextTaskInputSnapshotError(
+      'OD Next snapshot root must be a managed non-symlink directory.',
+    );
+  }
+
+  let snapshotStat: fs.Stats;
+  try {
+    snapshotStat = fs.lstatSync(snapshotDir);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return;
+    throw error;
+  }
+  if (snapshotStat.isSymbolicLink() || !snapshotStat.isDirectory()) {
+    throw new OdNextTaskInputSnapshotError(
+      'OD Next task input snapshot must be a managed non-symlink directory.',
+    );
+  }
+  removeWritableTreeWithoutFollowingLinks(snapshotDir);
+}
+
 function sameIdentity(
   stat: fs.BigIntStats,
   opened: fs.BigIntStats,
@@ -433,7 +535,12 @@ export function createOdNextTaskInputSnapshot(input: {
       // A task id is single-writer under the assistant/task claim. An entry
       // here is therefore a partial initialization left before that claim
       // committed, not a reusable canonical snapshot.
-      fs.rmSync(snapshotDir, { recursive: true, force: true });
+      try {
+        removeManagedSnapshotDir({ snapshotsRoot, taskExecutionId, snapshotDir });
+      } catch (cleanupError) {
+        warnSnapshotCleanupFailure('replace-partial', taskExecutionId, cleanupError);
+        throw cleanupError;
+      }
       fs.mkdirSync(snapshotDir, { recursive: false, mode: 0o700 });
       snapshotCleanupAllowed = true;
     }
@@ -529,7 +636,11 @@ export function createOdNextTaskInputSnapshot(input: {
     return { taskExecutionId, snapshotDir, manifestSha256: sha256(manifestBytes) };
   } catch (error) {
     if (snapshotCleanupAllowed) {
-      fs.rmSync(snapshotDir, { recursive: true, force: true });
+      try {
+        removeManagedSnapshotDir({ snapshotsRoot, taskExecutionId, snapshotDir });
+      } catch (cleanupError) {
+        warnSnapshotCleanupFailure('create', taskExecutionId, cleanupError);
+      }
     }
     throw error;
   }
@@ -893,7 +1004,27 @@ export function removeOdNextRunInputProjection(
 
 export function removeOdNextTaskInputSnapshot(
   descriptor: OdNextTaskInputSnapshotDescriptor | null | undefined,
+  snapshotsRoot: string,
 ): void {
   if (!descriptor) return;
-  fs.rmSync(descriptor.snapshotDir, { recursive: true, force: true });
+  removeManagedSnapshotDir({
+    snapshotsRoot,
+    taskExecutionId: descriptor.taskExecutionId,
+    snapshotDir: descriptor.snapshotDir,
+  });
+}
+
+export function removeOdNextTaskInputSnapshotBestEffort(
+  descriptor: OdNextTaskInputSnapshotDescriptor | null | undefined,
+  snapshotsRoot: string,
+  phase: OdNextTaskInputCleanupPhase,
+): void {
+  if (!descriptor) return;
+  let taskExecutionId = 'invalid';
+  try {
+    taskExecutionId = safeTaskId(descriptor.taskExecutionId);
+    removeOdNextTaskInputSnapshot(descriptor, snapshotsRoot);
+  } catch (error) {
+    warnSnapshotCleanupFailure(phase, taskExecutionId, error);
+  }
 }
