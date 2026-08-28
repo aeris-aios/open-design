@@ -1,6 +1,6 @@
 import type { Server } from 'node:http';
 import { execFile } from 'node:child_process';
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -34,7 +34,11 @@ vi.mock('node:crypto', async (importOriginal) => {
 
 import { closeDatabase, openDatabase } from '../src/db.js';
 import { createSnapshot, linkSnapshotToProject } from '../src/plugins/snapshots.js';
-import { resolvePluginFolder, upsertInstalledPlugin } from '../src/plugins/registry.js';
+import {
+  getInstalledPlugin,
+  resolvePluginFolder,
+  upsertInstalledPlugin,
+} from '../src/plugins/registry.js';
 import { createBundledStrategyBindingV2 } from '../src/plugins/strategy-package.js';
 import { startServer, type StartServerOptions } from '../src/server.js';
 import {
@@ -383,6 +387,112 @@ describe('OD Next automatic production through the real server', () => {
     expect(fallbackInvocations).toHaveLength(1);
     expect(fallbackInvocations[0]?.stdin).toContain('Creative Voltage');
     expect(fallbackInvocations[0]?.stdin).not.toContain('克制的 COO');
+  });
+
+  it('does not reuse an automatic-default pin when the bound example identity is stale', async () => {
+    const fixture = await createPublicRolloutFixture('stale-selected-example', 'design');
+    started = fixture.started;
+    binDir = fixture.binDir;
+    clearOdNextRolloutStop(database());
+    const exampleDir = path.join(binDir, 'stale-selected-example');
+    await cp(CREATIVE_VOLTAGE_EXAMPLE_DIR, exampleDir, { recursive: true });
+    const staleExamplePluginId = 'example-stale-creative-voltage';
+    const manifestPath = path.join(exampleDir, 'open-design.json');
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as Record<string, unknown>;
+    await writeFile(manifestPath, JSON.stringify({
+      ...manifest,
+      name: staleExamplePluginId,
+    }), 'utf8');
+    const installResponse = await fetch(`${started.url}/api/plugins/install`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'text/event-stream' },
+      body: JSON.stringify({ source: exampleDir }),
+    });
+    const installEvents = await installResponse.text();
+    expect(installEvents).toContain('event: success');
+    const installedExample = getInstalledPlugin(database(), staleExamplePluginId);
+    expect(installedExample).not.toBeNull();
+
+    const createAffectedProject = async (label: string) => {
+      const project = await createProjectForScenario(
+        started!.url,
+        label,
+        { kind: 'deck' },
+        undefined,
+        undefined,
+        {
+          pluginId: staleExamplePluginId,
+          source: installedExample!.source,
+        },
+      );
+      expect(project.appliedPluginSnapshotId).toEqual(expect.any(String));
+      expect(project.metadata?.scenarioBinding).toMatchObject({
+        provenance: 'automatic_default',
+        pluginId: 'example-simple-deck',
+        snapshotId: project.appliedPluginSnapshotId,
+      });
+      return project;
+    };
+    const rolloutOffProject = await createAffectedProject('stale-selected-example-off');
+    const prestartFallbackProject = await createAffectedProject(
+      'stale-selected-example-prestart',
+    );
+
+    // Both projects froze the original manifest identity. Mutating it now
+    // reproduces an example that was removed or upgraded after selection.
+    await writeFile(
+      path.join(installedExample!.fsPath, 'SKILL.md'),
+      '# Changed after the project selected this example\n',
+      'utf8',
+    );
+
+    const expectDefaultWasNotReused = async (
+      project: Awaited<ReturnType<typeof createAffectedProject>>,
+      created: { pluginId?: string; runId?: string },
+    ) => {
+      expect(created.pluginId).toBeUndefined();
+      await waitForRunTerminal(started!.url, created.runId as string);
+      expect(database().prepare(`
+        SELECT applied_plugin_snapshot_id AS snapshotId
+          FROM projects
+         WHERE id = ?
+      `).get(project.projectId)).toEqual({ snapshotId: project.appliedPluginSnapshotId });
+      const invocations = await readProjectInvocations(fixture.logPath, project.projectId);
+      expect(invocations).toHaveLength(1);
+      expect(invocations[0]?.stdin).not.toContain('Creative Voltage');
+      expect(invocations[0]?.stdin).not.toContain('克制的 COO');
+    };
+
+    process.env.OD_NEXT_STRATEGY_ROLLOUT = 'off';
+    const ordinary = await postRun(started.url, publicRunRequest(
+      rolloutOffProject,
+      'Do not substitute an unrelated default for the stale example.',
+      'stale-selected-example-off',
+    ));
+    expect(ordinary.strategyTask).toBeUndefined();
+    await expectDefaultWasNotReused(rolloutOffProject, ordinary);
+
+    process.env.OD_NEXT_STRATEGY_ROLLOUT = 'active';
+    process.env.OD_NEXT_STRATEGY_LOCAL_SYNTHETIC_CANARY = '1';
+    database().exec(`
+      CREATE TRIGGER reject_stale_example_strategy_task
+      BEFORE INSERT ON strategy_task_executions
+      BEGIN
+        SELECT RAISE(ABORT, 'fixture stale-example strategy preparation rejected');
+      END
+    `);
+    try {
+      const fallback = await postRun(started.url, publicRunRequest(
+        prestartFallbackProject,
+        'Do not substitute an unrelated default after pre-start fallback.',
+        'stale-selected-example-prestart',
+      ));
+      expect(fallback.strategyTask).toBeUndefined();
+      expect(fallback.taskExecutionId).toBeUndefined();
+      await expectDefaultWasNotReused(prestartFallbackProject, fallback);
+    } finally {
+      database().exec('DROP TRIGGER IF EXISTS reject_stale_example_strategy_task');
+    }
   });
 
   // ACCEPTANCE for the opt-in switch. Nothing configured takes the ordinary

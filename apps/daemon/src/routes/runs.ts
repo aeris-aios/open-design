@@ -1743,6 +1743,11 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
         && verifiedScenarioBinding?.provenance === 'automatic_default'
         && verifiedScenarioBinding.pluginId === defaultPluginId,
       );
+      const suppressAutomaticDefaultPinFallback = Boolean(
+        projectPinIsAutomaticDefault
+        && verifiedExampleBinding
+        && !selectedExamplePlugin,
+      );
       const suppliedContextPluginWasNamed = Boolean(
         Array.isArray((rolloutProject?.metadata as ContractProjectMetadata | undefined)?.contextPlugins)
         && (rolloutProject?.metadata as ContractProjectMetadata).contextPlugins!.length > 0
@@ -1992,6 +1997,7 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
           registry: registryView,
           connectorProbe: buildConnectorProbe(connectorService),
           requireSnapshotProjectMatch: true,
+          allowProjectPinFallback: !suppressAutomaticDefaultPinFallback,
           ...(selectedExamplePlugin ? { plugin: selectedExamplePlugin } : {}),
           ...(selectedExamplePlugin ? { runScopedActivation: true } : {}),
           ...(!selectedExamplePlugin && defaultPluginId
@@ -2016,6 +2022,7 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
         registry: registryView,
         connectorProbe: buildConnectorProbe(connectorService),
         requireSnapshotProjectMatch: true,
+        allowProjectPinFallback: !suppressAutomaticDefaultPinFallback,
         ...(selectedExamplePlugin ? { plugin: selectedExamplePlugin } : {}),
         ...(selectedExamplePlugin && runResolveBody.pluginId === selectedExamplePlugin.id
           ? { runScopedActivation: true }
