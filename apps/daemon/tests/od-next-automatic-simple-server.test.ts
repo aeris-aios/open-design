@@ -87,6 +87,13 @@ const THREAD_ID = '019fffaa-0000-7000-8000-000000000010';
 const execFileP = promisify(execFile);
 const DAEMON_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const REPO_ROOT = path.resolve(DAEMON_ROOT, '../..');
+const CREATIVE_VOLTAGE_EXAMPLE_DIR = path.join(
+  REPO_ROOT,
+  'plugins',
+  '_official',
+  'examples',
+  'fs-creative-voltage',
+);
 const CLI_SRC = path.resolve(DAEMON_ROOT, 'src/cli.ts');
 const TSX_CLI = path.resolve(REPO_ROOT, 'node_modules/tsx/dist/cli.mjs');
 const EXECUTION_PREFLIGHT = {
@@ -196,6 +203,74 @@ describe('OD Next automatic production through the real server', () => {
     const researchContract = invocations[0]!.stdin.slice(researchStart, researchEnd);
     expect(researchContract).toContain('ORDINARY_PRIOR_MARKER');
     expect(researchContract).toContain('Run the ordinary public fixture.');
+  });
+
+  it('runs the selected official example on the ordinary route without pinning it to the project', async () => {
+    const fixture = await createPublicRolloutFixture('selected-example-ordinary', 'design');
+    started = fixture.started;
+    binDir = fixture.binDir;
+    process.env.OD_NEXT_STRATEGY_ROLLOUT = 'off';
+
+    const selected = await createProjectForScenario(
+      started.url,
+      'selected-example-deck',
+      { kind: 'deck' },
+      undefined,
+      'ppt',
+      {
+        pluginId: 'example-fs-creative-voltage',
+        source: CREATIVE_VOLTAGE_EXAMPLE_DIR,
+      },
+    );
+    expect(selected.appliedPluginSnapshotId).toBeUndefined();
+    expect(selected.metadata?.exampleBinding).toMatchObject({
+      provenance: 'example_card',
+      pluginId: 'example-fs-creative-voltage',
+      pluginSource: CREATIVE_VOLTAGE_EXAMPLE_DIR,
+    });
+
+    const created = await postRun(started.url, publicRunRequest(
+      selected,
+      'Build the selected fundraising deck.',
+      'selected-example-ordinary',
+    ));
+    expect(created.strategyTask).toBeUndefined();
+    expect(created.pluginId).toBe('example-fs-creative-voltage');
+    expect(created.appliedPluginSnapshotId).toEqual(expect.any(String));
+    await waitForRunTerminal(started.url, created.runId as string);
+
+    expect(database().prepare(`
+      SELECT applied_plugin_snapshot_id AS snapshotId
+        FROM projects
+       WHERE id = ?
+    `).get(selected.projectId)).toEqual({ snapshotId: null });
+    expect(database().prepare(`
+      SELECT applied_plugin_snapshot_id AS snapshotId
+        FROM conversations
+       WHERE id = ?
+    `).get(selected.conversationId)).toEqual({ snapshotId: null });
+    expect(database().prepare(`
+      SELECT plugin_id AS pluginId, run_id AS runId
+        FROM applied_plugin_snapshots
+       WHERE id = ?
+    `).get(created.appliedPluginSnapshotId)).toEqual({
+      pluginId: 'example-fs-creative-voltage',
+      runId: created.runId,
+    });
+    const userMessage = database().prepare(`
+      SELECT applied_plugin_snapshot_json AS snapshotJson
+        FROM messages
+       WHERE id = ?
+    `).get('user-selected-example-ordinary') as { snapshotJson: string };
+    expect(JSON.parse(userMessage.snapshotJson)).toMatchObject({
+      pluginId: 'example-fs-creative-voltage',
+      pluginTitle: 'Write a Seed Pitch like a Top Pre-Seed Founder',
+    });
+
+    const invocations = await readProjectInvocations(fixture.logPath, selected.projectId);
+    expect(invocations).toHaveLength(1);
+    expect(invocations[0]?.stdin).toContain('Creative Voltage');
+    expect(invocations[0]?.stdin).not.toContain('克制的 COO');
   });
 
   // ACCEPTANCE for the opt-in switch. Nothing configured takes the ordinary
@@ -2310,6 +2385,7 @@ async function createProjectForScenario(
     pluginInputs: Record<string, unknown>;
   },
   automaticStrategyTaskProfile?: ProjectScenarioTaskProfile,
+  exampleReference?: { pluginId: string; source: string },
 ) {
   const projectId = `od-next-public-${label}-${Date.now()}`;
   const response = await fetch(`${url}/api/projects`, {
@@ -2321,6 +2397,7 @@ async function createProjectForScenario(
       metadata,
       ...plugin,
       ...(automaticStrategyTaskProfile ? { automaticStrategyTaskProfile } : {}),
+      ...(exampleReference ? { exampleReference } : {}),
       conversationMode: 'design',
       skipDiscoveryBrief: true,
     }),
@@ -2341,6 +2418,11 @@ async function createProjectForScenario(
           provenance: string;
           taskProfile: ProjectScenarioTaskProfile;
           boundAt: number;
+        };
+        exampleBinding?: {
+          provenance: string;
+          pluginId: string;
+          pluginSource: string;
         };
       };
     };

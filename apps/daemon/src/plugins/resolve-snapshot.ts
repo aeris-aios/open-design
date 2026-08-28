@@ -97,6 +97,12 @@ export interface ResolveSnapshotInput {
     plugin: InstalledPluginRecord;
   } | undefined;
   /**
+   * Apply an exact daemon-selected plugin for this Run without replacing the
+   * project's or conversation's durable plugin pin. The Run route links the
+   * resulting immutable snapshot after it claims the Run.
+   */
+  runScopedActivation?: boolean | undefined;
+  /**
    * Daemon-owned provenance to stamp when this call changes the durable
    * project pin. Omit for fallback reuse; explicit request fields default to
    * `explicit_user`.
@@ -177,7 +183,10 @@ function pickPluginFields(body: Record<string, unknown> | null | undefined) {
 export function resolvePluginSnapshot(input: ResolveSnapshotInput): ResolveSnapshotResult {
   const fields = pickPluginFields(input.body);
   const requestNamedBinding = Boolean(fields.pluginId || fields.snapshotId);
-  const projectBinding = input.internalStrategyActivation
+  const runScopedActivation = Boolean(
+    input.internalStrategyActivation || input.runScopedActivation,
+  );
+  const projectBinding = runScopedActivation
     ? null
     : input.projectBinding
       ?? (requestNamedBinding ? { provenance: 'explicit_user' as const } : null);
@@ -419,8 +428,10 @@ function finalizeOk(args: {
   // Rollout activation is run-scoped authority. It must not replace the
   // user's durable project/conversation plugin pin; rollback then affects new
   // tasks while this run remains linked to its immutable strategy snapshot.
-  const runScopedStrategy = Boolean(args.input.internalStrategyActivation);
-  if (args.input.projectId && !runScopedStrategy) {
+  const runScopedActivation = Boolean(
+    args.input.internalStrategyActivation || args.input.runScopedActivation,
+  );
+  if (args.input.projectId && !runScopedActivation) {
     linkSnapshotToProject(db, snap.snapshotId, args.input.projectId);
     if (args.projectBinding) {
       writeProjectScenarioBinding(db, {
@@ -434,7 +445,7 @@ function finalizeOk(args: {
       });
     }
   }
-  if (args.input.conversationId && !runScopedStrategy) {
+  if (args.input.conversationId && !runScopedActivation) {
     linkSnapshotToConversation(db, snap.snapshotId, args.input.conversationId);
   }
   if (args.input.runId) {
