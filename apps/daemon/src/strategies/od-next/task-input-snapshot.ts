@@ -11,7 +11,7 @@ import {
   type OdNextRequestInputFactsV1,
   type OdNextTaskConfigurationV1,
 } from '@open-design/contracts';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { redactSecrets } from '../../redact.js';
@@ -91,6 +91,10 @@ export interface SnapshotReadLimits {
 export interface SnapshotReadHooks {
   beforeOpenManifest?: (manifestPath: string) => void;
   beforeOpenFile?: (filePath: string) => void;
+}
+
+export interface SnapshotCleanupHooks {
+  beforeClaimSnapshot?: (snapshotDir: string) => void;
 }
 
 function sha256(bytes: Buffer | string): string {
@@ -174,6 +178,7 @@ function removeManagedSnapshotDir(input: {
   snapshotsRoot: string;
   taskExecutionId: string;
   snapshotDir: string;
+  hooks?: SnapshotCleanupHooks;
 }): void {
   const snapshotsRoot = path.resolve(input.snapshotsRoot);
   const taskExecutionId = safeTaskId(input.taskExecutionId);
@@ -198,9 +203,9 @@ function removeManagedSnapshotDir(input: {
     );
   }
 
-  let snapshotStat: fs.Stats;
+  let snapshotStat: fs.BigIntStats;
   try {
-    snapshotStat = fs.lstatSync(snapshotDir);
+    snapshotStat = fs.lstatSync(snapshotDir, { bigint: true });
   } catch (error) {
     if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return;
     throw error;
@@ -210,7 +215,30 @@ function removeManagedSnapshotDir(input: {
       'OD Next task input snapshot must be a managed non-symlink directory.',
     );
   }
-  removeWritableTreeWithoutFollowingLinks(snapshotDir);
+
+  // Claim the checked entry with one atomic rename before resolving any path
+  // for mutation. The random name prevents ordinary producers from finding or
+  // reusing the private deletion path while cleanup walks it. Rechecking the
+  // identity after rename makes a swap between lstat and rename fail closed:
+  // traversal never runs against the replacement (including a junction).
+  const claimedSnapshotDir = path.join(
+    snapshotsRoot,
+    `.deleting-${taskExecutionId}-${randomBytes(16).toString('hex')}`,
+  );
+  input.hooks?.beforeClaimSnapshot?.(snapshotDir);
+  fs.renameSync(snapshotDir, claimedSnapshotDir);
+  const claimedStat = fs.lstatSync(claimedSnapshotDir, { bigint: true });
+  if (
+    claimedStat.isSymbolicLink()
+    || !claimedStat.isDirectory()
+    || !sameIdentity(snapshotStat, claimedStat)
+  ) {
+    throw new OdNextTaskInputSnapshotError(
+      'OD Next task input snapshot changed before cleanup could claim it.',
+      'OD_NEXT_INPUT_SNAPSHOT_TOCTOU',
+    );
+  }
+  removeWritableTreeWithoutFollowingLinks(claimedSnapshotDir);
 }
 
 function sameIdentity(
@@ -1005,12 +1033,14 @@ export function removeOdNextRunInputProjection(
 export function removeOdNextTaskInputSnapshot(
   descriptor: OdNextTaskInputSnapshotDescriptor | null | undefined,
   snapshotsRoot: string,
+  hooks?: SnapshotCleanupHooks,
 ): void {
   if (!descriptor) return;
   removeManagedSnapshotDir({
     snapshotsRoot,
     taskExecutionId: descriptor.taskExecutionId,
     snapshotDir: descriptor.snapshotDir,
+    ...(hooks ? { hooks } : {}),
   });
 }
 

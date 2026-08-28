@@ -140,6 +140,32 @@ describe('OD Next task-scoped input snapshots', () => {
     expect(readFileSync(sentinel, 'utf8')).toBe('keep');
   });
 
+  it('does not traverse a junction swapped in immediately before cleanup claims the snapshot', () => {
+    const f = fixture();
+    const snapshotDir = path.join(f.snapshotsRoot, 'odnext_cleanup_swap');
+    const displacedSnapshotDir = `${snapshotDir}.displaced`;
+    const outside = path.join(f.root, 'outside-swap-target');
+    mkdirSync(snapshotDir, { recursive: true });
+    writeFileSync(path.join(snapshotDir, 'managed.txt'), 'managed');
+    mkdirSync(outside);
+    const sentinel = path.join(outside, 'sentinel.txt');
+    writeFileSync(sentinel, 'keep');
+
+    expect(() => removeOdNextTaskInputSnapshot({
+      taskExecutionId: 'odnext_cleanup_swap',
+      snapshotDir,
+      manifestSha256: 'd'.repeat(64),
+    }, f.snapshotsRoot, {
+      beforeClaimSnapshot: (target) => {
+        renameSync(target, displacedSnapshotDir);
+        symlinkSync(outside, target, 'junction');
+      },
+    })).toThrow(/changed before cleanup could claim/);
+
+    expect(readFileSync(sentinel, 'utf8')).toBe('keep');
+    expect(readFileSync(path.join(displacedSnapshotDir, 'managed.txt'), 'utf8')).toBe('managed');
+  });
+
   it('freezes ordered document/image bytes and survives source mutation or deletion', () => {
     const f = fixture();
     writeFileSync(path.join(f.projectRoot, 'brief.pdf'), Buffer.from('%PDF-1.7\nbrief'));
