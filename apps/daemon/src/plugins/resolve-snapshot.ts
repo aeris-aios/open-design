@@ -88,6 +88,13 @@ export interface ResolveSnapshotInput {
    */
   requireSnapshotProjectMatch?: boolean | undefined;
   /**
+   * Whether a request that names no plugin or snapshot may implicitly reuse
+   * the project's durable pin. Run creation normally enables this behavior;
+   * callers that have rejected a stale daemon-owned selection can disable it
+   * so that rejection cannot fall through to an unrelated historical pin.
+   */
+  allowProjectPinFallback?: boolean | undefined;
+  /**
    * Internal Coordinator-only activation. This is not parsed from an HTTP or
    * CLI request body, so ordinary catalog/apply paths stay fail closed.
    */
@@ -195,7 +202,12 @@ export function resolvePluginSnapshot(input: ResolveSnapshotInput): ResolveSnaps
   // conversation create that ran the plugin), reuse it. This is what
   // makes ChatComposer's "start a run" path work after the user picked a
   // plugin in NewProjectPanel — the body only carries `projectId`.
-  if (!fields.pluginId && !fields.snapshotId && input.projectId) {
+  if (
+    !fields.pluginId
+    && !fields.snapshotId
+    && input.projectId
+    && input.allowProjectPinFallback !== false
+  ) {
     const pinned = readProjectPinnedSnapshotId(input.db, input.projectId);
     if (pinned) {
       fields.snapshotId = pinned;
