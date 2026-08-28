@@ -2831,12 +2831,18 @@ function FormBlock({
     return { items, visualItems };
   }, [form, submittedFromHistory, visualStyleContext]);
   useEffect(() => {
-    const outstanding = readInlineQuestionFormSubmitted(formKey);
+    const syncSubmitLock = () => {
+      const outstanding = readInlineQuestionFormSubmitted(formKey);
+      submittingRef.current = outstanding;
+      setSubmitting(outstanding);
+    };
     setDraftAnswers(readInlineQuestionFormDraft(formKey));
     setUploadError(null);
-    submittingRef.current = outstanding;
-    setSubmitting(outstanding);
+    syncSubmitLock();
     pendingUploadCleanupRef.current = [];
+    // A submit started before this mount can still be refused after it, and
+    // that refusal is the user's only way back into the form.
+    return subscribeInlineQuestionFormSubmitted(formKey, syncSubmitLock);
   }, [formKey]);
   useEffect(() => {
     if (!submittedFromHistory) return;
@@ -2949,8 +2955,24 @@ function FormBlock({
       fileSubmissions: QuestionFormFileSubmission[] = [],
     ) => {
       if (submittingRef.current) return;
-      submittingRef.current = true;
-      setSubmitting(true);
+      // The occurrence is locked the moment the answer leaves the form, not
+      // when the host finally settles it. Every await below — rolling back a
+      // previous upload, uploading this answer's files, and above all the
+      // host's own send (which may sit in a pre-run gate or park in a busy
+      // conversation's queue) — is a window the user can leave the project
+      // through. A lock written only after those awaits is precisely the lock
+      // the remount rebuilds as "never submitted".
+      const beginSubmission = () => {
+        markInlineQuestionFormSubmitted(formKey);
+        submittingRef.current = true;
+        setSubmitting(true);
+      };
+      const releaseSubmitLock = () => {
+        clearInlineQuestionFormSubmitted(formKey);
+        submittingRef.current = false;
+        setSubmitting(false);
+      };
+      beginSubmission();
       if (
         pendingUploadCleanupRef.current.length > 0 &&
         !(await rollbackPendingUploads())
@@ -2958,8 +2980,7 @@ function FormBlock({
         setUploadError(
           t("questions.uploadFailed", { failed: Math.max(1, pendingUploadCleanupRef.current.length) }),
         );
-        submittingRef.current = false;
-        setSubmitting(false);
+        releaseSubmitLock();
         return;
       }
       let attachments: ChatAttachment[] = [];
@@ -2968,8 +2989,7 @@ function FormBlock({
       if (fileSubmissions.length > 0) {
         if (!projectId) {
           setUploadError(t("questions.uploadNeedsProject"));
-          submittingRef.current = false;
-          setSubmitting(false);
+          releaseSubmitLock();
           return;
         }
         const flatFiles = fileSubmissions.flatMap((submission) =>
@@ -2997,8 +3017,7 @@ function FormBlock({
           await rollbackPendingUploads();
           const detail = result.error ? ` (${result.error})` : "";
           setUploadError(t("questions.uploadFailed", { failed: flatFiles.length }) + detail);
-          submittingRef.current = false;
-          setSubmitting(false);
+          releaseSubmitLock();
           return;
         }
         attachments = result.uploaded.map((attachment, index) => ({
@@ -3036,11 +3055,6 @@ function FormBlock({
           project_id: projectId,
         });
       }
-      const releaseSubmitLock = () => {
-        clearInlineQuestionFormSubmitted(formKey);
-        submittingRef.current = false;
-        setSubmitting(false);
-      };
       const rejectSubmission = async () => {
         if (attachments.length > 0) {
           pendingUploadCleanupRef.current = attachments;
@@ -3055,7 +3069,6 @@ function FormBlock({
         releaseSubmitLock();
       };
       const acceptSubmission = () => {
-        markInlineQuestionFormSubmitted(formKey);
         clearInlineQuestionFormDraft(formKey);
         setDraftAnswers(undefined);
       };
@@ -3269,10 +3282,18 @@ function inlineQuestionFormSubmittedStorageKey(
  * switch, a virtualized row recycling — rebuilds it as "never submitted" while
  * the first answer is still being persisted or is still parked in the busy
  * conversation's queue. The occurrence key (project + conversation + assistant
- * message + form id) is the identity the lock belongs to, so it is recorded
- * next to the draft and outlives the component. Only an explicit submit
- * failure, or the answer surfacing in history, releases it.
+ * message + form id) is the identity the lock belongs to, so it is held here
+ * instead of in the component, taken the moment the answer leaves the form,
+ * and released only by an explicit submit failure or by the answer surfacing
+ * in history.
+ *
+ * Because the submit that takes the lock can outlive the component that
+ * started it, a release has to reach whichever form is mounted by the time it
+ * lands — hence the listeners, without which an answer refused after the user
+ * navigated away would leave the form locked with no way back.
  */
+const inlineQuestionFormSubmissionListeners = new Map<string, Set<() => void>>();
+
 function readInlineQuestionFormSubmitted(formKey: string | null): boolean {
   const key = inlineQuestionFormSubmittedStorageKey(formKey);
   if (!key || typeof window === "undefined") return false;
@@ -3283,6 +3304,29 @@ function readInlineQuestionFormSubmitted(formKey: string | null): boolean {
   }
 }
 
+function subscribeInlineQuestionFormSubmitted(
+  formKey: string | null,
+  listener: () => void,
+): () => void {
+  const key = inlineQuestionFormSubmittedStorageKey(formKey);
+  if (!key) return () => {};
+  const listeners = inlineQuestionFormSubmissionListeners.get(key) ?? new Set();
+  listeners.add(listener);
+  inlineQuestionFormSubmissionListeners.set(key, listeners);
+  return () => {
+    listeners.delete(listener);
+    if (listeners.size === 0) {
+      inlineQuestionFormSubmissionListeners.delete(key);
+    }
+  };
+}
+
+function notifyInlineQuestionFormSubmitted(key: string): void {
+  const listeners = inlineQuestionFormSubmissionListeners.get(key);
+  if (!listeners) return;
+  for (const listener of [...listeners]) listener();
+}
+
 function markInlineQuestionFormSubmitted(formKey: string | null): void {
   const key = inlineQuestionFormSubmittedStorageKey(formKey);
   if (!key || typeof window === "undefined") return;
@@ -3291,6 +3335,7 @@ function markInlineQuestionFormSubmitted(formKey: string | null): void {
   } catch {
     // Without storage the lock degrades to this mount, as it was before.
   }
+  notifyInlineQuestionFormSubmitted(key);
 }
 
 function clearInlineQuestionFormSubmitted(formKey: string | null): void {
@@ -3301,6 +3346,7 @@ function clearInlineQuestionFormSubmitted(formKey: string | null): void {
   } catch {
     // A stale lock only blocks re-answering one already-sent form.
   }
+  notifyInlineQuestionFormSubmitted(key);
 }
 
 function QuestionFormLoading() {
