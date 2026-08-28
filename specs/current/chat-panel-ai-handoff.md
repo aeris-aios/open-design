@@ -29,6 +29,22 @@
 **判 CI 红的规矩(踩过)**:OD 的「检查全绿」不可信,必须点名核心 job;而且要 **base 绿 → PR 红** 才算本分支阻塞。
 先跑 `gh run view --job <id> --log-failed`,再和 `main` 的同名 job 对照。
 
+### ⚠️ 两条结构性约束(我都是撞上去才知道的)
+
+**一、`needs-validation` 标签在 PR 上,不能合、不能入队。** 它是人工 QA 门,由 Looper 外部 bot 加,
+**摘掉会被自动加回来** —— 正规开关是 `skip-validation`。当前 `mergeState: BLOCKED` 有它一份。
+
+**二、beta 打包的 `publish=true` 只允许在 main 的当前提交上跑。** 功能分支上必然失败:
+
+```
+Shared beta publication is restricted to the current main commit
+(35edb37d…); got 50c3153b…. Re-run this ref with publish=false for
+dogfood artifacts.
+```
+
+所以**这个分支能出的只有 `publish=false` 的自用包**(不进 R2、不推给 beta 用户)。
+运行中:run `33132966714`。要真正发布给 beta 用户,只能等合进 main 之后从 main 触发。
+
 ---
 
 ## 1. 交付物在哪
@@ -238,6 +254,7 @@ pnpm --filter @open-design/daemon build; echo "EXIT=$?"
 
 ## 9. 下一步建议顺序
 
+0. **拿 `publish=false` 那个包给用户**(run `33132966714`)—— 我承诺过发链接但没兑现:`publish=true` 那次因上面第二条约束失败了
 1. **查 PR #7518 那 5 个红**,从 `Preflight` 开始;每条都和 `main` 的同名 job 对照,分清「本分支引入」还是「base 就红」
 2. ~~验证 critique 测试~~ **已做**:`tests/chat-project-skill-critique-label.test.ts` 在 PR 分支上单跑绿(1/1,4.6s)
 3. **拿 §3 那六条去问用户**,不要自己决定
