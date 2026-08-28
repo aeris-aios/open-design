@@ -140,6 +140,41 @@ export type OdNextTaskInputCleanupPhase =
   | 'run-claim'
   | 'non-ready';
 
+/**
+ * Remove an immutable managed tree without following links. Windows maps the
+ * snapshot's read-only modes to the ReadOnly attribute, so regular files and
+ * directories must be made writable before removal. Links and junctions are
+ * unlinked as entries and are never enumerated.
+ */
+function removeWritableTreeWithoutFollowingLinks(target: string): void {
+  let stat: fs.Stats;
+  try {
+    stat = fs.lstatSync(target);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return;
+    throw error;
+  }
+  if (stat.isSymbolicLink()) {
+    fs.unlinkSync(target);
+    return;
+  }
+  if (stat.isDirectory()) {
+    fs.chmodSync(target, 0o700);
+    for (const entry of fs.readdirSync(target)) {
+      removeWritableTreeWithoutFollowingLinks(path.join(target, entry));
+    }
+    fs.rmdirSync(target);
+    return;
+  }
+  if (!stat.isFile()) {
+    throw new OdNextTaskInputSnapshotError(
+      'OD Next task input cleanup refuses non-file entries.',
+    );
+  }
+  fs.chmodSync(target, 0o600);
+  fs.unlinkSync(target);
+}
+
 function removeManagedSnapshotDir(input: {
   snapshotsRoot: string;
   taskExecutionId: string;
@@ -222,11 +257,7 @@ function removeManagedSnapshotDir(input: {
     );
   }
   input.hooks?.beforeRemoveClaimedSnapshot?.(claimedSnapshotDir);
-  // Delegate recursive removal to Node's platform implementation. In
-  // particular, Windows removes a junction/reparse entry itself rather than
-  // resolving it as a directory to enumerate, and its EPERM recovery clears
-  // ReadOnly before retrying the removal.
-  fs.rmSync(claimedSnapshotDir, { recursive: true, force: true, maxRetries: 3 });
+  removeWritableTreeWithoutFollowingLinks(claimedSnapshotDir);
 }
 
 function sameIdentity(
