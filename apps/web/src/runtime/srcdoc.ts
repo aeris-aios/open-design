@@ -3777,12 +3777,18 @@ function injectDeckBridge(
     if (navigateViaDeckStage(list, 'go', target)) return;
     if (isScrollDeck(list)) { scrollGo(target); return; }
     if (activeIndex(list) === target) { report(); return; }
-    goViaArtifactIndex(target, navigationSequence, function(moved){
+    // A thumbnail selection and the footer prev/next controls must enter the
+    // artifact through the same navigation path. Trying nav dots/hash routes
+    // first makes an otherwise keyboard-responsive deck wait out the direct
+    // index retry deadline before the bridge finally dispatches the keys that
+    // the footer uses immediately. Keep direct-index navigation as a fallback
+    // for dot/hash-only decks, but prefer the proven keyboard path.
+    stepToIndexViaKeys(target, navigationSequence, function(stepped){
       if (navigationSequence !== odNavigationSequence) return;
-      if (moved) { report(); return; }
-      stepToIndexViaKeys(target, navigationSequence, function(stepped){
+      if (stepped) { report(); return; }
+      goViaArtifactIndex(target, navigationSequence, function(moved){
         if (navigationSequence !== odNavigationSequence) return;
-        if (stepped) { report(); return; }
+        if (moved) { report(); return; }
         var now = slides();
         if (canSetActive(now) && setActive(target)) return;
         if (transformGo(target)) return;

@@ -334,21 +334,24 @@ describe('deck bridge - keyboard paging keeps page counters in sync', () => {
     expect(slideStatesOf(parentPostMessage).at(-1)).toMatchObject({ active: 1, count: 3 });
   });
 
-  it('jumps directly to a selected thumbnail without exposing intermediate slides', async () => {
+  it('routes a selected thumbnail through the same keyboard path as footer paging', () => {
     const { win, parentPostMessage, track, pagerCur, visited } = setupCustomCounterDeck({
-      navigationLockMs: 120,
       directIndexControls: true,
+      listenOn: 'window',
     });
     visited.length = 0;
 
     win.dispatchEvent(new win.MessageEvent('message', {
       data: { type: 'od:slide', action: 'go', index: 2 },
     }));
-    await new Promise<void>((resolve) => win.setTimeout(resolve, 100));
+
+    // The keyboard handler is synchronous, so the bridge reaches the target
+    // in the same task without entering the 1.5s direct-index retry path.
+    // Both steps happen before the browser can paint an intermediate slide.
     expect(track.style.transform).toBe('translateX(-200vw)');
     expect(pagerCur.textContent).toBe('3');
     expect(win.document.querySelectorAll('.slide')[2]?.classList.contains('is-active')).toBe(true);
-    expect(visited).toEqual([2]);
+    expect(visited).toEqual([1, 2]);
     expect(slideStatesOf(parentPostMessage).at(-1)).toMatchObject({ active: 2, count: 3 });
   });
 
@@ -420,7 +423,9 @@ describe('deck bridge - keyboard paging keeps page counters in sync', () => {
     expect(track.style.transform).toBe('translateX(-0vw)');
     expect(pagerCur.textContent).toBe('1');
     expect(win.document.querySelectorAll('.slide')[0]?.classList.contains('is-active')).toBe(true);
-    expect(visited).toEqual([2, 0]);
+    // The second selection arrives before the document-listener probe has
+    // moved at all, so it cancels the stale jump and keeps slide 1 selected.
+    expect(visited).toEqual([]);
     expect(slideStatesOf(parentPostMessage).at(-1)).toMatchObject({ active: 0, count: 3 });
   });
 
