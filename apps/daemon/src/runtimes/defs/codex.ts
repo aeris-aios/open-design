@@ -149,6 +149,11 @@ const CODEX_SHELL_ENVIRONMENT_INCLUDE_KEYS = [
   'LOCALAPPDATA',
   'HOMEDRIVE',
   'HOMEPATH',
+  // Packaged macOS uses Electron's helper executable as its Node-compatible
+  // runtime. The helper only behaves as Node while this flag survives into
+  // Codex's tool shell; without it every OD_NODE_BIN + OD_BIN wrapper exits
+  // before the CLI script can run.
+  'ELECTRON_RUN_AS_NODE',
   'OD_BIN',
   'OD_HYPERFRAMES_BIN',
   'OD_NODE_BIN',
