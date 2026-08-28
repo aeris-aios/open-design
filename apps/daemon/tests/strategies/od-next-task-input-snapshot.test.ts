@@ -197,6 +197,42 @@ describe('OD Next task-scoped input snapshots', () => {
       .toBe('managed');
   });
 
+  it.runIf(process.platform !== 'win32')(
+    'keeps the POSIX claim bound to the root opened before a post-check root swap',
+    () => {
+      const f = fixture();
+      const taskExecutionId = 'odnext_posix_claim_root_swap';
+      const snapshotDir = path.join(f.snapshotsRoot, taskExecutionId);
+      const displacedRoot = `${f.snapshotsRoot}.displaced`;
+      const outsideRoot = path.join(f.root, 'outside-posix-claim-root-swap');
+      const outsideSnapshotDir = path.join(outsideRoot, taskExecutionId);
+      mkdirSync(snapshotDir, { recursive: true });
+      writeFileSync(path.join(snapshotDir, 'managed.txt'), 'managed');
+      mkdirSync(outsideSnapshotDir, { recursive: true });
+      const sentinel = path.join(outsideSnapshotDir, 'sentinel.txt');
+      writeFileSync(sentinel, 'keep');
+
+      expect(() => removeOdNextTaskInputSnapshot({
+        taskExecutionId,
+        snapshotDir,
+        manifestSha256: '2'.repeat(64),
+      }, f.snapshotsRoot, {
+        beforeClaimSnapshot: (target) => {
+          renameSync(path.dirname(target), displacedRoot);
+          symlinkSync(outsideRoot, f.snapshotsRoot, 'dir');
+        },
+      })).toThrow(/changed before cleanup could claim/);
+
+      expect(readFileSync(sentinel, 'utf8')).toBe('keep');
+      expect(existsSync(outsideSnapshotDir)).toBe(true);
+      const claimedEntry = readdirSync(displacedRoot)
+        .find((entry) => entry.startsWith('.deleting-odnext_posix_claim_root_swap-'));
+      expect(claimedEntry).toBeDefined();
+      expect(readFileSync(path.join(displacedRoot, claimedEntry!, 'managed.txt'), 'utf8'))
+        .toBe('managed');
+    },
+  );
+
   it('does not traverse a junction swapped in immediately before removing the claimed snapshot', () => {
     const f = fixture();
     const snapshotDir = path.join(f.snapshotsRoot, 'odnext_claimed_cleanup_swap');

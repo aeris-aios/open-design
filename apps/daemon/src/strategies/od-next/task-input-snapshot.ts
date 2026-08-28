@@ -235,25 +235,51 @@ function removeManagedSnapshotDir(input: {
     snapshotsRoot,
     `.deleting-${taskExecutionId}-${randomBytes(16).toString('hex')}`,
   );
-  input.hooks?.beforeClaimSnapshot?.(snapshotDir);
-  fs.renameSync(snapshotDir, claimedSnapshotDir);
-  const rootAfterClaim = fs.lstatSync(snapshotsRoot, { bigint: true });
-  const claimedStat = fs.lstatSync(claimedSnapshotDir, { bigint: true });
-  if (
-    rootAfterClaim.isSymbolicLink()
-    || !rootAfterClaim.isDirectory()
-    || !sameIdentity(rootStat, rootAfterClaim)
-    || claimedStat.isSymbolicLink()
-    || !claimedStat.isDirectory()
-    || !sameIdentity(snapshotStat, claimedStat)
-  ) {
-    throw new OdNextTaskInputSnapshotError(
-      'OD Next task input snapshot changed before cleanup could claim it.',
-      'OD_NEXT_INPUT_SNAPSHOT_TOCTOU',
+  const rootFd = process.platform === 'win32'
+    ? undefined
+    : fs.openSync(
+      snapshotsRoot,
+      fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW,
     );
+  try {
+    const boundRoot = rootFd === undefined
+      ? snapshotsRoot
+      : process.platform === 'linux' ? `/proc/self/fd/${rootFd}` : `/dev/fd/${rootFd}`;
+    if (rootFd !== undefined) {
+      const openedRootStat = fs.fstatSync(rootFd, { bigint: true });
+      const boundRootStat = fs.statSync(boundRoot, { bigint: true });
+      if (!sameIdentity(rootStat, openedRootStat) || !sameIdentity(rootStat, boundRootStat)) {
+        throw new OdNextTaskInputSnapshotError(
+          'OD Next snapshot root changed before cleanup could open it.',
+          'OD_NEXT_INPUT_SNAPSHOT_TOCTOU',
+        );
+      }
+    }
+
+    input.hooks?.beforeClaimSnapshot?.(snapshotDir);
+    const boundSnapshotDir = path.join(boundRoot, taskExecutionId);
+    const boundClaimedSnapshotDir = path.join(boundRoot, path.basename(claimedSnapshotDir));
+    fs.renameSync(boundSnapshotDir, boundClaimedSnapshotDir);
+    const rootAfterClaim = fs.lstatSync(snapshotsRoot, { bigint: true });
+    const claimedStat = fs.lstatSync(boundClaimedSnapshotDir, { bigint: true });
+    if (
+      rootAfterClaim.isSymbolicLink()
+      || !rootAfterClaim.isDirectory()
+      || !sameIdentity(rootStat, rootAfterClaim)
+      || claimedStat.isSymbolicLink()
+      || !claimedStat.isDirectory()
+      || !sameIdentity(snapshotStat, claimedStat)
+    ) {
+      throw new OdNextTaskInputSnapshotError(
+        'OD Next task input snapshot changed before cleanup could claim it.',
+        'OD_NEXT_INPUT_SNAPSHOT_TOCTOU',
+      );
+    }
+    input.hooks?.beforeRemoveClaimedSnapshot?.(claimedSnapshotDir);
+    removeSnapshotTreeWithPlatformPrimitive(boundClaimedSnapshotDir);
+  } finally {
+    if (rootFd !== undefined) fs.closeSync(rootFd);
   }
-  input.hooks?.beforeRemoveClaimedSnapshot?.(claimedSnapshotDir);
-  removeSnapshotTreeWithPlatformPrimitive(claimedSnapshotDir);
 }
 
 function sameIdentity(
