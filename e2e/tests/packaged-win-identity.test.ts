@@ -8,7 +8,7 @@ describe("packaged windows smoke identity", () => {
       namespace: "release-stable-win",
       releaseVersion: "0.8.0-prerelease.2",
     })).toEqual({
-      displayName: "Open Design Prerelease",
+      displayName: "OpenDesign Prerelease",
       namespaceToken: "release-stable-win",
     });
     expect(releaseAppVersionArgs("0.8.0-prerelease.2")).toEqual(["--app-version", "0.8.0-prerelease.2"]);
@@ -19,14 +19,14 @@ describe("packaged windows smoke identity", () => {
       namespace: "release-stable-win",
       releaseVersion: "0.8.0",
     })).toEqual({
-      displayName: "Open Design",
+      displayName: "OpenDesign",
       namespaceToken: "release-stable-win",
     });
     expect(resolvePackagedWinInstallIdentity({
       namespace: "default",
       releaseVersion: undefined,
     })).toEqual({
-      displayName: "Open Design",
+      displayName: "OpenDesign",
       namespaceToken: "default",
     });
   });
@@ -35,11 +35,11 @@ describe("packaged windows smoke identity", () => {
     expect(resolvePackagedWinInstallIdentity({
       namespace: "release-stable-win",
       releaseVersion: "0.8.0-preview.1",
-    }).displayName).toBe("Open Design Preview");
+    }).displayName).toBe("OpenDesign Preview");
     expect(resolvePackagedWinInstallIdentity({
       namespace: "release-beta-win",
       releaseVersion: undefined,
-    }).displayName).toBe("Open Design Beta");
+    }).displayName).toBe("OpenDesign Beta");
   });
 
   it("[P2] keeps ad hoc namespaces isolated from release channel identities", () => {
