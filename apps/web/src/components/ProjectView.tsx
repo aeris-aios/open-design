@@ -1175,24 +1175,22 @@ function homeAutoSendIdentity(projectId: string): Pick<
  * A form rendered without a known occurrence (no source message, no form id)
  * keeps the per-send random identity it has always had.
  *
- * Only the RUN is keyed this way, deliberately. `handleSend` persists the user
- * row before the daemon answers, so a deterministic `userMessageId` would let
- * a second tab answering the same form differently upsert the first tab's
- * accepted answer and then lose the run to `createOrReuse` — leaving a
- * transcript that shows one answer and a run that executed another. A
- * duplicate row in that rare two-tab race is a cosmetic cost; a transcript
- * that disagrees with what ran is a corrupt one. Making the first answer
- * authoritative for the row as well needs the check and the write to happen at
- * one authority (the daemon), not in the client before it has an answer.
+ * The row and the run are claimed by two different authorities, both of which
+ * decide on this identity. `handleSend` persists the user row before the
+ * daemon has answered, so the row's exactly-once cannot be decided here: the
+ * write goes out `createOnly`, and the daemon — where the check and the write
+ * are one operation — keeps the first accepted answer and returns it. The run
+ * is claimed by `createOrReuse` on the same key. A later submitter therefore
+ * adds neither a second answer nor a second run, and adopts the answer that
+ * actually ran instead of displaying one no run ever saw.
  */
 function questionFormAnswerIdentity(
   sourceAssistantMessageId: string | undefined,
   formId: string | undefined,
-): Pick<ProjectChatSendMeta, 'clientRequestId'> {
+): Pick<ProjectChatSendMeta, 'clientRequestId' | 'userMessageId'> {
   if (!sourceAssistantMessageId || !formId) return {};
-  return {
-    clientRequestId: `qf-answer-${stableIdentityDigest(`${sourceAssistantMessageId}:${formId}`)}`,
-  };
+  const answerId = `qf-answer-${stableIdentityDigest(`${sourceAssistantMessageId}:${formId}`)}`;
+  return { clientRequestId: answerId, userMessageId: `${answerId}-user` };
 }
 
 function autoSendPromptKey(projectId: string): string {
@@ -7220,7 +7218,29 @@ export function ProjectView({
       setArtifact(null);
       savedArtifactRef.current = null;
       onTouchProject();
-      if (!retryTarget) persistMessage(userMsg);
+      if (!retryTarget) {
+        // A send whose id was decided from its occupancy (an inline question
+        // form's answer) claims that row once: the daemon keeps whichever
+        // answer landed first and hands it back, and this view adopts it so
+        // the transcript shows the answer the surviving run actually read.
+        if (meta?.userMessageId) {
+          void Promise.resolve(
+            saveMessage(project.id, runConversationId, userMsg, {
+              createOnly: true,
+              workspaceContext: projectRunWorkspaceContext,
+            }),
+          ).then((stored) => {
+            if (!stored || stored.content === userMsg.content) return;
+            setMessages((current) =>
+              current.map((message) =>
+                message.id === userMsg.id ? { ...message, content: stored.content } : message,
+              ),
+            );
+          });
+        } else {
+          persistMessage(userMsg);
+        }
+      }
       // Intentionally do NOT persist `assistantMsg` here. In daemon mode it
       // starts as runStatus='running' with no runId, which the source-level
       // guard treats as a phantom — the first DB write happens inside

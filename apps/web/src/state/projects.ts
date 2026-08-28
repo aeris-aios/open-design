@@ -1494,6 +1494,8 @@ export async function listMessages(
 
 export interface SaveMessageOptions {
   telemetryFinalized?: boolean;
+  /** Claim the row once: the daemon keeps an existing row and returns it. */
+  createOnly?: boolean;
   workspaceContext?: WorkspaceCollabContext | null;
   // Set during page-unload paths (pagehide / visibilitychange→hidden) so
   // the in-flight PUT survives even if the document tears down before the
@@ -1507,12 +1509,14 @@ export async function saveMessage(
   conversationId: string,
   message: ChatMessage,
   options: SaveMessageOptions = {},
-): Promise<void> {
+): Promise<ChatMessage | null> {
   try {
-    const body = options.telemetryFinalized
-      ? { ...message, telemetryFinalized: true }
-      : message;
-    await fetch(
+    const body = {
+      ...message,
+      ...(options.telemetryFinalized ? { telemetryFinalized: true } : {}),
+      ...(options.createOnly ? { createOnly: true } : {}),
+    };
+    const response = await fetch(
       `/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(message.id)}`,
       {
         method: 'PUT',
@@ -1526,8 +1530,14 @@ export async function saveMessage(
         ...(options.keepalive ? { keepalive: true } : {}),
       },
     );
+    if (!response.ok) return null;
+    // The stored row, which a create-only claim may have kept from an earlier
+    // writer. Callers that care compare it against what they sent.
+    const saved = (await response.json()) as { message?: ChatMessage };
+    return saved.message ?? null;
   } catch {
     // best-effort persistence — UI keeps the message in-memory either way
+    return null;
   }
 }
 

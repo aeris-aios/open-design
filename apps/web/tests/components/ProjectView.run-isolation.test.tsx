@@ -499,6 +499,12 @@ vi.mock('../../src/components/ChatPane', () => ({
             )
             .join('\n')}
         </output>
+        <output data-testid="user-messages">
+          {(messages ?? [])
+            .filter((message) => message.role === 'user')
+            .map((message) => message.content)
+            .join('\n')}
+        </output>
         <output data-testid="attached-comment-count">{attached.length}</output>
         {retryTarget && onRetry ? (
           <button type="button" data-testid="chat-retry" onClick={() => onRetry(retryTarget)}>
@@ -1700,13 +1706,33 @@ describe('ProjectView conversation run isolation', () => {
     // send onto the first run instead of spawning another.
     expect(first.clientRequestId).toBeTruthy();
     expect(second.clientRequestId).toBe(first.clientRequestId);
-    // The message rows are NOT keyed on it. `handleSend` writes the user row
-    // before the daemon answers, so a shared id would let a second answer
-    // overwrite an accepted one and still lose the run to the first — a
-    // transcript disagreeing with what actually ran.
-    expect(first.userMessageId).toBeTruthy();
-    expect(second.userMessageId).not.toBe(first.userMessageId);
-    expect(second.assistantMessageId).not.toBe(first.assistantMessageId);
+    // The answer row carries the same identity and is written `createOnly`,
+    // so the daemon — not this view — decides which answer survives.
+    expect(second.userMessageId).toBe(first.userMessageId);
+    const claims = saveMessage.mock.calls.filter(
+      (call) => (call[3] as { createOnly?: boolean } | undefined)?.createOnly === true,
+    );
+    expect(claims).toHaveLength(2);
+    expect(claims.every((call) => (call[2] as { id: string }).id === first.userMessageId)).toBe(true);
+  });
+
+  it('adopts the answer that actually ran when another submitter claimed the occurrence first', async () => {
+    // The losing tab must not keep showing an answer no run ever read.
+    conversationAMessages = [];
+    saveMessage.mockImplementation(async (_p: string, _c: string, message: ChatMessage) => ({
+      ...message,
+      content: '[form answers — travel_app_brief]\n- Audience: Founders',
+    }));
+
+    renderProjectView();
+    await waitFor(() => expect(screen.getByTestId('active-conversation').textContent).toBe('conv-a'));
+    await waitFor(() => expect(screen.getByTestId('send-message')).toHaveProperty('disabled', false));
+    fireEvent.click(screen.getByTestId('submit-question-form'));
+
+    await waitFor(() =>
+      expect(screen.getByTestId('user-messages').textContent).toContain('Audience: Founders'),
+    );
+    expect(screen.getByTestId('user-messages').textContent).not.toContain('Audience: Designers');
   });
 
   it('reports a question-form answer parked in the queue as accepted', async () => {

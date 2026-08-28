@@ -952,21 +952,23 @@ async function runQuestionFormSingleAnswerFlow(
   await seedQuestionFormMessage(page);
   const { projectId, conversationId } = await getCurrentProjectContext(page);
 
-  const answersFor = async (): Promise<string[]> => {
+  const messagesFor = async (): Promise<Array<{ id: string; role: string; content: string }>> => {
     const response = await page.request.get(
       `/api/projects/${projectId}/conversations/${conversationId}/messages`,
     );
     expect(response.ok()).toBeTruthy();
     const { messages } = (await response.json()) as {
-      messages: Array<{ role: string; content: string }>;
+      messages: Array<{ id: string; role: string; content: string }>;
     };
-    return messages
+    return messages;
+  };
+  const answersFor = async (): Promise<string[]> =>
+    (await messagesFor())
       .filter(
         (message) =>
           message.role === 'user' && message.content.includes('[form answers — discovery]'),
       )
       .map((message) => message.content);
-  };
 
   const form = page.locator('.question-form').first();
   await expect(form).toBeVisible();
@@ -997,6 +999,32 @@ async function runQuestionFormSingleAnswerFlow(
   await expectWorkspaceReady(page);
   await expect(page.getByTestId('question-form-summary')).toBeVisible();
   await expect(page.locator('.question-form')).toHaveCount(0);
+  expect(await answersFor()).toHaveLength(1);
+
+  // A second submitter for the same occurrence — another tab, which never saw
+  // this one's form lock — reaches the daemon directly. The occurrence claim
+  // is decided where the check and the write are one operation, so the stored
+  // answer stays the one the surviving run read.
+  const stored = await messagesFor();
+  const answerRow = stored.find(
+    (message) =>
+      message.role === 'user' && message.content.includes('[form answers — discovery]'),
+  );
+  expect(answerRow).toBeTruthy();
+  const claim = await page.request.put(
+    `/api/projects/${projectId}/conversations/${conversationId}/messages/${answerRow!.id}`,
+    {
+      data: {
+        role: 'user',
+        content: '[form answers — discovery]\n- Visual tone: Editorial / magazine',
+        createOnly: true,
+        createdAt: Date.now(),
+      },
+    },
+  );
+  expect(claim.ok(), `create-only claim: ${await claim.text()}`).toBeTruthy();
+  const claimed = (await claim.json()) as { message: { content: string } };
+  expect(claimed.message.content).toBe(answerRow!.content);
   expect(await answersFor()).toHaveLength(1);
 }
 
