@@ -68,12 +68,38 @@ function stubFetch(options: Stub = {}) {
   return { writes, fetchMock };
 }
 
+/**
+ * Stands in for `SettingsDialog`, which owns one shared save indicator for
+ * every section. `supersede()` is another section taking it over.
+ */
+function autosaveHost(onAutosaveStatus?: (s: 'saving' | 'saved' | 'error' | 'idle') => void) {
+  let epoch = 0;
+  return {
+    supersede: () => { epoch += 1; },
+    controller: {
+      claim: () => {
+        epoch += 1;
+        onAutosaveStatus?.('saving');
+        return epoch;
+      },
+      settle: (claim: number, status: 'saved' | 'error' | 'idle') => {
+        if (claim !== epoch) return;
+        onAutosaveStatus?.(status);
+      },
+    },
+  };
+}
+
 function renderSection(onAutosaveStatus?: (s: 'saving' | 'saved' | 'error' | 'idle') => void) {
-  return render(
-    <I18nProvider initial="en">
-      <LabsSection onAutosaveStatus={onAutosaveStatus} />
-    </I18nProvider>,
-  );
+  const host = autosaveHost(onAutosaveStatus);
+  return {
+    ...render(
+      <I18nProvider initial="en">
+        <LabsSection autosave={host.controller} />
+      </I18nProvider>,
+    ),
+    host,
+  };
 }
 
 function switchEl(): HTMLButtonElement {
@@ -499,6 +525,30 @@ describe('LabsSection', () => {
 
       await waitFor(() => expect(onAutosaveStatus).toHaveBeenCalledWith('error'));
       expect(track).not.toHaveBeenCalled();
+    });
+
+    it('cannot take the shared save indicator back from a newer section', async () => {
+      // The indicator belongs to the dialog, not to this section. A Labs write
+      // that lands after the user has moved on and started a newer save must
+      // not relabel that save's outcome — nor force it to idle three seconds
+      // later, which is worse than a stuck pill.
+      const { gate, release } = heldWrite();
+      const { writes } = stubFetch({ writeGate: gate });
+      const onAutosaveStatus = vi.fn();
+      const { host } = renderSection(onAutosaveStatus);
+      await waitFor(() => expect(switchEl().getAttribute('aria-disabled')).toBe('false'));
+
+      fireEvent.click(switchEl());
+      await waitFor(() => expect(writes).toHaveLength(1));
+      cleanup();
+      // Another Settings section takes the indicator for a newer edit.
+      host.supersede();
+      onAutosaveStatus.mockClear();
+      release();
+
+      // The toggle still reports — the preference did land.
+      await waitFor(() => expect(track).toHaveBeenCalledTimes(1));
+      expect(onAutosaveStatus).not.toHaveBeenCalled();
     });
 
     it('keeps an opt-out paired with exactly one reason row', async () => {

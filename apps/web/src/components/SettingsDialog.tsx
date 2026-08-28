@@ -3179,6 +3179,29 @@ export function SettingsDialog({
   // = recent successful sync, 'error' = recent failure.
   const [autosaveStatus, setAutosaveStatus] =
     useState<'idle' | 'pending' | 'saving' | 'saved' | 'error'>('idle');
+  // The indicator is one shared surface: every section drives this same pill.
+  // A section whose write outlives it — Labs writes immediately and can settle
+  // after unmount — must not relabel a newer save's outcome, so every writer
+  // takes a claim and only the current claim may settle. Comparing the
+  // displayed value would not be enough: a newer section can legitimately be
+  // showing the same `saving` an older write left behind.
+  const autosaveClaimRef = useRef(0);
+  const writeAutosaveStatus = useCallback<typeof setAutosaveStatus>((next) => {
+    autosaveClaimRef.current += 1;
+    setAutosaveStatus(next);
+  }, []);
+  const labsAutosave = useMemo(() => ({
+    claim: () => {
+      writeAutosaveStatus('saving');
+      return autosaveClaimRef.current;
+    },
+    settle: (claim: number, status: 'saved' | 'error' | 'idle') => {
+      if (claim !== autosaveClaimRef.current) return;
+      // Settling does not hand the indicator to anyone else, so the claim
+      // stays valid for this writer's own follow-up (saved -> idle).
+      setAutosaveStatus(status);
+    },
+  }), [writeAutosaveStatus]);
   // Skip the very first effect tick so just opening the dialog doesn't
   // appear to "save" anything before the user has touched a field.
   const autosaveSkipFirstRef = useRef(true);
@@ -3224,7 +3247,7 @@ export function SettingsDialog({
       window.clearTimeout(autosaveRetryTimerRef.current);
       autosaveRetryTimerRef.current = null;
     }
-    setAutosaveStatus('idle');
+    writeAutosaveStatus('idle');
     onResetOnboarding({ ...cfg, onboardingCompleted: false });
   }, [cfg, onResetOnboarding]);
 
@@ -3237,7 +3260,7 @@ export function SettingsDialog({
       suppressNextAutosaveRef.current = false;
       return;
     }
-    setAutosaveStatus('pending');
+    writeAutosaveStatus('pending');
     if (autosaveSavedTimerRef.current != null) {
       window.clearTimeout(autosaveSavedTimerRef.current);
       autosaveSavedTimerRef.current = null;
@@ -3303,10 +3326,10 @@ export function SettingsDialog({
         !persistOptions.forceMediaProviderSync
         && isAutosaveDraftOnlyChange(persistedSnapshot, autosaveLastSavedRef.current)
       ) {
-        setAutosaveStatus('idle');
+        writeAutosaveStatus('idle');
         return;
       }
-      setAutosaveStatus('saving');
+      writeAutosaveStatus('saving');
       void (async () => {
         try {
           await onPersist(persistedSnapshot, persistOptions);
@@ -3324,19 +3347,19 @@ export function SettingsDialog({
           // leave the status as 'pending' so the next debounce tick
           // owns the indicator instead of flashing "Saved".
           if (autosaveLatestRef.current !== snapshot) {
-            setAutosaveStatus('pending');
+            writeAutosaveStatus('pending');
             return;
           }
           if (persistOptions.forceMediaProviderSync) {
             lastSyncedMediaProvidersVersionRef.current = mediaProvidersVersion;
             setPendingMediaProviderEditIds(new Set());
           }
-          setAutosaveStatus('saved');
+          writeAutosaveStatus('saved');
           autosaveSavedTimerRef.current = window.setTimeout(() => {
             autosaveSavedTimerRef.current = null;
             // Settle to idle after a moment so the indicator doesn't
             // stay on "Saved" forever and become noise.
-            setAutosaveStatus((curr) => (curr === 'saved' ? 'idle' : curr));
+            writeAutosaveStatus((curr) => (curr === 'saved' ? 'idle' : curr));
           }, 1800);
         } catch {
           if (
@@ -3345,7 +3368,7 @@ export function SettingsDialog({
             && mediaProvidersChangeVersionRef.current === mediaProvidersVersion
             && lastSyncedMediaProvidersVersionRef.current < mediaProvidersVersion
           ) {
-            setAutosaveStatus('pending');
+            writeAutosaveStatus('pending');
             autosaveRetryTimerRef.current = window.setTimeout(() => {
               autosaveRetryTimerRef.current = null;
               if (
@@ -3359,7 +3382,7 @@ export function SettingsDialog({
             }, 1500);
             return;
           }
-          setAutosaveStatus('error');
+          writeAutosaveStatus('error');
         }
       })();
     }, 400);
@@ -5969,7 +5992,7 @@ export function SettingsDialog({
           ) : null}
 
           {activeSection === 'labs' ? (
-            <LabsSection onAutosaveStatus={setAutosaveStatus} />
+            <LabsSection autosave={labsAutosave} />
           ) : null}
 
           {activeSection === 'designSystems' ? (
@@ -6134,13 +6157,13 @@ export function SettingsDialog({
                             ...autosaveLastSavedRef.current,
                             allowSilentUpdates,
                           };
-                          setAutosaveStatus('saved');
+                          writeAutosaveStatus('saved');
                           if (autosaveSavedTimerRef.current != null) {
                             window.clearTimeout(autosaveSavedTimerRef.current);
                           }
                           autosaveSavedTimerRef.current = window.setTimeout(() => {
                             autosaveSavedTimerRef.current = null;
-                            setAutosaveStatus((curr) => (curr === 'saved' ? 'idle' : curr));
+                            writeAutosaveStatus((curr) => (curr === 'saved' ? 'idle' : curr));
                           }, 1800);
                         } catch {
                           if (writeToken !== silentUpdateWriteTokenRef.current) return;
@@ -6149,7 +6172,7 @@ export function SettingsDialog({
                             ...current,
                             allowSilentUpdates: previous,
                           }));
-                          setAutosaveStatus('error');
+                          writeAutosaveStatus('error');
                         } finally {
                           if (writeToken === silentUpdateWriteTokenRef.current) {
                             setSilentUpdateBusy(false);
