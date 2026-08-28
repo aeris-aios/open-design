@@ -101,19 +101,15 @@ describe('HomeView media composer options', () => {
     expect((prototypeTab as HTMLButtonElement).disabled).toBe(false);
   });
 
-  it('shows the Home composer mode picker and still defaults to Design mode', async () => {
+  it('keeps the Home composer fixed to Design mode without exposing a mode picker', async () => {
     stubFetch();
     const onSubmit = vi.fn();
     renderHome({ onSubmit });
 
     await screen.findByTestId('home-hero-input');
 
-    // 设计 is the app default AND the default SELECTION: the composer opens with
-    // the Design pill showing, so the mode the request will run in is stated on
-    // screen rather than hidden behind a neutral glyph. The submitted payload
-    // carries design either way.
-    expect(screen.getByTestId('composer-mode-trigger').getAttribute('aria-label')).toBe('Mode: Design');
-    expect(screen.getByTestId('composer-mode-clear')).toBeTruthy();
+    expect(screen.queryByTestId('composer-mode-trigger')).toBeNull();
+    expect(screen.queryByTestId('composer-mode-clear')).toBeNull();
 
     await setHomePrompt('Create a clean loading animation');
     await submitHome();

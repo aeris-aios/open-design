@@ -636,7 +636,7 @@ export function HomeView({
     text: string;
     chipId: string | null;
   } | null>(null);
-  const [sessionMode, setSessionMode] = useState<ChatSessionMode>('design');
+  const sessionMode: ChatSessionMode = 'design';
   const [activeSkill, setActiveSkill] = useState<SkillSummary | null>(null);
   const [activeSkillCatalogScope, setActiveSkillCatalogScope] =
     useState<LocalCatalogScope | null>(null);
@@ -3108,8 +3108,6 @@ export function HomeView({
         onPromptChange={handlePromptChange}
         onSubmit={submit}
         onSubmitScenario={submitScenario}
-        sessionMode={sessionMode}
-        onSessionModeChange={setSessionMode}
         submitting={sending}
         activePluginTitle={activeBadgeTitle}
         activePluginIsExplicit={activePluginIsExplicit}
