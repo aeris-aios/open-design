@@ -35,6 +35,7 @@ describe('workspace tabs chrome styles', () => {
     expect(ruleValue(chrome, '-webkit-app-region')).toBe('drag');
     expect(ruleValue(chrome, 'overflow')).toBe('visible');
     expect(ruleValue(actions, '-webkit-app-region')).toBe('no-drag');
+    expect(ruleValue(actions, 'margin-left')).toBe('auto');
     expect(cluster).not.toContain('position:');
   });
 
