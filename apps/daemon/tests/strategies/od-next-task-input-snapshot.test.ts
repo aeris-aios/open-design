@@ -32,9 +32,11 @@ const roots: string[] = [];
 function makeTreeWritable(target: string): void {
   if (!existsSync(target)) return;
   const stat = lstatSync(target);
-  if (stat.isSymbolicLink() || !stat.isDirectory()) return;
-  chmodSync(target, 0o700);
-  for (const entry of readdirSync(target)) makeTreeWritable(path.join(target, entry));
+  if (stat.isSymbolicLink()) return;
+  chmodSync(target, stat.isDirectory() ? 0o700 : 0o600);
+  if (stat.isDirectory()) {
+    for (const entry of readdirSync(target)) makeTreeWritable(path.join(target, entry));
+  }
 }
 
 function fixture() {
@@ -288,7 +290,9 @@ describe('OD Next task-scoped input snapshots', () => {
       .toBe(true);
     expect(readFileSync(first.attachmentPaths[0]!, 'utf8')).toContain('canonical pdf');
     expect(readFileSync(first.attachmentPaths[1]!, 'utf8')).toBe('canonical text');
-    expect(statSync(first.projectionDir).mode & 0o777).toBe(0o555);
+    const projectionMode = statSync(first.projectionDir).mode & 0o777;
+    if (process.platform === 'win32') expect(projectionMode & 0o222).toBe(0);
+    else expect(projectionMode).toBe(0o555);
     expect(statSync(first.attachmentPaths[0]!).mode & 0o777).toBe(0o444);
 
     chmodSync(first.attachmentPaths[1]!, 0o600);
@@ -333,6 +337,21 @@ describe('OD Next task-scoped input snapshots', () => {
       .toThrow(/symlink|realpath escapes/);
   });
 
+  it('rejects an intermediate source-directory link even when it stays inside the allowed root', () => {
+    const f = fixture();
+    const actualDirectory = path.join(f.projectRoot, 'actual');
+    const linkedDirectory = path.join(f.projectRoot, 'linked');
+    mkdirSync(actualDirectory);
+    writeFileSync(path.join(actualDirectory, 'brief.txt'), 'inside allowed root');
+    symlinkSync(actualDirectory, linkedDirectory, 'junction');
+
+    expect(() => createOdNextTaskInputSnapshot({
+      ...f,
+      taskExecutionId: 'odnext_source_intermediate_link',
+      projectAttachments: ['linked/brief.txt'],
+    })).toThrow(/symlink or non-directory component/);
+  });
+
   it('uses no-follow bounded reads and caps when loading canonical files', () => {
     const f = fixture();
     writeFileSync(path.join(f.projectRoot, 'one.txt'), '12345');
@@ -370,6 +389,7 @@ describe('OD Next task-scoped input snapshots', () => {
     )).toThrow(/between path validation and open/);
 
     // Restore the original inode path before exercising the attachment swap.
+    chmodSync(manifestPath, 0o600);
     rmSync(manifestPath);
     renameSync(`${manifestPath}.old`, manifestPath);
 

@@ -250,13 +250,44 @@ function readFdBounded(
 }
 
 function readOnlyNoFollowFlags(): number {
-  if (typeof fs.constants.O_NOFOLLOW !== 'number') {
-    throw new OdNextTaskInputSnapshotError(
-      'OD Next cannot safely open managed input files on this platform.',
-      'OD_NEXT_INPUT_SNAPSHOT_UNSUPPORTED',
-    );
+  if (typeof fs.constants.O_NOFOLLOW === 'number') {
+    return fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW;
   }
-  return fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW;
+  if (process.platform === 'win32') return fs.constants.O_RDONLY;
+  throw new OdNextTaskInputSnapshotError(
+    'OD Next cannot safely open managed input files on this platform.',
+    'OD_NEXT_INPUT_SNAPSHOT_UNSUPPORTED',
+  );
+}
+
+/**
+ * Open a previously lstat-verified regular file without reading from a raced
+ * replacement. POSIX rejects a final symlink in the kernel with O_NOFOLLOW.
+ * Node does not expose that flag on Windows, so the read-only handle is
+ * accepted only when fstat proves it still has the exact lstat identity. The
+ * caller verifies path components before opening and file metadata after the
+ * bounded read, closing the remaining Windows TOCTOU windows without a native
+ * dependency.
+ */
+function openVerifiedReadOnly(
+  filePath: string,
+  pathStat: fs.BigIntStats,
+  changedMessage: string,
+): { fd: number; stat: fs.BigIntStats } {
+  const fd = fs.openSync(filePath, readOnlyNoFollowFlags());
+  try {
+    const stat = fs.fstatSync(fd, { bigint: true });
+    if (!stat.isFile() || !sameIdentity(pathStat, stat)) {
+      throw new OdNextTaskInputSnapshotError(
+        changedMessage,
+        'OD_NEXT_INPUT_SNAPSHOT_TOCTOU',
+      );
+    }
+    return { fd, stat };
+  } catch (error) {
+    fs.closeSync(fd);
+    throw error;
+  }
 }
 
 function assertManagedPathHasNoSymlinkComponents(
@@ -344,6 +375,7 @@ function readSourceWithoutFollowingSymlinks(
   if (!within(declaredRoot, resolved)) {
     throw new OdNextTaskInputSnapshotError('OD Next attachment escapes its allowed root.');
   }
+  assertManagedPathHasNoSymlinkComponents(declaredRoot, resolved);
   const linkStat = fs.lstatSync(resolved, { bigint: true });
   if (linkStat.isSymbolicLink() || !linkStat.isFile()) {
     throw new OdNextTaskInputSnapshotError('OD Next attachments must be regular non-symlink files.');
@@ -354,15 +386,13 @@ function readSourceWithoutFollowingSymlinks(
     throw new OdNextTaskInputSnapshotError('OD Next attachment realpath escapes its allowed root.');
   }
   beforeOpenSource?.(resolved);
-  const fd = fs.openSync(resolved, readOnlyNoFollowFlags());
+  const opened = openVerifiedReadOnly(
+    resolved,
+    linkStat,
+    'OD Next attachment changed between path validation and open.',
+  );
+  const { fd, stat: before } = opened;
   try {
-    const before = fs.fstatSync(fd, { bigint: true });
-    if (!before.isFile() || !sameIdentity(linkStat, before)) {
-      throw new OdNextTaskInputSnapshotError(
-        'OD Next attachment changed between path validation and open.',
-        'OD_NEXT_INPUT_SNAPSHOT_TOCTOU',
-      );
-    }
     if (before.size > BigInt(maxBytes)) {
       throw new OdNextTaskInputSnapshotError('OD Next attachment exceeds the per-file byte cap.', 'OD_NEXT_INPUT_SNAPSHOT_OVERSIZE');
     }
@@ -683,15 +713,13 @@ function readManagedSnapshotFile(
     );
   }
   beforeOpen?.(filePath);
-  const fd = fs.openSync(filePath, readOnlyNoFollowFlags());
+  const opened = openVerifiedReadOnly(
+    filePath,
+    pathStat,
+    'OD Next managed input changed between path validation and open.',
+  );
+  const { fd, stat: before } = opened;
   try {
-    const before = fs.fstatSync(fd, { bigint: true });
-    if (!before.isFile() || !sameIdentity(pathStat, before)) {
-      throw new OdNextTaskInputSnapshotError(
-        'OD Next managed input changed between path validation and open.',
-        'OD_NEXT_INPUT_SNAPSHOT_TOCTOU',
-      );
-    }
     const bytes = readFdBounded(
       fd,
       before.size,
