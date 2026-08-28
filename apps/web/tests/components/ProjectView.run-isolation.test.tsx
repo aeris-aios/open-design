@@ -1696,10 +1696,17 @@ describe('ProjectView conversation run isolation', () => {
     await waitFor(() => expect(streamViaDaemon).toHaveBeenCalledTimes(2));
     const second = streamViaDaemon.mock.calls[1]![0] as Record<string, unknown>;
 
+    // The run key is the occurrence: `createOrReuse` collapses the second
+    // send onto the first run instead of spawning another.
     expect(first.clientRequestId).toBeTruthy();
     expect(second.clientRequestId).toBe(first.clientRequestId);
-    expect(second.userMessageId).toBe(first.userMessageId);
-    expect(second.assistantMessageId).toBe(first.assistantMessageId);
+    // The message rows are NOT keyed on it. `handleSend` writes the user row
+    // before the daemon answers, so a shared id would let a second answer
+    // overwrite an accepted one and still lose the run to the first — a
+    // transcript disagreeing with what actually ran.
+    expect(first.userMessageId).toBeTruthy();
+    expect(second.userMessageId).not.toBe(first.userMessageId);
+    expect(second.assistantMessageId).not.toBe(first.assistantMessageId);
   });
 
   it('reports a question-form answer parked in the queue as accepted', async () => {

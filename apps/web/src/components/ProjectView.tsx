@@ -1174,17 +1174,24 @@ function homeAutoSendIdentity(projectId: string): Pick<
  *
  * A form rendered without a known occurrence (no source message, no form id)
  * keeps the per-send random identity it has always had.
+ *
+ * Only the RUN is keyed this way, deliberately. `handleSend` persists the user
+ * row before the daemon answers, so a deterministic `userMessageId` would let
+ * a second tab answering the same form differently upsert the first tab's
+ * accepted answer and then lose the run to `createOrReuse` — leaving a
+ * transcript that shows one answer and a run that executed another. A
+ * duplicate row in that rare two-tab race is a cosmetic cost; a transcript
+ * that disagrees with what ran is a corrupt one. Making the first answer
+ * authoritative for the row as well needs the check and the write to happen at
+ * one authority (the daemon), not in the client before it has an answer.
  */
 function questionFormAnswerIdentity(
   sourceAssistantMessageId: string | undefined,
   formId: string | undefined,
-): Pick<ProjectChatSendMeta, 'assistantMessageId' | 'clientRequestId' | 'userMessageId'> {
+): Pick<ProjectChatSendMeta, 'clientRequestId'> {
   if (!sourceAssistantMessageId || !formId) return {};
-  const answerId = `qf-answer-${stableIdentityDigest(`${sourceAssistantMessageId}:${formId}`)}`;
   return {
-    clientRequestId: answerId,
-    userMessageId: `${answerId}-user`,
-    assistantMessageId: `${answerId}-assistant`,
+    clientRequestId: `qf-answer-${stableIdentityDigest(`${sourceAssistantMessageId}:${formId}`)}`,
   };
 }
 
