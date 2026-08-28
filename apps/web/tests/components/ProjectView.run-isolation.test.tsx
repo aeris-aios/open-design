@@ -446,6 +446,7 @@ vi.mock('../../src/components/ChatPane', () => ({
       attachments?: unknown[],
       context?: unknown,
       sourceAssistantMessageId?: string,
+      formId?: string,
     ) => boolean | void | Promise<boolean | void>;
   }) => {
     const attached = attachedComments ?? [];
@@ -647,7 +648,13 @@ vi.mock('../../src/components/ChatPane', () => ({
           data-testid="submit-question-form"
           onClick={() => {
             void Promise.resolve(
-              onSubmitQuestionForm?.('Audience: Designers', [], undefined, undefined),
+              onSubmitQuestionForm?.(
+                'Audience: Designers',
+                [],
+                undefined,
+                'assistant-brief',
+                'travel_app_brief',
+              ),
             ).then((accepted) => {
               questionFormSubmitOutcomes.push(accepted);
             });
@@ -1660,6 +1667,39 @@ describe('ProjectView conversation run isolation', () => {
       ]);
     });
     expect(streamViaDaemon).not.toHaveBeenCalled();
+  });
+
+  it('identifies a question-form answer by its occurrence, not by a fresh id', async () => {
+    // "At most one user answer message and one non-failed run per
+    // sourceAssistantMessageId + formId" cannot be a property of the form's
+    // own lock: a second tab, a denied-storage reload, or a queue replay all
+    // reach the host without it. Deriving the send's ids from the occurrence
+    // makes the guarantee a property of the request instead — the queue dedupes
+    // on `clientRequestId`, the answer row keeps one `userMessageId`, and the
+    // daemon's createOrReuse collapses the second send onto the first run.
+    conversationAMessages = [];
+
+    renderProjectView();
+    await waitFor(() => expect(screen.getByTestId('active-conversation').textContent).toBe('conv-a'));
+    await waitFor(() => expect(screen.getByTestId('send-message')).toHaveProperty('disabled', false));
+    fireEvent.click(screen.getByTestId('submit-question-form'));
+    await waitFor(() => expect(streamViaDaemon).toHaveBeenCalledTimes(1));
+    const first = streamViaDaemon.mock.calls[0]![0] as Record<string, unknown>;
+
+    // Leaving the project and coming back is the reported path back into the
+    // same form. A freshly mounted view must not mint a fresh identity for it.
+    cleanup();
+    renderProjectView();
+    await waitFor(() => expect(screen.getByTestId('active-conversation').textContent).toBe('conv-a'));
+    await waitFor(() => expect(screen.getByTestId('send-message')).toHaveProperty('disabled', false));
+    fireEvent.click(screen.getByTestId('submit-question-form'));
+    await waitFor(() => expect(streamViaDaemon).toHaveBeenCalledTimes(2));
+    const second = streamViaDaemon.mock.calls[1]![0] as Record<string, unknown>;
+
+    expect(first.clientRequestId).toBeTruthy();
+    expect(second.clientRequestId).toBe(first.clientRequestId);
+    expect(second.userMessageId).toBe(first.userMessageId);
+    expect(second.assistantMessageId).toBe(first.assistantMessageId);
   });
 
   it('reports a question-form answer parked in the queue as accepted', async () => {

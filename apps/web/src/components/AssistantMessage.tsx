@@ -116,6 +116,7 @@ export type QuestionFormSubmitHandler = (
   attachments?: ChatAttachment[],
   context?: RunContextSelection,
   sourceAssistantMessageId?: string,
+  formId?: string,
 ) => boolean | void | Promise<boolean | void>;
 
 const DISCORD_INVITE_URL = "https://discord.gg/mHAjSMV6gz";
@@ -3076,8 +3077,8 @@ function FormBlock({
       try {
         submitOutcome =
           attachments.length > 0 || context
-            ? onSubmit?.(submittedText, attachments, context)
-            : onSubmit?.(submittedText);
+            ? onSubmit?.(submittedText, attachments, context, undefined, form.id)
+            : onSubmit?.(submittedText, undefined, undefined, undefined, form.id);
       } catch {
         void rejectSubmission();
         return;

@@ -1136,12 +1136,12 @@ function autoSendFirstMessageKey(projectId: string): string {
   return `od:auto-send-first:${projectId}`;
 }
 
-function stableHandoffProjectDigest(projectId: string): string {
+function stableIdentityDigest(value: string): string {
   // FNV-1a 64-bit keeps the daemon-facing id bounded while preserving a
   // deterministic identity across retries and ProjectView remounts.
   let hash = 0xcbf29ce484222325n;
-  for (let index = 0; index < projectId.length; index += 1) {
-    hash ^= BigInt(projectId.charCodeAt(index));
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= BigInt(value.charCodeAt(index));
     hash = BigInt.asUintN(64, hash * 0x100000001b3n);
   }
   return hash.toString(36).padStart(13, '0');
@@ -1151,11 +1151,40 @@ function homeAutoSendIdentity(projectId: string): Pick<
   ProjectChatSendMeta,
   'assistantMessageId' | 'clientRequestId' | 'userMessageId'
 > {
-  const handoffId = `home-auto-send-${stableHandoffProjectDigest(projectId)}`;
+  const handoffId = `home-auto-send-${stableIdentityDigest(projectId)}`;
   return {
     clientRequestId: handoffId,
     userMessageId: `${handoffId}-user`,
     assistantMessageId: `${handoffId}-assistant`,
+  };
+}
+
+/**
+ * A question form's answer is one payload with one identity.
+ *
+ * "At most one user answer message and one non-failed run per
+ * sourceAssistantMessageId + formId" cannot be a property of the form's own
+ * submit lock: a second tab, a reload in a context that denies storage, and a
+ * queue replay all reach the host without that lock. Deriving the send's ids
+ * from the occurrence makes the guarantee a property of the request, and every
+ * layer that already dedupes on identity then enforces it for free — the
+ * conversation queue keys entries on `clientRequestId`, the answer row keeps
+ * one `userMessageId` instead of appending a second, and the daemon's
+ * `createOrReuse` returns the first run rather than spawning another.
+ *
+ * A form rendered without a known occurrence (no source message, no form id)
+ * keeps the per-send random identity it has always had.
+ */
+function questionFormAnswerIdentity(
+  sourceAssistantMessageId: string | undefined,
+  formId: string | undefined,
+): Pick<ProjectChatSendMeta, 'assistantMessageId' | 'clientRequestId' | 'userMessageId'> {
+  if (!sourceAssistantMessageId || !formId) return {};
+  const answerId = `qf-answer-${stableIdentityDigest(`${sourceAssistantMessageId}:${formId}`)}`;
+  return {
+    clientRequestId: answerId,
+    userMessageId: `${answerId}-user`,
+    assistantMessageId: `${answerId}-assistant`,
   };
 }
 
@@ -11508,7 +11537,7 @@ export function ProjectView({
               initialDraft={chatInitialDraft}
               onboardingStarterPath={onboardingEntryRef.current?.productType ?? null}
               questionFormSubmitDisabled={currentConversationActionDisabled}
-              onSubmitQuestionForm={async (text, attachments = [], context, sourceAssistantMessageId) => {
+              onSubmitQuestionForm={async (text, attachments = [], context, sourceAssistantMessageId, formId) => {
                 if (currentConversationActionDisabled) return false;
                 let sourceAssistant = sourceAssistantMessageId
                   ? messages.find((message) => message.id === sourceAssistantMessageId)
@@ -11555,6 +11584,7 @@ export function ProjectView({
                 }
                 return handleSend(text, attachments, [], {
                   entryFrom: 'question_answer',
+                  ...questionFormAnswerIdentity(sourceAssistantMessageId, formId),
                   // The form owns the only copy of this answer (and of any
                   // file it uploaded). A send that parks in the conversation
                   // queue is durably accepted, not refused: reporting it as
