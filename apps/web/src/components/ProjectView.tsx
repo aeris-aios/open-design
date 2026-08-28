@@ -1952,6 +1952,31 @@ export function ProjectView({
     amrAuthRetryMountIdRef.current = randomUUID();
   }
   const activeAuthorizationLifetimeRef = useRef<string | null>(projectAuthorizationKey);
+  const initialHomeAttachmentFileNamesRef = useRef<{
+    projectId: string;
+    fileNames: Set<string>;
+  } | null>(null);
+  if (initialHomeAttachmentFileNamesRef.current?.projectId !== project.id) {
+    let isHomeAutoSend = false;
+    try {
+      isHomeAutoSend = Boolean(
+        window.sessionStorage.getItem(autoSendFirstMessageKey(project.id)),
+      );
+    } catch {
+      /* sessionStorage may be unavailable; use ordinary initial selection. */
+    }
+    const fileNames = new Set<string>();
+    if (isHomeAutoSend) {
+      for (const attachment of readAutoSendAttachments(project.id)) {
+        fileNames.add(attachment.path);
+        const baseName = attachment.path.split('/').pop();
+        if (baseName) fileNames.add(baseName);
+        if (attachment.name) fileNames.add(attachment.name);
+      }
+    }
+    initialHomeAttachmentFileNamesRef.current = { projectId: project.id, fileNames };
+  }
+
   useEffect(() => {
     activeAuthorizationLifetimeRef.current = projectAuthorizationKey;
     return () => {
@@ -3941,7 +3966,10 @@ export function ProjectView({
       hasAppliedInitialPrimaryOpenRef.current = true;
       return;
     }
-    const primaryFile = selectPrimaryProjectFile(projectFiles);
+    const primaryFile = selectPrimaryProjectFile(
+      projectFiles,
+      initialHomeAttachmentFileNamesRef.current?.fileNames,
+    );
     if (!primaryFile) return;
     hasAppliedInitialPrimaryOpenRef.current = true;
     persistTabsState({ tabs: [primaryFile.name], active: primaryFile.name });
@@ -12772,9 +12800,23 @@ function filterProjectFilesByMinMtime(
     : [...projectFiles];
 }
 
-export function selectPrimaryProjectFile(files: ProjectFile[]): ProjectFile | null {
+export function selectPrimaryProjectFile(
+  files: ProjectFile[],
+  excludedFileNames: ReadonlySet<string> = new Set(),
+): ProjectFile | null {
+  const normalizedExcludedFileNames = new Set(
+    [...excludedFileNames].map(normalizeProjectFileName),
+  );
   const candidates = files
-    .filter((file) => !isProcessArtifactFile(file.name))
+    .filter(
+      (file) =>
+        !isProcessArtifactFile(file.name)
+        && !normalizedExcludedFileNames.has(normalizeProjectFileName(file.name))
+        && !(
+          file.path
+          && normalizedExcludedFileNames.has(normalizeProjectFileName(file.path))
+        ),
+    )
     .map((file) => ({ file, rank: primaryProjectFileRank(file) }))
     .filter((candidate) => Number.isFinite(candidate.rank));
   if (candidates.length === 0) return null;

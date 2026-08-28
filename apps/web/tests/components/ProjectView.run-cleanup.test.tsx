@@ -416,6 +416,15 @@ describe('selectPrimaryProjectFile', () => {
 
     expect(selectPrimaryProjectFile([sidecar, html])).toBe(html);
   });
+
+  it('does not treat Home-staged reference attachments as the initial artifact to open', () => {
+    const reference = projectFile('reference.png', 'image', 2_000);
+    const generated = projectFile('index.html', 'html', 1_000);
+    const homeAttachments = new Set(['reference.png']);
+
+    expect(selectPrimaryProjectFile([reference], homeAttachments)).toBeNull();
+    expect(selectPrimaryProjectFile([reference, generated], homeAttachments)).toBe(generated);
+  });
 });
 
 describe('retry target resolution', () => {
@@ -1356,7 +1365,10 @@ describe('ProjectView daemon cleanup', () => {
     listMessages.mockResolvedValue([]);
     fetchPreviewComments.mockResolvedValue([]);
     loadTabs.mockResolvedValue({ tabs: [], activeTabId: null });
-    fetchProjectFiles.mockResolvedValue([]);
+    fetchProjectFiles.mockResolvedValue([
+      projectFile('brief.pdf', 'pdf', 1),
+      projectFile('logo.png', 'image', 2),
+    ]);
     fetchLiveArtifacts.mockResolvedValue([]);
     fetchSkill.mockResolvedValue(null);
     fetchDesignSystem.mockResolvedValue(null);
@@ -1419,6 +1431,10 @@ describe('ProjectView daemon cleanup', () => {
       });
       expect(window.sessionStorage.getItem('od:auto-send-first:project-files')).toBeNull();
       expect(window.sessionStorage.getItem('od:auto-send-attachments:project-files')).toBeNull();
+      expect(saveTabs).not.toHaveBeenCalledWith(
+        'project-files',
+        expect.objectContaining({ active: expect.stringMatching(/brief\.pdf|logo\.png/) }),
+      );
     } finally {
       window.sessionStorage.removeItem('od:auto-send-first:project-files');
       window.sessionStorage.removeItem('od:auto-send-attachments:project-files');

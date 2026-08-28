@@ -5725,9 +5725,18 @@ const UserMessage = memo(UserMessageImpl);
       <div className="user-attachments msg-att" data-testid="user-attachment-row" ref={rowRef}>
         {attachments.map((a) => {
           const baseName = a.path.split('/').pop() || a.path;
-          const openable =
-            !!onRequestOpenFile && (projectFileNames ? projectFileNames.has(baseName) : true);
-          const handleOpen = openable ? () => onRequestOpenFile?.(baseName) : undefined;
+          const openName = projectFileNames
+            ? [a.path, a.name, baseName].find(
+                (candidate): candidate is string =>
+                  typeof candidate === 'string' && projectFileNames.has(candidate),
+              ) ?? baseName
+            : baseName;
+          // User-message attachments are uploaded into the project before the
+          // message is persisted. The project file list can still be one
+          // refresh behind, especially during the Home -> Project handoff, so
+          // it is not a valid reason to disable the user's explicit open.
+          const openable = !!onRequestOpenFile;
+          const handleOpen = openable ? () => onRequestOpenFile?.(openName) : undefined;
           const label = openable ? t('chat.openFile', { name: baseName }) : a.path;
           return a.kind === 'image' && projectId ? (
             <button

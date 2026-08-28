@@ -167,9 +167,10 @@ describe('用户消息 · 时间与附件', () => {
     }
   });
 
-  it('附件不在项目里时卡片不可点(产品现状,稿子里附件永远可点 —— 差异已回报)', () => {
+  it('项目文件列表暂未刷新时，显式点击附件仍请求打开', () => {
     const restore = stubOverflow(false);
     try {
+      const onRequestOpenFile = vi.fn();
       render(
         <UserMessageImpl
           message={{
@@ -181,13 +182,15 @@ describe('用户消息 · 时间与附件', () => {
           } as never}
           projectId="p1"
           projectFileNames={new Set()}
-          onRequestOpenFile={vi.fn()}
+          onRequestOpenFile={onRequestOpenFile}
           t={t}
           appliedContextItems={[]}
         />,
       );
       const card = screen.getByTestId('user-attachment-row').querySelector('button');
-      expect((card as HTMLButtonElement).disabled).toBe(true);
+      expect((card as HTMLButtonElement).disabled).toBe(false);
+      fireEvent.click(card as HTMLButtonElement);
+      expect(onRequestOpenFile).toHaveBeenCalledWith('走查.md');
     } finally {
       restore();
     }
