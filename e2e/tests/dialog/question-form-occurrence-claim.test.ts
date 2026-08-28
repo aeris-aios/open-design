@@ -5,7 +5,7 @@ import { describe, expect, test } from 'vitest';
 
 import { createFakeAgentRuntimes } from '@/fake-agents';
 import { requestJson } from '@/vitest/http';
-import { listMessages } from '@/vitest/messages';
+import { listMessages, saveMessage } from '@/vitest/messages';
 import { startRun, waitForRunTerminal } from '@/vitest/runs';
 import { createSmokeSuite } from '@/vitest/suite';
 
@@ -155,6 +155,102 @@ describe('inline question form occurrence claim (OPEND-2367)', () => {
       expect(status.endedWithUnfinishedWork ?? false).toBe(
         storedAnswer === ANSWER_UNFINISHED,
       );
+    });
+  }, 180_000);
+
+  // The run seed rebuilds the answer row from the request it wins with, and
+  // `upsertMessage` writes every column it is handed — so a field the seed has
+  // no opinion about used to be erased. `taskAnalytics` is the turn's recovery
+  // lineage, written once by the client PUT before the run is created; losing
+  // it detaches an accepted clarification from its logical task after a reload.
+  test('the run seed keeps the answer row\'s recovery lineage', async () => {
+    const suite = await createSmokeSuite('question-form-answer-lineage');
+
+    await suite.with.toolsDev(async ({ webUrl }) => {
+      const fakeAgents = await createFakeAgentRuntimes({
+        root: join(suite.scratchDir, 'fake-agents'),
+        runtimeIds: ['claude'],
+      });
+
+      await requestJson(webUrl, '/api/app-config', {
+        body: {
+          agentCliEnv: { claude: fakeAgents.claude.env },
+          agentId: 'claude',
+          agentModels: { claude: { model: 'default', reasoning: 'default' } },
+          designSystemId: null,
+          onboardingCompleted: true,
+          skillId: null,
+          telemetry: { artifactManifest: true, content: false, metrics: false },
+        },
+        method: 'PUT',
+      });
+
+      const lineage = {
+        taskExecutionId: 'task-exec-1',
+        taskRunIndex: 1,
+        initialRunId: 'run-initial-1',
+        recoveryActionType: 'question_answer',
+        recoveryActionInstanceId: 'question_answer:assistant-brief',
+      };
+
+      // Both orderings the client can produce: the PUT racing ahead of the run
+      // request, and the run request landing first.
+      async function lineageAfterRun(putFirst: boolean): Promise<unknown> {
+        const project = await requestJson<ProjectResponse>(webUrl, '/api/projects', {
+          body: {
+            designSystemId: null,
+            id: randomUUID(),
+            metadata: { kind: 'prototype' },
+            name: `answer-lineage-${putFirst ? 'put-first' : 'post-first'}`,
+            pendingPrompt: null,
+            skillId: null,
+          },
+        });
+        const projectId = project.project.id;
+        const conversationId = project.conversationId;
+        const occurrence = `qf-answer-${projectId.slice(0, 8)}`;
+        const userMessageId = `${occurrence}-user`;
+
+        const put = () =>
+          saveMessage(webUrl, projectId, conversationId, {
+            content: ANSWER_PLAIN,
+            createdAt: Date.now(),
+            id: userMessageId,
+            role: 'user',
+            taskAnalytics: lineage,
+          });
+        const post = () =>
+          startRun(webUrl, {
+            agentId: 'claude',
+            assistantMessageId: `${occurrence}-assistant`,
+            clientRequestId: occurrence,
+            conversationId,
+            designSystemId: null,
+            message: ANSWER_PLAIN,
+            model: 'default',
+            projectId,
+            reasoning: 'default',
+            skillId: null,
+            userMessageId,
+          });
+
+        let runId: string;
+        if (putFirst) {
+          await put();
+          runId = (await post()).runId;
+        } else {
+          runId = (await post()).runId;
+          await put();
+        }
+        await waitForRunTerminal(webUrl, runId, { timeoutMs: 20_000 });
+        await delay(200);
+
+        const messages = await listMessages(webUrl, projectId, conversationId);
+        return messages.find((message) => message.id === userMessageId)?.taskAnalytics;
+      }
+
+      expect(await lineageAfterRun(true)).toMatchObject(lineage);
+      expect(await lineageAfterRun(false)).toMatchObject(lineage);
     });
   }, 180_000);
 });
