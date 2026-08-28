@@ -2,11 +2,10 @@
 //
 // The 「无限使用」 badge in the model chip + compact model list.
 //
-// The badge used to be hard-wired to the DeepSeek V4 campaign, so it marked
-// exactly two models for everyone and nothing at all once the campaign window
-// closes. The Vela wallet snapshot is now the source of truth for which models
-// are included in Coding Plan, so the badge must follow that response instead
-// of a duplicated per-tier table in Open Design.
+// DeepSeek V4 campaign badges must stop at the campaign boundary, including
+// for paid users whose Coding Plan model list still contains those models.
+// Other Coding Plan badges follow Vela's wallet snapshot instead of a
+// duplicated per-tier table in Open Design.
 
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import type {
@@ -224,7 +223,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe('unlimited badge follows the subscription tier', () => {
+describe('unlimited badge follows campaign and subscription boundaries', () => {
   it('badges a newly configured model from the Vela wallet snapshot', async () => {
     setPlan('go');
     providerState.codingPlanModels = ['new-coding-plan-model'];
@@ -235,14 +234,12 @@ describe('unlimited badge follows the subscription tier', () => {
     expect(await badgedModelIds()).toContain('new-coding-plan-model');
   });
 
-  it('badges the five models Pro includes, and none of the metered ones', async () => {
+  it('badges non-campaign models included by Pro, and none of the metered ones', async () => {
     mockNow(AFTER_CAMPAIGN);
     setPlan('pro');
     renderSwitcher();
     expect((await badgedModelIds()).sort()).toEqual(
       [
-        'deepseek-v4-flash',
-        'deepseek-v4-pro',
         'glm-5.2',
         'kimi-k2.7-code',
         'mimo-v2.5-pro',
@@ -250,20 +247,18 @@ describe('unlimited badge follows the subscription tier', () => {
     );
   });
 
-  it('badges the three models Go includes', async () => {
+  it('stops badging the two DeepSeek campaign models for paid plans after the window closes', async () => {
     mockNow(AFTER_CAMPAIGN);
     setPlan('go');
     renderSwitcher();
-    expect((await badgedModelIds()).sort()).toEqual(
-      ['deepseek-v4-flash', 'deepseek-v4-pro', 'glm-5.2'].sort(),
-    );
+    expect(await badgedModelIds()).toEqual(['glm-5.2']);
   });
 
-  it('badges every popular model on Max', async () => {
+  it('badges every non-campaign popular model on Max', async () => {
     mockNow(AFTER_CAMPAIGN);
     setPlan('max');
     renderSwitcher();
-    expect(await badgedModelIds()).toHaveLength(8);
+    expect(await badgedModelIds()).toHaveLength(6);
   });
 
   it.each(['team_plus', 'team_pro', 'team_max_yearly'])(
@@ -277,7 +272,7 @@ describe('unlimited badge follows the subscription tier', () => {
       mockNow(AFTER_CAMPAIGN);
       setPlan('plus');
       const view = renderSwitcher();
-      expect(await badgedModelIds()).toContain('deepseek-v4-flash');
+      expect(await badgedModelIds()).toContain('kimi-k2.7-code');
       workspaceState.context = {
         ...workspaceState.context,
         workspaceType: 'team',
@@ -295,7 +290,7 @@ describe('unlimited badge follows the subscription tier', () => {
     mockNow(AFTER_CAMPAIGN);
     setPlan('plus');
     const view = renderSwitcher();
-    expect(await badgedModelIds()).toContain('deepseek-v4-flash');
+    expect(await badgedModelIds()).toContain('kimi-k2.7-code');
 
     workspaceState.loading = true;
     view.rerender(switcher());

@@ -747,10 +747,11 @@ export function InlineModelSwitcher({
       // by the user's own provider, and the dormant AMR selection must not
       // leak an entitlement claim onto it.
       if (config.mode !== 'daemon' || currentAgent?.id !== 'amr') return null;
-      if (
-        deepSeekCampaignVisibleForCurrentExecution
-        && isDeepSeekV4FlashCampaignModel(modelId)
-      ) {
+      // Campaign models are governed exclusively by the campaign window. Do
+      // not let a paid plan's Coding Plan list keep the campaign badge alive
+      // after that window closes.
+      if (isDeepSeekV4FlashCampaignModel(modelId)) {
+        if (!deepSeekCampaignVisibleForCurrentExecution) return null;
         return {
           label: campaignModelBadge,
           tooltip: campaignModelTooltip,
