@@ -989,7 +989,10 @@ describe('EntryShell onboarding OpenDesign AMR runtime', () => {
   it('drops a Local Agent validation that lands after the user goes Back', async () => {
     // Continue awaits a network round trip before it persists. Back stays
     // enabled through that wait, so a late success must not resurrect the
-    // configuration the user just walked away from.
+    // configuration the user just walked away from. Leaving the step also
+    // aborts the request; a mock that ignores its signal keeps this spec on
+    // the second line of defence, the one that judges a result that still
+    // arrives.
     let releaseTest: ((value: Response) => void) | undefined;
     let testCalls = 0;
     globalThis.fetch = vi.fn(async (input, init) => {
@@ -1158,6 +1161,105 @@ describe('EntryShell onboarding OpenDesign AMR runtime', () => {
       expect(props.onCompleteOnboarding).toHaveBeenCalledTimes(1);
     });
     expect(testCalls).toBe(1);
+  });
+
+  it('releases the agent child when the user leaves the setup step mid-validation', async () => {
+    // The background pass spawns a real agent CLI, so a validation the user
+    // walks away from is not free — left alone the daemon holds that child
+    // until its own timeout, and a few abandoned visits cost several spawns
+    // and model calls for nothing.
+    let testSignal: AbortSignal | undefined;
+    globalThis.fetch = vi.fn(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith('/api/integrations/vela/status')) {
+        return jsonResponse({
+          loggedIn: true,
+          profile: 'prod',
+          configPath: '/x',
+          user: { id: 'u', email: 'user@example.com' },
+        });
+      }
+      if (url.endsWith('/api/test/connection') && init?.method === 'POST') {
+        testSignal = init.signal ?? undefined;
+        // Never settles: the abort is the only thing that can end this run.
+        return new Promise<Response>(() => {});
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as typeof fetch;
+    renderOnboarding({
+      config: baseConfig({
+        agentId: 'claude-code',
+        agentModels: { 'claude-code': { model: 'sonnet' } },
+      }),
+    });
+
+    await openLocalRuntimeSetup();
+    await waitFor(() => {
+      expect(testSignal).toBeDefined();
+    });
+    expect(testSignal?.aborted).toBe(false);
+
+    fireEvent.click(screen.getByRole('button', { name: /^Back$/i }));
+    await waitFor(() => {
+      expect(testSignal?.aborted).toBe(true);
+    });
+  });
+
+  it('restarts BYOK auto-validation against edited inputs instead of waiting the old one out', async () => {
+    // A held request must not decide when the replacement gets to start: the
+    // key the user is now looking at has to begin validating immediately, or
+    // it stays unproven until the abandoned run times out.
+    const signals: AbortSignal[] = [];
+    globalThis.fetch = vi.fn(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith('/api/integrations/vela/status')) {
+        return jsonResponse({
+          loggedIn: true,
+          profile: 'prod',
+          configPath: '/x',
+          user: { id: 'u', email: 'user@example.com' },
+        });
+      }
+      if (url.endsWith('/api/provider/models') && init?.method === 'POST') {
+        return jsonResponse({
+          ok: true,
+          kind: 'success',
+          latencyMs: 10,
+          models: [{ id: 'gpt-test', label: 'GPT Test' }],
+        });
+      }
+      if (url.endsWith('/api/test/connection') && init?.method === 'POST') {
+        if (init.signal) signals.push(init.signal);
+        // Never settles, so only the abort can free the slot.
+        return new Promise<Response>(() => {});
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as typeof fetch;
+    renderOnboarding({
+      config: baseConfig({
+        mode: 'api',
+        apiProtocol: 'openai',
+        apiKey: 'test-api-key',
+        baseUrl: 'https://api.openai.com/v1',
+        model: 'gpt-test',
+        apiProviderBaseUrl: 'https://api.openai.com/v1',
+      }),
+    });
+
+    await openByokRuntimeSetup();
+    await waitFor(() => {
+      expect(signals).toHaveLength(1);
+    });
+
+    fireEvent.change(screen.getByLabelText('API key'), {
+      target: { value: 'rotated-api-key' },
+    });
+
+    await waitFor(() => {
+      expect(signals).toHaveLength(2);
+    });
+    expect(signals[0]?.aborted).toBe(true);
+    expect(signals[1]?.aborted).toBe(false);
   });
 
   it('does not auto-select OpenDesign AMR when the AMR runtime is unavailable', async () => {

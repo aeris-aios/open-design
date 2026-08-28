@@ -2624,6 +2624,21 @@ function OnboardingView({
     agentRevealTimersRef.current = [];
   }
 
+  /**
+   * Drop whichever runtime validation is still in flight.
+   *
+   * A validation is not free to abandon: proving a local runtime spawns a real
+   * agent CLI, and left alone that child occupies the daemon until its own
+   * timeout — so a user who opens the setup step, looks, and leaves would pay
+   * for a check nobody can consume. Aborting hands the child back immediately.
+   */
+  function abortRuntimeValidations(): void {
+    agentTestRunRef.current?.controller.abort();
+    agentTestRunRef.current = null;
+    providerTestRunRef.current?.controller.abort();
+    providerTestRunRef.current = null;
+  }
+
   function selectDefaultCliAgent(availableAgents: AgentInfo[]): AgentInfo | null {
     const selectedAgent =
       availableAgents.find((agent) => agent.id === config.agentId) ?? availableAgents[0] ?? null;
@@ -3440,22 +3455,20 @@ function OnboardingView({
     step,
   ]);
 
+  // No "already running" bail in either auto-validation effect below:
+  // `startOrJoinInlineTest` serializes the runs, so skipping while one is in
+  // flight would only leave the pass proving inputs the user has already moved
+  // off — an edited key would not start validating until the request it
+  // replaced finished running out its own seconds.
   useEffect(() => {
     if (runtime !== 'byok' || !runtimeSetupStep) return;
     if (!canTestProvider) return;
-    if (providerTestState.status === 'running') return;
     if (providerAutoTestKeyRef.current === providerTestInputKey) return;
     const timer = window.setTimeout(() => {
       void testProviderInline();
     }, ONBOARDING_BYOK_AUTO_TEST_DELAY_MS);
     return () => window.clearTimeout(timer);
-  }, [
-    canTestProvider,
-    providerTestInputKey,
-    providerTestState.status,
-    runtime,
-    step,
-  ]);
+  }, [canTestProvider, providerTestInputKey, runtime, step]);
 
   // Validate the local runtime as soon as the selection settles, the way BYOK
   // already validates a settled provider. Continue cannot finish onboarding on
@@ -3464,11 +3477,6 @@ function OnboardingView({
   // Continue feel stuck; starting it here overlaps it with the time the user
   // spends reading the panel and picking a model, so the click usually has an
   // answer waiting for it.
-  //
-  // Deliberately no "already running" bail: `startOrJoinInlineTest` serializes
-  // the runs, and skipping while one is in flight would leave the pass proving
-  // the agent the user just moved off — the newly picked one would not start
-  // validating until the abandoned spawn ran out its own seconds first.
   useEffect(() => {
     if (runtime !== 'local' || !runtimeSetupStep) return;
     if (!canTestAgent) return;
@@ -3478,6 +3486,18 @@ function OnboardingView({
     }, ONBOARDING_LOCAL_AUTO_TEST_DELAY_MS);
     return () => window.clearTimeout(timer);
   }, [agentTestInputKey, canTestAgent, runtime, step]);
+
+  // A validation only has a consumer while the user is still on the setup step
+  // that started it. Back, a runtime switch, and leaving onboarding all end
+  // that, so they all release the agent child rather than letting an
+  // unconsumable check run out the daemon's timeout. The unmount case is
+  // covered too: React runs this cleanup on the way out.
+  useEffect(() => {
+    if (!runtimeSetupStep) return;
+    return () => {
+      abortRuntimeValidations();
+    };
+  }, [runtime, runtimeSetupStep]);
 
   const primaryActionLabel = t('settings.onboardingContinue');
 
