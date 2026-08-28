@@ -84,6 +84,13 @@
   background: var(--bg-subtle);
   border-radius: calc(var(--radius) - 1px);
   overflow: hidden;
+  /* Query container for the HTML thumbnail's fit scale (see
+     `.artifact-card-frame`), and it has to be declared HERE. With no
+     container in the ancestor chain, `100cqw` falls back to the viewport:
+     measured 2026-08-28 in a 1600px window, dropping this line takes the
+     frame's scale from 0.140 to 1.111 and the 1440px page renders 1600px
+     wide inside a 202px card. */
+  container-type: inline-size;
 }
 /* The grey placeholder: the only placeholder tone in the whole sheet. */
 .artifact-card-mini {
@@ -100,16 +107,33 @@
   object-fit: cover;
   display: block;
 }
-/* HTML artifacts render the real page as their thumbnail (same trick as the
-   designs drawer): oversize the frame, then scale it down so a desktop-width
-   layout still reads at card size. */
+/* HTML artifacts render the real page as their thumbnail: the frame lays the
+   page out at a DESKTOP viewport and the whole thing is then scaled down to
+   the card. Same trick, same numbers-shape as the home project grid
+   (`styles/home/recent-projects.css` `.recent-projects__thumb-iframe`).
+
+   An iframe's own box size IS its viewport, so the base has to be an absolute
+   px width — not a multiple of the card. This rule used to read
+   `width: 250%; transform: scale(0.4)`, i.e. 2.5x a ~202px card = a 505px
+   viewport, which every responsive page treats as a phone: the card showed a
+   different LAYOUT from the preview beside it (measured 2026-08-28: card
+   `innerWidth` 505 with the page's mobile tab bar, preview pane 1124 with its
+   desktop three-column layout). Scaling was never the missing part; the base
+   was.
+
+   1440x900 because: it is 16/10 like the thumb above, so scaling by width
+   fits both axes exactly with no crop or letterbox; and it clears every
+   common desktop breakpoint (768 / 1024 / 1280) while staying near the real
+   preview pane's width, so both land in the same responsive bucket. Going all
+   the way to 1920 would show a wider layout than the pane on the right
+   actually renders, and would shrink type past legibility at card size. */
 .artifact-card-frame {
   position: absolute;
   top: 0;
   left: 0;
-  width: 250%;
-  height: 250%;
-  transform: scale(0.4);
+  width: 1440px;
+  height: 900px;
+  transform: scale(calc(100cqw / 1440px));
   transform-origin: top left;
   border: 0;
   background: var(--bg-panel);
