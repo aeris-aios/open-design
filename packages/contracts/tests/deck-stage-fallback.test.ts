@@ -50,7 +50,9 @@ describe('deck-stage fallback runtime injection', () => {
     expect(htmlUsesDeckStageElement(html)).toBe(true);
     expect(out).toContain('data-od-deck-stage-fallback');
     expect(out).toContain("window.customElements.define('deck-stage'");
-    expect(out).toContain("type: 'od:slide-state'");
+    expect(out).toContain('type: "od:deck-ready"');
+    expect(out).toContain('type: "od:slide-state"');
+    expect(out).toContain('protocolVersion: 1');
     expect(out).toContain('get index()');
     expect(out).toContain('goTo(index)');
     expect(out).toContain("this.go('next')");
