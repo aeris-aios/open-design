@@ -499,6 +499,9 @@ export function daemonAgentPayloadToPersistedAgentEvent(data: unknown): Persiste
       toolUseId: data.toolUseId,
       content: String(data.content ?? ''),
       isError: Boolean(data.isError),
+      ...(typeof data.completedAt === 'number' && Number.isFinite(data.completedAt)
+        ? { completedAt: data.completedAt }
+        : {}),
     };
   }
   if (type === 'usage') {
