@@ -89,7 +89,11 @@ describe('internal run creation service', () => {
 
     const starter = vi.fn(async () => undefined);
     if (prepared.kind !== 'ready') throw new Error('expected ready run');
-    harness.service.start(prepared.run, { body: { ...meta } }, starter);
+    harness.service.start(
+      prepared.run,
+      { body: { ...meta }, requestAnalyticsContext: null },
+      starter,
+    );
     expect(harness.start).toHaveBeenCalledOnce();
     expect(starter).toHaveBeenCalledWith(harness.run);
   });

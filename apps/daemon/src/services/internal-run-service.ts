@@ -119,9 +119,11 @@ export function createInternalRunCreationService<
   ) => AssistantRunClaimResult;
   /**
    * Armed for every physical Run this service starts, whoever asked for it.
-   * Optional only so a test harness can leave it out.
+   * Required: an optional dependency would let a future factory construct this
+   * service, satisfy the `.runs.start` guard, and still emit nothing. A harness
+   * that wants silence injects a no-op lifecycle and says so.
    */
-  analyticsLifecycle?: InternalRunAnalyticsLifecycle<TRun>;
+  analyticsLifecycle: InternalRunAnalyticsLifecycle<TRun>;
 }): InternalRunCreationService<TMeta, TRun> {
   const isRunActive = (runId: string): boolean => {
     const existing = deps.runs.get(runId);
@@ -189,7 +191,7 @@ export function createInternalRunCreationService<
       // Before the child is spawned: `run_created` describes a Run that has
       // been accepted, and the terminal half must already be attached when the
       // Run settles — including a Run that fails on its first tick.
-      deps.analyticsLifecycle?.install({ ...analytics, run });
+      deps.analyticsLifecycle.install({ ...analytics, run });
       return deps.runs.start(run, () => starter(run));
     },
   };

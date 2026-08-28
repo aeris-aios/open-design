@@ -254,11 +254,14 @@ export interface RunAnalyticsTelemetryDeps {
 export interface RunAnalyticsFacts {
   body: JsonRecord;
   /**
-   * Identity of the caller that asked for this Run. Absent for a Run nothing
-   * asked for (a scheduled Automation, a background refresh): the lifecycle
-   * then finds no context and stays silent rather than inventing one.
+   * Identity of the caller that asked for this Run. Required, and `null` is a
+   * real answer: a Run nothing asked for (a scheduled Automation, a background
+   * refresh) has no caller to attribute to, and the lifecycle then stays silent
+   * rather than inventing one. Making it optional would let a caller drop its
+   * identity by forgetting a key, which is the shape of the bug this whole
+   * seam exists to prevent.
    */
-  requestAnalyticsContext?: AnalyticsContext | null;
+  requestAnalyticsContext: AnalyticsContext | null;
   /**
    * The resolved plugin snapshot, when the caller had one. Declared as the
    * narrow shape this module actually reads rather than the resolver's full
