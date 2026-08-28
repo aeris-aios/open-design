@@ -245,3 +245,19 @@
 - `dedupeToolUsesById`:典型消息 0.005 ms p50。
 - 典型消息的 `buildTurnBlocks`:0.113 ms p50(103 事件)。
 - daemon `GET .../messages` 热态延迟:50–150 ms,不是首开慢的原因。
+
+---
+
+## 6. 浏览器侧测量为什么卡住(环境阻塞,不是代码问题)
+
+- `open-browser-use`(真 Chrome 151)一开始工作正常,中途 `/tmp/open-browser-use/active.json`
+  注册表消失(`socket not provided and active socket registry is unavailable`),标签页被回收,
+  此后无法再开 tab。
+- 退而用 `claude-in-chrome` 时发现它连的是 **Microsoft Edge**,而这台机器上的 Edge
+  **连不上任何新的本地端口**:`http://127.0.0.1:17856/api/health` 和
+  `http://127.0.0.1:17858/`(一个纯 `python3 -m http.server` 对照组)都是
+  `ERR_CONNECTION_REFUSED`,而同一时刻 `curl` 两个都是 200。
+  用户已经开着的 `localhost:17573` 那个标签页是好的 —— 所以这是 Edge 侧的
+  本地网络访问策略/权限,不是 daemon 的问题。
+- **结论**:第 4 节那些浏览器指标要么等 `open-browser-use` 的 Chrome 会话恢复,
+  要么需要用户在 Edge 里放行本地端口。测量脚本和 runtime 都已就绪,恢复后可以直接跑。
