@@ -90,6 +90,7 @@ function failedMessage(
 
 function renderChat(opts: {
   messages?: ChatMessage[];
+  error?: string | null;
   onRetry?: (m: ChatMessage) => void;
   onOpenSettings?: (section?: string) => void;
   amrBalanceCardUsd?: number | null;
@@ -99,7 +100,7 @@ function renderChat(opts: {
     <ChatPane
       messages={opts.messages ?? []}
       streaming={false}
-      error={null}
+      error={opts.error ?? null}
       projectId="project-1"
       projectFiles={[]}
       onEnsureProject={async () => 'project-1'}
@@ -120,6 +121,15 @@ function renderChat(opts: {
 }
 
 describe('ChatPane — 报错卡的常驻动作', () => {
+  function expectSecondaryActionsShareOneShell(): void {
+    const support = screen.getByTestId('chat-error-contact-support');
+    const exportLogs = screen.getByTestId('chat-error-export-logs');
+
+    expect(support.getAttribute('data-run-error-action')).toBe('secondary');
+    expect(exportLogs.getAttribute('data-run-error-action')).toBe('secondary');
+    expect(support.className).toBe(exportLogs.className);
+  }
+
   it('每一张报错卡都带〔联系支持〕和〔导出日志〕两颗次级', () => {
     const { container } = renderChat({
       messages: [failedMessage({ code: 'AGENT_EXECUTION_FAILED' })],
@@ -128,6 +138,10 @@ describe('ChatPane — 报错卡的常驻动作', () => {
     expect(container.querySelector('[data-user-action-card="run-recovery"]')).toBeTruthy();
     expect(screen.getByTestId('chat-error-contact-support')).toBeTruthy();
     expect(screen.getByTestId('chat-error-export-logs')).toBeTruthy();
+    expectSecondaryActionsShareOneShell();
+
+    const retry = screen.getByTestId('chat-error-retry');
+    expect(retry.getAttribute('data-run-error-action')).toBe('primary');
   });
 
   // 产品裁决:「好多都应该得有导出日志这个按钮」→ 不挑场景。
@@ -146,7 +160,14 @@ describe('ChatPane — 报错卡的常驻动作', () => {
     expect(screen.getByTestId('chat-error-contact-support')).toBeTruthy();
     expect(screen.getByTestId('chat-error-export-logs')).toBeTruthy();
     // 这一档不该有重试 —— 重试必然同样结果。
-    expect(screen.queryByRole('button', { name: 'promptTemplates.retry' })).toBeNull();
+    expect(screen.queryByTestId('chat-error-retry')).toBeNull();
+  });
+
+  it('只有面板级错误、没有可重试轮次时，两颗常驻动作仍共用描边次级壳', () => {
+    renderChat({ error: 'conversations 404' });
+
+    expectSecondaryActionsShareOneShell();
+    expect(screen.queryByTestId('chat-error-retry')).toBeNull();
   });
 
   // 稿子第 78 格:〔联系支持〕〔导出日志〕〔从失败处重试〕—— 前两颗次级、第三颗主。

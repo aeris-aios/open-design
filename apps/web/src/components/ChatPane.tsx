@@ -141,8 +141,7 @@ import { listDesignArtifactCandidates } from './design-files/designArtifacts';
 import type { PluginFolderAgentAction } from './design-files/pluginFolderActions';
 import { Icon, type IconName } from './Icon';
 import { UserActionCard, type UserActionCardTone } from './UserActionCard';
-import { Button } from '@open-design/components';
-import { RunErrorCard } from './chat/RunErrorCard';
+import { RunErrorCard, RunErrorCardAction } from './chat/RunErrorCard';
 import { UpgradeCard } from './chat/UpgradeCard';
 import { SupportDialog } from './chat/SupportDialog';
 import { supportChannels } from './chat/support-channels';
@@ -3373,26 +3372,25 @@ export function ChatPane({
                           * 位置不动:那一排在 274px 窄面板里的排布是量过的,
                           * 重排会把 e2e 的溢出判据一起动掉。
                           */}
-                        <Button
+                        <RunErrorCardAction
                           type="button"
                           variant={contactSupportIsPrimary ? 'primary' : 'secondary'}
-                          size="sm"
                           data-testid="chat-error-contact-support"
                           {...(contactSupportIsPrimary ? { 'data-primary': 'true' } : {})}
                           onClick={() => setSupportDialogOpen(true)}
                         >
                           <Icon name="headset" size={11} />
                           {t('chat.runError.contactSupportCta')}
-                        </Button>
+                        </RunErrorCardAction>
                         <ExportLogsAction />
                         {showByokRecoveryCta ? (
-                          <button
+                          <RunErrorCardAction
                             type="button"
-                            className="chat-error-action"
+                            variant="primary"
                             onClick={onSwitchToLocalCli}
                           >
                             {t('avatar.useLocal')}
-                          </button>
+                          </RunErrorCardAction>
                         ) : null}
                         {retryAssistant && onRetry && runFailureUi ? (
                           <>
@@ -3438,25 +3436,25 @@ export function ChatPane({
                                 }}
                               />
                             ) : runFailureUi.primaryAction === 'launch-terminal-auth' ? (
-                              <button
+                              <RunErrorCardAction
                                 type="button"
-                                className="chat-error-action"
+                                variant="primary"
                                 onClick={() => {
                                   onLaunchAntigravityOauth?.();
                                 }}
                               >
                                 {t('chat.antigravityError.launchTerminalCta')}
-                              </button>
+                              </RunErrorCardAction>
                             ) : runFailureUi.primaryAction === 'launch-terminal-switch-model' ? (
-                              <button
+                              <RunErrorCardAction
                                 type="button"
-                                className="chat-error-action"
+                                variant="primary"
                                 onClick={() => {
                                   onLaunchAntigravityOauth?.();
                                 }}
                               >
                                 {t('chat.antigravityError.launchSwitchModelCta')}
-                              </button>
+                              </RunErrorCardAction>
                             ) : runFailureUi.primaryAction === 'switch-model' ? (
                               /*
                                * 模型下线 / 不在套餐里 —— 重试必然同样结果,所以这一档
@@ -3466,9 +3464,9 @@ export function ChatPane({
                                * 重跑」(`error-ux-design.md:130`)。宿主接了 `onSwitchModel`
                                * 就开 composer 那颗触发器背后的内联列表;没接的回落设置面板。
                                */
-                              <button
+                              <RunErrorCardAction
                                 type="button"
-                                className="chat-error-action"
+                                variant="primary"
                                 data-testid="chat-error-switch-model"
                                 onClick={() => {
                                   trackRecoveryClick(retryAssistant, 'switch_model_retry');
@@ -3477,11 +3475,11 @@ export function ChatPane({
                                 }}
                               >
                                 {t('chat.runError.switchModelCta')}
-                              </button>
+                              </RunErrorCardAction>
                             ) : runFailureUi.primaryAction === 'recharge' ? (
-                              <button
+                              <RunErrorCardAction
                                 type="button"
-                                className="chat-error-action"
+                                variant="primary"
                                 onClick={() => {
                                   const attribution = recordAmrEntry(
                                     analytics.track,
@@ -3517,11 +3515,11 @@ export function ChatPane({
                                 }}
                               >
                                 {t('chat.amrError.rechargeCta')}
-                              </button>
+                              </RunErrorCardAction>
                             ) : runFailureUi.primaryAction === 'upgrade' ? (
-                              <button
+                              <RunErrorCardAction
                                 type="button"
-                                className="chat-error-action"
+                                variant="primary"
                                 onClick={() => {
                                   const attribution = recordAmrEntry(
                                     analytics.track,
@@ -3550,7 +3548,7 @@ export function ChatPane({
                                 }}
                               >
                                 {t('chat.amrBalanceGate.plansCta')}
-                              </button>
+                              </RunErrorCardAction>
                             ) : null}
                             {canResumeFailedRun ? (
                               // Resumable failure: continue the agent's existing
@@ -3560,9 +3558,9 @@ export function ChatPane({
                               // the wired resume handler when present, otherwise a
                               // plain send of the continue prompt — never the
                               // re-sending Retry path, which would resume + repeat.
-                              <button
+                              <RunErrorCardAction
                                 type="button"
-                                className="chat-error-action"
+                                variant="primary"
                                 onClick={() =>
                                   {
                                     trackRecoveryClick(retryAssistant, 'resume_run');
@@ -3572,7 +3570,7 @@ export function ChatPane({
                                 }
                               >
                                 {t('chat.resumeRunCta')}
-                              </button>
+                              </RunErrorCardAction>
                             ) : runFailureUi.primaryAction === 'retry' ||
                               runFailureUi.secondaryRetry ? (
                               /*
@@ -3583,10 +3581,9 @@ export function ChatPane({
                                * 4px 11px)—— 排在一起圆角明显对不上(用户 2026-08-27)。
                                * 图标也照稿子补上:那一排三颗都带图标。
                                */
-                              <Button
+                              <RunErrorCardAction
                                 type="button"
                                 variant="primary"
-                                size="sm"
                                 data-testid="chat-error-retry"
                                 onClick={() => {
                                   trackRecoveryClick(retryAssistant, 'manual_retry');
@@ -3595,7 +3592,7 @@ export function ChatPane({
                               >
                                 <Icon name="refresh" size={11} />
                                 {t('promptTemplates.retry')}
-                              </Button>
+                              </RunErrorCardAction>
                             ) : null}
                           </>
                         ) : null}

@@ -8,8 +8,40 @@
  * 抽成组件之前它是 `ChatPane.tsx` 里 200 多行内联 JSX:样式没法集中对齐,
  * 陈列页也照不出来。这两件事都是抽出来才解决的。
  */
-import type { ReactElement, ReactNode } from 'react';
+import { Button } from '@open-design/components';
+import type { ComponentProps, ReactElement, ReactNode } from 'react';
 import styles from './RunErrorCard.module.css';
+
+export interface RunErrorCardActionProps
+  extends Omit<ComponentProps<typeof Button>, 'size' | 'variant'> {
+  variant?: 'primary' | 'secondary';
+}
+
+/**
+ * 报错卡动作的唯一壳。交互仍由共享 `Button` 提供；这里固定稿子这一排的
+ * `mod-sm` 尺寸与 primary / secondary 视觉，避免调用方各自拼按钮。
+ */
+export function RunErrorCardAction({
+  className,
+  variant = 'secondary',
+  ...props
+}: RunErrorCardActionProps): ReactElement {
+  const actionClassName = [
+    styles.action,
+    variant === 'primary' ? styles.primaryAction : styles.secondaryAction,
+    className,
+  ].filter(Boolean).join(' ');
+
+  return (
+    <Button
+      {...props}
+      className={actionClassName}
+      variant={variant}
+      size="sm"
+      data-run-error-action={variant}
+    />
+  );
+}
 
 export interface RunErrorCardProps {
   title: string;

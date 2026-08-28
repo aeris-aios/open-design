@@ -14,10 +14,11 @@
  * 屏幕阅读器通过 `role="status"` 的隐藏文本拿到同一句话。
  */
 import type { ReactElement } from 'react';
-import { Button, VisuallyHidden } from '@open-design/components';
+import { VisuallyHidden } from '@open-design/components';
 import { Icon } from '../Icon';
 import { useDiagnosticsExport } from '../ExportDiagnosticsButton';
 import { useT } from '../../i18n';
+import { RunErrorCardAction } from './RunErrorCard';
 
 export function ExportLogsAction(): ReactElement {
   const t = useT();
@@ -27,10 +28,9 @@ export function ExportLogsAction(): ReactElement {
     status.kind === 'success' || status.kind === 'error' ? status.message : null;
   return (
     <>
-      <Button
+      <RunErrorCardAction
         type="button"
         variant="secondary"
-        size="sm"
         data-testid="chat-error-export-logs"
         data-status={status.kind}
         disabled={busy}
@@ -39,7 +39,7 @@ export function ExportLogsAction(): ReactElement {
       >
         <Icon name="upload" size={11} />
         {label}
-      </Button>
+      </RunErrorCardAction>
       {detail ? (
         <VisuallyHidden role="status">{detail}</VisuallyHidden>
       ) : null}

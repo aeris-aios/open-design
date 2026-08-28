@@ -53,3 +53,46 @@
   gap: 6px;
   margin-top: 9px;
 }
+
+/* 稿子 `.errb .ops .btn.mod-sm`:这一排的每一颗动作都走同一副壳。
+   仍以共享 Button 为底层原语；这里把报错卡自己的固定尺寸和两种分量收口，
+   调用方不再分别依赖全局类、共享 CSS Module 或裸 button。 */
+.action {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: auto;
+  padding: 4px 11px;
+  border: var(--chat-stroke) solid transparent;
+  border-radius: var(--chat-radius-pill);
+  font-family: inherit;
+  font-size: var(--chat-t-mini);
+  font-weight: 600;
+  line-height: normal;
+  white-space: nowrap;
+}
+
+.secondaryAction {
+  border-color: var(--chat-border);
+  background: var(--chat-bg);
+  color: var(--chat-text);
+}
+
+.secondaryAction:hover:not(:disabled) {
+  border-color: var(--chat-border-strong);
+  background: var(--chat-bg);
+  color: var(--chat-text-strong);
+}
+
+.primaryAction {
+  border-color: var(--chat-text-strong);
+  background: var(--chat-text-strong);
+  color: var(--chat-bg);
+}
+
+.primaryAction:hover:not(:disabled) {
+  border-color: var(--chat-text);
+  background: var(--chat-text);
+  color: var(--chat-bg);
+}

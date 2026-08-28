@@ -45,17 +45,20 @@ describe('失败卡三颗按钮同壳', () => {
     expect(src).not.toMatch(/className="chat-error-action chat-error-retry"/);
   });
 
-  it('重试要走共享 Button 的 primary + sm,和旁边两颗对齐', () => {
+  it('重试要走报错卡动作组件的 primary,和旁边两颗同一出口', () => {
     const src = readChatPane();
     const near = sliceAround(src, "promptTemplates.retry");
+    expect(near).toMatch(/<RunErrorCardAction/);
     expect(near).toMatch(/variant="primary"/);
-    expect(near).toMatch(/size="sm"/);
   });
 
-  it('旁边两颗保持 sm —— 别为了对齐把它们改大', () => {
+  it('旁边两颗同样走报错卡动作组件 —— 尺寸不再由调用方各写一份', () => {
     const src = readChatPane();
     const near = sliceAround(src, 'chat-error-contact-support');
-    expect(near).toMatch(/size="sm"/);
+    expect(near).toMatch(/<RunErrorCardAction/);
+
+    const actionSrc = readRunErrorCard();
+    expect(actionSrc).toMatch(/<Button[\s\S]*size="sm"/);
   });
 });
 
@@ -64,6 +67,10 @@ import { resolve } from 'node:path';
 
 function readChatPane(): string {
   return readFileSync(resolve(__dirname, '../../../src/components/ChatPane.tsx'), 'utf8');
+}
+
+function readRunErrorCard(): string {
+  return readFileSync(resolve(__dirname, '../../../src/components/chat/RunErrorCard.tsx'), 'utf8');
 }
 
 /** 取某个锚点前后各 700 字符 —— 断言只看那一颗按钮,不被全文件干扰 */
