@@ -69,6 +69,17 @@ async function withFakeAgent<T>(
   }
 }
 
+async function withCodexExecJson<T>(run: () => Promise<T>): Promise<T> {
+  const previous = process.env.OD_CODEX_TRANSPORT;
+  process.env.OD_CODEX_TRANSPORT = 'exec-json';
+  try {
+    return await run();
+  } finally {
+    if (previous == null) delete process.env.OD_CODEX_TRANSPORT;
+    else process.env.OD_CODEX_TRANSPORT = previous;
+  }
+}
+
 function killProcessesUsingPath(pathFragment: string): void {
   if (process.platform === 'win32') return;
   let output = '';
@@ -1081,7 +1092,7 @@ child.on('exit', (code, signal) => {
       await writeAppConfig(process.env.OD_DATA_DIR, {
         agentModels: { codex: { model: 'gpt-5.5' } },
       });
-      await withFakeAgent(
+      await withCodexExecJson(() => withFakeAgent(
         'codex',
         `
 const fs = require('node:fs');
@@ -1117,7 +1128,7 @@ process.exit(0);
           expect(args).toContain('gpt-5.5');
           expect(args).toContain('service_tier="priority"');
         },
-      );
+      ));
     } finally {
       rmSync(argsPath, { force: true });
       await writeAppConfig(process.env.OD_DATA_DIR, {
@@ -1134,7 +1145,7 @@ process.exit(0);
     const previousConfig = await readAppConfig(process.env.OD_DATA_DIR);
     try {
       await writeAppConfig(process.env.OD_DATA_DIR, { agentModels: null });
-      await withFakeAgent(
+      await withCodexExecJson(() => withFakeAgent(
         'codex',
         `
 const fs = require('node:fs');
@@ -1171,7 +1182,7 @@ process.exit(0);
           expect(args).toContain('gpt-5.5');
           expect(args).toContain('service_tier="priority"');
         },
-      );
+      ));
     } finally {
       rmSync(argsPath, { force: true });
       await writeAppConfig(process.env.OD_DATA_DIR, {

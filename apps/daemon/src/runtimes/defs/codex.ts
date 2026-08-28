@@ -446,8 +446,9 @@ export const CODEX_TRANSPORT_ENV_VAR = 'OD_CODEX_TRANSPORT';
 /**
  * Read the operator's transport preference.
  *
- * Three values, and an unrecognised one is treated as unset rather than as an
- * error: an environment typo must not take codex offline.
+ * Three values. An unrecognised non-empty value fails closed to exec-json
+ * rather than taking Codex offline; an unset or empty value uses the shipping
+ * app-server default.
  *
  *   (unset)                app-server (shipping default)
  *   `exec-json`            force the legacy transport (rollback)
