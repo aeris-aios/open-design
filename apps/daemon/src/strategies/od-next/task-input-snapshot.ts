@@ -94,6 +94,7 @@ export interface SnapshotReadHooks {
 }
 
 export interface SnapshotCleanupHooks {
+  beforeLookupSnapshot?: (snapshotsRoot: string) => void;
   beforeClaimSnapshot?: (snapshotDir: string) => void;
   beforeRemoveClaimedSnapshot?: (claimedSnapshotDir: string) => void;
 }
@@ -155,9 +156,9 @@ function removeManagedSnapshotDir(input: {
     );
   }
 
-  let rootStat: fs.Stats;
+  let rootStat: fs.BigIntStats;
   try {
-    rootStat = fs.lstatSync(snapshotsRoot);
+    rootStat = fs.lstatSync(snapshotsRoot, { bigint: true });
   } catch (error) {
     if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return;
     throw error;
@@ -168,6 +169,7 @@ function removeManagedSnapshotDir(input: {
     );
   }
 
+  input.hooks?.beforeLookupSnapshot?.(snapshotsRoot);
   let snapshotStat: fs.BigIntStats;
   try {
     snapshotStat = fs.lstatSync(snapshotDir, { bigint: true });
@@ -178,6 +180,18 @@ function removeManagedSnapshotDir(input: {
   if (snapshotStat.isSymbolicLink() || !snapshotStat.isDirectory()) {
     throw new OdNextTaskInputSnapshotError(
       'OD Next task input snapshot must be a managed non-symlink directory.',
+    );
+  }
+
+  const rootAfterLookup = fs.lstatSync(snapshotsRoot, { bigint: true });
+  if (
+    rootAfterLookup.isSymbolicLink()
+    || !rootAfterLookup.isDirectory()
+    || !sameIdentity(rootStat, rootAfterLookup)
+  ) {
+    throw new OdNextTaskInputSnapshotError(
+      'OD Next snapshot root changed before cleanup could claim its child.',
+      'OD_NEXT_INPUT_SNAPSHOT_TOCTOU',
     );
   }
 
@@ -192,9 +206,13 @@ function removeManagedSnapshotDir(input: {
   );
   input.hooks?.beforeClaimSnapshot?.(snapshotDir);
   fs.renameSync(snapshotDir, claimedSnapshotDir);
+  const rootAfterClaim = fs.lstatSync(snapshotsRoot, { bigint: true });
   const claimedStat = fs.lstatSync(claimedSnapshotDir, { bigint: true });
   if (
-    claimedStat.isSymbolicLink()
+    rootAfterClaim.isSymbolicLink()
+    || !rootAfterClaim.isDirectory()
+    || !sameIdentity(rootStat, rootAfterClaim)
+    || claimedStat.isSymbolicLink()
     || !claimedStat.isDirectory()
     || !sameIdentity(snapshotStat, claimedStat)
   ) {

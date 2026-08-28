@@ -888,6 +888,21 @@ export function sendStructuredRunCreateFailure(
   );
 }
 
+export function registerRunCreateRoute(
+  app: Express,
+  handleRunCreate: (req: ApiRequest, res: ApiResponse) => Promise<unknown>,
+  sendApiError: RegisterRunRoutesDeps['http']['sendApiError'],
+): void {
+  app.post('/api/runs', async (req: ApiRequest, res: ApiResponse) => {
+    try {
+      return await handleRunCreate(req, res);
+    } catch (error) {
+      if (res.headersSent) throw error;
+      return sendStructuredRunCreateFailure(res, sendApiError, error);
+    }
+  });
+}
+
 export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
   const { db, design } = ctx;
   const { createSseResponse, sendApiError } = ctx.http;
@@ -3001,14 +3016,7 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
     );
   };
 
-  app.post('/api/runs', async (req: ApiRequest, res: ApiResponse) => {
-    try {
-      return await handleRunCreate(req, res);
-    } catch (error) {
-      if (res.headersSent) throw error;
-      return sendStructuredRunCreateFailure(res, sendApiError, error);
-    }
-  });
+  registerRunCreateRoute(app, handleRunCreate, sendApiError);
 
   app.get('/api/runs', async (req: ApiRequest, res: ApiResponse) => {
     const { projectId, conversationId, status } = req.query;

@@ -1,9 +1,60 @@
-import type { Response } from 'express';
+import express, { type Response } from 'express';
+import type http from 'node:http';
 import { describe, expect, it, vi } from 'vitest';
 
-import { sendStructuredRunCreateFailure } from '../../src/routes/runs.js';
+import {
+  registerRunCreateRoute,
+  sendStructuredRunCreateFailure,
+} from '../../src/routes/runs.js';
 
 describe('Run creation structured failures', () => {
+  it('returns sanitized JSON when preparation throws at the HTTP boundary', async () => {
+    const app = express();
+    app.use(express.json());
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    registerRunCreateRoute(
+      app,
+      async () => {
+        throw Object.assign(new Error('secret input at C:\\private\\prompt.txt'), { code: 'EPERM' });
+      },
+      (res, status, code, message, details) => res.status(status).json({
+        error: { code, message, details },
+      }),
+    );
+    const server = await new Promise<http.Server>((resolve) => {
+      const listening = app.listen(0, '127.0.0.1', () => resolve(listening));
+    });
+
+    try {
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('missing test server address');
+      const response = await fetch(`http://127.0.0.1:${address.port}/api/runs`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{}',
+      });
+      const text = await response.text();
+
+      expect(response.status).toBe(500);
+      expect(response.headers.get('content-type')).toContain('application/json');
+      expect(JSON.parse(text)).toMatchObject({
+        error: {
+          code: 'INTERNAL_ERROR',
+          message: 'Run preparation failed.',
+          details: { requestId: expect.any(String) },
+        },
+      });
+      expect(text).not.toContain('private');
+      expect(text).not.toContain('secret input');
+    } finally {
+      consoleError.mockRestore();
+      await new Promise<void>((resolve, reject) => server.close((error) => {
+        if (error) reject(error);
+        else resolve();
+      }));
+    }
+  });
+
   it('returns a traceable JSON error without exposing the underlying failure', () => {
     const sendApiError = vi.fn();
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
