@@ -204,7 +204,7 @@ function isWorkspaceCreditsText(text: string): boolean {
 }
 
 function isTimeoutText(text: string): boolean {
-  return /\b(timed?\s*out|timeout|inactivity|stalled|hung|no new output|without emitting any new output)\b/i
+  return /\b(timed?\s*out|timeout|context deadline exceeded|inactivity|stalled|hung|no new output|without emitting any new output)\b/i
     .test(text);
 }
 

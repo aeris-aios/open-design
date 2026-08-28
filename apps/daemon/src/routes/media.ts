@@ -108,13 +108,16 @@ export function resolveLegacyMediaRouteGrant(input: {
  * being defaulted — `retryable: false` invented here would tell a user a
  * transient outage is permanent.
  */
-function mediaTaskErrorFromFailure(err: any): MediaTaskError {
+export function mediaTaskErrorFromFailure(err: any): MediaTaskError {
   const subject = err?.subject;
   const retryable = err?.retryable;
+  const code = typeof err?.code === 'string' && err.code.trim()
+    ? err.code.trim()
+    : undefined;
   return {
     message: String(err && err.message ? err.message : err),
     status: typeof err?.status === 'number' ? err.status : 400,
-    code: err?.code,
+    ...(code ? { code } : {}),
     ...(subject === 'prompt' || subject === 'input_image' || subject === 'output_image'
       ? { subject }
       : {}),

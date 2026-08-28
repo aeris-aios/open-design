@@ -68,6 +68,9 @@ localized sentence and nothing else:
   - \`MEDIA_DISPATCHER_UNREACHABLE\`: "Image was not generated: The local media
     dispatcher could not be reached (error code: \`MEDIA_DISPATCHER_UNREACHABLE\`)."
     Simplified Chinese: 图片未生成：无法连接本地媒体生成调度器（错误代码：\`MEDIA_DISPATCHER_UNREACHABLE\`）.
+  - \`MEDIA_CLI_INCOMPATIBLE\`: "Image was not generated: The local media runtime
+    is too old. Update it and try again (error code: \`MEDIA_CLI_INCOMPATIBLE\`)."
+    Simplified Chinese: 图片未生成：本地媒体运行时版本过旧，请升级后重试（错误代码：\`MEDIA_CLI_INCOMPATIBLE\`）.
   - \`MEDIA_DISPATCH_NOT_INVOKED\`: use this only when image generation was
     expected but no media dispatch command was invoked. Say "Image was not
     generated: The media dispatcher was not invoked (error code:
