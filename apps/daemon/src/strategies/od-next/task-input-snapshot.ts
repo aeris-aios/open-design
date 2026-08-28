@@ -95,6 +95,7 @@ export interface SnapshotReadHooks {
 
 export interface SnapshotCleanupHooks {
   beforeClaimSnapshot?: (snapshotDir: string) => void;
+  beforeRemoveClaimedSnapshot?: (claimedSnapshotDir: string) => void;
 }
 
 function sha256(bytes: Buffer | string): string {
@@ -137,42 +138,6 @@ export type OdNextTaskInputCleanupPhase =
   | 'initial-bundle'
   | 'run-claim'
   | 'non-ready';
-
-/**
- * Remove a managed immutable tree without following links. Windows maps the
- * snapshot's 0400/0444 modes to the ReadOnly attribute, so every entry must be
- * made owner-writable before unlinking it. A link or special file fails closed
- * instead of allowing cleanup to escape the daemon-owned tree.
- */
-function removeWritableTreeWithoutFollowingLinks(target: string): void {
-  let stat: fs.Stats;
-  try {
-    stat = fs.lstatSync(target);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return;
-    throw error;
-  }
-  if (stat.isSymbolicLink()) {
-    throw new OdNextTaskInputSnapshotError(
-      'OD Next task input cleanup refuses symbolic links or reparse points.',
-    );
-  }
-  if (stat.isDirectory()) {
-    fs.chmodSync(target, 0o700);
-    for (const entry of fs.readdirSync(target)) {
-      removeWritableTreeWithoutFollowingLinks(path.join(target, entry));
-    }
-    fs.rmdirSync(target);
-    return;
-  }
-  if (!stat.isFile()) {
-    throw new OdNextTaskInputSnapshotError(
-      'OD Next task input cleanup refuses non-file entries.',
-    );
-  }
-  fs.chmodSync(target, 0o600);
-  fs.unlinkSync(target);
-}
 
 function removeManagedSnapshotDir(input: {
   snapshotsRoot: string;
@@ -238,7 +203,12 @@ function removeManagedSnapshotDir(input: {
       'OD_NEXT_INPUT_SNAPSHOT_TOCTOU',
     );
   }
-  removeWritableTreeWithoutFollowingLinks(claimedSnapshotDir);
+  input.hooks?.beforeRemoveClaimedSnapshot?.(claimedSnapshotDir);
+  // Delegate recursive removal to Node's platform implementation. In
+  // particular, Windows removes a junction/reparse entry itself rather than
+  // resolving it as a directory to enumerate, and its EPERM recovery clears
+  // ReadOnly before retrying the removal.
+  fs.rmSync(claimedSnapshotDir, { recursive: true, force: true, maxRetries: 3 });
 }
 
 function sameIdentity(
