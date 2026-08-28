@@ -45,7 +45,6 @@ import {
 } from "@open-design/contracts/analytics";
 import { questionsFormTrackingId } from "@open-design/contracts/analytics";
 import {
-  formOptionLabelForValue,
   hasUnterminatedQuestionForm,
   splitOnQuestionForms,
   stripTrailingOpenQuestionForm,
@@ -69,16 +68,13 @@ import {
 } from "@open-design/contracts";
 import { OdCardView, type BrandBrowserAssistConfirm } from "./OdCard";
 import {
-  normalizeVisualStyleQuestionValue,
   parseSubmittedAnswers,
   QuestionFormView,
+  summarizeQuestionFormAnswers,
   type QuestionFormFileSubmission,
   type QuestionFormInteraction,
 } from "./QuestionForm";
-import {
-  visualStyleCardsForContext,
-  type VisualStyleContext,
-} from "../runtime/visual-style-catalog";
+import type { VisualStyleContext } from "../runtime/visual-style-catalog";
 import { splitStreamingArtifact, stripArtifact, stripRecoveredHtmlFallbackForDisplay } from "../artifacts/strip";
 import { stripInternalControlMarkers } from "../artifacts/internal-markers";
 import { BRAND_BROWSER_TAB_ID } from "../runtime/brand-browser-bridge";
@@ -1110,9 +1106,7 @@ function AssistantMessageImpl({
   const effectiveNextStepVariant: NextStepActionsVariant =
     nextStepVariant === 'brand-extraction' && (!runSucceeded || !nextStepArtifactName)
       ? 'brand-programmatic-incomplete'
-      : nextStepVariant === 'default' && (!runSucceeded || !nextStepArtifactName)
-        ? 'project-incomplete'
-        : nextStepVariant;
+      : nextStepVariant;
   /*
    * 这一轮的三条行为引导。
    *
@@ -3194,60 +3188,8 @@ function FormBlock({
     [form, nextUserContent],
   );
   const submittedSummary = useMemo(() => {
-    const items: Array<{ label: string; value: string }> = [];
-    const visualItems: Array<{
-      label: string;
-      cards: Array<{ title: string; src: string }>;
-    }> = [];
-    if (!submittedFromHistory) return { items, visualItems };
-    for (const question of form.questions) {
-      const raw = submittedFromHistory[question.id];
-      const values = Array.isArray(raw) ? raw : typeof raw === "string" ? [raw] : [];
-      const labels = values
-        .filter((value) => value.trim().length > 0)
-        .map((value) => formOptionLabelForValue(question, value));
-      if (labels.length === 0) continue;
-
-      const visualStyleCards =
-        visualStyleContext &&
-        question.id === "tone" &&
-        (question.type === "checkbox" || question.type === "radio") &&
-        question.options
-          ? visualStyleCardsForContext(visualStyleContext)
-          : [];
-      const normalizedVisualValues =
-        visualStyleCards.length > 0 && visualStyleContext
-          ? values.map((value) =>
-              normalizeVisualStyleQuestionValue(question, value, visualStyleContext),
-            )
-          : values;
-      const visualCards = visualStyleCards.flatMap((card) =>
-        normalizedVisualValues.includes(card.value) && card.preview
-          ? [{ title: card.title, src: card.preview.src }]
-          : [],
-      );
-      if (visualCards.length > 0) {
-        visualItems.push({ label: question.label, cards: visualCards });
-        const selectedLabelsWithoutPreview = normalizedVisualValues
-          .filter(
-            (value) =>
-              !visualStyleCards.some((card) => card.value === value && card.preview),
-          )
-          .map((value) => {
-            const card = visualStyleCards.find((candidate) => candidate.value === value);
-            return card?.title ?? formOptionLabelForValue(question, value);
-          });
-        if (selectedLabelsWithoutPreview.length > 0) {
-          items.push({
-            label: question.label,
-            value: selectedLabelsWithoutPreview.join(", "),
-          });
-        }
-        continue;
-      }
-      items.push({ label: question.label, value: labels.join(", ") });
-    }
-    return { items, visualItems };
+    if (!submittedFromHistory) return { items: [], visualItems: [] };
+    return summarizeQuestionFormAnswers(form, submittedFromHistory, visualStyleContext);
   }, [form, submittedFromHistory, visualStyleContext]);
   useEffect(() => {
     setDraftAnswers(readInlineQuestionFormDraft(formKey));

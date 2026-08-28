@@ -11,7 +11,10 @@ export type VisualStyleVariant =
   | 'human';
 
 export interface VisualStylePreviewAsset {
+  /** Full-size source kept as the stable catalogue identity and export fallback. */
   src: string;
+  /** Display-sized derivative for the inline direction picker. */
+  thumbnailSrc: string;
   alt: string;
 }
 
@@ -34,7 +37,22 @@ interface VisualStyleCatalogEntry {
   recommended?: boolean;
 }
 
-const STYLE_CATALOG_ASSET_BASE_URL = 'https://repo-assets.open-design.ai/style-catalog/v1';
+const STYLE_CATALOG_ASSET_ORIGIN = 'https://repo-assets.open-design.ai';
+const STYLE_CATALOG_ASSET_PATH = '/style-catalog/v1';
+const STYLE_CATALOG_ASSET_BASE_URL = `${STYLE_CATALOG_ASSET_ORIGIN}${STYLE_CATALOG_ASSET_PATH}`;
+/**
+ * The picker never draws a preview wider than a few hundred CSS pixels. Its
+ * source catalogue is uniformly 1600x1200, so decoding six originals would
+ * spend about 11.5 megapixels on a 200px card stack. Cloudflare's derivative
+ * keeps enough pixels for a 3x 200px display while cutting transfer and decode
+ * work; `format=auto` lets the browser take AVIF/WebP without changing the
+ * stable original URL exposed by `src`.
+ */
+const STYLE_CATALOG_THUMBNAIL_TRANSFORM = 'width=640,quality=75,format=auto';
+
+function styleCatalogThumbnailUrl(filename: string): string {
+  return `${STYLE_CATALOG_ASSET_ORIGIN}/cdn-cgi/image/${STYLE_CATALOG_THUMBNAIL_TRANSFORM}${STYLE_CATALOG_ASSET_PATH}/${filename}`;
+}
 
 const DECK_STYLE_CATALOG: VisualStyleCatalogEntry[] = [
   {
@@ -738,16 +756,20 @@ const STYLE_CATALOGS: Readonly<Record<VisualStyleContext, VisualStyleCatalogEntr
 
 export function visualStyleCardsForContext(context: VisualStyleContext): VisualStyleCard[] {
   const catalog = STYLE_CATALOGS[context];
-  return catalog.map((style) => ({
-    value: `${context}-${style.slug}`,
-    title: style.title,
-    description: style.description,
-    variant: style.variant,
-    category: style.category,
-    preview: {
-      src: `${STYLE_CATALOG_ASSET_BASE_URL}/${context}-${style.slug}-v1.webp`,
-      alt: `${style.title} ${context} style preview.`,
-    },
-    recommended: style.recommended,
-  }));
+  return catalog.map((style) => {
+    const filename = `${context}-${style.slug}-v1.webp`;
+    return {
+      value: `${context}-${style.slug}`,
+      title: style.title,
+      description: style.description,
+      variant: style.variant,
+      category: style.category,
+      preview: {
+        src: `${STYLE_CATALOG_ASSET_BASE_URL}/${filename}`,
+        thumbnailSrc: styleCatalogThumbnailUrl(filename),
+        alt: `${style.title} ${context} style preview.`,
+      },
+      recommended: style.recommended,
+    };
+  });
 }

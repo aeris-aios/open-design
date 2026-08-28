@@ -1137,6 +1137,43 @@ describe('AssistantMessage question forms', () => {
     expect(screen.queryByText('Quick brief — tailored')).toBeNull();
   });
 
+  it('keeps ordinary checkbox answers on one replay-summary row', () => {
+    const form = [
+      '<question-form id="pages" title="Pages">',
+      JSON.stringify({
+        questions: [
+          {
+            id: 'pages',
+            label: 'Pages',
+            type: 'checkbox',
+            options: ['Product detail', 'Search results'],
+          },
+        ],
+      }),
+      '</question-form>',
+    ].join('\n');
+
+    render(
+      <AssistantMessage
+        message={baseMessage({
+          content: form,
+          events: [{ kind: 'text', text: form } as ChatMessage['events'][number]],
+        })}
+        streaming={false}
+        projectId="proj-1"
+        nextUserContent={[
+          '[form answers — pages]',
+          '- Pages: Product detail, Search results',
+        ].join('\n')}
+      />,
+    );
+
+    const summary = screen.getByTestId('question-form-summary');
+    expect(summary.querySelectorAll('.ab')).toHaveLength(1);
+    expect(summary.querySelector('.ab b')?.textContent).toBe('Product detail, Search results');
+    expect(summary.querySelector('.al')).toBeNull();
+  });
+
   it('keeps file names in the answered summary when an upload appendix repeats a question label', () => {
     const form = [
       '<question-form id="references" title="References">',
@@ -1209,6 +1246,49 @@ describe('AssistantMessage question forms', () => {
       'src',
       'https://repo-assets.open-design.ai/style-catalog/v1/deck-editorial-narrative-v1.webp',
     );
+  });
+
+  it('keeps a catalog-backed direction-card preview in the answered summary', () => {
+    const form = [
+      '<question-form id="direction" title="Choose a visual direction">',
+      JSON.stringify({
+        questions: [
+          {
+            id: 'direction',
+            label: 'Visual direction',
+            type: 'direction-cards',
+            options: [{ label: 'Model-authored placeholder', value: 'placeholder' }],
+            cards: [{ id: 'placeholder', label: 'Model-authored placeholder' }],
+          },
+        ],
+      }),
+      '</question-form>',
+    ].join('\n');
+
+    render(
+      <AssistantMessage
+        message={baseMessage({
+          content: form,
+          events: [{ kind: 'text', text: form } as ChatMessage['events'][number]],
+        })}
+        streaming={false}
+        projectId="proj-1"
+        projectKind="web_clone"
+        nextUserContent={[
+          '[form answers — direction]',
+          '- Visual direction: Expressive consumer [value: prototype-expressive-consumer]',
+        ].join('\n')}
+      />,
+    );
+
+    expect(screen.getByText('Expressive consumer')).toBeTruthy();
+    expect(
+      screen.getByRole('img', { name: 'Visual direction: Expressive consumer' }),
+    ).toHaveAttribute(
+      'src',
+      'https://repo-assets.open-design.ai/style-catalog/v1/prototype-expressive-consumer-v1.webp',
+    );
+    expect(screen.queryByText('prototype-expressive-consumer')).toBeNull();
   });
 
   it.each([

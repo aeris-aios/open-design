@@ -10,9 +10,6 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { AssistantMessage } from '../../src/components/AssistantMessage';
-import {
-  PROJECT_GENERATE_ARTIFACT_PROMPT,
-} from '../../src/components/NextStepActions';
 import { en } from '../../src/i18n/locales/en';
 import type { ChatMessage, ProjectFile } from '../../src/types';
 
@@ -234,15 +231,14 @@ describe('AssistantMessage next-step affordance', () => {
     expect(screen.queryByTestId('next-step-actions')).toBeNull();
   });
 
-  it('renders project recovery actions when the turn produced no previewable artifact', () => {
-    const h = handlers();
+  it('does not fall back to the fixed project menu when a successful turn has no previewable artifact', () => {
     render(
       <AssistantMessage
         message={baseMessage({ producedFiles: [producedFile('notes.md', 'text')] })}
         streaming={false}
         projectId="proj-1"
         isLast
-        {...h}
+        {...handlers()}
       />,
     );
     // #5517 shape: a turn with produced files but no tool ops renders the produced
@@ -254,10 +250,28 @@ describe('AssistantMessage next-step affordance', () => {
     // 收成一个组件之后,`file-ops-summary` 标的是面板身份,两条路上都有。
     expect(document.querySelector('.file-ops-list')).toBeNull();
     expect(document.querySelectorAll('[data-testid="file-ops-summary"]')).toHaveLength(1);
-    expect(screen.getByTestId('next-step-actions')).toBeTruthy();
-    expect(screen.getByText(en['nextStep.projectGenerateArtifactTitle'])).toBeTruthy();
-    fireEvent.click(screen.getByTestId('next-step-project-action-project-generate-artifact'));
-    expect(h.onNextStepPromptAction).toHaveBeenCalledWith(PROJECT_GENERATE_ARTIFACT_PROMPT);
+    expect(screen.queryByTestId('next-step-actions')).toBeNull();
+    expect(screen.queryByText(en['nextStep.projectGenerateArtifactTitle'])).toBeNull();
+    expect(screen.queryByTestId('next-step-toolbox-more')).toBeNull();
+  });
+
+  it('uses agent-written suggestions for a successful non-preview artifact turn', () => {
+    render(
+      <AssistantMessage
+        message={withSuggestions(
+          baseMessage({ producedFiles: [producedFile('notes.md', 'text')] }),
+        )}
+        streaming={false}
+        projectId="proj-1"
+        isLast
+        {...handlers()}
+      />,
+    );
+
+    expect(screen.getByTestId('next-step-suggestions')).toBeTruthy();
+    for (const suggestion of SUGGESTIONS) expect(screen.getByText(suggestion)).toBeTruthy();
+    expect(screen.queryByText(en['nextStep.projectGenerateArtifactTitle'])).toBeNull();
+    expect(screen.queryByTestId('next-step-toolbox-more')).toBeNull();
   });
 
   it('does not reuse an earlier artifact for a pure-answer turn', () => {

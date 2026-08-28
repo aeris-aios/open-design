@@ -566,7 +566,14 @@ export const QuestionFormView = forwardRef<QuestionFormHandle, Props>(function Q
    * 「renders restored legacy visual tone answers on their matching cards」拦下来的。
    */
   if (submittedAnswers !== undefined && !interactive) {
-    return <AnsweredSummary form={form} answers={submittedAnswers} t={t} />;
+    return (
+      <AnsweredSummary
+        form={form}
+        answers={submittedAnswers}
+        visualStyleContext={visualStyleContext}
+        t={t}
+      />
+    );
   }
 
   return (
@@ -1224,7 +1231,12 @@ function VisualStylePicker({
     value: card.value,
     title: card.title,
     preview: (
-      <VisualStylePreview context={context} variant={card.variant} preview={card.preview} />
+      <VisualStylePreview
+        context={context}
+        variant={card.variant}
+        preview={card.preview}
+        eager={!disabled}
+      />
     ),
     disabled:
       disabled ||
@@ -1718,15 +1730,26 @@ function VisualStylePreview({
   context,
   variant,
   preview,
+  eager = false,
 }: {
   context: VisualStyleContext;
   variant: VisualStyleCard['variant'];
   preview?: VisualStyleCard['preview'];
+  /** The active six-card batch should be ready before a hidden card rotates forward. */
+  eager?: boolean;
 }) {
   if (preview) {
     return (
       <span className="qf-visual-preview" data-style={variant}>
-        <img className="qf-visual-preview-image" src={preview.src} alt={preview.alt} loading="lazy" />
+        <img
+          className="qf-visual-preview-image"
+          src={preview.thumbnailSrc}
+          alt={preview.alt}
+          width={640}
+          height={480}
+          loading={eager ? 'eager' : 'lazy'}
+          decoding="async"
+        />
       </span>
     );
   }
@@ -1976,11 +1999,7 @@ function formWithVisualStyleOptions(
   if (!visualStyleContext) return form;
   let expanded = false;
   const questions = form.questions.map((question) => {
-    if (
-      question.id !== 'tone' ||
-      (question.type !== 'checkbox' && question.type !== 'radio') ||
-      !question.options
-    ) {
+    if (!questionUsesVisualStyleCatalog(question)) {
       return question;
     }
     expanded = true;
@@ -2067,11 +2086,7 @@ export function normalizeVisualStyleQuestionValue(
   visualStyleContext: VisualStyleContext | undefined,
 ): string {
   const optionValue = formOptionValueForLabel(q, value);
-  if (
-    !visualStyleContext ||
-    q.id !== 'tone' ||
-    (q.type !== 'checkbox' && q.type !== 'radio')
-  ) {
+  if (!visualStyleContext || !questionUsesVisualStyleCatalog(q)) {
     return optionValue;
   }
 
@@ -2088,6 +2103,16 @@ export function normalizeVisualStyleQuestionValue(
   return variant
     ? (cards.find((card) => card.variant === variant)?.value ?? optionValue)
     : optionValue;
+}
+
+function questionUsesVisualStyleCatalog(
+  question: QuestionForm['questions'][number],
+): boolean {
+  return question.type === 'direction-cards' || (
+    question.id === 'tone' &&
+    (question.type === 'checkbox' || question.type === 'radio') &&
+    !!question.options
+  );
 }
 
 function shouldRenderCustomChoice(q: QuestionForm['questions'][number]): boolean {
@@ -2205,59 +2230,130 @@ function parseSubmittedOptionToken(raw: string): string {
 function AnsweredSummary({
   form,
   answers,
+  visualStyleContext,
   t,
 }: {
   form: QuestionForm;
   answers: Record<string, string | string[]>;
+  visualStyleContext?: VisualStyleContext;
   t: ReturnType<typeof useT>;
 }) {
-  /*
-   * 显示的是选项的**文案**,不是它的 value。
-   *
-   * `answers` 里存的是 `share` / `detail` 这种内部标识,直接打出来屏幕上就是一串
-   * 没人看得懂的英文(稿子第 23 / 24 格要的是「沿用列表页那张…」)。
-   * 自己填的答案不在选项表里,查不到就原样显示 —— 那本来就是用户写的话。
-   */
-  const readable = (q: QuestionForm['questions'][number], value: string): string => {
-    const option = q.options?.find((o) => o.value === value);
-    if (option) return option.label;
-    const card = q.cards?.find((c) => c.id === value);
-    if (card) return card.label;
-    return value;
-  };
-  const rows = form.questions
-    .map((q) => {
-      const raw = answers[q.id];
-      const values = (Array.isArray(raw) ? raw.filter(Boolean) : raw ? [raw] : [])
-        .map((v) => readable(q, v));
-      return { label: q.label, values };
-    })
-    .filter((r) => r.values.length > 0);
+  // This locked-form renderer follows design frame #24: each checkbox value
+  // gets its own `.al li`. Conversation replay keeps its pre-existing compact
+  // one-row-per-question shape from FormBlock.
+  const summary = summarizeQuestionFormAnswers(form, answers, visualStyleContext, true);
+  const flat = summary.items;
+  const single = flat.length === 1 && summary.visualItems.length === 0;
 
-  if (rows.length === 0) return null;
-
-  const single = rows.length === 1 && rows[0]!.values.length === 1;
+  if (flat.length === 0 && summary.visualItems.length === 0) return null;
 
   return (
     <div className="answered">
       <div className="k">{t('qf.answeredConfirmed')}</div>
       {single ? (
         <div className="ab">
-          <span className="ak">{rows[0]!.label}</span>
-          <b>{rows[0]!.values[0]}</b>
+          <span className="ak">{flat[0]!.label}</span>
+          <b>{flat[0]!.value}</b>
         </div>
-      ) : (
+      ) : flat.length > 0 ? (
         <ul className="al">
-          {rows.flatMap((r) =>
-            r.values.map((v) => (
-              <li key={`${r.label}-${v}`}>
-                <span className="ak">{r.label}</span>
-                <b>{v}</b>
-              </li>
-            )),
-          )}
+          {flat.map((item) => (
+            <li key={`${item.label}-${item.value}`}>
+              <span className="ak">{item.label}</span>
+              <b>{item.value}</b>
+            </li>
+          ))}
         </ul>
-      )}
+      ) : null}
+      {summary.visualItems.map((item) => (
+        <div key={item.label} className="ab">
+          <span className="ak">{item.label}</span>
+          <b>{item.cards.map((card) => card.title).join(' / ')}</b>
+          {item.cards.map((card) => (
+            <img
+              key={card.src}
+              className="av"
+              src={card.src}
+              alt={`${item.label}: ${card.title}`}
+            />
+          ))}
+        </div>
+      ))}
     </div>
   );
+}
+
+export interface QuestionFormAnsweredSummary {
+  items: Array<{ label: string; value: string }>;
+  visualItems: Array<{
+    label: string;
+    cards: Array<{ title: string; src: string }>;
+  }>;
+}
+
+/**
+ * Build the design's compact "Confirmed" rows from either the just-submitted
+ * snapshot or a later replay. Both paths must resolve catalog-backed visual
+ * choices the same way: the internal style id is protocol data, while the UI
+ * shows the catalog title and its selected preview. `splitMultiValueItems`
+ * preserves the locked-form design's one-row-per-checkbox-value layout; the
+ * replay path keeps its established one-row-per-question summary.
+ */
+export function summarizeQuestionFormAnswers(
+  form: QuestionForm,
+  answers: Record<string, string | string[]>,
+  visualStyleContext?: VisualStyleContext,
+  splitMultiValueItems = false,
+): QuestionFormAnsweredSummary {
+  const items: QuestionFormAnsweredSummary['items'] = [];
+  const visualItems: QuestionFormAnsweredSummary['visualItems'] = [];
+
+  const readable = (question: QuestionForm['questions'][number], value: string): string => {
+    const option = question.options?.find(
+      (candidate) => candidate.value === value || candidate.label === value,
+    );
+    if (option) return option.label;
+    const card = question.cards?.find(
+      (candidate) => candidate.id === value || candidate.label === value,
+    );
+    return card?.label ?? value;
+  };
+
+  for (const question of form.questions) {
+    const raw = answers[question.id];
+    const values = (Array.isArray(raw) ? raw : typeof raw === 'string' ? [raw] : [])
+      .filter((value) => value.trim().length > 0);
+    if (values.length === 0) continue;
+
+    const catalog = visualStyleContext && questionUsesVisualStyleCatalog(question)
+      ? visualStyleCardsForContext(visualStyleContext)
+      : [];
+    const normalized = catalog.length > 0 && visualStyleContext
+      ? values.map((value) =>
+          normalizeVisualStyleQuestionValue(question, value, visualStyleContext),
+        )
+      : values;
+    const selectedCards = catalog.flatMap((card) =>
+      normalized.includes(card.value) && card.preview
+        ? [{ title: card.title, src: card.preview.src }]
+        : [],
+    );
+
+    if (selectedCards.length > 0) {
+      visualItems.push({ label: question.label, cards: selectedCards });
+    }
+
+    const readableWithoutPreview = normalized
+      .filter((value) => !catalog.some((card) => card.value === value && card.preview))
+      .map((value) => catalog.find((card) => card.value === value)?.title ?? readable(question, value));
+    if (splitMultiValueItems) {
+      for (const value of readableWithoutPreview) {
+        items.push({ label: question.label, value });
+      }
+    } else if (readableWithoutPreview.length > 0) {
+      items.push({ label: question.label, value: readableWithoutPreview.join(', ') });
+    }
+  }
+
+  return { items, visualItems };
 }

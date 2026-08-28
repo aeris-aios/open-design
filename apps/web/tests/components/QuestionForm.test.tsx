@@ -975,12 +975,20 @@ describe('QuestionFormView', () => {
       (screen.getByAltText(
         'Editorial narrative deck style preview.',
       ) as HTMLImageElement).getAttribute('src'),
-    ).toBe('https://repo-assets.open-design.ai/style-catalog/v1/deck-editorial-narrative-v1.webp');
+    ).toBe(
+      visualStyleCardsForContext('deck').find(
+        (style) => style.value === 'deck-editorial-narrative',
+      )?.preview.thumbnailSrc,
+    );
     expect(
       (screen.getByAltText(
         'Product keynote deck style preview.',
       ) as HTMLImageElement).getAttribute('src'),
-    ).toBe('https://repo-assets.open-design.ai/style-catalog/v1/deck-product-keynote-v1.webp');
+    ).toBe(
+      visualStyleCardsForContext('deck').find(
+        (style) => style.value === 'deck-product-keynote',
+      )?.preview.thumbnailSrc,
+    );
     expect(document.querySelector('[data-artifact-type="deck"]')).toBeTruthy();
 
     fireEvent.click(card('Editorial narrative'));
@@ -1040,6 +1048,41 @@ describe('QuestionFormView', () => {
 
     expect(card('Editorial narrative').getAttribute('aria-checked')).toBe('true');
     expect(card('Premium pitch').getAttribute('aria-checked')).toBe('true');
+  });
+
+  it('summarizes a submitted catalog-backed direction card with its title and preview', () => {
+    const form = {
+      id: 'direction',
+      title: 'Choose a visual direction',
+      questions: [
+        {
+          id: 'direction',
+          label: 'Visual direction',
+          type: 'direction-cards',
+          required: true,
+          options: [{ label: 'Model-authored placeholder', value: 'placeholder' }],
+          cards: [{ id: 'placeholder', label: 'Model-authored placeholder' }],
+        },
+      ],
+    } as QuestionForm;
+
+    render(
+      <QuestionFormView
+        form={form}
+        interactive={false}
+        submittedAnswers={{ direction: 'prototype-expressive-consumer' }}
+        visualStyleContext="prototype"
+      />,
+    );
+
+    expect(screen.getByText('Expressive consumer')).toBeTruthy();
+    expect(
+      screen.getByRole('img', { name: 'Visual direction: Expressive consumer' }),
+    ).toHaveAttribute(
+      'src',
+      'https://repo-assets.open-design.ai/style-catalog/v1/prototype-expressive-consumer-v1.webp',
+    );
+    expect(screen.queryByText('prototype-expressive-consumer')).toBeNull();
   });
 
   it('keeps the visual picker compact, shuffles unselected styles, and expands on demand', () => {

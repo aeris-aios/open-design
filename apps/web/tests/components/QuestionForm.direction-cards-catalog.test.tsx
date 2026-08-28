@@ -13,7 +13,7 @@
  * 拼成文本行回去的,不是机器 id 契约;`tone` 那条路今天就是这么替换的。
  */
 
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { QuestionFormView } from '../../src/components/QuestionForm';
@@ -83,6 +83,27 @@ describe('direction-cards 由内置目录接管', () => {
     const picker = container.querySelector('.qf-visual-picker');
     expect(picker).toBeTruthy();
     expect(container.querySelectorAll('.qf-visual-card[aria-pressed="true"]').length).toBeLessThanOrEqual(1);
+  });
+
+  it('提交给 agent 的文本使用目录标题并保留稳定 value', () => {
+    const onSubmit = vi.fn();
+    const { container } = render(
+      <QuestionFormView
+        form={modelAuthored}
+        interactive
+        visualStyleContext="prototype"
+        onSubmit={onSubmit}
+      />,
+    );
+    const selected = visualStyleCardsForContext('prototype')[0]!;
+
+    fireEvent.click(container.querySelector(`[title="${selected.title}"]`)!);
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+
+    expect(onSubmit.mock.calls[0]?.[0]).toContain(
+      `${selected.title} [value: ${selected.value}]`,
+    );
+    expect(onSubmit.mock.calls[0]?.[1]).toEqual({ direction: [selected.value] });
   });
 
   it('**没有**视觉风格上下文时原样渲染模型那几张 —— 没有对应的一沓可换', () => {
