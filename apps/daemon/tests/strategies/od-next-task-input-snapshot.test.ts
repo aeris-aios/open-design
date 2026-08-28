@@ -224,6 +224,33 @@ describe('OD Next task-scoped input snapshots', () => {
     expect(readFileSync(path.join(displacedClaimedDir, 'managed.txt'), 'utf8')).toBe('managed');
   });
 
+  it('does not traverse a descendant junction swapped in before platform removal', () => {
+    const f = fixture();
+    const snapshotDir = path.join(f.snapshotsRoot, 'odnext_descendant_cleanup_swap');
+    const childDir = path.join(snapshotDir, 'attachments');
+    const displacedChildDir = `${childDir}.displaced`;
+    const outside = path.join(f.root, 'outside-descendant-swap-target');
+    mkdirSync(childDir, { recursive: true });
+    writeFileSync(path.join(childDir, 'managed.txt'), 'managed');
+    mkdirSync(outside);
+    const sentinel = path.join(outside, 'sentinel.txt');
+    writeFileSync(sentinel, 'keep');
+
+    removeOdNextTaskInputSnapshot({
+      taskExecutionId: 'odnext_descendant_cleanup_swap',
+      snapshotDir,
+      manifestSha256: '1'.repeat(64),
+    }, f.snapshotsRoot, {
+      beforeRemoveClaimedSnapshot: (claimedSnapshotDir) => {
+        const claimedChildDir = path.join(claimedSnapshotDir, 'attachments');
+        renameSync(claimedChildDir, path.join(claimedSnapshotDir, path.basename(displacedChildDir)));
+        symlinkSync(outside, claimedChildDir, 'junction');
+      },
+    });
+
+    expect(readFileSync(sentinel, 'utf8')).toBe('keep');
+  });
+
   it('freezes ordered document/image bytes and survives source mutation or deletion', () => {
     const f = fixture();
     writeFileSync(path.join(f.projectRoot, 'brief.pdf'), Buffer.from('%PDF-1.7\nbrief'));

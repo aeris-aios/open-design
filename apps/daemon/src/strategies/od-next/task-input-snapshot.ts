@@ -11,6 +11,7 @@ import {
   type OdNextRequestInputFactsV1,
   type OdNextTaskConfigurationV1,
 } from '@open-design/contracts';
+import { spawnSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -140,39 +141,34 @@ export type OdNextTaskInputCleanupPhase =
   | 'run-claim'
   | 'non-ready';
 
-/**
- * Remove an immutable managed tree without following links. Windows maps the
- * snapshot's read-only modes to the ReadOnly attribute, so regular files and
- * directories must be made writable before removal. Links and junctions are
- * unlinked as entries and are never enumerated.
- */
-function removeWritableTreeWithoutFollowingLinks(target: string): void {
-  let stat: fs.Stats;
-  try {
-    stat = fs.lstatSync(target);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return;
-    throw error;
-  }
-  if (stat.isSymbolicLink()) {
-    fs.unlinkSync(target);
+/** Remove a claimed tree with the host's reparse-aware removal primitive. */
+function removeSnapshotTreeWithPlatformPrimitive(target: string): void {
+  if (process.platform !== 'win32') {
+    fs.rmSync(target, { recursive: true, force: true, maxRetries: 3 });
     return;
   }
-  if (stat.isDirectory()) {
-    fs.chmodSync(target, 0o700);
-    for (const entry of fs.readdirSync(target)) {
-      removeWritableTreeWithoutFollowingLinks(path.join(target, entry));
-    }
-    fs.rmdirSync(target);
-    return;
-  }
-  if (!stat.isFile()) {
+
+  // Node 24's Windows recursive remover can enumerate through a junction that
+  // replaces a descendant mid-walk. The Windows `rmdir` primitive detects
+  // reparse entries during its own traversal and removes the entry rather than
+  // enumerating its target. Pass the attacker-influenced path through an
+  // environment value so cmd never parses it as command syntax.
+  const result = spawnSync(
+    process.env.ComSpec ?? process.env.COMSPEC ?? 'cmd.exe',
+    ['/d', '/v:off', '/s', '/c', 'rmdir /s /q "%OD_SNAPSHOT_DELETE_TARGET%"'],
+    {
+      env: { ...process.env, OD_SNAPSHOT_DELETE_TARGET: target },
+      stdio: 'ignore',
+      windowsVerbatimArguments: true,
+    },
+  );
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
     throw new OdNextTaskInputSnapshotError(
-      'OD Next task input cleanup refuses non-file entries.',
+      'OD Next task input cleanup failed in the Windows directory remover.',
+      'OD_NEXT_INPUT_SNAPSHOT_CLEANUP_FAILED',
     );
   }
-  fs.chmodSync(target, 0o600);
-  fs.unlinkSync(target);
 }
 
 function removeManagedSnapshotDir(input: {
@@ -257,7 +253,7 @@ function removeManagedSnapshotDir(input: {
     );
   }
   input.hooks?.beforeRemoveClaimedSnapshot?.(claimedSnapshotDir);
-  removeWritableTreeWithoutFollowingLinks(claimedSnapshotDir);
+  removeSnapshotTreeWithPlatformPrimitive(claimedSnapshotDir);
 }
 
 function sameIdentity(
