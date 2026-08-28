@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   AppliedStrategyBindingV2,
   OdNextRuntimeCapabilitySnapshotV1,
@@ -147,8 +147,16 @@ describe('OD Next automatic production through the real server', () => {
   let started: StartedServer | null = null;
   let binDir: string | null = null;
   let sequence = 0;
+  let previousCodexTransport: string | undefined;
+
+  beforeEach(() => {
+    previousCodexTransport = process.env.OD_CODEX_TRANSPORT;
+    process.env.OD_CODEX_TRANSPORT = 'exec-json';
+  });
 
   afterEach(async () => {
+    if (previousCodexTransport == null) delete process.env.OD_CODEX_TRANSPORT;
+    else process.env.OD_CODEX_TRANSPORT = previousCodexTransport;
     delete process.env.OD_NEXT_STRATEGY_ROLLOUT;
     delete process.env.OD_NEXT_STRATEGY_LOCAL_SYNTHETIC_CANARY;
     delete process.env.OD_NEXT_STRATEGY_MAX_RUN_DURATION_MS;
