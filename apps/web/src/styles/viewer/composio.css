@@ -919,6 +919,7 @@
   background: var(--bg-panel);
   font-size: 12px;
   font-weight: 600;
+  line-height: 1.5;
   color: var(--text-strong);
 }
 .question-form-locked .question-form-head {
@@ -941,12 +942,6 @@
   font-size: 12px;
   font-weight: 600;
   color: var(--text-strong);
-}
-.question-form-desc {
-  margin-top: 2px;
-  font-size: 12px;
-  color: var(--text-muted);
-  line-height: 1.45;
 }
 .question-form-pill {
   font-size: 12px;
@@ -977,11 +972,8 @@
 .qf-step-progress {
   flex: 0 0 auto;
   margin-inline-start: auto;
-  color: var(--text-muted);
-  font-size: 11px;
-  font-weight: 600;
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
-  letter-spacing: 0.04em;
 }
 
 .qf-field-visual .qf-label {

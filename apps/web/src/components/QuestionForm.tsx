@@ -591,15 +591,12 @@ export const QuestionFormView = forwardRef<QuestionFormHandle, Props>(function Q
         {/* 稿子的卡头标题是 `<b>`(`.card > .h b { font-weight: inherit }`),不是 div ——
             标签不一样,逐元素比样式时从这里开始整段串位 */}
         <b className="question-form-title">{form.title}</b>
-        {form.description ? (
-          <div className="question-form-desc">{form.description}</div>
-        ) : null}
         {stepped ? (
           <span
             className="qf-step-progress"
             aria-label={`${activeQuestionIndex + 1} / ${form.questions.length}`}
           >
-            {activeQuestionIndex + 1} / {form.questions.length}
+            {activeQuestionIndex + 1}/{form.questions.length}
           </span>
         ) : null}
         {pickedCount > 0 ? <span className="qf-picked">{t('qf.picked', { count: pickedCount })}</span> : null}

@@ -29,8 +29,6 @@ const form: QuestionForm = {
 const voiceForm: QuestionForm = {
   id: 'elevenlabs-voice',
   title: 'Choose an ElevenLabs voice',
-  description:
-    'Pick a voice by description. The selected answer will be the exact voice_id passed to the renderer.',
   questions: [
     {
       id: 'voice',
@@ -796,7 +794,7 @@ describe('QuestionFormView', () => {
       />,
     );
 
-    expect(screen.getByText('1 / 3').closest('.question-form-head')).toBeTruthy();
+    expect(screen.getByText('1/3').closest('.question-form-head')).toBeTruthy();
     expect(screen.getByLabelText(/Auto-continues when the timer ends 10:00/)).toBeTruthy();
     expect(screen.getByText('Who will see this deck?')).toBeTruthy();
     expect(screen.queryByText('How detailed should it be?')).toBeNull();
@@ -819,7 +817,7 @@ describe('QuestionFormView', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: 'Next step' }));
 
-    expect(screen.getByText('2 / 3')).toBeTruthy();
+    expect(screen.getByText('2/3')).toBeTruthy();
     expect(screen.queryByText('Who will see this deck?')).toBeNull();
     expect(screen.getByRole('button', { name: 'Back' })).toBeTruthy();
     expect(
@@ -843,7 +841,7 @@ describe('QuestionFormView', () => {
     expect(chip('Standard · 12 slides').getAttribute('aria-checked')).toBe('true');
     fireEvent.click(screen.getByRole('button', { name: 'Next step' }));
 
-    expect(screen.getByText('3 / 3')).toBeTruthy();
+    expect(screen.getByText('3/3')).toBeTruthy();
     fireEvent.change(screen.getByRole('textbox'), {
       target: { value: 'Include speaker notes' },
     });
@@ -880,12 +878,12 @@ describe('QuestionFormView', () => {
       stepCount: 3,
     });
 
-    expect(screen.getByText('2 / 3')).toBeTruthy();
+    expect(screen.getByText('2/3')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Skip' })).toBeTruthy();
     fireEvent.click(chip('Concise · 8 slides'));
     fireEvent.click(screen.getByRole('button', { name: 'Next step' }));
 
-    expect(screen.getByText('3 / 3')).toBeTruthy();
+    expect(screen.getByText('3/3')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Skip' })).toBeTruthy();
     expect((screen.getByRole('button', { name: 'Next' }) as HTMLButtonElement).disabled).toBe(
       false,

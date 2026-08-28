@@ -110,7 +110,6 @@ export interface FormQuestion {
 export interface QuestionForm {
   id: string;
   title: string;
-  description?: string;
   questions: FormQuestion[];
   submitLabel?: string;
   /**
@@ -377,7 +376,6 @@ function parseForm(body: string, attrs: Record<string, string>): FormParseResult
   const id = attrs.id ?? (typeof obj.id === 'string' ? obj.id : 'discovery');
   const title =
     attrs.title ?? (typeof obj.title === 'string' ? obj.title : 'A few quick questions');
-  const description = typeof obj.description === 'string' ? obj.description : undefined;
   const submitLabel = typeof obj.submitLabel === 'string' ? obj.submitLabel : undefined;
   const lang = typeof obj.lang === 'string' && obj.lang.trim().length > 0 ? obj.lang.trim() : undefined;
   return {
@@ -385,7 +383,6 @@ function parseForm(body: string, attrs: Record<string, string>): FormParseResult
       id,
       title,
       questions,
-      ...(description ? { description } : {}),
       ...(submitLabel ? { submitLabel } : {}),
       ...(lang ? { lang } : {}),
     },
@@ -496,7 +493,6 @@ export function parsePartialQuestionForm(input: string): QuestionForm | null {
   const topTitle = typeof top.title === 'string' && top.title.trim().length > 0 ? top.title : undefined;
   const id = attrs.id ?? completeTopLevelString(body, 'id') ?? 'discovery';
   const title = attrs.title ?? topTitle ?? 'A few quick questions';
-  const description = typeof top.description === 'string' ? top.description : undefined;
   // Carry submitLabel through the preview too — `tryParseForm` reads it for the
   // final form and `QuestionForm` renders `form.submitLabel ?? default`, so
   // omitting it here makes a custom CTA flicker in only once the close tag
@@ -511,7 +507,6 @@ export function parsePartialQuestionForm(input: string): QuestionForm | null {
     id,
     title,
     questions,
-    ...(description ? { description } : {}),
     ...(submitLabel ? { submitLabel } : {}),
     ...(lang ? { lang } : {}),
   };

@@ -82,7 +82,7 @@ function renderUiLocalePrompt(locale: string | undefined): string {
   const lines = [
     '# UI locale override',
     '',
-    `The OpenDesign UI locale for this run is \`${normalized}\` (${languageName}). All user-visible chat prose and generated UI controls must follow this locale, especially \`<question-form>\` titles, descriptions, labels, placeholders, helper text, and option labels. Keep machine-readable ids and object option \`value\` fields exact and unlocalized.`,
+    `The OpenDesign UI locale for this run is \`${normalized}\` (${languageName}). All user-visible chat prose and generated UI controls must follow this locale, especially \`<question-form>\` titles, question labels, placeholders, helper text, and option labels. Keep machine-readable ids and object option \`value\` fields exact and unlocalized.`,
   ];
   if (normalized === 'zh-CN') {
     lines.push(
@@ -1052,7 +1052,6 @@ function shouldRenderElevenLabsVoiceOptions(
 }
 
 function renderElevenLabsVoiceQuestionForm(voiceOptions: AudioVoiceOption[]): {
-  description: string;
   questions: Array<{
     id: string;
     label: string;
@@ -1070,8 +1069,6 @@ function renderElevenLabsVoiceQuestionForm(voiceOptions: AudioVoiceOption[]): {
     value: option.voiceId,
   }));
   return {
-    description:
-      'Pick a voice by description. The selected answer will be the exact voice_id passed to the renderer.',
     questions: [
       {
         id: 'voice',

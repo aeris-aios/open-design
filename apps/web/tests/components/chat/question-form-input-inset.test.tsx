@@ -62,7 +62,6 @@ const TO_FOOT = '16px';
 const FORM: QuestionForm = {
   id: 'brief',
   title: 'Kami 羊皮纸文档简报',
-  description: '锁定文档类型、主题和范围,开始创作',
   questions: [{
     id: 'topic',
     label: '主题或用途',

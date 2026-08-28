@@ -96,7 +96,7 @@ function renderUiLocalePrompt(
   const lines = [
     '# UI locale override',
     '',
-    `The OpenDesign UI locale for this run is \`${normalized}\` (${languageName}). All user-visible chat prose and generated UI controls must follow this locale, especially \`<question-form>\` titles, descriptions, labels, placeholders, helper text, and option labels. Keep machine-readable ids and object option \`value\` fields exact and unlocalized.`,
+    `The OpenDesign UI locale for this run is \`${normalized}\` (${languageName}). All user-visible chat prose and generated UI controls must follow this locale, especially \`<question-form>\` titles, question labels, placeholders, helper text, and option labels. Keep machine-readable ids and object option \`value\` fields exact and unlocalized.`,
     `The artifacts you generate must also be in ${languageName}: every piece of user-visible copy in the HTML/React/page/deck you produce — headings, body text, navigation, button and link labels, captions, alt text, and form fields — is written in this language by default. This holds even when a chosen template, plugin, or design system ships its reference/example content in another language: treat that copy as a layout and style reference and translate/adapt it into ${languageName}, do not ship its wording verbatim. Keep brand names, code, and technical identifiers as-is, and honor an explicit user request for a different output language.`,
   ];
   // The worked zh-CN quick-brief copy below matches the CLASSIC default
@@ -2000,7 +2000,6 @@ function shouldRenderElevenLabsVoiceOptions(
 }
 
 function renderElevenLabsVoiceQuestionForm(voiceOptions: AudioVoiceOption[]): {
-  description: string;
   questions: Array<{
     id: string;
     label: string;
@@ -2018,8 +2017,6 @@ function renderElevenLabsVoiceQuestionForm(voiceOptions: AudioVoiceOption[]): {
     value: option.voiceId,
   }));
   return {
-    description:
-      'Pick a voice by description. The selected answer will be the exact voice_id passed to the renderer.',
     questions: [
       {
         id: 'voice',
