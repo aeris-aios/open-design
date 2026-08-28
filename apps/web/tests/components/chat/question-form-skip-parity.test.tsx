@@ -362,6 +362,13 @@ const DESIGN_SKIP: Record<Prop, string> = {
 };
 
 describe('question-form 底栏「跳过」两态一致', () => {
+  it('主按钮在平铺和分步底栏都保持设计稿的 32px 高度', () => {
+    for (const form of [FLAT, STEPPED]) {
+      expect(resolved(submitButton(mount(form, false))).height).toBe('32px');
+      cleanup();
+    }
+  });
+
   it('正向对照:两态都真的渲染出了那颗按钮,而且都是同一个共享原语', () => {
     for (const form of [FLAT, STEPPED]) {
       const idle = skipButton(mount(form, false));

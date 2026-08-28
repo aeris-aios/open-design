@@ -497,6 +497,7 @@ export const QuestionFormView = forwardRef<QuestionFormHandle, Props>(function Q
       type="button"
       size="sm"
       variant="primary"
+      className="qf-primary-action"
       onClick={handleSubmit}
       disabled={submitDisabled || !ready}
       title={!submitDisabled && ready ? t('qf.submitTitle') : t('qf.submitDisabledTitle')}
@@ -928,6 +929,7 @@ export const QuestionFormView = forwardRef<QuestionFormHandle, Props>(function Q
                     type="button"
                     size="sm"
                     variant="primary"
+                    className="qf-primary-action"
                     onClick={
                       isLastQuestion
                         ? handleSubmit

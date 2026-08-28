@@ -1742,9 +1742,10 @@
   padding-inline: 0;
   min-width: auto;
 }
-/* 稿子 `.btn.mod-primary { height: 32px }` —— 底栏那颗主按钮比其它 sm 档高一截 */
-.qf-visual-foot > .button.primary,
-.question-form-foot > .button.primary {
+/* 稿子 `.btn.mod-primary { height: 32px }` —— 底栏那颗主按钮比其它 sm 档高一截。
+   用 QuestionForm 自己的语义类命中；共享 Button 的基础类来自 CSS Module，
+   DOM 上没有全局 `.button`，拿 `.button.primary` 当钩子会让这条规则静默失效。 */
+.question-form .qf-primary-action {
   height: 32px;
 }
 .qf-visual-foot-gap {
