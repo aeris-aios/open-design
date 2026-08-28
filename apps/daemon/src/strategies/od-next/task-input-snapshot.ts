@@ -11,7 +11,7 @@ import {
   type OdNextRequestInputFactsV1,
   type OdNextTaskConfigurationV1,
 } from '@open-design/contracts';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { redactSecrets } from '../../redact.js';
@@ -93,6 +93,12 @@ export interface SnapshotReadHooks {
   beforeOpenFile?: (filePath: string) => void;
 }
 
+export interface SnapshotCleanupHooks {
+  beforeLookupSnapshot?: (snapshotsRoot: string) => void;
+  beforeClaimSnapshot?: (snapshotDir: string) => void;
+  beforeRemoveClaimedSnapshot?: (claimedSnapshotDir: string) => void;
+}
+
 function sha256(bytes: Buffer | string): string {
   return createHash('sha256').update(bytes).digest('hex');
 }
@@ -134,46 +140,11 @@ export type OdNextTaskInputCleanupPhase =
   | 'run-claim'
   | 'non-ready';
 
-/**
- * Remove a managed immutable tree without following links. Windows maps the
- * snapshot's 0400/0444 modes to the ReadOnly attribute, so every entry must be
- * made owner-writable before unlinking it. A link or special file fails closed
- * instead of allowing cleanup to escape the daemon-owned tree.
- */
-function removeWritableTreeWithoutFollowingLinks(target: string): void {
-  let stat: fs.Stats;
-  try {
-    stat = fs.lstatSync(target);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return;
-    throw error;
-  }
-  if (stat.isSymbolicLink()) {
-    throw new OdNextTaskInputSnapshotError(
-      'OD Next task input cleanup refuses symbolic links or reparse points.',
-    );
-  }
-  if (stat.isDirectory()) {
-    fs.chmodSync(target, 0o700);
-    for (const entry of fs.readdirSync(target)) {
-      removeWritableTreeWithoutFollowingLinks(path.join(target, entry));
-    }
-    fs.rmdirSync(target);
-    return;
-  }
-  if (!stat.isFile()) {
-    throw new OdNextTaskInputSnapshotError(
-      'OD Next task input cleanup refuses non-file entries.',
-    );
-  }
-  fs.chmodSync(target, 0o600);
-  fs.unlinkSync(target);
-}
-
 function removeManagedSnapshotDir(input: {
   snapshotsRoot: string;
   taskExecutionId: string;
   snapshotDir: string;
+  hooks?: SnapshotCleanupHooks;
 }): void {
   const snapshotsRoot = path.resolve(input.snapshotsRoot);
   const taskExecutionId = safeTaskId(input.taskExecutionId);
@@ -185,9 +156,9 @@ function removeManagedSnapshotDir(input: {
     );
   }
 
-  let rootStat: fs.Stats;
+  let rootStat: fs.BigIntStats;
   try {
-    rootStat = fs.lstatSync(snapshotsRoot);
+    rootStat = fs.lstatSync(snapshotsRoot, { bigint: true });
   } catch (error) {
     if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return;
     throw error;
@@ -198,9 +169,10 @@ function removeManagedSnapshotDir(input: {
     );
   }
 
-  let snapshotStat: fs.Stats;
+  input.hooks?.beforeLookupSnapshot?.(snapshotsRoot);
+  let snapshotStat: fs.BigIntStats;
   try {
-    snapshotStat = fs.lstatSync(snapshotDir);
+    snapshotStat = fs.lstatSync(snapshotDir, { bigint: true });
   } catch (error) {
     if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return;
     throw error;
@@ -210,7 +182,51 @@ function removeManagedSnapshotDir(input: {
       'OD Next task input snapshot must be a managed non-symlink directory.',
     );
   }
-  removeWritableTreeWithoutFollowingLinks(snapshotDir);
+
+  const rootAfterLookup = fs.lstatSync(snapshotsRoot, { bigint: true });
+  if (
+    rootAfterLookup.isSymbolicLink()
+    || !rootAfterLookup.isDirectory()
+    || !sameIdentity(rootStat, rootAfterLookup)
+  ) {
+    throw new OdNextTaskInputSnapshotError(
+      'OD Next snapshot root changed before cleanup could claim its child.',
+      'OD_NEXT_INPUT_SNAPSHOT_TOCTOU',
+    );
+  }
+
+  // Claim the checked entry with one atomic rename before resolving any path
+  // for mutation. The random name prevents ordinary producers from finding or
+  // reusing the private deletion path while cleanup walks it. Rechecking the
+  // identity after rename makes a swap between lstat and rename fail closed:
+  // traversal never runs against the replacement (including a junction).
+  const claimedSnapshotDir = path.join(
+    snapshotsRoot,
+    `.deleting-${taskExecutionId}-${randomBytes(16).toString('hex')}`,
+  );
+  input.hooks?.beforeClaimSnapshot?.(snapshotDir);
+  fs.renameSync(snapshotDir, claimedSnapshotDir);
+  const rootAfterClaim = fs.lstatSync(snapshotsRoot, { bigint: true });
+  const claimedStat = fs.lstatSync(claimedSnapshotDir, { bigint: true });
+  if (
+    rootAfterClaim.isSymbolicLink()
+    || !rootAfterClaim.isDirectory()
+    || !sameIdentity(rootStat, rootAfterClaim)
+    || claimedStat.isSymbolicLink()
+    || !claimedStat.isDirectory()
+    || !sameIdentity(snapshotStat, claimedStat)
+  ) {
+    throw new OdNextTaskInputSnapshotError(
+      'OD Next task input snapshot changed before cleanup could claim it.',
+      'OD_NEXT_INPUT_SNAPSHOT_TOCTOU',
+    );
+  }
+  input.hooks?.beforeRemoveClaimedSnapshot?.(claimedSnapshotDir);
+  // Delegate recursive removal to Node's platform implementation. In
+  // particular, Windows removes a junction/reparse entry itself rather than
+  // resolving it as a directory to enumerate, and its EPERM recovery clears
+  // ReadOnly before retrying the removal.
+  fs.rmSync(claimedSnapshotDir, { recursive: true, force: true, maxRetries: 3 });
 }
 
 function sameIdentity(
@@ -1033,12 +1049,14 @@ export function removeOdNextRunInputProjection(
 export function removeOdNextTaskInputSnapshot(
   descriptor: OdNextTaskInputSnapshotDescriptor | null | undefined,
   snapshotsRoot: string,
+  hooks?: SnapshotCleanupHooks,
 ): void {
   if (!descriptor) return;
   removeManagedSnapshotDir({
     snapshotsRoot,
     taskExecutionId: descriptor.taskExecutionId,
     snapshotDir: descriptor.snapshotDir,
+    ...(hooks ? { hooks } : {}),
   });
 }
 

@@ -124,7 +124,7 @@ describe('OD Next task-scoped input snapshots', () => {
     }
   });
 
-  it('refuses links inside a managed snapshot without touching their targets', () => {
+  it('unlinks links inside a managed snapshot without touching their targets', () => {
     const f = fixture();
     const snapshotDir = path.join(f.snapshotsRoot, 'odnext_link');
     const outside = path.join(f.root, 'outside-link-target');
@@ -134,12 +134,94 @@ describe('OD Next task-scoped input snapshots', () => {
     writeFileSync(sentinel, 'keep');
     symlinkSync(outside, path.join(snapshotDir, 'linked'), 'junction');
 
-    expect(() => removeOdNextTaskInputSnapshot({
+    removeOdNextTaskInputSnapshot({
       taskExecutionId: 'odnext_link',
       snapshotDir,
       manifestSha256: 'c'.repeat(64),
-    }, f.snapshotsRoot)).toThrow(/symbolic links or reparse points/);
+    }, f.snapshotsRoot);
+    expect(existsSync(snapshotDir)).toBe(false);
     expect(readFileSync(sentinel, 'utf8')).toBe('keep');
+  });
+
+  it('does not traverse a junction swapped in immediately before cleanup claims the snapshot', () => {
+    const f = fixture();
+    const snapshotDir = path.join(f.snapshotsRoot, 'odnext_cleanup_swap');
+    const displacedSnapshotDir = `${snapshotDir}.displaced`;
+    const outside = path.join(f.root, 'outside-swap-target');
+    mkdirSync(snapshotDir, { recursive: true });
+    writeFileSync(path.join(snapshotDir, 'managed.txt'), 'managed');
+    mkdirSync(outside);
+    const sentinel = path.join(outside, 'sentinel.txt');
+    writeFileSync(sentinel, 'keep');
+
+    expect(() => removeOdNextTaskInputSnapshot({
+      taskExecutionId: 'odnext_cleanup_swap',
+      snapshotDir,
+      manifestSha256: 'd'.repeat(64),
+    }, f.snapshotsRoot, {
+      beforeClaimSnapshot: (target) => {
+        renameSync(target, displacedSnapshotDir);
+        symlinkSync(outside, target, 'junction');
+      },
+    })).toThrow(/changed before cleanup could claim/);
+
+    expect(readFileSync(sentinel, 'utf8')).toBe('keep');
+    expect(readFileSync(path.join(displacedSnapshotDir, 'managed.txt'), 'utf8')).toBe('managed');
+  });
+
+  it('does not traverse a snapshot root swapped before child lookup', () => {
+    const f = fixture();
+    const taskExecutionId = 'odnext_root_swap';
+    const snapshotDir = path.join(f.snapshotsRoot, taskExecutionId);
+    const displacedRoot = `${f.snapshotsRoot}.displaced`;
+    const outsideRoot = path.join(f.root, 'outside-root-swap-target');
+    mkdirSync(snapshotDir, { recursive: true });
+    writeFileSync(path.join(snapshotDir, 'managed.txt'), 'managed');
+    mkdirSync(path.join(outsideRoot, taskExecutionId), { recursive: true });
+    const sentinel = path.join(outsideRoot, taskExecutionId, 'sentinel.txt');
+    writeFileSync(sentinel, 'keep');
+
+    expect(() => removeOdNextTaskInputSnapshot({
+      taskExecutionId,
+      snapshotDir,
+      manifestSha256: 'f'.repeat(64),
+    }, f.snapshotsRoot, {
+      beforeLookupSnapshot: (root) => {
+        renameSync(root, displacedRoot);
+        symlinkSync(outsideRoot, root, 'junction');
+      },
+    })).toThrow(/root changed before cleanup could claim/);
+
+    expect(readFileSync(sentinel, 'utf8')).toBe('keep');
+    expect(readFileSync(path.join(displacedRoot, taskExecutionId, 'managed.txt'), 'utf8'))
+      .toBe('managed');
+  });
+
+  it('does not traverse a junction swapped in immediately before removing the claimed snapshot', () => {
+    const f = fixture();
+    const snapshotDir = path.join(f.snapshotsRoot, 'odnext_claimed_cleanup_swap');
+    const outside = path.join(f.root, 'outside-claimed-swap-target');
+    mkdirSync(snapshotDir, { recursive: true });
+    writeFileSync(path.join(snapshotDir, 'managed.txt'), 'managed');
+    mkdirSync(outside);
+    const sentinel = path.join(outside, 'sentinel.txt');
+    writeFileSync(sentinel, 'keep');
+    let displacedClaimedDir = '';
+
+    removeOdNextTaskInputSnapshot({
+      taskExecutionId: 'odnext_claimed_cleanup_swap',
+      snapshotDir,
+      manifestSha256: 'e'.repeat(64),
+    }, f.snapshotsRoot, {
+      beforeRemoveClaimedSnapshot: (claimedSnapshotDir) => {
+        displacedClaimedDir = `${claimedSnapshotDir}.displaced`;
+        renameSync(claimedSnapshotDir, displacedClaimedDir);
+        symlinkSync(outside, claimedSnapshotDir, 'junction');
+      },
+    });
+
+    expect(readFileSync(sentinel, 'utf8')).toBe('keep');
+    expect(readFileSync(path.join(displacedClaimedDir, 'managed.txt'), 'utf8')).toBe('managed');
   });
 
   it('freezes ordered document/image bytes and survives source mutation or deletion', () => {
