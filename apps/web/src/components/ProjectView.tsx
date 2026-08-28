@@ -5671,6 +5671,39 @@ export function ProjectView({
               status: projectedTaskStatus,
             }
           : physicalStatus;
+        const projectedRunAlreadyHydrated = Boolean(
+          taskRunAdvanced
+          && messages.some(
+            (candidate) =>
+              candidate.id !== message.id
+              && candidate.role === 'assistant'
+              && candidate.runId === reattachRunId,
+          ),
+        );
+        if (projectedRunAlreadyHydrated) {
+          // A normal hydration contains one persisted assistant message per
+          // physical strategy Run. The predecessor's status probe still
+          // projects the task's active successor, but that successor must own
+          // its own replay/reattach. Replaying it into this predecessor would
+          // append the final answer here while its hydrated sibling already
+          // renders the same answer, producing a duplicate conclusion after a
+          // hard refresh. Keep the crash-window recovery below for the case
+          // where the successor message has not been persisted yet.
+          if (status.strategyTask?.taskExecutionId) {
+            const settledFields = strategySettledMessageFields(status.strategyTask);
+            updateMessageById(
+              message.id,
+              (prev) => ({
+                ...prev,
+                strategyTaskExecutionId: status.strategyTask!.taskExecutionId,
+                ...(settledFields ?? {}),
+              }),
+              true,
+            );
+          }
+          completedReattachRunsRef.current.add(runId);
+          continue;
+        }
         if (
           taskRunAdvanced
           && (

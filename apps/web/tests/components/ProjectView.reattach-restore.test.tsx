@@ -862,6 +862,80 @@ describe('ProjectView daemon reattach restore', () => {
     expect(reattachDaemonRun).toHaveBeenCalledTimes(1);
   });
 
+  it('does not replay a projected successor into its predecessor when that successor message is already hydrated', async () => {
+    const startedAt = Date.now();
+    const taskExecutionId = 'task-already-hydrated';
+    const strategyTask = {
+      taskExecutionId,
+      strategy: {
+        id: 'od-next-strategy',
+        version: '2.0.0',
+        packageHash: 'f'.repeat(64),
+        snapshotId: 'snapshot-already-hydrated',
+      },
+      inputStage: 'production' as const,
+      outcome: 'completed' as const,
+      route: 'full_plan' as const,
+      executionMode: 'simple' as const,
+      activeRunId: 'run-production-hydrated',
+      terminal: true,
+    };
+    listConversations.mockResolvedValue([{ id: 'conv-1', title: 'Conversation' }]);
+    listMessages.mockResolvedValue([
+      {
+        id: 'msg-request-hydrated',
+        role: 'assistant',
+        agentId: 'codex',
+        content: 'Planning decision.',
+        events: [],
+        createdAt: startedAt,
+        startedAt,
+        runId: 'run-request-hydrated',
+        runStatus: 'succeeded',
+        strategyTaskExecutionId: taskExecutionId,
+        strategyTaskRunIndex: 0,
+      } satisfies ChatMessage,
+      {
+        id: 'msg-production-hydrated',
+        role: 'assistant',
+        agentId: 'codex',
+        content: 'Final delivery.',
+        events: [],
+        createdAt: startedAt + 1,
+        startedAt: startedAt + 1,
+        endedAt: startedAt + 2,
+        runId: 'run-production-hydrated',
+        runStatus: 'succeeded',
+        strategyTaskExecutionId: taskExecutionId,
+        strategyTaskRunIndex: 1,
+      } satisfies ChatMessage,
+    ]);
+    fetchPreviewComments.mockResolvedValue([]);
+    loadTabs.mockResolvedValue({ tabs: [], activeTabId: null });
+    fetchProjectFiles.mockResolvedValue([]);
+    fetchLiveArtifacts.mockResolvedValue([]);
+    fetchSkill.mockResolvedValue(null);
+    fetchDesignSystem.mockResolvedValue(null);
+    getTemplate.mockResolvedValue(null);
+    listActiveChatRuns.mockResolvedValue([]);
+    fetchChatRunStatus.mockImplementation(async (runId: string) => ({
+      id: runId,
+      status: 'succeeded',
+      createdAt: startedAt,
+      updatedAt: startedAt + 2,
+      exitCode: 0,
+      signal: null,
+      strategyTask,
+    }));
+    reattachDaemonRun.mockImplementation(async () => new Promise<void>(() => {}));
+
+    renderProjectView();
+
+    await waitFor(() => expect(fetchChatRunStatus).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(reattachDaemonRun).not.toHaveBeenCalled();
+  });
+
   it('preserves the predecessor visible prefix while replaying only the active successor', async () => {
     const startedAt = Date.now();
     const visiblePrefix = 'Decision summary.\n';
