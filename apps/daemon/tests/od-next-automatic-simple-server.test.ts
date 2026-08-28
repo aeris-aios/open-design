@@ -273,6 +273,118 @@ describe('OD Next automatic production through the real server', () => {
     expect(invocations[0]?.stdin).not.toContain('克制的 COO');
   });
 
+  it('lets a verified example replace an existing automatic-default pin for only the current run', async () => {
+    const fixture = await createPublicRolloutFixture('selected-example-upgrade', 'design');
+    started = fixture.started;
+    binDir = fixture.binDir;
+    clearOdNextRolloutStop(database());
+
+    const createAffectedProject = async (label: string) => {
+      const project = await createProjectForScenario(
+        started!.url,
+        label,
+        { kind: 'deck' },
+        undefined,
+        undefined,
+        {
+          pluginId: 'example-fs-creative-voltage',
+          source: CREATIVE_VOLTAGE_EXAMPLE_DIR,
+        },
+      );
+      expect(project.appliedPluginSnapshotId).toEqual(expect.any(String));
+      expect(project.metadata?.scenarioBinding).toMatchObject({
+        provenance: 'automatic_default',
+        pluginId: 'example-simple-deck',
+        snapshotId: project.appliedPluginSnapshotId,
+      });
+      expect(project.metadata?.exampleBinding).toMatchObject({
+        provenance: 'example_card',
+        pluginId: 'example-fs-creative-voltage',
+        pluginSource: CREATIVE_VOLTAGE_EXAMPLE_DIR,
+      });
+      return project;
+    };
+    const expectRunScopedExample = (
+      project: Awaited<ReturnType<typeof createAffectedProject>>,
+      created: {
+        pluginId?: string;
+        appliedPluginSnapshotId?: string;
+        runId?: string;
+      },
+    ) => {
+      expect(created.pluginId).toBe('example-fs-creative-voltage');
+      expect(created.appliedPluginSnapshotId).toEqual(expect.any(String));
+      expect(created.appliedPluginSnapshotId).not.toBe(project.appliedPluginSnapshotId);
+      expect(database().prepare(`
+        SELECT applied_plugin_snapshot_id AS snapshotId
+          FROM projects
+         WHERE id = ?
+      `).get(project.projectId)).toEqual({ snapshotId: project.appliedPluginSnapshotId });
+      expect(database().prepare(`
+        SELECT applied_plugin_snapshot_id AS snapshotId
+          FROM conversations
+         WHERE id = ?
+      `).get(project.conversationId)).toEqual({ snapshotId: project.appliedPluginSnapshotId });
+      expect(database().prepare(`
+        SELECT plugin_id AS pluginId, run_id AS runId
+          FROM applied_plugin_snapshots
+         WHERE id = ?
+      `).get(created.appliedPluginSnapshotId)).toEqual({
+        pluginId: 'example-fs-creative-voltage',
+        runId: created.runId,
+      });
+    };
+
+    const rolloutOffProject = await createAffectedProject('selected-example-upgrade-off');
+    process.env.OD_NEXT_STRATEGY_ROLLOUT = 'off';
+    const ordinary = await postRun(started.url, publicRunRequest(
+      rolloutOffProject,
+      'Use the selected example after upgrading the ordinary route.',
+      'selected-example-upgrade-off',
+    ));
+    expect(ordinary.strategyTask).toBeUndefined();
+    await waitForRunTerminal(started.url, ordinary.runId as string);
+    expectRunScopedExample(rolloutOffProject, ordinary);
+
+    const prestartFallbackProject = await createAffectedProject(
+      'selected-example-upgrade-prestart',
+    );
+    process.env.OD_NEXT_STRATEGY_ROLLOUT = 'active';
+    process.env.OD_NEXT_STRATEGY_LOCAL_SYNTHETIC_CANARY = '1';
+    database().exec(`
+      CREATE TRIGGER reject_selected_example_strategy_task
+      BEFORE INSERT ON strategy_task_executions
+      BEGIN
+        SELECT RAISE(ABORT, 'fixture selected-example strategy preparation rejected');
+      END
+    `);
+    try {
+      const fallback = await postRun(started.url, publicRunRequest(
+        prestartFallbackProject,
+        'Use the selected example after automatic pre-start fallback.',
+        'selected-example-upgrade-prestart',
+      ));
+      expect(fallback.strategyTask).toBeUndefined();
+      expect(fallback.taskExecutionId).toBeUndefined();
+      await waitForRunTerminal(started.url, fallback.runId as string);
+      expectRunScopedExample(prestartFallbackProject, fallback);
+    } finally {
+      database().exec('DROP TRIGGER IF EXISTS reject_selected_example_strategy_task');
+    }
+
+    const invocations = await readProjectInvocations(fixture.logPath, rolloutOffProject.projectId);
+    expect(invocations).toHaveLength(1);
+    expect(invocations[0]?.stdin).toContain('Creative Voltage');
+    expect(invocations[0]?.stdin).not.toContain('克制的 COO');
+    const fallbackInvocations = await readProjectInvocations(
+      fixture.logPath,
+      prestartFallbackProject.projectId,
+    );
+    expect(fallbackInvocations).toHaveLength(1);
+    expect(fallbackInvocations[0]?.stdin).toContain('Creative Voltage');
+    expect(fallbackInvocations[0]?.stdin).not.toContain('克制的 COO');
+  });
+
   // ACCEPTANCE for the opt-in switch. Nothing configured takes the ordinary
   // route; the SAME running daemon takes the OD Next route on the next run
   // once `odNextStrategyMode` is saved through the public app-config API. No
