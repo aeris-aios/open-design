@@ -469,6 +469,10 @@
   padding: 24px;
 }
 .image-body img {
+  /* Keep the hairline inside the 100% fit box. Without border-box, a large
+     artifact consumes the full content box first and its 1px border extends
+     past the preview viewport, so the edge against the clipped side vanishes. */
+  box-sizing: border-box;
   max-width: 100%;
   max-height: 100%;
   object-fit: contain;

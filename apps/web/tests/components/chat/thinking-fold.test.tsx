@@ -127,4 +127,24 @@ describe('N2 跑完的 thinking 收进折叠行', () => {
     openShell(container);
     expect(screen.getAllByText('思考过程')).toHaveLength(2);
   });
+
+  it('OPEND-2406:运行中的历史/中间 thought 收起,只有当前 live thought 展开', () => {
+    const { container } = render(show(shellOf([
+      think('开头已经完成的推理。'),
+      tool('first.png'),
+      think('中间已经完成的推理。'),
+      tool('second.png'),
+      think('当前仍在写的推理。'),
+    ], { status: 'running', thinking: true })));
+    openShell(container);
+
+    const thoughts = Array.from(
+      container.querySelectorAll<HTMLDetailsElement>('details[class*="thoughts"]'),
+    );
+    expect(thoughts).toHaveLength(3);
+    expect(thoughts.map((row) => row.open)).toEqual([false, false, true]);
+    expect(thoughts.slice(0, 2).map((row) => row.querySelector('summary')?.textContent))
+      .toEqual(['思考过程', '思考过程']);
+    expect(thoughts[2]?.querySelector('summary')?.textContent).toContain('思考中');
+  });
 });

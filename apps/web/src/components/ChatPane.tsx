@@ -3677,18 +3677,23 @@ export function ChatPane({
                   directions; the `chat-jump-btn-active` class flips the
                   slide + opacity, and `aria-hidden` + `tabIndex={-1}`
                   keep it out of the a11y tree when it's not visible.
-                  Also suppressed while the conversation-history dropdown is
-                  open: the dropdown sits in a separate stacking context, so
-                  without this the button bleeds through it (#4123). */}
+
+                  Keep the affordance available while conversation history is
+                  open. A history pick can leave a long transcript at an older
+                  reading position, and this is the deterministic way back to
+                  the latest turn (OPEND-2420). The history header now owns the
+                  higher stacking layer, so its menu occludes the pill only
+                  where the two physically overlap instead of deleting the
+                  pill's state from the rest of the pane. */}
               <button
                 type="button"
                 ref={jumpBtnGlassRef}
-                className={`chat-jump-btn od-glass-refract${scrolledFromBottom && !showConvList ? ' chat-jump-btn-active' : ''}`}
+                className={`chat-jump-btn od-glass-refract${scrolledFromBottom ? ' chat-jump-btn-active' : ''}`}
                 data-testid="chat-jump-btn"
                 onClick={jumpToBottom}
                 title={t('chat.scrollToLatest')}
-                aria-hidden={!scrolledFromBottom || showConvList}
-                tabIndex={scrolledFromBottom && !showConvList ? 0 : -1}
+                aria-hidden={!scrolledFromBottom}
+                tabIndex={scrolledFromBottom ? 0 : -1}
               >
                 <Icon name="arrow-up" size={14} style={{ transform: 'rotate(180deg)' }} />
                 <span>{t('chat.jumpToLatest')}</span>

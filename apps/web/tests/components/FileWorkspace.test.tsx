@@ -23,7 +23,11 @@ import {
 import { ENABLE_BLANK_PAGE_WORKSPACE_ENTRYPOINT } from '../../src/components/workspace/tab-launcher';
 import { I18nProvider } from '../../src/i18n';
 import { DesignFilesPanel } from '../../src/components/DesignFilesPanel';
-import { projectSplitClassName, projectSplitStyle } from '../../src/components/ProjectView';
+import {
+  defaultChatPanelWidthForSplit,
+  projectSplitClassName,
+  projectSplitStyle,
+} from '../../src/components/ProjectView';
 import {
   fetchProjectFileText,
   uploadProjectFiles,
@@ -3378,6 +3382,18 @@ describe('projectSplitClassName', () => {
       '--project-workspace-panel-track': 'minmax(420px, 1fr)',
     });
     expect(projectSplitStyle(true, 512, 'minmax(420px, 1fr)')).toBeUndefined();
+  });
+
+  it('starts an uncustomized wide project at an equal chat/preview split', () => {
+    // 1600 total − the 8px handle = two 796px content columns. This must not
+    // regress to the old fixed 460px default or its former 720px ceiling.
+    expect(defaultChatPanelWidthForSplit(1600)).toBe(796);
+  });
+
+  it('keeps the workspace minimum when the viewport is too narrow for 1:1', () => {
+    // At this width an exact half would leave the preview below its existing
+    // 400px minimum, so the established drag boundary wins.
+    expect(defaultChatPanelWidthForSplit(760)).toBe(352);
   });
 });
 

@@ -570,6 +570,22 @@ function mergeServerMessageWithLocal(
   if (!server.runStatus && local.runStatus) {
     merged.runStatus = local.runStatus;
   }
+  // Feedback is written through a best-effort PUT after the button updates
+  // the local message. A run-completion refresh can race that PUT and return
+  // the previous server snapshot; blindly accepting it makes the selected
+  // thumb (and the reason panel after submit) visibly snap back until reload.
+  // Both copies carry the client-issued feedback timestamp, so keep the newer
+  // one just like we already keep fresher streamed content/events above.
+  if (
+    local.feedback
+    && (
+      !server.feedback
+      || (local.feedback.updatedAt ?? local.feedback.createdAt)
+        > (server.feedback.updatedAt ?? server.feedback.createdAt)
+    )
+  ) {
+    merged.feedback = local.feedback;
+  }
   return merged;
 }
 
@@ -786,7 +802,7 @@ const BRAND_EMPTY_TRANSCRIPT_RETRY_DELAYS_MS = [120, 500, 1_200, 2_000] as const
 const CHAT_PANEL_WIDTH_STORAGE_KEY = 'open-design.project.chatPanelWidth';
 const DEFAULT_CHAT_PANEL_WIDTH = 460;
 const MIN_CHAT_PANEL_WIDTH = 345;
-const MAX_CHAT_PANEL_WIDTH = 720;
+const FALLBACK_MAX_CHAT_PANEL_WIDTH = 720;
 const MIN_WORKSPACE_PANEL_WIDTH = 400;
 const SPLIT_RESIZE_HANDLE_WIDTH = 8;
 const BYOK_OPENCODE_UNAVAILABLE_MESSAGE =
@@ -925,20 +941,34 @@ function workspacePanelMinWidthForSplit(splitWidth: number): number {
 }
 
 function maxChatPanelWidthForSplit(splitWidth: number): number {
-  if (!Number.isFinite(splitWidth) || splitWidth <= 0) return MAX_CHAT_PANEL_WIDTH;
+  if (!Number.isFinite(splitWidth) || splitWidth <= 0) return FALLBACK_MAX_CHAT_PANEL_WIDTH;
   const workspaceMinWidth = workspacePanelMinWidthForSplit(splitWidth);
   const viewportAwareMax = splitWidth - SPLIT_RESIZE_HANDLE_WIDTH - workspaceMinWidth;
-  return Math.max(0, Math.min(MAX_CHAT_PANEL_WIDTH, Math.floor(viewportAwareMax)));
+  // Keep the established 720px drag ceiling on ordinary windows, widening it
+  // only as far as the equal split on larger project workspaces. That makes
+  // 1:1 reachable without letting the chat drag past and dominate preview.
+  const equalSplitWidth = Math.floor((splitWidth - SPLIT_RESIZE_HANDLE_WIDTH) / 2);
+  const responsiveMax = Math.max(FALLBACK_MAX_CHAT_PANEL_WIDTH, equalSplitWidth);
+  return Math.max(0, Math.min(responsiveMax, Math.floor(viewportAwareMax)));
 }
 
 function clampPreferredChatPanelWidth(width: number): number {
-  return Math.min(MAX_CHAT_PANEL_WIDTH, Math.max(MIN_CHAT_PANEL_WIDTH, Math.round(width)));
+  return Math.max(MIN_CHAT_PANEL_WIDTH, Math.round(width));
 }
 
-function clampChatPanelWidth(width: number, maxWidth = MAX_CHAT_PANEL_WIDTH): number {
-  const effectiveMax = Math.max(0, Math.min(MAX_CHAT_PANEL_WIDTH, Math.floor(maxWidth)));
+function clampChatPanelWidth(
+  width: number,
+  maxWidth = FALLBACK_MAX_CHAT_PANEL_WIDTH,
+): number {
+  const effectiveMax = Math.max(0, Math.floor(maxWidth));
   const effectiveMin = Math.min(MIN_CHAT_PANEL_WIDTH, effectiveMax);
   return Math.min(effectiveMax, Math.max(effectiveMin, Math.round(width)));
+}
+
+export function defaultChatPanelWidthForSplit(splitWidth: number): number {
+  if (!Number.isFinite(splitWidth) || splitWidth <= 0) return DEFAULT_CHAT_PANEL_WIDTH;
+  const equalHalf = (splitWidth - SPLIT_RESIZE_HANDLE_WIDTH) / 2;
+  return clampChatPanelWidth(equalHalf, maxChatPanelWidthForSplit(splitWidth));
 }
 
 function designSystemFeedbackAttachments(
@@ -1169,16 +1199,18 @@ function designSystemNeedsWorkPrompt(
   );
 }
 
-function readSavedChatPanelWidth(): number {
-  if (typeof window === 'undefined') return DEFAULT_CHAT_PANEL_WIDTH;
+function readSavedChatPanelWidth(): { width: number; customized: boolean } {
+  if (typeof window === 'undefined') {
+    return { width: DEFAULT_CHAT_PANEL_WIDTH, customized: false };
+  }
   try {
     const raw = window.localStorage.getItem(CHAT_PANEL_WIDTH_STORAGE_KEY);
     const parsed = raw ? Number.parseInt(raw, 10) : Number.NaN;
     return Number.isFinite(parsed)
-      ? clampPreferredChatPanelWidth(parsed)
-      : DEFAULT_CHAT_PANEL_WIDTH;
+      ? { width: clampPreferredChatPanelWidth(parsed), customized: true }
+      : { width: DEFAULT_CHAT_PANEL_WIDTH, customized: false };
   } catch {
-    return DEFAULT_CHAT_PANEL_WIDTH;
+    return { width: DEFAULT_CHAT_PANEL_WIDTH, customized: false };
   }
 }
 
@@ -2642,13 +2674,15 @@ export function ProjectView({
   const amrGatePausedQueueConversationsRef = useRef<Set<string>>(new Set());
   const [autoAuditRepairSeed, setAutoAuditRepairSeed] =
     useState<{ id: string; value: string } | null>(null);
-  const [chatPanelWidth, setChatPanelWidth] = useState(readSavedChatPanelWidth);
-  const [chatPanelMaxWidth, setChatPanelMaxWidth] = useState(MAX_CHAT_PANEL_WIDTH);
+  const initialChatPanelWidth = useMemo(readSavedChatPanelWidth, []);
+  const [chatPanelWidth, setChatPanelWidth] = useState(initialChatPanelWidth.width);
+  const [chatPanelMaxWidth, setChatPanelMaxWidth] = useState(FALLBACK_MAX_CHAT_PANEL_WIDTH);
   const [workspacePanelMinWidth, setWorkspacePanelMinWidth] = useState(MIN_WORKSPACE_PANEL_WIDTH);
   const [resizingChatPanel, setResizingChatPanel] = useState(false);
   const splitRef = useRef<HTMLDivElement | null>(null);
   const chatPanelWidthRef = useRef(chatPanelWidth);
   const preferredChatPanelWidthRef = useRef(chatPanelWidth);
+  const chatPanelWidthCustomizedRef = useRef(initialChatPanelWidth.customized);
   const resizeStartPreferredWidthRef = useRef(chatPanelWidth);
   const chatPanelMaxWidthRef = useRef(chatPanelMaxWidth);
   const resizeStateRef = useRef<{
@@ -10878,6 +10912,7 @@ export function ProjectView({
   }, [renderPreferredChatPanelWidth]);
 
   const finishChatPanelResize = useCallback((saveFinalWidth = true) => {
+    const resized = resizeStateRef.current?.hasMoved === true;
     pointerCleanupRef.current?.();
     pointerCleanupRef.current = null;
     if (pointerFrameRef.current !== null) {
@@ -10887,8 +10922,9 @@ export function ProjectView({
     pendingPointerClientXRef.current = null;
     resizeStateRef.current = null;
     setResizingChatPanel(false);
-    if (saveFinalWidth) {
+    if (saveFinalWidth && resized) {
       const finalWidth = renderPreferredChatPanelWidth(preferredChatPanelWidthRef.current);
+      chatPanelWidthCustomizedRef.current = true;
       saveChatPanelWidth(finalWidth);
     }
   }, [renderPreferredChatPanelWidth]);
@@ -10916,7 +10952,10 @@ export function ProjectView({
       chatPanelMaxWidthRef.current = nextMax;
       setWorkspacePanelMinWidth(nextWorkspaceMin);
       setChatPanelMaxWidth(nextMax);
-      renderPreferredChatPanelWidth(preferredChatPanelWidthRef.current, nextMax);
+      const preferredWidth = chatPanelWidthCustomizedRef.current
+        ? preferredChatPanelWidthRef.current
+        : defaultChatPanelWidthForSplit(splitWidth);
+      renderPreferredChatPanelWidth(preferredWidth, nextMax);
     };
 
     updateAllowedWidth();
@@ -11071,6 +11110,7 @@ export function ProjectView({
     if (nextWidth === null) return;
     event.preventDefault();
     const next = applyChatPanelWidth(nextWidth);
+    chatPanelWidthCustomizedRef.current = true;
     saveChatPanelWidth(next);
   }, [applyChatPanelWidth]);
 

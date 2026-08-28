@@ -676,7 +676,10 @@
   align-items: flex-end;
   gap: 2px;
   margin-inline-start: 3px;
-  vertical-align: baseline;
+  /* The 3px box used to sit on the text baseline, which leaves the dots at
+     the bottom of the Chinese glyph. Align the box by its visual middle; the
+     bob animation still moves each dot upward from that centered rest line. */
+  vertical-align: middle;
 }
 .dots i {
   width: 3px;

@@ -448,6 +448,31 @@ describe('「回到最新」什么时候该在(用户 2026-08-27:「总是在不
     expect(jumpBtnShown()).toBe(true);
   });
 
+  it('打开会话历史弹框时仍保留回到最新的入口', async () => {
+    /*
+     * OPEND-2420:用户从会话历史弹框打开一条长会话时,视图可能
+     * 停在之前的阅读位置。这时「回到最新」是唯一个确定的到底入口,
+     * 不能因为会话菜单还开着就把它从屏幕和键盘顺序一起摘掉。
+     *
+     * 菜单与浮标的遮挡关系应由堆叠层处理:菜单在上,浮标在下,
+     * 而不是把浮标的交互状态改成「不存在」。
+     */
+    geom = { contentHeight: 5000, clientHeight: 400, scrollTop: 0 };
+    render(chatPaneEl(longConversation('chunk'), { streaming: true }));
+    await flushFrames();
+    await userScrollTo(1000);
+    expect(jumpBtnShown()).toBe(true);
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('conversation-history-trigger'));
+      await Promise.resolve();
+    });
+
+    expect(screen.getByTestId('conversation-history-menu')).toBeTruthy();
+    expect(jumpBtnShown()).toBe(true);
+    expect(screen.getByTestId('chat-jump-btn').getAttribute('tabindex')).toBe('0');
+  });
+
   it('内容缩到滚不动之后,浮标必须自己收起(没有任何 scroll 事件)', async () => {
     /*
      * run 结束、执行记录自动收起,内容一下矮了一大截 —— 这是**没有 scroll 事件**的

@@ -18,7 +18,11 @@
   height: 38px;
   position: sticky;
   top: 0;
-  z-index: 4;
+  /* Above the jump-to-latest pill (z-index: 6). The history menu belongs to
+     this sticky stacking context, so lifting the header lets the menu cover
+     the pill only where they overlap without removing that navigation
+     affordance from the rest of the pane (OPEND-2420 / supersedes #4123). */
+  z-index: 7;
 }
 .chat-project-header::after {
   content: '';
