@@ -1934,7 +1934,7 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
             pluginId: 'od-next-strategy',
             appliedPluginSnapshotId: undefined,
           };
-        } else if (!hasPin) {
+        } else if (!hasPin || (projectPinIsAutomaticDefault && selectedExamplePlugin)) {
           // An official example card is the user's concrete choice inside this
           // task type. When OD Next is not active, execute that exact example
           // on the ordinary route instead of silently substituting the
@@ -1992,7 +1992,11 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
       if (!explicitUserPlugin && strategyRolloutDecision?.effectiveMode === 'active') {
         automaticOrdinaryFallbackPluginId = selectedExamplePlugin?.id
           ?? (verifiedExampleBinding ? null : defaultPluginId);
-        const fallbackBody = !projectHasExplicitPin && automaticOrdinaryFallbackPluginId
+        const fallbackBody = (
+          !projectHasExplicitPin
+          || (projectPinIsAutomaticDefault && selectedExamplePlugin)
+        )
+          && automaticOrdinaryFallbackPluginId
           && (selectedExamplePlugin || getInstalledPlugin(db, automaticOrdinaryFallbackPluginId))
           ? { ...requestBody, pluginId: automaticOrdinaryFallbackPluginId }
           : requestBody;
