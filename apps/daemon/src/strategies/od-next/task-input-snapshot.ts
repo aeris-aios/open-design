@@ -235,16 +235,20 @@ function removeManagedSnapshotDir(input: {
     snapshotsRoot,
     `.deleting-${taskExecutionId}-${randomBytes(16).toString('hex')}`,
   );
-  const rootFd = process.platform === 'win32'
-    ? undefined
-    : fs.openSync(
-      snapshotsRoot,
-      fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW,
-    );
+  // Linux exposes an opened directory as a traversable procfs path. Darwin's
+  // /dev/fd entry is only a synthetic descriptor node: its device identity
+  // differs from the directory and child paths cannot be resolved through it.
+  // Keep the documented pathname claim on platforms without Linux procfs.
+  const rootFd = process.platform === 'linux'
+    ? fs.openSync(
+        snapshotsRoot,
+        fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW,
+      )
+    : undefined;
   try {
     const boundRoot = rootFd === undefined
       ? snapshotsRoot
-      : process.platform === 'linux' ? `/proc/self/fd/${rootFd}` : `/dev/fd/${rootFd}`;
+      : `/proc/self/fd/${rootFd}`;
     if (rootFd !== undefined) {
       const openedRootStat = fs.fstatSync(rootFd, { bigint: true });
       const boundRootStat = fs.statSync(boundRoot, { bigint: true });

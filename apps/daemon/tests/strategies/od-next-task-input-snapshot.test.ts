@@ -197,8 +197,8 @@ describe('OD Next task-scoped input snapshots', () => {
       .toBe('managed');
   });
 
-  it.runIf(process.platform !== 'win32')(
-    'keeps the POSIX claim bound to the root opened before a post-check root swap',
+  it.runIf(process.platform === 'linux')(
+    'keeps the Linux claim bound to the root opened before a post-check root swap',
     () => {
       const f = fixture();
       const taskExecutionId = 'odnext_posix_claim_root_swap';
