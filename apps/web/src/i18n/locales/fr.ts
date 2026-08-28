@@ -2193,6 +2193,7 @@ export const fr: Dict = {
   'chat.annotationFailed': 'L’envoi de l’annotation a échoué. Veuillez réessayer.',
   'chat.annotationProjectCreateFailed': 'Impossible de créer un projet, donc l’annotation n’a pas été envoyée.',
   'chat.annotationUploadFailed': 'L’envoi de la pièce jointe a échoué. Veuillez réessayer.',
+  'chat.attachmentFolderUnsupported': 'Les dossiers ne peuvent pas être joints ici. Joignez plutôt les fichiers qu’ils contiennent.',
   'chat.conversationsTitle': 'Conversations',
   'chat.conversationsAria': 'Historique des conversations',
   'chat.newConversation': 'Nouvelle conversation',

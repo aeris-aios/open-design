@@ -2294,6 +2294,7 @@ export const zhTW: Dict = {
   "chat.annotationFailed": "標註傳送失敗，請重試",
   "chat.annotationProjectCreateFailed": "無法建立專案，因此未送出標註。",
   "chat.annotationUploadFailed": "附件上傳失敗，請重試。",
+  "chat.attachmentFolderUnsupported": "資料夾無法作為附件拖入，請改為選擇其中的檔案。",
   "chat.conversationsTitle": "對話紀錄",
   "chat.conversationsAria": "對話紀錄",
   "chat.newConversation": "新建對話",

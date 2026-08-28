@@ -3018,6 +3018,7 @@ export interface Dict {
   'chat.annotationFailed': string;
   'chat.annotationProjectCreateFailed': string;
   'chat.annotationUploadFailed': string;
+  'chat.attachmentFolderUnsupported': string;
   'chat.inspect.noEditableTargets': string;
   'chat.inspect.noCommentTargets': string;
   'chat.inspect.editHint': string;

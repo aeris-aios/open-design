@@ -2193,6 +2193,7 @@ export const tr: Dict = {
   'chat.annotationFailed': 'Açıklama gönderimi başarısız oldu. Lütfen tekrar deneyin.',
   'chat.annotationProjectCreateFailed': 'Bir proje oluşturulamadığından açıklama gönderilmedi.',
   'chat.annotationUploadFailed': 'Ek yükleme başarısız oldu. Lütfen tekrar deneyin.',
+  'chat.attachmentFolderUnsupported': 'Klasörler buraya eklenemez. Bunun yerine klasörün içindeki dosyaları ekleyin.',
   'chat.conversationsTitle': 'Konuşmalar',
   'chat.conversationsAria': 'Konuşma geçmişi',
   'chat.newConversation': 'Yeni konuşma',

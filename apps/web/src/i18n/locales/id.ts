@@ -2193,6 +2193,7 @@ export const id: Dict = {
   'chat.annotationFailed': 'Annotation send failed. Please try again.',
   'chat.annotationProjectCreateFailed': 'Could not create a project, so the annotation was not sent.',
   'chat.annotationUploadFailed': 'Attachment upload failed. Please try again.',
+  'chat.attachmentFolderUnsupported': 'Folder tidak dapat dilampirkan di sini. Lampirkan file di dalamnya sebagai gantinya.',
   'chat.conversationsTitle': 'Percakapan',
   'chat.conversationsAria': 'Buka percakapan',
   'chat.newConversation': 'Percakapan baru',

@@ -2193,6 +2193,7 @@ export const uk: Dict = {
   'chat.annotationFailed': 'Не вдалося надіслати анотацію. Спробуйте ще раз.',
   'chat.annotationProjectCreateFailed': 'Не вдалося створити проєкт, тому анотацію не надіслано.',
   'chat.annotationUploadFailed': 'Не вдалося завантажити вкладення. Спробуйте ще раз.',
+  'chat.attachmentFolderUnsupported': 'Папки не можна прикріплювати тут. Натомість прикріпіть файли з папки.',
   'chat.conversationsTitle': 'Розмови',
   'chat.conversationsAria': 'Історія розмов',
   'chat.newConversation': 'Нова розмова',

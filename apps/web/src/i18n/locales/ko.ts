@@ -2193,6 +2193,7 @@ export const ko: Dict = {
   'chat.annotationFailed': '주석 전송에 실패했습니다. 다시 시도해 주세요.',
   'chat.annotationProjectCreateFailed': '프로젝트를 생성할 수 없어 주석이 전송되지 않았습니다.',
   'chat.annotationUploadFailed': '첨부 파일 업로드에 실패했습니다. 다시 시도해 주세요.',
+  'chat.attachmentFolderUnsupported': '여기에는 폴더를 첨부할 수 없습니다. 대신 폴더 안의 파일을 첨부해 주세요.',
   'chat.conversationsTitle': '대화 목록',
   'chat.conversationsAria': '대화 내역',
   'chat.newConversation': '새 대화 시작',

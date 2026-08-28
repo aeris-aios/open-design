@@ -2193,6 +2193,7 @@ export const it: Dict = {
   'chat.annotationFailed': 'Invio dell\'annotazione non riuscito. Riprova.',
   'chat.annotationProjectCreateFailed': 'Impossibile creare un progetto, quindi l\'annotazione non è stata inviata.',
   'chat.annotationUploadFailed': 'Caricamento dell\'allegato non riuscito. Riprova.',
+  'chat.attachmentFolderUnsupported': 'Le cartelle non possono essere allegate qui. Allega invece i file al loro interno.',
   'chat.conversationsTitle': 'Conversazioni',
   'chat.conversationsAria': 'Cronologia delle conversazioni',
   'chat.newConversation': 'Nuova conversazione',

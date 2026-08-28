@@ -2193,6 +2193,7 @@ export const fa: Dict = {
   'chat.annotationFailed': 'ارسال حاشیه‌نویسی ناموفق بود. لطفاً دوباره تلاش کنید.',
   'chat.annotationProjectCreateFailed': 'امکان ایجاد پروژه وجود نداشت، بنابراین حاشیه‌نویسی ارسال نشد.',
   'chat.annotationUploadFailed': 'بارگذاری پیوست ناموفق بود. لطفاً دوباره تلاش کنید.',
+  'chat.attachmentFolderUnsupported': 'پوشه‌ها را نمی‌توان اینجا پیوست کرد. به‌جای آن فایل‌های داخل پوشه را پیوست کنید.',
   'chat.conversationsTitle': 'مکالمات',
   'chat.conversationsAria': 'تاریخچه مکالمات',
   'chat.newConversation': 'مکالمه جدید',

@@ -523,6 +523,19 @@ export interface ChatSendMeta {
   quotes?: ChatQuote[];
 }
 
+type DataTransferItemWithFileSystemEntry = DataTransferItem & {
+  webkitGetAsEntry?: () => { isDirectory?: boolean } | null;
+};
+
+function dataTransferContainsDirectory(dataTransfer: DataTransfer): boolean {
+  for (const item of Array.from(dataTransfer.items ?? [])) {
+    if (item.kind !== 'file') continue;
+    const entry = (item as DataTransferItemWithFileSystemEntry).webkitGetAsEntry?.();
+    if (entry?.isDirectory === true) return true;
+  }
+  return false;
+}
+
 /**
  * The chat composer: textarea + paste/drop/attach buttons + @-mention
  * picker. Attachments are uploaded into the active project's folder so
@@ -2634,6 +2647,16 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
     function handleDrop(e: React.DragEvent<HTMLDivElement>) {
       e.preventDefault();
       setDragActive(false);
+      // Chromium exposes dropped directories as zero-byte `File` objects in
+      // `dataTransfer.files`. Appending one to FormData makes Electron try to
+      // read the directory as a file, which raises EISDIR in the main process
+      // before the renderer's fetch promise can report a normal upload error.
+      // Inspect the richer item entry first and never hand a directory to the
+      // multipart stack.
+      if (dataTransferContainsDirectory(e.dataTransfer)) {
+        setUploadError(t('chat.attachmentFolderUnsupported'));
+        return;
+      }
       const files = Array.from(e.dataTransfer.files ?? []);
       if (files.length > 0) void uploadFiles(files);
     }

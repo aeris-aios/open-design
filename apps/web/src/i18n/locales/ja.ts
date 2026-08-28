@@ -2193,6 +2193,7 @@ export const ja: Dict = {
   'chat.annotationFailed': '注釈の送信に失敗しました。もう一度お試しください。',
   'chat.annotationProjectCreateFailed': 'プロジェクトを作成できなかったため、注釈は送信されませんでした。',
   'chat.annotationUploadFailed': '添付ファイルのアップロードに失敗しました。もう一度お試しください。',
+  'chat.attachmentFolderUnsupported': 'フォルダはここに添付できません。代わりにフォルダ内のファイルを添付してください。',
   'chat.conversationsTitle': '会話',
   'chat.conversationsAria': '会話履歴',
   'chat.newConversation': '新しい会話',

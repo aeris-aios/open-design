@@ -2193,6 +2193,7 @@ export const ar: Dict = {
   'chat.annotationFailed': 'فشل إرسال التعليق التوضيحي. يُرجى المحاولة مرة أخرى.',
   'chat.annotationProjectCreateFailed': 'تعذّر إنشاء مشروع، لذا لم يتم إرسال التعليق التوضيحي.',
   'chat.annotationUploadFailed': 'فشل رفع المرفق. يُرجى المحاولة مرة أخرى.',
+  'chat.attachmentFolderUnsupported': 'لا يمكن إرفاق المجلدات هنا. أرفق الملفات الموجودة بداخلها بدلاً من ذلك.',
   'chat.conversationsTitle': 'المحادثات',
   'chat.conversationsAria': 'سجل المحادثات',
   'chat.newConversation': 'محادثة جديدة',

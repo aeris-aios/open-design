@@ -33,6 +33,40 @@ afterEach(() => {
 });
 
 describe('ChatComposer /search command', () => {
+  it('rejects dropped folders before the upload path can read them', async () => {
+    const directory = new File([], 'reference-assets');
+    mockedUploadProjectFiles.mockResolvedValue({ uploaded: [], failed: [] });
+
+    render(
+      <ChatComposer
+        projectId="project-1"
+        projectFiles={[]}
+        streaming={false}
+        onEnsureProject={async () => 'project-1'}
+        onSend={vi.fn()}
+        onStop={vi.fn()}
+      />,
+    );
+
+    fireEvent.drop(screen.getByTestId('chat-composer'), {
+      dataTransfer: {
+        files: [directory],
+        items: [
+          {
+            kind: 'file',
+            getAsFile: () => directory,
+            webkitGetAsEntry: () => ({ isDirectory: true, isFile: false, name: directory.name }),
+          },
+        ],
+      },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/folders can't be attached/i)).toBeTruthy();
+    });
+    expect(mockedUploadProjectFiles).not.toHaveBeenCalled();
+  });
+
   it('sends staged file attachments even when the text draft is empty', async () => {
     const onSend = vi.fn();
     mockedUploadProjectFiles.mockResolvedValue({

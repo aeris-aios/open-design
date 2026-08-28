@@ -2193,6 +2193,7 @@ export const hu: Dict = {
   'chat.annotationFailed': 'Az annotáció küldése nem sikerült. Kérjük, próbálja újra.',
   'chat.annotationProjectCreateFailed': 'Nem sikerült projektet létrehozni, ezért az annotáció nem lett elküldve.',
   'chat.annotationUploadFailed': 'A melléklet feltöltése nem sikerült. Kérjük, próbálja újra.',
+  'chat.attachmentFolderUnsupported': 'Mappák itt nem csatolhatók. Csatolja inkább a bennük lévő fájlokat.',
   'chat.conversationsTitle': 'Beszélgetések',
   'chat.conversationsAria': 'Beszélgetések előzménye',
   'chat.newConversation': 'Új beszélgetés',

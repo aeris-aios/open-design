@@ -2193,6 +2193,7 @@ export const ptBR: Dict = {
   'chat.annotationFailed': 'Falha ao enviar a anotação. Tente novamente.',
   'chat.annotationProjectCreateFailed': 'Não foi possível criar um projeto, então a anotação não foi enviada.',
   'chat.annotationUploadFailed': 'Falha ao enviar o anexo. Tente novamente.',
+  'chat.attachmentFolderUnsupported': 'Não é possível anexar pastas aqui. Anexe os arquivos dentro delas.',
   'chat.conversationsTitle': 'Conversas',
   'chat.conversationsAria': 'Histórico de conversas',
   'chat.newConversation': 'Nova conversa',

@@ -2286,6 +2286,7 @@ export const zhCN: Dict = {
   "chat.annotationFailed": "标注发送失败，请重试",
   "chat.annotationProjectCreateFailed": "无法创建项目，标注未发送",
   "chat.annotationUploadFailed": "附件上传失败，请重试",
+  "chat.attachmentFolderUnsupported": "文件夹无法作为附件拖入，请改为选择其中的文件。",
   "chat.conversationsTitle": "对话历史",
   "chat.conversationsAria": "对话历史",
   "chat.newConversation": "新建对话",

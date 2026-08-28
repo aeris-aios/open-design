@@ -2193,6 +2193,7 @@ export const de: Dict = {
   'chat.annotationFailed': 'Senden der Anmerkung fehlgeschlagen. Bitte versuche es erneut.',
   'chat.annotationProjectCreateFailed': 'Es konnte kein Projekt erstellt werden, daher wurde die Anmerkung nicht gesendet.',
   'chat.annotationUploadFailed': 'Hochladen des Anhangs fehlgeschlagen. Bitte versuche es erneut.',
+  'chat.attachmentFolderUnsupported': 'Ordner können hier nicht angehängt werden. Hänge stattdessen die darin enthaltenen Dateien an.',
   'chat.conversationsTitle': 'Konversationen',
   'chat.conversationsAria': 'Konversationsverlauf',
   'chat.newConversation': 'Neue Konversation',

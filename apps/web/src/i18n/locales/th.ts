@@ -2193,6 +2193,7 @@ export const th: Dict = {
   'chat.annotationFailed': 'การส่งคำอธิบายประกอบล้มเหลว โปรดลองอีกครั้ง',
   'chat.annotationProjectCreateFailed': 'ไม่สามารถสร้างโปรเจกต์ได้ จึงไม่ได้ส่งคำอธิบายประกอบ',
   'chat.annotationUploadFailed': 'การอัปโหลดไฟล์แนบล้มเหลว โปรดลองอีกครั้ง',
+  'chat.attachmentFolderUnsupported': 'ไม่สามารถแนบโฟลเดอร์ที่นี่ได้ โปรดแนบไฟล์ภายในโฟลเดอร์แทน',
   'chat.conversationsTitle': 'การสนทนา',
   'chat.conversationsAria': 'ประวัติ',
   'chat.newConversation': 'สนทนาใหม่',
