@@ -15,7 +15,7 @@ import {
   defaultScenarioPluginIdForTaskKind,
   defaultScenarioTaskProfileForProjectMetadata,
   hasCurrentAutomaticStrategyBinding,
-  hasCurrentAutomaticScenarioBinding,
+  projectLeftItsAutomaticScenario,
 } from '../src/plugins/scenario-defaults.js';
 
 describe('automaticStrategyTaskProfileForRouteId', () => {
@@ -110,10 +110,10 @@ describe('automaticStrategyTaskProfileForRouteId', () => {
       },
     };
     expect(hasCurrentAutomaticStrategyBinding(metadata)).toBe(true);
-    expect(hasCurrentAutomaticScenarioBinding({
+    expect(projectLeftItsAutomaticScenario({
       metadata,
       appliedPluginSnapshotId: null,
-    })).toBe(true);
+    })).toBe(false);
     // A Wireframe refinement stays on the same Prototype route, so its
     // binding remains current.
     expect(hasCurrentAutomaticStrategyBinding({
@@ -158,6 +158,10 @@ describe('defaultScenarioPluginIdForKind', () => {
       kind: 'prototype',
       intent: 'live-artifact',
     })).toBe('example-live-artifact');
+    expect(defaultScenarioPluginIdForProjectMetadata({
+      kind: 'prototype',
+      intent: 'webgl-experience',
+    })).toBe('example-webgl-experience');
     expect(defaultScenarioPluginIdForProjectMetadata({ kind: 'prototype' }))
       .toBe('example-web-prototype');
     expect(defaultScenarioPluginIdForProjectMetadata(undefined)).toBeNull();
@@ -213,7 +217,10 @@ describe('defaultScenarioPluginIdForKind', () => {
     )).toBeNull();
   });
 
-  it('detects stale or tampered automatic bindings for the restore surface', () => {
+  it('treats any pinned plugin on an OD Next route as a departure', () => {
+    // The automatic scenario for this metadata is the OD Next strategy route,
+    // which pins nothing — so even the route's own seed plugin, and even
+    // stamped `automatic_default`, is a scenario the project left.
     const metadata = {
       kind: 'prototype' as const,
       scenarioBinding: {
@@ -225,19 +232,73 @@ describe('defaultScenarioPluginIdForKind', () => {
         boundAt: 1,
       },
     };
-    expect(hasCurrentAutomaticScenarioBinding({
+    expect(projectLeftItsAutomaticScenario({
       metadata,
       appliedPluginSnapshotId: 'snapshot-1',
     })).toBe(true);
-    expect(hasCurrentAutomaticScenarioBinding({
+    // Unpinned is the OD Next route itself, whether or not the strategy
+    // binding has been stamped yet.
+    expect(projectLeftItsAutomaticScenario({
+      metadata: { kind: 'prototype' },
+      appliedPluginSnapshotId: null,
+    })).toBe(false);
+  });
+
+  it('reads the running scenario, not the provenance label, off the create rail', () => {
+    // Every first-level output type OD Next does not route pins its own
+    // default plugin at create, and the daemon records that as `explicit_user`
+    // because the body named it. The project never left anything.
+    const railBindings: Array<[Record<string, unknown>, string]> = [
+      [{ kind: 'image' }, 'od-media-generation'],
+      [{ kind: 'video' }, 'od-media-generation'],
+      [{ kind: 'audio' }, 'od-media-generation'],
+      [{ kind: 'other', intent: 'document' }, 'od-new-generation'],
+      [{ kind: 'prototype', intent: 'web-clone' }, 'example-web-clone'],
+      [{ kind: 'prototype', intent: 'live-artifact' }, 'example-live-artifact'],
+      [{ kind: 'prototype', intent: 'webgl-experience' }, 'example-webgl-experience'],
+    ];
+    for (const [base, pluginId] of railBindings) {
+      const metadata = {
+        ...base,
+        scenarioBinding: {
+          schemaVersion: 1 as const,
+          provenance: 'explicit_user' as const,
+          pluginId,
+          snapshotId: 'snapshot-1',
+          boundAt: 1,
+        },
+      } as never;
+      expect(projectLeftItsAutomaticScenario({
+        metadata,
+        appliedPluginSnapshotId: 'snapshot-1',
+      }), pluginId).toBe(false);
+    }
+  });
+
+  it('still reports a departure for a plugin the automatic router would not pick', () => {
+    const metadata = {
+      kind: 'image' as const,
+      scenarioBinding: {
+        schemaVersion: 1 as const,
+        provenance: 'explicit_user' as const,
+        pluginId: 'some-community-image-plugin',
+        snapshotId: 'snapshot-1',
+        boundAt: 1,
+      },
+    };
+    expect(projectLeftItsAutomaticScenario({
+      metadata,
+      appliedPluginSnapshotId: 'snapshot-1',
+    })).toBe(true);
+    // A binding that does not describe the pin leaves the escape hatch up.
+    expect(projectLeftItsAutomaticScenario({
       metadata,
       appliedPluginSnapshotId: 'snapshot-2',
-    })).toBe(false);
-    expect(hasCurrentAutomaticScenarioBinding({
-      metadata: {
-        ...metadata,
-        scenarioBinding: { ...metadata.scenarioBinding, pluginId: 'od-media-generation' },
-      },
+    })).toBe(true);
+    // A project with no metadata names no automatic scenario to restore to,
+    // and the daemon answers DEFAULT_SCENARIO_UNAVAILABLE for it.
+    expect(projectLeftItsAutomaticScenario({
+      metadata: undefined,
       appliedPluginSnapshotId: 'snapshot-1',
     })).toBe(false);
   });

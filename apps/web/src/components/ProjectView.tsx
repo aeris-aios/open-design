@@ -63,7 +63,7 @@ import {
   strategySettledMessageFields,
 } from '../runtime/strategy-question-continuation';
 import {
-  hasCurrentAutomaticScenarioBinding,
+  projectLeftItsAutomaticScenario,
   type AmrWalletSnapshot,
   type ByokChatProviderConfig,
   type ByokMediaDefaults,
@@ -11086,13 +11086,10 @@ export function ProjectView({
       cancelled = true;
     };
   }, [project.appliedPluginSnapshotId]);
-  const canRestoreAutomaticScenario = Boolean(
-    project.metadata?.kind
-    && !hasCurrentAutomaticScenarioBinding({
-      metadata: project.metadata,
-      appliedPluginSnapshotId: project.appliedPluginSnapshotId,
-    }),
-  );
+  const canRestoreAutomaticScenario = projectLeftItsAutomaticScenario({
+    metadata: project.metadata,
+    appliedPluginSnapshotId: project.appliedPluginSnapshotId,
+  });
   const handleRestoreAutomaticScenario = useCallback(async () => {
     if (restoreAutomaticScenarioState === 'busy') return;
     setRestoreAutomaticScenarioState('busy');
