@@ -319,6 +319,13 @@ type LauncherSnapshot = {
   versionsRoot: string;
 };
 
+type NativeChromeActionProbe = {
+  clickCount: number;
+  targetMatches: boolean;
+  x: number;
+  y: number;
+};
+
 type LauncherPointer = {
   generation: number;
   version: string;
@@ -440,6 +447,7 @@ macDescribe('packaged mac runtime smoke', () => {
       firstRunStarted = true;
       expect(start.source).toBe('installed');
       await waitForHealthyDesktop();
+      await assertFirstNativeChromeActionClick(firstRunInstalledAppPath);
 
       const setup = await runToolsPackJson<MacInspectResult>('inspect', [
         '--expr',
@@ -2303,6 +2311,88 @@ async function waitForHealthyDesktop(): Promise<MacInspectResult> {
   }
 
   throw new Error(`packaged mac runtime did not become healthy: ${formatUnknown(lastResult)}`);
+}
+
+async function assertFirstNativeChromeActionClick(installedAppPath: string): Promise<void> {
+  const probeId = 'packaged-native-chrome-action-probe';
+  const setup = await runToolsPackJson<MacInspectResult>('inspect', [
+    '--expr',
+    `(() => {
+      const host = document.querySelector('[data-testid="workspace-chrome-account-actions"]');
+      if (!(host instanceof HTMLElement)) {
+        throw new Error('workspace chrome account actions host is missing');
+      }
+      document.getElementById(${JSON.stringify(probeId)})?.remove();
+      const button = document.createElement('button');
+      button.id = ${JSON.stringify(probeId)};
+      button.type = 'button';
+      button.tabIndex = -1;
+      button.setAttribute('aria-hidden', 'true');
+      Object.assign(button.style, {
+        appearance: 'none',
+        border: '0',
+        height: '24px',
+        margin: '0',
+        opacity: '0.01',
+        padding: '0',
+        pointerEvents: 'auto',
+        width: '24px',
+        WebkitAppRegion: 'no-drag',
+      });
+      button.addEventListener('click', () => {
+        button.dataset.clickCount = String(Number(button.dataset.clickCount || '0') + 1);
+      });
+      button.dataset.clickCount = '0';
+      host.append(button);
+      const rect = button.getBoundingClientRect();
+      const clientX = rect.left + rect.width / 2;
+      const clientY = rect.top + rect.height / 2;
+      return {
+        clickCount: 0,
+        targetMatches: document.elementFromPoint(clientX, clientY) === button,
+        x: window.screenX + clientX,
+        y: window.screenY + clientY,
+      };
+    })()`,
+  ]);
+  if (setup.eval?.ok !== true) {
+    throw new Error(`native chrome action setup failed: ${formatUnknown(setup.eval)}`);
+  }
+  const probe = setup.eval.value as NativeChromeActionProbe;
+  expect(probe.targetMatches).toBe(true);
+  expect(Number.isFinite(probe.x)).toBe(true);
+  expect(Number.isFinite(probe.y)).toBe(true);
+
+  try {
+    await execFileAsync('/usr/bin/open', ['-a', installedAppPath]);
+    await delay(250);
+    const swiftSource = `
+      import CoreGraphics
+      import Darwin
+      let point = CGPoint(x: ${probe.x}, y: ${probe.y})
+      let source = CGEventSource(stateID: .hidSystemState)
+      CGEvent(mouseEventSource: source, mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: .left)?.post(tap: .cghidEventTap)
+      CGEvent(mouseEventSource: source, mouseType: .leftMouseDown, mouseCursorPosition: point, mouseButton: .left)?.post(tap: .cghidEventTap)
+      usleep(50_000)
+      CGEvent(mouseEventSource: source, mouseType: .leftMouseUp, mouseCursorPosition: point, mouseButton: .left)?.post(tap: .cghidEventTap)
+    `;
+    await execFileAsync('/usr/bin/xcrun', ['swift', '-e', swiftSource], { timeout: 30_000 });
+    await waitFor(async () => {
+      const snapshot = await runToolsPackJson<MacInspectResult>('inspect', [
+        '--expr',
+        `(() => {
+          const button = document.getElementById(${JSON.stringify(probeId)});
+          return { clickCount: Number(button?.dataset.clickCount || '0') };
+        })()`,
+      ]);
+      expect((snapshot.eval?.value as { clickCount?: number } | undefined)?.clickCount).toBe(1);
+    }, 5_000);
+  } finally {
+    await runToolsPackJson<MacInspectResult>('inspect', [
+      '--expr',
+      `(() => { document.getElementById(${JSON.stringify(probeId)})?.remove(); return true; })()`,
+    ]).catch(() => undefined);
+  }
 }
 
 async function waitForPackagedHomeFirstRunOutput(): Promise<PackagedHomeFirstRunResult> {
