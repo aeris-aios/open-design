@@ -435,7 +435,7 @@ export const CODEX_APP_SERVER_MIN_VERSION = '0.95.0';
 export type CodexTransport = 'exec-json' | 'app-server';
 export type CodexTransportPreference = CodexTransport | 'auto';
 
-/** Operator switch. Unset means the shipping `exec --json` behaviour. */
+/** Operator switch. Unset means the shipping `app-server` behaviour. */
 export const CODEX_TRANSPORT_ENV_VAR = 'OD_CODEX_TRANSPORT';
 
 /**
@@ -444,7 +444,8 @@ export const CODEX_TRANSPORT_ENV_VAR = 'OD_CODEX_TRANSPORT';
  * Three values, and an unrecognised one is treated as unset rather than as an
  * error: an environment typo must not take codex offline.
  *
- *   (unset) / `exec-json`  the shipping transport
+ *   (unset)                app-server (shipping default)
+ *   `exec-json`            force the legacy transport (rollback)
  *   `auto`                 app-server when the installed codex is new enough
  *   `app-server`           force, no version gate (operator override)
  */
@@ -454,6 +455,7 @@ export function codexTransportPreference(
   const raw = typeof env[CODEX_TRANSPORT_ENV_VAR] === 'string'
     ? String(env[CODEX_TRANSPORT_ENV_VAR]).trim().toLowerCase()
     : '';
+  if (raw === '') return 'app-server';
   if (raw === 'app-server') return 'app-server';
   if (raw === 'auto') return 'auto';
   return 'exec-json';

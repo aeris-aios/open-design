@@ -13,18 +13,20 @@ import {
  * The app-server transport ships behind a runtime switch. Two properties are
  * load-bearing and are asserted here rather than argued in a PR body:
  *
- *  1. With the switch off the codex runtime definition is the SAME OBJECT the
+ *  1. With the switch forced off the codex runtime definition is the SAME OBJECT the
  *     registry has always exported — not a copy that happens to hold equal
  *     fields. Object identity is the strongest available proof that no code
  *     path downstream of the def can observe a difference.
- *  2. The switch is resolved from the process environment at run time, so an
- *     operator rolls back by unsetting a variable and restarting the daemon —
- *     no rebuild, no code edit, and both transports stay reachable.
+ *  2. The switch is resolved from the process environment at run time. The
+ *     app-server transport is the shipping default; an operator can roll back
+ *     with `OD_CODEX_TRANSPORT=exec-json` and a daemon restart — no rebuild or
+ *     code edit, and both transports stay reachable.
  */
 describe('codex transport switch', () => {
   describe('codexTransportPreference', () => {
-    it('defaults to exec-json when unset', () => {
-      expect(codexTransportPreference({})).toBe('exec-json');
+    it('defaults to app-server when unset or empty', () => {
+      expect(codexTransportPreference({})).toBe('app-server');
+      expect(codexTransportPreference({ OD_CODEX_TRANSPORT: '' })).toBe('app-server');
     });
 
     it('reads the three supported values', () => {
@@ -39,7 +41,6 @@ describe('codex transport switch', () => {
 
     it('falls back to exec-json for an unrecognised value', () => {
       expect(codexTransportPreference({ OD_CODEX_TRANSPORT: 'grpc' })).toBe('exec-json');
-      expect(codexTransportPreference({ OD_CODEX_TRANSPORT: '' })).toBe('exec-json');
     });
   });
 
@@ -77,8 +78,8 @@ describe('codex transport switch', () => {
   });
 
   describe('resolveCodexTransport', () => {
-    it('stays on exec-json by default even on a codex that supports app-server', () => {
-      expect(resolveCodexTransport({ env: {}, version: '0.149.1' })).toBe('exec-json');
+    it('uses app-server by default', () => {
+      expect(resolveCodexTransport({ env: {}, version: '0.149.1' })).toBe('app-server');
     });
 
     it('auto upgrades only when the installed codex is new enough', () => {
