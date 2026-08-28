@@ -537,6 +537,11 @@ function isSafeMarkdownImageSrc(src: string): boolean {
 function isSafeMarkdownHref(href: string): boolean {
   const value = href.trim();
   if (!value || value.startsWith('//')) return false;
+  // A Windows drive path satisfies the URI scheme grammar (`C:`), but it is
+  // still a local path that the chat click router must inspect and swallow or
+  // route in-app. Treat it like POSIX/relative project paths, not like an
+  // arbitrary custom protocol.
+  if (/^[a-z]:[\\/]/i.test(value)) return true;
   const scheme = /^([a-z][a-z\d+.-]*):/i.exec(value)?.[1]?.toLowerCase();
   if (!scheme) return true;
   return scheme === 'http' || scheme === 'https' || scheme === 'mailto';
@@ -584,6 +589,12 @@ function renderColorToken(value: string, key: string): ReactNode {
   );
 }
 
+function unwrapMarkdownDestination(value: string): string {
+  return value.startsWith('<') && value.endsWith('>')
+    ? value.slice(1, -1)
+    : value;
+}
+
 // Inline pass: tokenize into runs of `code`, **bold**, *italic*, links,
 // and plain text. We walk the string with a regex that matches whichever
 // delimiter shows up next; everything between delimiters becomes a text
@@ -608,7 +619,7 @@ function renderInline(text: string, options?: RenderMarkdownOptions): ReactNode 
   //     leaving italic to win turns the URL into an italic-fragmented mess.
   //  5. bold (**a** / __a__) before italic (*a* / _a_).
   const re =
-    /(`[^`]+`)|!\[([^\]]*)\]\(([^)\s]+)\)|\[([^\]]+)\]\(([^)\s]+)\)|(https?:\/\/[^\s)<>]+)|(\*\*[^*]+\*\*)|(__[^_]+__)|(\*[^*\n]+\*)|(_[^_\n]+_)/g;
+    /(`[^`]+`)|!\[([^\]]*)\]\((<[^>\n]+>|[^)\s]+)\)|\[([^\]]+)\]\((<[^>\n]+>|[^)\s]+)\)|(https?:\/\/[^\s)<>]+)|(\*\*[^*]+\*\*)|(__[^_]+__)|(\*[^*\n]+\*)|(_[^_\n]+_)/g;
   let lastIndex = 0;
   let m: RegExpExecArray | null;
   let key = 0;
@@ -620,7 +631,7 @@ function renderInline(text: string, options?: RenderMarkdownOptions): ReactNode 
       out.push(renderInlineCodeSpan(m[1].slice(1, -1), key++));
     } else if (m[3] !== undefined) {
       // Image: m[2] = alt (may be empty), m[3] = src
-      const src = m[3];
+      const src = unwrapMarkdownDestination(m[3]);
       const alt = m[2] || '';
       if (isSafeMarkdownImageSrc(src)) {
         out.push(
@@ -640,7 +651,7 @@ function renderInline(text: string, options?: RenderMarkdownOptions): ReactNode 
         pushText(out, alt, key++, options);
       }
     } else if (m[4] && m[5]) {
-      const href = m[5];
+      const href = unwrapMarkdownDestination(m[5]);
       if (isSafeMarkdownHref(href)) {
         out.push(
           <a
