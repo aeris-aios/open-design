@@ -5408,4 +5408,9 @@ export const uk: Dict = {
   'labs.optOutSkip': "Пропустити",
   'labs.optOutOtherPlaceholder': "Що саме не підійшло?",
   'labs.optOutSubmit': "Надіслати",
+  'chat.conversationsSearchPlaceholder': "Пошук розмов",
+  'chat.conversationsNoMatches': "Немає відповідних розмов.",
+  'chat.attachments.preview': "Попередній перегляд: {name}",
+  'chat.record.canceled': "Скасовано",
+  'chat.record.pending': "Не розпочато",
 };

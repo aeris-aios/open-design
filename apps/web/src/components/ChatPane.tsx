@@ -3149,7 +3149,7 @@ export function ChatPane({
                     type="search"
                     value={conversationSearch}
                     onChange={(event) => setConversationSearch(event.currentTarget.value)}
-                    placeholder="Search conversations"
+                    placeholder={t('chat.conversationsSearchPlaceholder')}
                     data-testid="conversation-history-search"
                   />
                   {conversationSearch ? (
@@ -3170,7 +3170,7 @@ export function ChatPane({
                     </div>
                   ) : filteredConversations.length === 0 ? (
                     <div className="chat-history-empty">
-                      No conversations match.
+                      {t('chat.conversationsNoMatches')}
                     </div>
                   ) : (
                     filteredConversations.map((c) => (

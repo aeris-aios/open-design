@@ -5408,4 +5408,9 @@ export const id: Dict = {
   'labs.optOutSkip': "Lewati",
   'labs.optOutOtherPlaceholder': "Apa yang kurang pas secara spesifik?",
   'labs.optOutSubmit': "Kirim",
+  'chat.conversationsSearchPlaceholder': "Cari percakapan",
+  'chat.conversationsNoMatches': "Tidak ada percakapan yang cocok.",
+  'chat.attachments.preview': "Pratinjau {name}",
+  'chat.record.canceled': "Dibatalkan",
+  'chat.record.pending': "Belum dimulai",
 };

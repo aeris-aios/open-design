@@ -5408,4 +5408,9 @@ export const hu: Dict = {
   'labs.optOutSkip': "Kihagyás",
   'labs.optOutOtherPlaceholder': "Pontosan mi nem volt megfelelő?",
   'labs.optOutSubmit': "Elküldés",
+  'chat.conversationsSearchPlaceholder': "Beszélgetések keresése",
+  'chat.conversationsNoMatches': "Nincs egyező beszélgetés.",
+  'chat.attachments.preview': "{name} előnézete",
+  'chat.record.canceled': "Megszakítva",
+  'chat.record.pending': "Nincs elindítva",
 };

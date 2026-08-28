@@ -4,6 +4,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ChatComposer } from '../../src/components/ChatComposer';
+import { I18nProvider } from '../../src/i18n';
 import { ANNOTATION_EVENT } from '../../src/components/PreviewDrawOverlay';
 import { uploadProjectFiles } from '../../src/providers/registry';
 import { readExpandedIndexCss } from '../helpers/read-expanded-css';
@@ -518,23 +519,25 @@ describe('ChatComposer /search command', () => {
   it('previews a staged image attachment from its chip', async () => {
     const longName = 'drawing-2026-05-13T09-25-03-040Z-with-extra-long-name.png';
     render(
-      <ChatComposer
-        projectId="project-1"
-        projectFiles={[
-          {
-            name: longName,
-            path: `uploads/${longName}`,
-            kind: 'image',
-            mime: 'image/png',
-            size: 1234,
-            mtime: Date.now(),
-          },
-        ]}
-        streaming={false}
-        onEnsureProject={async () => 'project-1'}
-        onSend={vi.fn()}
-        onStop={vi.fn()}
-      />,
+      <I18nProvider initial="fr">
+        <ChatComposer
+          projectId="project-1"
+          projectFiles={[
+            {
+              name: longName,
+              path: `uploads/${longName}`,
+              kind: 'image',
+              mime: 'image/png',
+              size: 1234,
+              mtime: Date.now(),
+            },
+          ]}
+          streaming={false}
+          onEnsureProject={async () => 'project-1'}
+          onSend={vi.fn()}
+          onStop={vi.fn()}
+        />
+      </I18nProvider>,
     );
 
     await typeAndSettle('@drawing');
@@ -542,9 +545,9 @@ describe('ChatComposer /search command', () => {
     fireEvent.click(screen.getByText(`uploads/${longName}`));
 
     const chip = screen.getByTestId('staged-attachments').querySelector('[data-testid="staged-attachment-image"]');
-    const previewTrigger = screen.getByRole('button', { name: `Preview ${longName}` });
+    const previewTrigger = screen.getByRole('button', { name: `Aperçu de ${longName}` });
     expect(chip?.contains(previewTrigger)).toBe(true);
-    expect(chip?.contains(screen.getByRole('button', { name: `Remove ${longName}` }))).toBe(true);
+    expect(chip?.contains(screen.getByRole('button', { name: `Retirer ${longName}` }))).toBe(true);
     expect(previewTrigger.querySelector('img')).toBeTruthy();
     // 图卡上不挂文件名 —— 缩略图本身就是它的名字,名字只进 title / aria-label。
     expect(chip?.textContent).toBe('');
@@ -562,7 +565,7 @@ describe('ChatComposer /search command', () => {
     // 图必须是卡的**直接子节点**(套一层就会破坏那套等比撑满的布局)
     expect(card.querySelector(':scope > img')).toBe(previewImage);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Fermer' }));
     expect(screen.queryByRole('dialog', { name: longName })).toBeNull();
   });
 

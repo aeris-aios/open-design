@@ -150,7 +150,8 @@ export function toolIcon(kind: ToolKind): ReactElement {
   switch (kind) {
     case 'read': return <ReadIcon />;
     case 'write':
-    case 'edit': return <WriteIcon />;
+    case 'edit':
+    case 'delete': return <WriteIcon />;
     case 'search': return <SearchIcon />;
     case 'exec': return <ExecIcon />;
     case 'image': return <ImageIcon />;

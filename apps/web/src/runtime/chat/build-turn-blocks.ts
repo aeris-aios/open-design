@@ -1177,7 +1177,7 @@ function buildToolRow(
 
   const kind = toolKind(event.name, event.input);
   const command = isCommandTool(event.name) ? commandOf(event.input) : '';
-  const file = fileOf(event.input) ?? (kind === 'read' && command ? commandFile(command) : null);
+  const file = fileOf(event.input) ?? (command ? commandFile(command) : null);
   const failed = Boolean(result.isError);
   const hits = kind === 'search' && !failed && result.content
     ? result.content.split('\n').filter((l) => l.trim()).length

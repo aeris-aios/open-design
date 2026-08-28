@@ -5403,4 +5403,9 @@ export const fa: Dict = {
   'labs.optOutSkip': "رد کردن",
   'labs.optOutOtherPlaceholder': "دقیقاً چه چیزی مناسب نبود؟",
   'labs.optOutSubmit': "ارسال",
+  'chat.conversationsSearchPlaceholder': "جست‌وجوی گفتگوها",
+  'chat.conversationsNoMatches': "هیچ گفتگوی منطبقی یافت نشد.",
+  'chat.attachments.preview': "پیش‌نمایش {name}",
+  'chat.record.canceled': "لغوشده",
+  'chat.record.pending': "شروع‌نشده",
 };

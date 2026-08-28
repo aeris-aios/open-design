@@ -94,6 +94,25 @@ export function ToolRow({ row, onOpenFile, fileScope, onShowFailure }: ToolRowPr
     );
   }
 
+  /*
+   * Bash 已能确认动作、但目标是多文件 / glob / 动态变量时,不能伪造一个
+   * 可点文件。动词仍然应该如实显示,只把剩下的命令摘要当普通文字。
+   */
+  const semanticVerb = row.tool === 'search' ? t('chat.record.verb.search') : verb;
+  if (semanticVerb && row.command && row.rawTitle && !row.failed) {
+    return (
+      <div className={rowClass}>
+        {icon}
+        <span className={styles.name}>
+          {semanticVerb} <FileButton path={row.command} label={row.title} />
+        </span>
+        {row.tool === 'search' && row.hits != null
+          ? <span className={`${styles.meta} ${styles.num}`}>{t('chat.record.hits', { count: row.hits })}</span>
+          : elapsed ? <span className={styles.meta}>{elapsed}</span> : null}
+      </div>
+    );
+  }
+
   /* 失败写法二:原因跟在名字后面(有具体原因时才用,没有就走写法一) */
   if (row.failed && row.file && row.failReason) {
     return (
@@ -176,7 +195,8 @@ type Translate = ReturnType<typeof useT>;
 function fileVerb(row: ToolRowData, t: Translate): ReactNode {
   if (row.tool === 'write') return t('chat.record.verb.write');
   if (row.tool === 'edit') return t('chat.record.verb.edit');
-  if (row.tool === 'read' && row.file) return t('chat.record.verb.read');
+  if (row.tool === 'delete') return t('common.delete');
+  if (row.tool === 'read') return t('chat.record.verb.read');
   return null;
 }
 

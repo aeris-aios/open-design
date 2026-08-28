@@ -5408,4 +5408,9 @@ export const tr: Dict = {
   'labs.optOutSkip': "Atla",
   'labs.optOutOtherPlaceholder': "Tam olarak ne uymadı?",
   'labs.optOutSubmit': "Gönder",
+  'chat.conversationsSearchPlaceholder': "Konuşmalarda ara",
+  'chat.conversationsNoMatches': "Eşleşen konuşma yok.",
+  'chat.attachments.preview': "{name} önizlemesi",
+  'chat.record.canceled': "İptal edildi",
+  'chat.record.pending': "Başlatılmadı",
 };

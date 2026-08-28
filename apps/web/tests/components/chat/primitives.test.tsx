@@ -7,9 +7,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render as rtlRender, screen } from '@testing-library/react';
 import type { ReactElement } from 'react';
-import { I18nProvider } from '../../../src/i18n';
+import { I18nProvider, type Locale } from '../../../src/i18n';
 import { Foldable } from '../../../src/components/chat/primitives/Foldable';
 import { StatusMark } from '../../../src/components/chat/primitives/StatusMark';
+import { UpgradeCard } from '../../../src/components/chat/UpgradeCard';
 import { ToolRow } from '../../../src/components/chat/primitives/ToolRow';
 import { SayText } from '../../../src/components/chat/primitives/SayText';
 import { FileButton } from '../../../src/components/chat/primitives/FileButton';
@@ -24,8 +25,8 @@ afterEach(() => { cleanup(); });
  * rerender 也要带同一层包裹 —— 否则整棵树被换掉、组件重新挂载,
  * 测的就不是「父层重渲染」而是「重新创建」,折叠态当然会回到初值。
  */
-function render(ui: ReactElement) {
-  const wrap = (node: ReactElement) => <I18nProvider initial="zh-CN">{node}</I18nProvider>;
+function render(ui: ReactElement, initial: Locale = 'zh-CN') {
+  const wrap = (node: ReactElement) => <I18nProvider initial={initial}>{node}</I18nProvider>;
   const result = rtlRender(wrap(ui));
   return { ...result, rerender: (next: ReactElement) => result.rerender(wrap(next)) };
 }
@@ -98,6 +99,24 @@ describe('Foldable', () => {
 });
 
 describe('StatusMark', () => {
+  it('读屏状态跟随界面语言,不写死中文', () => {
+    render(
+      <>
+        <StatusMark status="ok" />
+        <StatusMark status="fail" />
+        <StatusMark status="running" />
+        <StatusMark status="skip" />
+        <StatusMark status="pending" />
+      </>,
+      'fr',
+    );
+    expect(screen.getByLabelText('Terminé')).toBeTruthy();
+    expect(screen.getByLabelText('Échec')).toBeTruthy();
+    expect(screen.getByLabelText('En cours')).toBeTruthy();
+    expect(screen.getByLabelText('Annulé')).toBeTruthy();
+    expect(screen.getByLabelText('Non commencé')).toBeTruthy();
+  });
+
   it('过了那枚勾是一张图,里面不塞 svg', () => {
     render(<StatusMark status="ok" />);
     const mark = screen.getByLabelText('已完成');
@@ -181,6 +200,16 @@ describe('ToolRow', () => {
     expect(screen.getByText('ls -la')).toBeTruthy();
   });
 
+  it('已识别的 shell 动作不回落成「执行」', () => {
+    const { unmount } = render(<ToolRow row={row({ tool: 'read', command: 'wc -l a.html b.html', title: 'wc -l a.html b.html', rawTitle: true })} />);
+    expect(screen.getByText('读取')).toBeTruthy();
+    expect(screen.queryByText('执行')).toBeNull();
+    unmount();
+    render(<ToolRow row={row({ tool: 'delete', command: 'rm -f a.html b.html', title: 'rm -f a.html b.html', rawTitle: true })} />);
+    expect(screen.getByText('删除')).toBeTruthy();
+    expect(screen.queryByText('执行')).toBeNull();
+  });
+
   it('失败行两种写法:有原因跟在名字后面,没原因给「失败」', () => {
     const { unmount } = render(<ToolRow row={row({ tool: 'write', failed: true, file: { path: 'dist/x', label: 'x' }, failReason: '目录只读' })} />);
     expect(screen.getByText(/目录只读/)).toBeTruthy();
@@ -201,6 +230,11 @@ describe('ToolRow', () => {
 });
 
 describe('SayText / FileButton', () => {
+  it('文件打开标签跟随界面语言', () => {
+    render(<FileButton path="/x/card.html" label="card.html" onOpen={() => {}} />, 'fr');
+    expect(screen.getByRole('button', { name: 'Ouvrir card.html' })).toBeTruthy();
+  });
+
   it('空白文字不成段(claude 的 thinking 全是空串)', () => {
     const { container } = render(<SayText text="   " />);
     expect(container.querySelector('p')).toBeNull();
@@ -218,6 +252,13 @@ describe('SayText / FileButton', () => {
     expect(screen.getByText('card.html')).toBeTruthy();
     expect(container.querySelector('button')).toBeNull();
     expect(screen.queryByLabelText('打开 card.html')).toBeNull();
+  });
+});
+
+describe('UpgradeCard', () => {
+  it('升级按钮复用设置页的本地化文案', () => {
+    render(<UpgradeCard balanceUsd={1.2} onUpgrade={() => {}} />, 'fr');
+    expect(screen.getByRole('button', { name: 'Mettre à niveau' })).toBeTruthy();
   });
 });
 

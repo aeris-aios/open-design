@@ -58,7 +58,7 @@ export function UpgradeCard({ balanceUsd, onUpgrade }: UpgradeCardProps): ReactE
           disabled={!onUpgrade}
         >
           <SparkIcon />
-          Upgrade
+          {t('settings.amrUpgrade')}
         </Button>
       </div>
       <p className={styles.why}>{out ? t('chat.upgrade.whyOut') : t('chat.upgrade.whyLow')}</p>

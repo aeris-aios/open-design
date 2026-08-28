@@ -134,6 +134,30 @@ describe('工具行(D3 / D23 / §2.2b)', () => {
     expect(nth(tools(nth(shells(blocks), 0).items), 0).delta).toEqual({ added: 3, removed: 0 });
   });
 
+  it('Bash 新建 / 改写 / 删除会带上文件目标,不再退化成执行命令', () => {
+    const events = [
+      ...call('w1', 'Bash', { command: `cat > card.html <<'EOF'\n<div/>\nEOF` }),
+      ...call('e1', 'Bash', { command: `sed -i '' 's/old/new/' page.html` }),
+      ...call('d1', 'Bash', { command: 'rm -f obsolete.html' }),
+    ];
+    const rows = tools(nth(shells(buildTurnBlocks({ events })), 0).items);
+    expect(rows.map((row) => [row.tool, row.file?.label])).toEqual([
+      ['write', 'card.html'],
+      ['edit', 'page.html'],
+      ['delete', 'obsolete.html'],
+    ]);
+  });
+
+  it('复合 Bash 会找到 cd 后的读取 / 搜索目标', () => {
+    const events = [
+      ...call('r1', 'Bash', { command: `cd "$PWD" && sed -n '1,220p' page.html` }),
+      ...call('s1', 'Bash', { command: `cd "$PWD" && rg -n 'TODO|FIXME' src` }, { content: 'src/a.ts:1:TODO' }),
+    ];
+    const rows = tools(nth(shells(buildTurnBlocks({ events })), 0).items);
+    expect(rows[0]?.file?.label).toBe('page.html');
+    expect(rows[1]?.pattern).toBe('TODO|FIXME');
+  });
+
   it('两端时间都有才算耗时', () => {
     const blocks = buildTurnBlocks({ events: call('t1', 'Read', { file_path: 'a.ts' }, { startedAt: 1000, completedAt: 1400 }) });
     expect(nth(tools(nth(shells(blocks), 0).items), 0).elapsedMs).toBe(400);

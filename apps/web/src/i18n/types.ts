@@ -3030,6 +3030,8 @@ export interface Dict {
   'chat.conversationsHeading': string;
   'chat.new': string;
   'chat.emptyConversations': string;
+  'chat.conversationsSearchPlaceholder': string;
+  'chat.conversationsNoMatches': string;
   'chat.deleteConversation': string;
   'chat.renameConversationLabel': string;
   'chat.deleteConversationConfirm': string;
@@ -4515,6 +4517,7 @@ export interface Dict {
   'qf.answeredConfirmed': string;
   'chat.att.cancelUpload': string;
   'chat.att.retry': string;
+  'chat.attachments.preview': string;
   'chat.attachments.scrollNext': string;
   'chat.attachments.scrollPrev': string;
   'chat.input.collapse': string;
@@ -5575,6 +5578,8 @@ export interface Dict {
   'chat.record.thinking': string;
   'chat.record.thoughts': string;
   'chat.record.done': string;
+  'chat.record.canceled': string;
+  'chat.record.pending': string;
   'chat.record.failedTurn': string;
   'chat.record.plan': string;
   /* Plan 卡收起态那枚药丸(设计稿第 71 格):N = 当前正在做第几步,M = 总步数 */

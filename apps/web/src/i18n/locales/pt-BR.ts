@@ -5408,4 +5408,9 @@ export const ptBR: Dict = {
   'labs.optOutSkip': "Pular",
   'labs.optOutOtherPlaceholder': "O que exatamente não funcionou?",
   'labs.optOutSubmit': "Enviar",
+  'chat.conversationsSearchPlaceholder': "Pesquisar conversas",
+  'chat.conversationsNoMatches': "Nenhuma conversa encontrada.",
+  'chat.attachments.preview': "Pré-visualizar {name}",
+  'chat.record.canceled': "Cancelado",
+  'chat.record.pending': "Não iniciado",
 };

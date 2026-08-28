@@ -5408,4 +5408,9 @@ export const it: Dict = {
   'labs.optOutSkip': "Salta",
   'labs.optOutOtherPlaceholder': "Cosa non ha funzionato esattamente?",
   'labs.optOutSubmit': "Invia",
+  'chat.conversationsSearchPlaceholder': "Cerca conversazioni",
+  'chat.conversationsNoMatches': "Nessuna conversazione corrispondente.",
+  'chat.attachments.preview': "Anteprima di {name}",
+  'chat.record.canceled': "Annullato",
+  'chat.record.pending': "Non avviato",
 };

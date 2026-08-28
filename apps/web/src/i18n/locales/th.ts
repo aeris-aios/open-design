@@ -5408,4 +5408,9 @@ export const th: Dict = {
   'labs.optOutSkip': "ข้าม",
   'labs.optOutOtherPlaceholder': "อะไรที่ไม่เหมาะบ้าง",
   'labs.optOutSubmit': "ส่ง",
+  'chat.conversationsSearchPlaceholder': "ค้นหาการสนทนา",
+  'chat.conversationsNoMatches': "ไม่พบการสนทนาที่ตรงกัน",
+  'chat.attachments.preview': "ดูตัวอย่าง {name}",
+  'chat.record.canceled': "ยกเลิกแล้ว",
+  'chat.record.pending': "ยังไม่เริ่ม",
 };

@@ -5408,4 +5408,9 @@ export const ru: Dict = {
   'labs.optOutSkip': "Пропустить",
   'labs.optOutOtherPlaceholder': "Что именно не подошло?",
   'labs.optOutSubmit': "Отправить",
+  'chat.conversationsSearchPlaceholder': "Поиск бесед",
+  'chat.conversationsNoMatches': "Подходящих бесед нет.",
+  'chat.attachments.preview': "Предпросмотр: {name}",
+  'chat.record.canceled': "Отменено",
+  'chat.record.pending': "Не начато",
 };

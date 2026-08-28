@@ -33,7 +33,7 @@ export interface ToolRow {
   /** 搜索行的「搜了什么」与「N 处」(D23) */
   pattern: string | null;
   hits: number | null;
-  /** 写 / 改文件的改动量;数不出来就是 null,那一行改显示耗时 */
+  /** 新建 / 改写 / 删除文件的改动量;数不出来就是 null,那一行改显示耗时 */
   delta: DiffStat | null;
   /** 拿不到就是 null —— 不显示,不估算(§2.2b) */
   elapsedMs: number | null;

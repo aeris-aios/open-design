@@ -5857,4 +5857,9 @@ export const zhCN: Dict = {
   'labs.optOutSkip': "跳过",
   'labs.optOutOtherPlaceholder': "具体是哪里不合适？",
   'labs.optOutSubmit': "提交",
+  'chat.conversationsSearchPlaceholder': "搜索会话",
+  'chat.conversationsNoMatches': "没有匹配的会话。",
+  'chat.attachments.preview': "预览 {name}",
+  'chat.record.canceled': "已取消",
+  'chat.record.pending': "未开始",
 };

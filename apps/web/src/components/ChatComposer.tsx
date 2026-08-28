@@ -4482,7 +4482,7 @@ export function StagedAttachmentTray({
                       className="msg-att-mini-btn"
                       onClick={() => setPreview(card)}
                       title={card.name}
-                      aria-label={`Preview ${card.name}`}
+                      aria-label={t('chat.attachments.preview', { name: card.name })}
                     >
                       <img className="msg-att-mini" src={thumbUrl} alt="" aria-hidden />
                     </button>

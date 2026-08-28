@@ -50,7 +50,7 @@ describe('classifyCommand · 容易判错的几种写法', () => {
   });
 
   it('sudo / env 只是前缀,看后面那个命令', () => {
-    expect(classifyCommand('sudo rm -rf dist')).toBe('write');
+    expect(classifyCommand('sudo rm -rf dist')).toBe('delete');
     expect(classifyCommand('env cat a.txt')).toBe('read');
   });
 
@@ -60,6 +60,39 @@ describe('classifyCommand · 容易判错的几种写法', () => {
 
   it('追加重定向算写', () => {
     expect(classifyCommand('echo x >> notes.md')).toBe('write');
+  });
+
+  describe('本地 OD 会话命令补样(2026-08-28)', () => {
+    it('引号里的 > 是搜索模式,不是写文件重定向', () => {
+      expect(classifyCommand(`rg -n 'data-label="[^>]+"' page.html`)).toBe('search');
+    });
+
+    it('产生数据的命令通过管道交给 rg 时,主导动作是搜索', () => {
+      expect(classifyCommand(`env | rg '^OD_(BIN|PROJECT_ID)='`)).toBe('search');
+      expect(classifyCommand(`curl -s https://example.invalid | rg -o 'src="[^"]+"'`)).toBe('search');
+    });
+
+    it('只读文本预处理后明确 grep / rg 时,按真正的搜索阶段分类', () => {
+      expect(classifyCommand(`sed -n '1,220p' page.html | grep -n 'button' | head`)).toBe('search');
+      expect(classifyCommand(`awk '{print $1}' report.txt | rg '^total$'`)).toBe('search');
+      expect(classifyCommand(`cat page.html | rg 'button'`)).toBe('search');
+      expect(classifyCommand(`cat page.html | head -20`)).toBe('read');
+    });
+
+    it('原地改写和删除不再谎报成新建', () => {
+      expect(classifyCommand(`sed -i '' 's/old/new/' page.html`)).toBe('edit');
+      expect(classifyCommand('rm -f obsolete.html')).toBe('delete');
+    });
+
+    it('常见的文件统计命令是读取', () => {
+      expect(classifyCommand('wc -l page.html')).toBe('read');
+      expect(classifyCommand('nl -ba page.html')).toBe('read');
+    });
+
+    it('内联脚本读后写回文件是改写', () => {
+      const cmd = `python3 - <<'PY'\np='page.html'\ns=open(p).read()\ns=s.replace('old','new')\nopen(p,'w').write(s)\nPY`;
+      expect(classifyCommand(cmd)).toBe('edit');
+    });
   });
 });
 
@@ -103,7 +136,7 @@ describe('toolKind · 工具名能说明问题的直接认', () => {
   });
 });
 
-describe('commandFile · 用命令读单个文件时还原成「读取 + 文件名」', () => {
+describe('commandFile · 从命令恢复单一文件目标', () => {
   it('cat 单文件', () => {
     expect(commandFile('cat src/index.html')).toEqual({ path: 'src/index.html', label: 'index.html' });
   });
@@ -115,6 +148,26 @@ describe('commandFile · 用命令读单个文件时还原成「读取 + 文件�
   it('多文件或带管道的不猜', () => {
     expect(commandFile('cat a.html b.html')).toBeNull();
     expect(commandFile('cat a.html | head -20')).toBeNull();
+  });
+
+  it('真实复合命令会穿过 cd 找到后面的读取目标', () => {
+    expect(commandFile(`cd "$PWD" && sed -n '1,220p' page.html`)).toEqual({ path: 'page.html', label: 'page.html' });
+  });
+
+  it('新建、改写、删除命令也能抽出单一文件目标', () => {
+    expect(commandFile(`cat > card.html <<'EOF'\n<div/>\nEOF`)).toEqual({ path: 'card.html', label: 'card.html' });
+    expect(commandFile('echo x >> notes.md')).toEqual({ path: 'notes.md', label: 'notes.md' });
+    expect(commandFile(`sed -i '' 's/old/new/' page.html`)).toEqual({ path: 'page.html', label: 'page.html' });
+    expect(commandFile('rm -f obsolete.html')).toEqual({ path: 'obsolete.html', label: 'obsolete.html' });
+  });
+
+  it('内联脚本写回的文件可从字面量赋值中恢复', () => {
+    const cmd = `python3 - <<'PY'\np='page.html'\ns=open(p).read()\nopen(p,'w').write(s)\nPY`;
+    expect(commandFile(cmd)).toEqual({ path: 'page.html', label: 'page.html' });
+  });
+
+  it('heredoc 标记不是文件目标,不伪造成可打开文件', () => {
+    expect(commandFile(`apply_patch <<'PATCH'\n*** Begin Patch\nPATCH`)).toBeNull();
   });
 });
 
@@ -141,8 +194,12 @@ describe('searchPattern · 搜索行要显示搜的是什么', () => {
     expect(searchPattern('Bash', bash('find . -type f'))).toBeNull();
   });
 
-  it('不是搜索命令就没有模式', () => {
-    expect(searchPattern('Bash', bash('ls -la'))).toBeNull();
+  it('复合命令能跳过 cd 找到搜索段', () => {
+    expect(searchPattern('Bash', bash(`cd "$PWD" && rg -n 'TODO|FIXME' src`))).toBe('TODO|FIXME');
+  });
+
+  it('列目录没有显式路径时以当前目录为搜索目标', () => {
+    expect(searchPattern('Bash', bash('ls -la'))).toBe('.');
   });
 });
 

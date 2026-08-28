@@ -5408,4 +5408,9 @@ export const ja: Dict = {
   'labs.optOutSkip': "スキップ",
   'labs.optOutOtherPlaceholder': "具体的にどこが合いませんでしたか？",
   'labs.optOutSubmit': "送信",
+  'chat.conversationsSearchPlaceholder': "会話を検索",
+  'chat.conversationsNoMatches': "一致する会話はありません。",
+  'chat.attachments.preview': "{name}をプレビュー",
+  'chat.record.canceled': "キャンセル済み",
+  'chat.record.pending': "未開始",
 };

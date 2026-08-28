@@ -5408,4 +5408,9 @@ export const ar: Dict = {
   'labs.optOutSkip': "تخطٍ",
   'labs.optOutOtherPlaceholder': "ما الذي لم يناسبك تحديداً؟",
   'labs.optOutSubmit': "إرسال",
+  'chat.conversationsSearchPlaceholder': "البحث في المحادثات",
+  'chat.conversationsNoMatches': "لا توجد محادثات مطابقة.",
+  'chat.attachments.preview': "معاينة {name}",
+  'chat.record.canceled': "ملغى",
+  'chat.record.pending': "لم يبدأ",
 };

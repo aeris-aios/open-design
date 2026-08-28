@@ -9,14 +9,18 @@ import { trackRunFailedToastSurfaceView } from '../../src/analytics/events';
 import type { AppConfig, ChatMessage, Conversation } from '../../src/types';
 
 const translate = (key: string, vars?: Record<string, string | number>) => {
+  const localized: Record<string, string> = {
+    'chat.conversationsSearchPlaceholder': 'Rechercher des conversations',
+    'chat.conversationsNoMatches': 'Aucune conversation correspondante.',
+  };
   if (vars && Object.keys(vars).length > 0) {
     return `${key} ${Object.values(vars).join(' ')}`;
   }
-  return key;
+  return localized[key] ?? key;
 };
 
 vi.mock('../../src/i18n', () => ({
-  useI18n: () => ({ locale: 'en', setLocale: () => undefined, t: translate }),
+  useI18n: () => ({ locale: 'fr', setLocale: () => undefined, t: translate }),
   useT: () => translate,
 }));
 
@@ -63,6 +67,19 @@ describe('ChatPane session switcher', () => {
     expect(screen.getByTestId('conversation-history-menu')).toBeTruthy();
     expect(screen.getByTestId('conversation-select-conv-1').textContent).toBe('Contract review draft');
     expect(screen.getByTestId('conversation-select-conv-2').textContent).toBe('Pricing page copy');
+  });
+
+  it('localizes conversation search and its no-match state', () => {
+    renderChatPane({
+      conversations: [conversation({ id: 'conv-1', title: 'Contract review draft' })],
+      activeConversationId: 'conv-1',
+    });
+
+    fireEvent.click(screen.getByTestId('conversation-history-trigger'));
+    const search = screen.getByPlaceholderText('Rechercher des conversations');
+    fireEvent.change(search, { target: { value: 'aucun résultat' } });
+
+    expect(screen.getByText('Aucune conversation correspondante.')).toBeTruthy();
   });
 
   it('selects a conversation from the history menu', () => {

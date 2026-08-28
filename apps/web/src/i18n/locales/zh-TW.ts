@@ -5864,4 +5864,9 @@ export const zhTW: Dict = {
   'labs.optOutSkip': "略過",
   'labs.optOutOtherPlaceholder': "具體是哪裡不合適？",
   'labs.optOutSubmit': "送出",
+  'chat.conversationsSearchPlaceholder': "搜尋對話",
+  'chat.conversationsNoMatches': "沒有符合的對話。",
+  'chat.attachments.preview': "預覽 {name}",
+  'chat.record.canceled': "已取消",
+  'chat.record.pending': "尚未開始",
 };

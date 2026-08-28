@@ -13,7 +13,7 @@ import { toolIcon } from '../../../src/components/chat/primitives/icons';
 import { toolKind } from '../../../src/runtime/chat/tool-kind';
 import type { ToolKind } from '../../../src/runtime/chat/tool-kind';
 
-const ALL: ToolKind[] = ['read', 'write', 'edit', 'search', 'exec', 'image', 'other'];
+const ALL: ToolKind[] = ['read', 'write', 'edit', 'delete', 'search', 'exec', 'image', 'other'];
 
 describe('行首图标', () => {
   it('每一类都有图标 —— 包括「认不出来」那一类', () => {

@@ -5408,4 +5408,9 @@ export const de: Dict = {
   'labs.optOutSkip': "Überspringen",
   'labs.optOutOtherPlaceholder': "Was genau hat nicht gepasst?",
   'labs.optOutSubmit': "Absenden",
+  'chat.conversationsSearchPlaceholder': "Unterhaltungen durchsuchen",
+  'chat.conversationsNoMatches': "Keine passenden Unterhaltungen.",
+  'chat.attachments.preview': "Vorschau für {name}",
+  'chat.record.canceled': "Abgebrochen",
+  'chat.record.pending': "Noch nicht gestartet",
 };

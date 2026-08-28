@@ -5408,4 +5408,9 @@ export const ko: Dict = {
   'labs.optOutSkip': "건너뛰기",
   'labs.optOutOtherPlaceholder': "구체적으로 어떤 점이 아쉬웠나요?",
   'labs.optOutSubmit': "제출",
+  'chat.conversationsSearchPlaceholder': "대화 검색",
+  'chat.conversationsNoMatches': "일치하는 대화가 없습니다.",
+  'chat.attachments.preview': "{name} 미리보기",
+  'chat.record.canceled': "취소됨",
+  'chat.record.pending': "시작 전",
 };

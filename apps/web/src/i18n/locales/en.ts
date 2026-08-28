@@ -5422,4 +5422,9 @@ export const en: Dict = {
   'labs.optOutSkip': "Skip",
   'labs.optOutOtherPlaceholder': "What specifically did not work?",
   'labs.optOutSubmit': "Submit",
+  'chat.conversationsSearchPlaceholder': "Search conversations",
+  'chat.conversationsNoMatches': "No conversations match.",
+  'chat.attachments.preview': "Preview {name}",
+  'chat.record.canceled': "Canceled",
+  'chat.record.pending': "Not started",
 };

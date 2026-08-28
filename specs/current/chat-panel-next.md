@@ -133,19 +133,20 @@
 
 ```mermaid
 flowchart TD
-  C["command"] --> R{"含重定向 > / >> ?"}
-  R -->|是| W["write"]
-  R -->|否| G["按 ; && || 切成独立动作组"]
-  G --> P["每组按 | 切,取【上游第一段】"]
+  C["command"] --> Q["剥 shell 壳;只在引号外识别重定向 / 连接符"]
+  Q --> G["按 ; && || 切成独立动作组"]
+  G --> P["管道优先上游;上游无语义才取下游可证明动作"]
   P --> H["取首个可执行 token(剥 VAR= / 引号 / 路径)"]
-  H --> K["查表分类"] --> M["组间取权重最大<br/>write4 > read3 > search2 > exec1 > noise0"]
+  H --> K["查表 + 原地修改参数分类"] --> M["组间取权重最大<br/>delete > edit > write > read > search > exec > noise"]
 ```
 
 | 类别 | 首 token |
 |---|---|
-| `read` | cat / head / tail / less / sed / awk / jq |
+| `read` | cat / head / tail / less / sed(非 `-i`) / awk / jq / wc / nl / stat / file / du / diff / pwd |
 | `search` | grep / rg / find / fd / ls / tree / locate |
-| `write` | tee / touch / mkdir / mv / cp / rm / patch,或任意重定向 |
+| `write` | tee / touch / mkdir / cp / install,或引号外的输出重定向 |
+| `edit` | sed -i / perl -pi / mv / ln / chmod / patch / apply_patch,以及可静态证明的内联脚本读后写回 |
+| `delete` | rm / rmdir / unlink |
 | `exec` | 其余,含 `$VAR` 形式 |
 | `noise` | echo / printf / cd / export / true — 不计入判定 |
 
@@ -156,6 +157,11 @@ flowchart TD
 2. **顺序执行取权重最大**。`echo … && grep … || echo …` 里 echo 是噪音
 
 验证集见 `apps/web/tests/runtime/chat/tool-kind.test.ts`。**新命令形态出现时先加用例再改规则。**
+
+**2026-08-28 本地会话补样**:只读统计 stable / beta / prerelease 会话里 332 条 shell command,
+不落会话正文、绝对路径或凭据。旧规则有 246 条最终仍回落成「执行 …」;补齐复合命令目标、
+引号感知切分、内联 Python / Node 静态写入、原地改写和删除后,只剩 83 条保守归为 `exec`;
+其中主要是 OD CLI / 渲染导出、等待、只做计算的脚本,应继续显示「执行」。
 
 **标题与图标分工**:行标题优先用 `Bash.input.description`(**claude 有,codex 实测没有**),没有时回落到命令本身;嗅探结果**只用来选图标**。
 
@@ -445,6 +451,7 @@ classDiagram
 | D46 | **组件 3 思考块的滚动形态要做**:运行中推理文字自己往上走。落点仍在执行记录壳内(D29 不变),即壳内的思考正文区限高 + 自动贴底 | 用户 2026-08-25:「做」。壳内 vs 独立块这一层未再细说,按 D29 落在壳内;若设计要求独立块再改。**2026-08-27**:实现曾把限高窗套在整只壳 body 上,吞掉壳内原有内容 —— 规格原文「壳内的思考正文区」没写错,是实现读错了;思考块的身份/缩进/收起见 `chat-panel-feedback.md` §F-15 |
 | D47 | **组件 8 记忆卡改成可折叠**:收起只留「已记住 N 条偏好」,展开列出那 N 条 —— 展开的内容**就是现在铺在行内的那几条**,不需要新数据 | 用户 2026-08-25 附截图指认:「展开的不就是原本的这几个东西吗?」 |
 | D48 | **工具行行首用图标**(读=眼睛 / 写=铅笔 / 搜索=放大镜 / 执行=`>` / 生图=图片),不是 5px 圆点。稿子里新旧两版并存时,**以带图标的新版为准** | 用户 2026-08-25:「图标」。此前 Unsupported additions 里"设计稿没有图标"那条记录作废(已在该表标注更正) |
+| D51 | **command 动作识别必须用本地 OD 真实会话补样**,Bash 能证明读取 / 新建 / 改写 / 删除 / 搜索时不再回落成「执行 …」;多目标、glob、动态路径只显示动词,不伪造可点文件 | 用户 2026-08-28 真机指认「还有很多 运行 xxxx 后面一大堆」,并明确要求用本地 OD 会话 command 做样本,不臆造规则 |
 | D42 | **T8 拍板:维持 D29 的位置规则(候选 A)**。每轮第一张执行记录钉在本轮正文上方;发清单时照旧多出第二张,出现在当前位置。评审提的「先吐正文再出工具」不通过改位置解决。模拟器里候选 B(`?anchor=flow`,空壳跟着流走)连同实现一起撤掉 —— 定了的事不留开关(同 T3 定 F 之后撤掉策略切换栏) | 用户 2026-08-23 拍板「A」 |
 | D37 | **产物卡在「写产物文件」那一刻就出现,先是生成中的灰占位(呼吸闪烁),run 结束才定格成正式卡**;位置 = 出卡那一刻的位置,不挪到轮末。判据:本轮往 `.html/.htm`、图、视频、音频文件里写(Write / Edit / 带 `>` 重定向的命令),且这次调用没失败;轮末拿 `end.artifactPaths` 核对,名单里没有的撤掉。设计稿组件 14 没有「生成中」这一态,占位样式是模拟器加的(`.art.is-pending`,标注示意) | 产品 2026-08-21 评审:「产物生成过程中,可以给产物的图形做一个灰色占位图的闪烁动效?现在它停在这儿,不知道它有没有结束,然后产物突然就出来了」 |
 | D38 | **轮末顺序按场景稿:产物卡 → 总结正文 → 回合状态行 → 下一步引导**;记忆卡(组件 8)紧跟用户消息,不排在轮末 | 设计 2026-08-21:「下一步行为应该在产物下面」;场景稿 891468→892467→892617→896219 的实际顺序(`arts → say → fb → nexts`),记忆卡在 882742(用户消息之后) |
@@ -752,7 +759,7 @@ React 每帧重挂载、用户手点开的折叠态被拨回去;`ChatPane` 解�
 | B6 | 召回 = 新旧清单内容交集,不做语义判断、不限轮数;`expandable` 只看本轮有无内容;每轮只装本轮内容 | D17、D24、D25 | 「中断后继续」场景:上一轮完成的条目不可展开,本轮继续的可展开且只含本轮条目 |
 | B7 | 收起以 run 生命周期为准,agent 的 done 只是提前量;中断时 in_progress 条目标停止态,状态词「已手动停止」 | D18、规则 11、设计稿 2643 行 | plain 系场景(无任何信号)在 run 结束时正确收起;中断场景状态词与设计稿逐字一致 |
 | B8 | 工具行没有「执行中」档,跑完才落行;行首是 5px 圆点,失败红点,正在跑的行换成球 | D3、设计稿 2031–2035、2189–2200 行 | 渲染时 tool_use 没有配对 tool_result 的不出行(生图计数行例外,见 S3) |
-| B9 | 工具类别靠解析 Bash command 判定,不改 skill;类别 = 动词 + 图标(读取 / 新建 / 改写 / 搜索 / 执行 / 生成),搜索是一等类别 | D7、D23;8/20 21:02 版 `.ti > svg`;§2.2 的 9 条真命令 + 剥壳规则 | `tool-kind.test.ts` 9/9 + 两条易错点 + codex 剥壳用例 |
+| B9 | 工具类别靠解析 Bash command 判定,不改 skill;类别 = 动词 + 图标(读取 / 新建 / 改写 / 删除 / 搜索 / 执行 / 生成),搜索是一等类别 | D7、D23、D51;8/20 21:02 版 `.ti > svg`;§2.2 的真实会话补样 + 剥壳规则 | `tool-kind.test.ts` 旧 9 条 + 2026-08-28 本地会话形态 + codex 剥壳用例 |
 | B10 | 意图澄清:选中后点「确认」才发送 | D2(设计稿「点错了还能换」) | 组件 4 测试:点选项不触发发送,点确认触发 |
 | B11 | Plan 卡不阻塞,只有执行中一态;手动暂停只给一行文案「已手动暂停任务」;联系支持是全局弹窗 | D4、D5、D6(评审录音);设计稿 4117 行 | 对应组件测试 + 陈列页逐格比对 |
 | B12 | Claude 的清单来源是 MCP 注入的 todo 工具,三种用法(写清单 / done / 作废)收敛为一个工具;`isTodoWriteToolName` 必须同时放宽以认 `mcp__*__` 形式 | D9;§5.5 | 注入后 Claude 真实一轮里出现清单分段;不放宽匹配则视为未完成 |
@@ -1205,4 +1212,3 @@ color: inherit; font-size: var(--font-size-13) }`。我们的全局 `button`(`st
 | T36 未闭合 artifact 倒灌原文 | `artifacts/strip.ts`:开标签没闭合时,**按标签自称的 `type` 判** —— 声称 html/文本的当「产物被截断」吃到末尾,没有 type 的(行文里提了一嘴)原样留着 | `tests/artifacts/strip-unterminated.test.ts` 4 例(先红后绿) | **没有推翻别人之前的修复**:`strip.test.ts` 那条「不许把整条消息吃掉」的老用例一字未动、仍然绿 —— 两种情况用 `type` 区分开了。真页面实测:聊天里已无裸 HTML |
 | 产物卡不出缩略图(T35 的「灰块」那一半) | `project-cover.tsx` 新增 `ungated` 开关(只给「前台主内容」用,注释写清两条准入:数量有界 + 就是当前路由的前台);`FileOpsSummary.tsx` 的 `ArtifactCard` 传它 | `tests/components/chat/artifact-card-cover.test.tsx` 1 例(先红后绿:先 `suspendThumbnailLoads()` 模拟进项目路由,再断言 iframe 挂上) | 真 Chrome 实测:缩略图格子从 `SPAN.artifact-card-mini`(灰占位)变成 `IFRAME.artifact-card-frame`,src 指向真实文件。**排查过程值得记**:先怀疑 HEAD 不被支持(实测 200)、再怀疑 `src` 为空、最后发现连 IntersectionObserver 都不回调 —— 那是**标签页在后台被节流**,`Page.bringToFront` 之后才回调。在后台标签里量 lazy-mount 的东西会得到假结论 |
 | 产物卡按手机排版(T35 的另一半) | `styles/viewer/tools.css`:`.artifact-card-frame` 的基准从 `width:250%` + `scale(0.4)`(=卡宽×2.5)换成固定的 `1440x900` + `transform: scale(calc(100cqw / 1440px))`,`.artifact-card-thumb` 补 `container-type: inline-size` 当查询容器。写法与首页项目网格 `styles/home/recent-projects.css` 的 `.recent-projects__thumb-iframe`(16/9 的 1280x720)对齐,数字按卡面 16/10 换成 1440x900 —— 按宽缩放两轴正好铺满,不裁不留边 | `tests/styles/artifact-card-desktop-viewport.test.ts` 5 例(先红后绿:4 红 1 绿,绿的那条是拿首页那份当对照,证明检查器本身没写错)。三条机制逐个消融各自红了 3 / 1 / 1 条 | **真 Chrome 实测(1600x1000 窗口)**:缩略图 iframe 的 `window.innerWidth` **505 → 1440**,右边真实预览是 **1124** —— 修前缩略图落在手机档、右边落在桌面档,同一个文件两种布局(缩略图有底部标签栏、预览是三栏);修后两边同档。卡面视觉尺寸 202x126 前后一字不差(布局尺寸 505x316 → 1440x900,`scale` 0.4 → 0.140278),**不是把卡撑大,是换渲染视口**。`container-type` 是必需的:去掉它 `100cqw` 回落到视口,scale 变 1.111,1440px 的页面在 202px 的卡里铺成 1600px 宽。性能:同屏 6 张卡对照跑 4 轮,滚动帧 p50 8.3~8.4ms(120Hz 满帧)两边一致,p95 重叠,`paintReady` 的差异全在 dev server 抖动量级内;iframe 本来就有 `useInView`(160px overscan)懒挂,这次没动 | 截图(本机,未入库):`~/Documents/thumb-shots-artifact-viewport/thumb-card-before-after.png` |
-

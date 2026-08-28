@@ -102,10 +102,10 @@ function renderSvg(node: ReactElement): SVGSVGElement {
   return svg as unknown as SVGSVGElement;
 }
 
-const TOOL_KINDS: ToolKind[] = ['read', 'write', 'edit', 'search', 'exec', 'image', 'other'];
+const TOOL_KINDS: ToolKind[] = ['read', 'write', 'edit', 'delete', 'search', 'exec', 'image', 'other'];
 
 describe('聊天面板描边图标的笔画粗细', () => {
-  it('执行记录行首那一格:七类图标全部落在稿子量出来的 1.021px 上', () => {
+  it('执行记录行首那一格:全部类别图标都落在稿子量出来的 1.021px 上', () => {
     const displayPx = cssWidth('components/chat/primitives/record.module.css', '.icon > svg');
     for (const kind of TOOL_KINDS) {
       const svg = renderSvg(toolIcon(kind));
