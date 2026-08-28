@@ -1,27 +1,21 @@
-// The 「使用系统自动场景」 entry in the project header, judged at the daemon
-// HTTP boundary: create every first-level output type on Home's create rail
-// through the real `POST /api/projects`, then run the exact predicate
-// `ProjectView` renders the Button on.
+// What `POST /api/projects` records for each first-level output type on Home's
+// create rail.
 //
-// Each card can reach the create in two shapes, and both must land on a
-// project the header leaves alone:
+// Every entry on that rail is a product-owned automatic scenario: the user
+// picks a task type, never a plugin. So the create travels as
+// `pluginSelectionProvenance: 'automatic-default'` — `EntryShell` omits
+// `pluginId`, and the daemon re-derives the plugin from the metadata and stamps
+// an `automatic_default` scenario binding. `routes/runs.ts` reads exactly that
+// per run (`projectPinIsAutomaticDefault` -> `routeApplicability`), so a card
+// that forwards its plugin id instead is labelled `explicit_user` when nobody
+// pinned anything.
 //
-//   - the card itself, which claims the product-owned automatic default and
-//     names no plugin, so the daemon re-derives it and stamps
-//     `automatic_default`;
-//   - a pick made under the card — an example/preset card, a plugin card's
-//     「使用」 — which pins the plugin it applied, so the daemon records
-//     `explicit_user`.
-//
-// The second shape stays `explicit_user` on purpose: naming a plugin is how a
-// caller opts a project out of OD Next, and softening that would let the
-// rollout override authority it must not touch. What the header must not do is
-// read that label as "this project left its automatic scenario" when the plugin
-// it names IS the metadata's automatic default.
+// The reverse direction is pinned too: a body that DOES name a plugin stays
+// `explicit_user`, because naming one is how a caller opts a project out of OD
+// Next and the rollout must not be able to override that.
 
 import type { Server } from 'node:http';
 import { afterEach, describe, expect, it } from 'vitest';
-import { projectLeftItsAutomaticScenario } from '@open-design/contracts';
 import type { ProjectMetadata, ProjectScenarioTaskProfile } from '@open-design/contracts';
 import { closeDatabase } from '../../src/db.js';
 import { startServer, type StartServerOptions } from '../../src/server.js';
@@ -188,15 +182,7 @@ function forwardedPluginBody(surface: RailSurface): Record<string, unknown> {
   };
 }
 
-/** The exact gate `ProjectView` renders the restore Button on. */
-function showsRestoreAutomaticScenarioEntry(project: CreatedProject): boolean {
-  return projectLeftItsAutomaticScenario({
-    metadata: project.metadata,
-    appliedPluginSnapshotId: project.appliedPluginSnapshotId,
-  });
-}
-
-describe('automatic scenario restore entry', () => {
+describe('create-rail scenario binding', () => {
   let started: StartedServer | null = null;
 
   async function daemon(): Promise<StartedServer> {
@@ -217,44 +203,21 @@ describe('automatic scenario restore entry', () => {
     closeDatabase();
   });
 
-  it('is hidden for every first-level output type on the create rail', async () => {
+  it('stamps an automatic_default binding for every entry on the create rail', async () => {
     const { url } = await daemon();
-    const shown: string[] = [];
     for (const surface of CREATE_RAIL_SURFACES) {
       const project = await createProject(url, surface.chipId, automaticDefaultBody(surface));
-      if (showsRestoreAutomaticScenarioEntry(project)) shown.push(surface.chipId);
-    }
-    expect(shown).toEqual([]);
-  });
-
-  it('is hidden when a pick under the card forwards its scenario plugin', async () => {
-    const { url } = await daemon();
-    const shown: string[] = [];
-    for (const surface of PLUGIN_FORWARDING_SURFACES) {
-      const project = await createProject(
-        url,
-        `${surface.chipId}-pinned`,
-        forwardedPluginBody(surface),
-      );
-      // The pin is recorded as user authority — that part is correct and the
-      // rollout depends on it — and the header still leaves it alone.
-      expect(project.metadata.scenarioBinding, surface.chipId).toMatchObject({
-        provenance: 'explicit_user',
-        pluginId: surface.scenarioPluginId,
-        snapshotId: project.appliedPluginSnapshotId,
-      });
-      if (showsRestoreAutomaticScenarioEntry(project)) shown.push(surface.chipId);
-    }
-    expect(shown).toEqual([]);
-  });
-
-  // `routes/runs.ts` recomputes the same judgement per run
-  // (`projectPinIsAutomaticDefault`), and a run that does not recognise the pin
-  // as automatic stops re-stamping the binding onto the snapshot it links.
-  it('stamps a binding the run path also reads as the automatic default', async () => {
-    const { url } = await daemon();
-    for (const surface of PLUGIN_FORWARDING_SURFACES) {
-      const project = await createProject(url, surface.chipId, automaticDefaultBody(surface));
+      if (surface.automaticStrategyTaskProfile) {
+        // An OD Next route pins no scenario plugin at all; its automatic
+        // binding is the strategy binding instead.
+        expect(project.appliedPluginSnapshotId, surface.chipId).toBeNull();
+        expect(project.metadata.strategyBinding, surface.chipId).toMatchObject({
+          schemaVersion: 1,
+          provenance: 'automatic_default',
+          taskProfile: surface.automaticStrategyTaskProfile,
+        });
+        continue;
+      }
       expect(project.metadata.scenarioBinding, surface.chipId).toMatchObject({
         schemaVersion: 1,
         provenance: 'automatic_default',
@@ -264,27 +227,46 @@ describe('automatic scenario restore entry', () => {
     }
   });
 
-  // The other half of the contract: the entry is a real escape hatch, so a
-  // project pinned to a scenario the automatic router would NOT choose keeps
-  // offering it. Both shapes of "automatic" are covered — a plugin that is not
-  // the metadata's default, and any plugin at all on metadata OD Next routes.
-  it('is offered for a project pinned off its automatic scenario', async () => {
+  it('binds exactly the plugin each card advertises', async () => {
+    // Dropping the plugin id is only safe while the daemon re-derives the same
+    // plugin from the metadata the card stamps. WebGL is the case that made
+    // this worth pinning: `intent: 'webgl-experience'` used to fall through to
+    // the generic prototype seed.
     const { url } = await daemon();
-    const offDefault = await createProject(url, 'off-default', {
-      metadata: { kind: 'image' },
-      pluginId: 'od-new-generation',
-      pluginInputs: { artifactKind: 'poster', audience: 'readers', topic: 'the user brief' },
-    });
-    expect(showsRestoreAutomaticScenarioEntry(offDefault)).toBe(true);
+    for (const surface of PLUGIN_FORWARDING_SURFACES) {
+      const project = await createProject(url, surface.chipId, automaticDefaultBody(surface));
+      expect(project.metadata.scenarioBinding?.pluginId, surface.chipId)
+        .toBe(surface.scenarioPluginId);
+    }
+  });
 
-    const pinnedOffOdNext = await createProject(url, 'pinned-off-od-next', {
+  // The reverse direction. A pick made UNDER a card — an example/preset card,
+  // a plugin card's 「使用」 — forwards the plugin it applied, and that must
+  // still read as user authority: it is how a caller opts a project out of OD
+  // Next. Nobody may "fix" a create-rail defect by softening this.
+  it('keeps a named plugin recorded as user authority', async () => {
+    const { url } = await daemon();
+    for (const surface of PLUGIN_FORWARDING_SURFACES) {
+      const project = await createProject(
+        url,
+        `${surface.chipId}-pinned`,
+        forwardedPluginBody(surface),
+      );
+      expect(project.metadata.scenarioBinding, surface.chipId).toMatchObject({
+        provenance: 'explicit_user',
+        pluginId: surface.scenarioPluginId,
+        snapshotId: project.appliedPluginSnapshotId,
+      });
+    }
+
+    const namedDefaultOnOdNextRoute = await createProject(url, 'named-default', {
       metadata: { kind: 'prototype' },
       pluginId: 'example-web-prototype',
     });
-    expect(pinnedOffOdNext.metadata.scenarioBinding).toMatchObject({
+    expect(namedDefaultOnOdNextRoute.metadata.scenarioBinding).toMatchObject({
       provenance: 'explicit_user',
       pluginId: 'example-web-prototype',
     });
-    expect(showsRestoreAutomaticScenarioEntry(pinnedOffOdNext)).toBe(true);
   });
+
 });

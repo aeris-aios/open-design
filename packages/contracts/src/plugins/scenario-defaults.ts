@@ -192,63 +192,6 @@ export function defaultScenarioTaskProfileForProjectMetadata(
   return null;
 }
 
-export function hasCurrentAutomaticStrategyBinding(
-  metadata: ProjectMetadata | null | undefined,
-): boolean {
-  const binding = metadata?.strategyBinding;
-  return binding?.schemaVersion === 1
-    && binding.provenance === 'automatic_default'
-    && binding.boundAt >= 0
-    && binding.taskProfile === automaticStrategyTaskProfileForProjectMetadata(metadata);
-}
-
-/**
- * Whether restoring the automatic scenario would actually change this project.
- *
- * Pure read-model check owned by the UI surface that offers the restore entry.
- * That entry is an affordance, not a provenance report: it belongs only where
- * the project sits on a scenario the automatic router would not have chosen,
- * because that is the only case where restoring changes anything a user sees.
- *
- * "Automatic" has two shapes and the answer differs per shape:
- *
- *   - Metadata that owns an OD Next route: the automatic scenario IS that
- *     strategy route, and a strategy route pins no scenario plugin. So any
- *     pinned snapshot means the project left it, and restoring hands the task
- *     back to OD Next — a real change.
- *   - Everything else: the automatic scenario IS the metadata's default plugin.
- *     A project already bound to that plugin has nothing to restore, whichever
- *     provenance the create path recorded. `explicit_user` is real authority on
- *     the daemon side — naming a plugin is how a caller opts a project out of
- *     OD Next — but it does not change WHICH scenario is running, so it cannot
- *     by itself mean the project left one. Only a genuinely different plugin (a
- *     Community pick, the plugin detail modal, `--plugin`) can be restored away
- *     from.
- *
- * Daemon authority additionally verifies that the referenced snapshot row
- * belongs to this project and carries the recorded plugin id.
- */
-export function projectLeftItsAutomaticScenario(input: {
-  metadata: ProjectMetadata | null | undefined;
-  appliedPluginSnapshotId: string | null | undefined;
-}): boolean {
-  const pinnedSnapshotId = input.appliedPluginSnapshotId || null;
-  if (automaticStrategyTaskProfileForProjectMetadata(input.metadata) !== null) {
-    return pinnedSnapshotId !== null;
-  }
-  const defaultPluginId = defaultScenarioPluginIdForProjectMetadata(input.metadata);
-  // Nothing to restore to (the daemon answers DEFAULT_SCENARIO_UNAVAILABLE for
-  // metadata with no default), and an unpinned project is already on it.
-  if (!defaultPluginId || !pinnedSnapshotId) return false;
-  const binding = input.metadata?.scenarioBinding;
-  // The pin exists but the read model does not describe it, so which scenario
-  // is running cannot be established here. Keep offering the escape hatch
-  // rather than hiding it on a guess; the daemon re-derives the truth when the
-  // entry is actually used.
-  if (binding?.schemaVersion !== 1 || binding.snapshotId !== pinnedSnapshotId) return true;
-  return binding.pluginId !== defaultPluginId;
-}
-
 export function defaultScenarioPluginIdForTaskKind(
   taskKind: TaskKind | undefined,
 ): DefaultScenarioPluginId | null {
