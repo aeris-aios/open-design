@@ -3177,8 +3177,8 @@ export function SettingsDialog({
   // The status here drives the footer indicator: 'idle' = no draft to
   // flush, 'pending' = scheduled, 'saving' = request in flight, 'saved'
   // = recent successful sync, 'error' = recent failure.
-  const [autosaveStatus, setAutosaveStatus] =
-    useState<'idle' | 'pending' | 'saving' | 'saved' | 'error'>('idle');
+  type AutosaveStatus = 'idle' | 'pending' | 'saving' | 'saved' | 'error';
+  const [autosaveStatus, setAutosaveStatus] = useState<AutosaveStatus>('idle');
   // The indicator is one shared surface: every section drives this same pill.
   // A section whose write outlives it — Labs writes immediately and can settle
   // after unmount — must not relabel a newer save's outcome, so every writer
@@ -3186,22 +3186,23 @@ export function SettingsDialog({
   // displayed value would not be enough: a newer section can legitimately be
   // showing the same `saving` an older write left behind.
   const autosaveClaimRef = useRef(0);
-  const writeAutosaveStatus = useCallback<typeof setAutosaveStatus>((next) => {
+  const claimAutosaveStatus = useCallback((next: AutosaveStatus): number => {
     autosaveClaimRef.current += 1;
+    setAutosaveStatus(next);
+    return autosaveClaimRef.current;
+  }, []);
+  const settleAutosaveStatus = useCallback((claim: number, next: AutosaveStatus): void => {
+    if (claim !== autosaveClaimRef.current) return;
     setAutosaveStatus(next);
   }, []);
   const labsAutosave = useMemo(() => ({
-    claim: () => {
-      writeAutosaveStatus('saving');
-      return autosaveClaimRef.current;
-    },
+    claim: () => claimAutosaveStatus('saving'),
     settle: (claim: number, status: 'saved' | 'error' | 'idle') => {
-      if (claim !== autosaveClaimRef.current) return;
       // Settling does not hand the indicator to anyone else, so the claim
       // stays valid for this writer's own follow-up (saved -> idle).
-      setAutosaveStatus(status);
+      settleAutosaveStatus(claim, status);
     },
-  }), [writeAutosaveStatus]);
+  }), [claimAutosaveStatus, settleAutosaveStatus]);
   // Skip the very first effect tick so just opening the dialog doesn't
   // appear to "save" anything before the user has touched a field.
   const autosaveSkipFirstRef = useRef(true);
@@ -3247,9 +3248,9 @@ export function SettingsDialog({
       window.clearTimeout(autosaveRetryTimerRef.current);
       autosaveRetryTimerRef.current = null;
     }
-    writeAutosaveStatus('idle');
+    claimAutosaveStatus('idle');
     onResetOnboarding({ ...cfg, onboardingCompleted: false });
-  }, [cfg, onResetOnboarding]);
+  }, [cfg, claimAutosaveStatus, onResetOnboarding]);
 
   useEffect(() => {
     if (autosaveSkipFirstRef.current) {
@@ -3260,7 +3261,7 @@ export function SettingsDialog({
       suppressNextAutosaveRef.current = false;
       return;
     }
-    writeAutosaveStatus('pending');
+    const autosaveClaim = claimAutosaveStatus('pending');
     if (autosaveSavedTimerRef.current != null) {
       window.clearTimeout(autosaveSavedTimerRef.current);
       autosaveSavedTimerRef.current = null;
@@ -3326,10 +3327,10 @@ export function SettingsDialog({
         !persistOptions.forceMediaProviderSync
         && isAutosaveDraftOnlyChange(persistedSnapshot, autosaveLastSavedRef.current)
       ) {
-        writeAutosaveStatus('idle');
+        settleAutosaveStatus(autosaveClaim, 'idle');
         return;
       }
-      writeAutosaveStatus('saving');
+      settleAutosaveStatus(autosaveClaim, 'saving');
       void (async () => {
         try {
           await onPersist(persistedSnapshot, persistOptions);
@@ -3347,19 +3348,19 @@ export function SettingsDialog({
           // leave the status as 'pending' so the next debounce tick
           // owns the indicator instead of flashing "Saved".
           if (autosaveLatestRef.current !== snapshot) {
-            writeAutosaveStatus('pending');
+            settleAutosaveStatus(autosaveClaim, 'pending');
             return;
           }
           if (persistOptions.forceMediaProviderSync) {
             lastSyncedMediaProvidersVersionRef.current = mediaProvidersVersion;
             setPendingMediaProviderEditIds(new Set());
           }
-          writeAutosaveStatus('saved');
+          settleAutosaveStatus(autosaveClaim, 'saved');
           autosaveSavedTimerRef.current = window.setTimeout(() => {
             autosaveSavedTimerRef.current = null;
             // Settle to idle after a moment so the indicator doesn't
             // stay on "Saved" forever and become noise.
-            writeAutosaveStatus((curr) => (curr === 'saved' ? 'idle' : curr));
+            settleAutosaveStatus(autosaveClaim, 'idle');
           }, 1800);
         } catch {
           if (
@@ -3368,7 +3369,7 @@ export function SettingsDialog({
             && mediaProvidersChangeVersionRef.current === mediaProvidersVersion
             && lastSyncedMediaProvidersVersionRef.current < mediaProvidersVersion
           ) {
-            writeAutosaveStatus('pending');
+            settleAutosaveStatus(autosaveClaim, 'pending');
             autosaveRetryTimerRef.current = window.setTimeout(() => {
               autosaveRetryTimerRef.current = null;
               if (
@@ -3382,7 +3383,7 @@ export function SettingsDialog({
             }, 1500);
             return;
           }
-          writeAutosaveStatus('error');
+          settleAutosaveStatus(autosaveClaim, 'error');
         }
       })();
     }, 400);
@@ -3392,7 +3393,15 @@ export function SettingsDialog({
         autosaveTimerRef.current = null;
       }
     };
-  }, [analytics.track, autosaveCommitTick, cfg, onPersist, autosaveRetryTick]);
+  }, [
+    analytics.track,
+    autosaveCommitTick,
+    autosaveRetryTick,
+    cfg,
+    claimAutosaveStatus,
+    onPersist,
+    settleAutosaveStatus,
+  ]);
   // Flush any pending autosave on unmount so a fast-closing dialog
   // never strands an in-flight edit. We also clear the "Saved" toast
   // timer to avoid setState after unmount.
@@ -6144,6 +6153,7 @@ export function SettingsDialog({
                         allowSilentUpdates,
                       }));
                       if (onSilentUpdatePreferenceChange == null) return;
+                      const autosaveClaim = claimAutosaveStatus('saving');
                       setSilentUpdateBusy(true);
                       void (async () => {
                         try {
@@ -6157,13 +6167,13 @@ export function SettingsDialog({
                             ...autosaveLastSavedRef.current,
                             allowSilentUpdates,
                           };
-                          writeAutosaveStatus('saved');
+                          settleAutosaveStatus(autosaveClaim, 'saved');
                           if (autosaveSavedTimerRef.current != null) {
                             window.clearTimeout(autosaveSavedTimerRef.current);
                           }
                           autosaveSavedTimerRef.current = window.setTimeout(() => {
                             autosaveSavedTimerRef.current = null;
-                            writeAutosaveStatus((curr) => (curr === 'saved' ? 'idle' : curr));
+                            settleAutosaveStatus(autosaveClaim, 'idle');
                           }, 1800);
                         } catch {
                           if (writeToken !== silentUpdateWriteTokenRef.current) return;
@@ -6172,7 +6182,7 @@ export function SettingsDialog({
                             ...current,
                             allowSilentUpdates: previous,
                           }));
-                          writeAutosaveStatus('error');
+                          settleAutosaveStatus(autosaveClaim, 'error');
                         } finally {
                           if (writeToken === silentUpdateWriteTokenRef.current) {
                             setSilentUpdateBusy(false);
