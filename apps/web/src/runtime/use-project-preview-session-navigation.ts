@@ -17,9 +17,8 @@ interface ProjectPreviewNavigationSource {
   ): Promise<ProjectScopedPreviewNavigation | null>;
 }
 
-export interface UseProjectPreviewSessionNavigationOptions
+export interface UseProjectScopedPreviewNavigationOptions
   extends ProjectPreviewNavigationRequest {
-  policy: PreviewSessionNavigationPolicy;
   enabled?: boolean;
   /** Keep the same owner's last-good document visible while minting is paused. */
   retainLastGoodWhenDisabled?: boolean;
@@ -29,6 +28,18 @@ export interface UseProjectPreviewSessionNavigationOptions
   refreshAheadMs?: number;
 }
 
+export interface UseProjectPreviewSessionNavigationOptions
+  extends UseProjectScopedPreviewNavigationOptions {
+  policy: PreviewSessionNavigationPolicy;
+}
+
+export interface ProjectScopedPreviewNavigationState {
+  scoped: ProjectScopedPreviewNavigation | null;
+  loading: boolean;
+  unavailable: boolean;
+  expiresAt: number | null;
+}
+
 export interface ProjectPreviewSessionNavigationState {
   navigation: PreviewSessionNavigation | null;
   loading: boolean;
@@ -36,18 +47,18 @@ export interface ProjectPreviewSessionNavigationState {
   expiresAt: number | null;
 }
 
-interface LoadedNavigationState extends ProjectPreviewSessionNavigationState {
+interface LoadedScopedNavigationState extends ProjectScopedPreviewNavigationState {
   ownerKey: string;
   loadKey: string | null;
-  scoped: ProjectScopedPreviewNavigation | null;
+  lastGoodScoped: ProjectScopedPreviewNavigation | null;
   renewalFailures: number;
 }
 
-const EMPTY_STATE: LoadedNavigationState = {
+const EMPTY_SCOPED_STATE: LoadedScopedNavigationState = {
   ownerKey: '',
   loadKey: null,
   scoped: null,
-  navigation: null,
+  lastGoodScoped: null,
   loading: false,
   unavailable: false,
   expiresAt: null,
@@ -73,49 +84,26 @@ function sameNavigation(
 }
 
 /**
- * Resolve and renew the exact real-URL navigation for one FileViewer slot.
+ * Resolve and renew the scoped real-URL capability for one FileViewer slot.
  *
- * A revision update retains the previous navigation while the replacement is
+ * A revision update retains the previous capability while the replacement is
  * being minted, allowing PreviewSession to keep last-good content visible.
  * Project, file, or authorization changes fail closed and never expose the
  * previous owner's scoped URL.
  */
-export function useProjectPreviewSessionNavigation({
+export function useProjectScopedPreviewNavigation({
   projectId,
   fileName,
   revisionKey,
   authorizationKey,
-  policy,
   enabled = true,
   retainLastGoodWhenDisabled = false,
   cache = projectPreviewNavigationCache,
   now = Date.now,
   refreshAheadMs = PROJECT_PREVIEW_NAVIGATION_REFRESH_AHEAD_MS,
-}: UseProjectPreviewSessionNavigationOptions): ProjectPreviewSessionNavigationState {
+}: UseProjectScopedPreviewNavigationOptions): ProjectScopedPreviewNavigationState {
   const ownerKey = stableKey([authorizationKey, projectId, fileName]);
-  const policyKey = stableKey([
-    policy.sandboxProfile,
-    policy.guards.storage ? 'storage' : '',
-    policy.guards.focus ? 'focus' : '',
-    policy.guards.redirect ? 'redirect' : '',
-    policy.deck ? 'deck' : '',
-  ]);
-  const stablePolicy = useMemo<PreviewSessionNavigationPolicy>(() => ({
-    sandboxProfile: policy.sandboxProfile,
-    guards: {
-      storage: policy.guards.storage,
-      focus: policy.guards.focus,
-      redirect: policy.guards.redirect,
-    },
-    deck: policy.deck,
-  }), [
-    policy.deck,
-    policy.guards.focus,
-    policy.guards.redirect,
-    policy.guards.storage,
-    policy.sandboxProfile,
-  ]);
-  const loadKey = stableKey([ownerKey, revisionKey, policyKey]);
+  const loadKey = stableKey([ownerKey, revisionKey]);
   const request = useMemo<ProjectPreviewNavigationRequest>(() => ({
     projectId,
     fileName,
@@ -123,7 +111,7 @@ export function useProjectPreviewSessionNavigation({
     authorizationKey,
   }), [authorizationKey, fileName, projectId, revisionKey]);
   const requestGenerationRef = useRef(0);
-  const [state, setState] = useState<LoadedNavigationState>(EMPTY_STATE);
+  const [state, setState] = useState<LoadedScopedNavigationState>(EMPTY_SCOPED_STATE);
 
   useEffect(() => {
     const generation = ++requestGenerationRef.current;
@@ -137,7 +125,7 @@ export function useProjectPreviewSessionNavigation({
             unavailable: false,
             renewalFailures: 0,
           }
-        : { ...EMPTY_STATE, ownerKey });
+        : { ...EMPTY_SCOPED_STATE, ownerKey });
       return;
     }
 
@@ -151,7 +139,7 @@ export function useProjectPreviewSessionNavigation({
           expiresAt: null,
           renewalFailures: 0,
         }
-      : { ...EMPTY_STATE, ownerKey, loading: true });
+      : { ...EMPTY_SCOPED_STATE, ownerKey, loading: true });
 
     void cache.get(request).then((scoped) => {
       if (requestGenerationRef.current !== generation) return;
@@ -168,14 +156,11 @@ export function useProjectPreviewSessionNavigation({
         }));
         return;
       }
-      const navigation = buildPreviewSessionNavigation(scoped, stablePolicy);
-      setState((previous) => ({
+      setState(() => ({
         ownerKey,
         loadKey,
         scoped,
-        navigation: sameNavigation(previous.navigation, navigation)
-          ? previous.navigation
-          : navigation,
+        lastGoodScoped: scoped,
         loading: false,
         unavailable: false,
         expiresAt: scoped.renewalScope.expiresAt,
@@ -200,7 +185,7 @@ export function useProjectPreviewSessionNavigation({
         requestGenerationRef.current += 1;
       }
     };
-  }, [cache, enabled, loadKey, ownerKey, request, stablePolicy]);
+  }, [cache, enabled, loadKey, ownerKey, request]);
 
   useEffect(() => {
     if (
@@ -233,7 +218,6 @@ export function useProjectPreviewSessionNavigation({
             : previous);
           return;
         }
-        const navigation = buildPreviewSessionNavigation(scoped, stablePolicy);
         setState((previous) => {
           if (previous.ownerKey !== ownerKey || previous.loadKey !== loadKey) return previous;
           const needsAnotherAttempt = scoped.renewalScope.expiresAt
@@ -241,9 +225,7 @@ export function useProjectPreviewSessionNavigation({
           return {
             ...previous,
             scoped,
-            navigation: sameNavigation(previous.navigation, navigation)
-              ? previous.navigation
-              : navigation,
+            lastGoodScoped: scoped,
             unavailable: false,
             expiresAt: scoped.renewalScope.expiresAt,
             renewalFailures: needsAnotherAttempt ? previous.renewalFailures + 1 : 0,
@@ -262,26 +244,75 @@ export function useProjectPreviewSessionNavigation({
       });
     }, delay);
     return () => window.clearTimeout(timer);
-  }, [cache, enabled, loadKey, now, ownerKey, refreshAheadMs, request, stablePolicy, state]);
+  }, [cache, enabled, loadKey, now, ownerKey, refreshAheadMs, request, state]);
 
   if (!enabled) {
     if (retainLastGoodWhenDisabled && state.ownerKey === ownerKey) {
       return {
-        navigation: state.navigation,
+        scoped: state.lastGoodScoped,
         loading: false,
         unavailable: false,
         expiresAt: state.expiresAt,
       };
     }
-    return EMPTY_STATE;
+    return {
+      scoped: null,
+      loading: false,
+      unavailable: false,
+      expiresAt: null,
+    };
   }
   if (state.ownerKey !== ownerKey) {
-    return { navigation: null, loading: true, unavailable: false, expiresAt: null };
+    return { scoped: null, loading: true, unavailable: false, expiresAt: null };
   }
   return {
-    navigation: state.navigation,
+    scoped: state.lastGoodScoped,
     loading: state.loading,
     unavailable: state.unavailable,
     expiresAt: state.expiresAt,
+  };
+}
+
+/**
+ * Bind a scoped URL capability to the document policy chosen for this render.
+ * Policy discovery is deliberately separate from scope acquisition: learning
+ * more about a document must not mint another credential or restart renewal.
+ */
+export function useProjectPreviewSessionNavigation({
+  policy,
+  ...scopeOptions
+}: UseProjectPreviewSessionNavigationOptions): ProjectPreviewSessionNavigationState {
+  const stablePolicy = useMemo<PreviewSessionNavigationPolicy>(() => ({
+    sandboxProfile: policy.sandboxProfile,
+    guards: {
+      storage: policy.guards.storage,
+      focus: policy.guards.focus,
+      redirect: policy.guards.redirect,
+    },
+    deck: policy.deck,
+  }), [
+    policy.deck,
+    policy.guards.focus,
+    policy.guards.redirect,
+    policy.guards.storage,
+    policy.sandboxProfile,
+  ]);
+  const scopedState = useProjectScopedPreviewNavigation(scopeOptions);
+  const navigationRef = useRef<PreviewSessionNavigation | null>(null);
+
+  if (!scopedState.scoped) {
+    navigationRef.current = null;
+  } else {
+    const navigation = buildPreviewSessionNavigation(scopedState.scoped, stablePolicy);
+    if (!sameNavigation(navigationRef.current, navigation)) {
+      navigationRef.current = navigation;
+    }
+  }
+
+  return {
+    navigation: navigationRef.current,
+    loading: scopedState.loading,
+    unavailable: scopedState.unavailable,
+    expiresAt: scopedState.expiresAt,
   };
 }

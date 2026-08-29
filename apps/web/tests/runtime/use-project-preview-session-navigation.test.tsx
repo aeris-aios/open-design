@@ -128,6 +128,37 @@ describe('useProjectPreviewSessionNavigation', () => {
     expect(hook.result.current.expiresAt).toBe(20_000);
   });
 
+  it('recomputes fallback document policy without requesting another scope', async () => {
+    const scoped = navigation('scope-0001', 'v1');
+    const get = vi.fn().mockResolvedValue(scoped);
+    const cache = { get };
+    const poweredPolicy: PreviewSessionNavigationPolicy = {
+      sandboxProfile: 'powered',
+      guards: { storage: false, focus: false, redirect: false },
+      deck: false,
+    };
+    const hook = renderHook(
+      ({ policy }) => useProjectPreviewSessionNavigation({
+        projectId: 'project-1',
+        fileName: 'index.html',
+        revisionKey: 'v1',
+        authorizationKey: 'local',
+        policy,
+        cache,
+        now: () => 1_000,
+      }),
+      { initialProps: { policy: normalPolicy } },
+    );
+    await flushMicrotasks();
+    expect(hook.result.current.navigation?.url).toBe(scoped.normalUrl);
+
+    hook.rerender({ policy: poweredPolicy });
+    await flushMicrotasks();
+
+    expect(hook.result.current.navigation?.url).toBe(scoped.poweredUrl);
+    expect(get).toHaveBeenCalledTimes(1);
+  });
+
   it('keeps last-good visible and retries after a renewal failure', async () => {
     const first = navigation('scope-0001', 'v1', 5_000);
     const renewed = navigation('scope-0001', 'v1', 20_000);
