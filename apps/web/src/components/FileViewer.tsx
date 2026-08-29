@@ -9598,6 +9598,13 @@ function HtmlViewer({
     );
 
   const shouldDeferPassivePreviewSource =
+    // The converged runtime receives an exact whole-document policy from the
+    // daemon before navigation. Once its iframe paints, hydrate host-owned
+    // tools from the full source exactly once; a 96 KiB routing sample would
+    // add a second source mode without contributing any terminal decision.
+    // Retain the bounded sample only for the legacy transport and old-daemon
+    // rolling fallback, where the Web client still owns classification.
+    !(previewRuntimeNavigationEnabled && daemonPreviewPolicy !== undefined) &&
     liveHtml === undefined &&
     file.size > HTML_PASSIVE_PREVIEW_FULL_TEXT_LIMIT &&
     mode === 'preview' &&

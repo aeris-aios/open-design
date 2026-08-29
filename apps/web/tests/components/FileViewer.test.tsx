@@ -9335,6 +9335,125 @@ describe('FileViewer tweaks toolbar', () => {
     ))).toHaveLength(1);
   });
 
+  it('hydrates converged host tools from full source without reading a routing sample', async () => {
+    const file = htmlPreviewFile({
+      name: 'large-passive.html',
+      path: 'large-passive.html',
+      size: 3 * 1024 * 1024,
+    });
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = typeof input === 'string'
+        ? input
+        : input instanceof Request
+          ? input.url
+          : String(input);
+      if (url.startsWith('/api/projects/project-1/raw/large-passive.html')) {
+        return new Response('<!doctype html><html><body><main>Source on demand</main></body></html>', {
+          status: 200,
+          headers: { 'Content-Type': 'text/html' },
+        });
+      }
+      if (url.startsWith('/api/projects/project-1/text-preview/large-passive.html')) {
+        return new Response(JSON.stringify({
+          text: '<!doctype html><html><body><main>Routing sample</main>',
+          poweredPreview: { required: false },
+          passiveGuards: {
+            sandbox: false,
+            focus: false,
+            redirect: false,
+            scannedBytes: file.size,
+            complete: true,
+          },
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      if (url === '/api/projects/project-1/files') {
+        return new Response(JSON.stringify({ files: [file] }), { status: 200 });
+      }
+      if (url.includes('/api/projects/project-1/preview-url')) {
+        return new Response(JSON.stringify({
+          url: '/api/projects/project-1/preview/legacy-scope/large-passive.html',
+          file: 'large-passive.html',
+          expiresAt: Date.now() + 60 * 60 * 1000,
+          scopedOrigin: {
+            normalUrl: 'http://n-scope-passive.localhost:43111/large-passive.html',
+            poweredUrl: 'http://p-scope-passive.localhost:43111/large-passive.html',
+            documentVersion: 'large-passive-v1',
+            previewPolicy: {
+              sandboxProfile: 'normal',
+              guards: { storage: false, focus: false, redirect: false },
+              deck: false,
+            },
+          },
+        }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ deployments: [] }), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(
+      <FileViewer
+        projectId="project-1"
+        projectKind="prototype"
+        file={file}
+        previewRuntimeConvergence
+      />,
+    );
+
+    const frame = await screen.findByTestId(
+      'preview-runtime-frame-standby',
+    ) as HTMLIFrameElement;
+    const capabilities: PreviewRuntimeCapability[] = [
+      'content_measurement',
+      'scroll',
+      'snapshot',
+      'observability',
+      'selection',
+      'tweaks',
+      'palette',
+    ];
+    for (const type of [
+      'od:preview:hello',
+      'od:preview:capabilities-applied',
+      'od:preview:visible-paint',
+    ] as const) {
+      act(() => {
+        window.dispatchEvent(new MessageEvent('message', {
+          source: frame.contentWindow,
+          data: {
+            type,
+            protocolVersion: PREVIEW_RUNTIME_PROTOCOL_VERSION,
+            sessionId: 'scope-passive',
+            documentVersion: 'large-passive-v1',
+            ...(type === 'od:preview:hello'
+              ? { availableCapabilities: capabilities }
+              : {}),
+            ...(type === 'od:preview:capabilities-applied'
+              ? { enabledCapabilities: capabilities }
+              : {}),
+          },
+        }));
+      });
+    }
+
+    expect(screen.getByTestId('preview-runtime-frame-current')).toBe(frame);
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.some(([input]) => (
+        String(input).includes('/raw/large-passive.html')
+      ))).toBe(true);
+    });
+    expect(fetchMock.mock.calls.some(([input]) => (
+      String(input).includes('/text-preview/large-passive.html')
+    ))).toBe(false);
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Code' }));
+    await waitFor(() => {
+      expect(document.querySelector('.viewer-source')?.textContent).toContain('Source on demand');
+    });
+    expect(fetchMock.mock.calls.filter(([input]) => (
+      String(input).includes('/raw/large-passive.html')
+    ))).toHaveLength(1);
+  });
+
   it('waits for local policy before navigating a powered document with an old daemon', async () => {
     const file = htmlPreviewFile({ name: 'old-daemon.html', path: 'old-daemon.html' });
     const sourceResponse = deferredResponse();
