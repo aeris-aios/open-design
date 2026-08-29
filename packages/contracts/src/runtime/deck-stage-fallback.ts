@@ -297,6 +297,7 @@ const DECK_STAGE_FALLBACK_SCRIPT = `<script data-od-deck-stage-fallback>(functio
     _onMessage(ev) {
       var data = ev && ev.data;
       if (!data || data.type !== 'od:slide') return;
+      if (data.protocolVersion != null && data.protocolVersion !== ${DECK_PROTOCOL_VERSION}) return;
       this.go(data.action, data.index);
     }
 
