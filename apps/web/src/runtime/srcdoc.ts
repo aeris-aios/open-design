@@ -3590,6 +3590,8 @@ function injectDeckBridge(
   // deferred artifact handler still runs afterwards, advancing a second time
   // and desyncing the artifact's internal index from the visible slide.
   var KEY_PROBE_WINDOW_MS = 48;
+  var KEYBOARD_UNLOCK_TIMEOUT_MS = 600;
+  var KEYBOARD_UNLOCK_RETRY_MS = 40;
   var DIRECT_INDEX_UNLOCK_TIMEOUT_MS = 1500;
   var preferredKeyTarget = null;
   var odNavigationSequence = 0;
@@ -3673,16 +3675,33 @@ function injectDeckBridge(
   }
   function stepToIndexViaKeys(target, navigationSequence, onDone){
     var guard = slides().length + 4;
+    var unlockDeadline = 0;
     function isCurrent(){ return navigationSequence === odNavigationSequence; }
     function step(){
       if (!isCurrent()) return;
       var current = activeIndex(slides());
       if (current === target) { onDone(true); return; }
       if (guard <= 0) { onDone(false); return; }
-      guard -= 1;
       goViaArtifactKeys(target > current ? 'ArrowRight' : 'ArrowLeft', function(moved){
         if (!isCurrent()) return;
-        if (!moved) { onDone(false); return; }
+        if (!moved) {
+          // A target that moved the deck on an earlier step is available but
+          // may be temporarily rejecting keys during an authored transition.
+          // Retry that same remaining step briefly before falling through to
+          // direct-index/DOM navigation, which would desynchronize private
+          // artifact state from the visible canvas.
+          if (preferredKeyTarget) {
+            if (!unlockDeadline) unlockDeadline = Date.now() + KEYBOARD_UNLOCK_TIMEOUT_MS;
+            if (Date.now() < unlockDeadline) {
+              setTimeout(function(){ if (isCurrent()) step(); }, KEYBOARD_UNLOCK_RETRY_MS);
+              return;
+            }
+          }
+          onDone(false);
+          return;
+        }
+        unlockDeadline = 0;
+        guard -= 1;
         step();
       }, isCurrent);
     }

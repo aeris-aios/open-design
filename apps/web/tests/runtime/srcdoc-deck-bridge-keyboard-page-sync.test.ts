@@ -369,6 +369,32 @@ describe('deck bridge - keyboard paging keeps page counters in sync', () => {
     }
   });
 
+  it('retries a proven keyboard path through an authored transition lock', async () => {
+    vi.useFakeTimers();
+    try {
+      const { win, parentPostMessage, track, pagerCur, visited } = setupCustomCounterDeck({
+        navigationLockMs: 120,
+        directIndexControls: true,
+        ignoreDirectIndexControls: true,
+        listenOn: 'window',
+      });
+      visited.length = 0;
+
+      win.dispatchEvent(new win.MessageEvent('message', {
+        data: { type: 'od:slide', action: 'go', index: 2 },
+      }));
+      await vi.advanceTimersByTimeAsync(499);
+
+      expect(track.style.transform).toBe('translateX(-200vw)');
+      expect(pagerCur.textContent).toBe('3');
+      expect(win.document.querySelectorAll('.slide')[2]?.classList.contains('is-active')).toBe(true);
+      expect(visited).toEqual([1, 2]);
+      expect(slideStatesOf(parentPostMessage).at(-1)).toMatchObject({ active: 2, count: 3 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('ignores future-version bridge commands while accepting legacy and v1 navigation', async () => {
     vi.useFakeTimers();
     try {
