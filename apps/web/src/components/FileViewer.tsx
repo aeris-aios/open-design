@@ -30,7 +30,10 @@ import {
   replayPreviewBridgeModes as replayPreviewBridgeModeState,
   type PreviewBridgeModeState,
 } from '../runtime/replay-preview-bridge-modes';
-import { useProjectPreviewSessionNavigation } from '../runtime/use-project-preview-session-navigation';
+import {
+  useProjectScopedPreviewNavigation,
+  usePreviewSessionNavigationFromScope,
+} from '../runtime/use-project-preview-session-navigation';
 import {
   NORMAL_PREVIEW_FRAME_SANDBOX,
   POWERED_PREVIEW_FRAME_ALLOW,
@@ -9554,6 +9557,42 @@ function HtmlViewer({
     liveCommentTargetsRef.current = liveCommentTargets;
   }, [liveCommentTargets]);
 
+  const previewRuntimeNavigationEnabled =
+    previewRuntimeConvergence
+    && sourceAuthorizationScopeKey !== null
+    && liveHtml === undefined;
+  const previewRuntimeRevisionKey = `${sourceSnapshotRefreshKey}:${reloadKey}`;
+  const previewRuntimeScopedNavigation = useProjectScopedPreviewNavigation({
+    projectId,
+    fileName: file.name,
+    revisionKey: previewRuntimeRevisionKey,
+    authorizationKey: sourceAuthorizationScopeKey ?? 'pending',
+    enabled: previewRuntimeNavigationEnabled,
+    retainLastGoodWhenDisabled: true,
+  });
+  const daemonPreviewPolicy = previewRuntimeConvergence
+    ? previewRuntimeScopedNavigation.scoped?.previewPolicy
+    : undefined;
+  const daemonDeckPolicy = daemonPreviewPolicy?.deck;
+  // When the daemon owns the exact document policy, its real URL is the only
+  // first-paint dependency. Delay the Web source read until that frame paints
+  // so a redundant raw/text-preview request cannot contend with navigation.
+  // An old daemon has no previewPolicy; in that case this gate opens as soon
+  // as scope minting settles and local classification remains fail-closed.
+  const deferConvergedSourceUntilFirstPaint =
+    previewRuntimeNavigationEnabled
+    && mode === 'preview'
+    && !manualEditMode
+    && !manualEditSrcDocActive
+    && !boardMode
+    && !inspectMode
+    && !drawOverlayOpen
+    && previewRuntimeCurrentFrame === null
+    && (
+      previewRuntimeScopedNavigation.loading
+      || daemonPreviewPolicy !== undefined
+    );
+
   const shouldDeferPassivePreviewSource =
     liveHtml === undefined &&
     file.size > HTML_PASSIVE_PREVIEW_FULL_TEXT_LIMIT &&
@@ -9563,7 +9602,8 @@ function HtmlViewer({
     !boardMode &&
     !inspectMode &&
     !drawOverlayOpen &&
-    !isDeck;
+    !isDeck &&
+    daemonDeckPolicy !== true;
 
   useEffect(() => {
     // Open HTML tabs stay mounted at the real viewport size. Keep refreshing
@@ -9573,7 +9613,7 @@ function HtmlViewer({
     // local/headerless read. The authorization key changes when an exact
     // Workspace witness resolves, which reruns this effect with scoped URL and
     // headers. Only an explicit daemon `unbound` result receives the local key.
-    if (projectResourceReadBlocked) return;
+    if (projectResourceReadBlocked || deferConvergedSourceUntilFirstPaint) return;
     const sourceFileKey = currentSourceIdentity;
     if (liveHtml !== undefined) {
       sourceFileKeyRef.current = sourceFileKey;
@@ -9792,6 +9832,7 @@ function HtmlViewer({
     sourceAuthorizationScopeKey,
     currentSourceIdentity,
     shouldDeferPassivePreviewSource,
+    deferConvergedSourceUntilFirstPaint,
     projectResourceReadBlocked,
   ]);
 
@@ -9885,23 +9926,15 @@ function HtmlViewer({
   // the converged transport. Source text is still fetched for Code, export,
   // thumbnails, and legacy fallback, but it must not sit on the first-paint
   // critical path of a real URL document.
-  const previewRuntimeNavigationEnabled =
-    previewRuntimeConvergence
-    && sourceAuthorizationScopeKey !== null
-    && liveHtml === undefined;
-  const previewRuntimeRevisionKey = `${sourceSnapshotRefreshKey}:${reloadKey}`;
-  const previewRuntimeNavigation = useProjectPreviewSessionNavigation({
-    projectId,
-    fileName: file.name,
-    revisionKey: previewRuntimeRevisionKey,
-    authorizationKey: sourceAuthorizationScopeKey ?? 'pending',
-    policy: previewRuntimePolicy,
-    enabled: previewRuntimeNavigationEnabled,
-    retainLastGoodWhenDisabled: true,
+  const previewRuntimeFallbackPolicyReady =
+    routingSourceIdentity === currentSourceIdentity
+    && routingHtmlSource !== null;
+  const previewRuntimeNavigation = usePreviewSessionNavigationFromScope({
+    scopedState: previewRuntimeScopedNavigation,
+    policy: daemonPreviewPolicy !== undefined || previewRuntimeFallbackPolicyReady
+      ? previewRuntimePolicy
+      : null,
   });
-  const daemonDeckPolicy = previewRuntimeConvergence
-    ? previewRuntimeNavigation.navigation?.deck
-    : undefined;
   const effectiveDeck = isDeck || (daemonDeckPolicy ?? sourceDeckHint);
   const previewRuntimeNavigationGeneration = previewRuntimeNavigation.navigation
     ? [

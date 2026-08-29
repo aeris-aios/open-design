@@ -9218,7 +9218,7 @@ describe('FileViewer tweaks toolbar', () => {
     ))).toHaveLength(1);
   });
 
-  it('mints converged navigation from daemon policy without waiting for source text', async () => {
+  it('paints converged daemon-policy navigation before loading non-critical source text', async () => {
     const file = htmlPreviewFile({ name: 'gated.html', path: 'gated.html' });
     const sourceResponse = deferredResponse();
     const fetchMock = vi.fn(async (input: string | URL | Request) => {
@@ -9265,25 +9265,67 @@ describe('FileViewer tweaks toolbar', () => {
 
     await waitFor(() => {
       expect(fetchMock.mock.calls.some(([input]) => (
-        String(input).startsWith('/api/projects/project-1/raw/gated.html')
-      ))).toBe(true);
-    });
-    await waitFor(() => {
-      expect(fetchMock.mock.calls.some(([input]) => (
         String(input).includes('/api/projects/project-1/preview-url')
       ))).toBe(true);
     });
-    expect(await screen.findByTestId('preview-runtime-frame-standby')).toHaveAttribute(
+    const frame = await screen.findByTestId(
+      'preview-runtime-frame-standby',
+    ) as HTMLIFrameElement;
+    expect(frame).toHaveAttribute(
       'src',
       'http://n-scope-0002.localhost:43111/gated.html?odPreviewRuntime=deck',
     );
+    expect(fetchMock.mock.calls.some(([input]) => (
+      String(input).startsWith('/api/projects/project-1/raw/gated.html')
+    ))).toBe(false);
+
+    const capabilities: PreviewRuntimeCapability[] = [
+      'content_measurement',
+      'scroll',
+      'snapshot',
+      'observability',
+      'selection',
+      'deck',
+      'tweaks',
+      'palette',
+    ];
+    for (const type of [
+      'od:preview:hello',
+      'od:preview:capabilities-applied',
+      'od:preview:visible-paint',
+    ] as const) {
+      act(() => {
+        window.dispatchEvent(new MessageEvent('message', {
+          source: frame.contentWindow,
+          data: {
+            type,
+            protocolVersion: PREVIEW_RUNTIME_PROTOCOL_VERSION,
+            sessionId: 'scope-0002',
+            documentVersion: 'gated-v1',
+            ...(type === 'od:preview:hello'
+              ? { availableCapabilities: capabilities }
+              : {}),
+            ...(type === 'od:preview:capabilities-applied'
+              ? { enabledCapabilities: capabilities }
+              : {}),
+          },
+        }));
+      });
+    }
+
+    expect(screen.getByTestId('preview-runtime-frame-current')).toBe(frame);
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.some(([input]) => (
+        String(input).startsWith('/api/projects/project-1/raw/gated.html')
+      ))).toBe(true);
+    });
 
     sourceResponse.resolve(new Response(
       '<!doctype html><html><body><main>Ready</main></body></html>',
       { status: 200, headers: { 'Content-Type': 'text/html' } },
     ));
     await waitFor(() => {
-      expect(screen.getByTestId('preview-runtime-frame-standby')).toHaveAttribute(
+      expect(screen.getByTestId('preview-runtime-frame-current')).toHaveAttribute(
         'src',
         'http://n-scope-0002.localhost:43111/gated.html?odPreviewRuntime=deck',
       );
@@ -9291,6 +9333,68 @@ describe('FileViewer tweaks toolbar', () => {
     expect(fetchMock.mock.calls.filter(([input]) => (
       String(input).includes('/api/projects/project-1/preview-url')
     ))).toHaveLength(1);
+  });
+
+  it('waits for local policy before navigating a powered document with an old daemon', async () => {
+    const file = htmlPreviewFile({ name: 'old-daemon.html', path: 'old-daemon.html' });
+    const sourceResponse = deferredResponse();
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = typeof input === 'string'
+        ? input
+        : input instanceof Request
+          ? input.url
+          : String(input);
+      if (url.startsWith('/api/projects/project-1/raw/old-daemon.html')) {
+        return sourceResponse.promise;
+      }
+      if (url === '/api/projects/project-1/files') {
+        return new Response(JSON.stringify({ files: [file] }), { status: 200 });
+      }
+      if (url.includes('/api/projects/project-1/preview-url')) {
+        return new Response(JSON.stringify({
+          url: '/api/projects/project-1/preview/legacy-scope/old-daemon.html',
+          file: 'old-daemon.html',
+          expiresAt: Date.now() + 60 * 60 * 1000,
+          scopedOrigin: {
+            normalUrl: 'http://n-scope-old.localhost:43111/old-daemon.html',
+            poweredUrl: 'http://p-scope-old.localhost:43111/old-daemon.html',
+            documentVersion: 'old-daemon-v1',
+          },
+        }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ deployments: [] }), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(
+      <FileViewer
+        projectId="project-1"
+        projectKind="prototype"
+        file={file}
+        previewRuntimeConvergence
+      />,
+    );
+
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.some(([input]) => (
+        String(input).includes('/api/projects/project-1/preview-url')
+      ))).toBe(true);
+      expect(fetchMock.mock.calls.some(([input]) => (
+        String(input).startsWith('/api/projects/project-1/raw/old-daemon.html')
+      ))).toBe(true);
+    });
+    expect(screen.queryByTestId('preview-runtime-frame-standby')).toBeNull();
+
+    sourceResponse.resolve(new Response(
+      '<!doctype html><script type="text/babel" src="screen.jsx"></script>',
+      { status: 200, headers: { 'Content-Type': 'text/html' } },
+    ));
+
+    expect(await screen.findByTestId('preview-runtime-frame-standby')).toHaveAttribute(
+      'src',
+      'http://p-scope-old.localhost:43111/old-daemon.html',
+    );
+    expect(screen.queryByTestId('preview-runtime-frame-current')).toBeNull();
   });
 
   it('surfaces an initial converged navigation failure and recovers on explicit reload', async () => {

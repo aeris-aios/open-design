@@ -47,6 +47,12 @@ export interface ProjectPreviewSessionNavigationState {
   expiresAt: number | null;
 }
 
+export interface UsePreviewSessionNavigationFromScopeOptions {
+  scopedState: ProjectScopedPreviewNavigationState;
+  /** Null until an old daemon's document policy has been classified locally. */
+  policy: PreviewSessionNavigationPolicy | null;
+}
+
 interface LoadedScopedNavigationState extends ProjectScopedPreviewNavigationState {
   ownerKey: string;
   loadKey: string | null;
@@ -282,27 +288,39 @@ export function useProjectPreviewSessionNavigation({
   policy,
   ...scopeOptions
 }: UseProjectPreviewSessionNavigationOptions): ProjectPreviewSessionNavigationState {
-  const stablePolicy = useMemo<PreviewSessionNavigationPolicy>(() => ({
-    sandboxProfile: policy.sandboxProfile,
-    guards: {
-      storage: policy.guards.storage,
-      focus: policy.guards.focus,
-      redirect: policy.guards.redirect,
-    },
-    deck: policy.deck,
-  }), [
-    policy.deck,
-    policy.guards.focus,
-    policy.guards.redirect,
-    policy.guards.storage,
-    policy.sandboxProfile,
-  ]);
   const scopedState = useProjectScopedPreviewNavigation(scopeOptions);
+  return usePreviewSessionNavigationFromScope({ scopedState, policy });
+}
+
+/**
+ * Map an already-owned scope to a document navigation without coupling policy
+ * discovery to credential acquisition. A null policy deliberately preserves
+ * an existing last-good document but cannot start an unclassified one.
+ */
+export function usePreviewSessionNavigationFromScope({
+  scopedState,
+  policy,
+}: UsePreviewSessionNavigationFromScopeOptions): ProjectPreviewSessionNavigationState {
+  const stablePolicy = useMemo<PreviewSessionNavigationPolicy>(() => ({
+    sandboxProfile: policy?.sandboxProfile ?? 'normal',
+    guards: {
+      storage: policy?.guards.storage ?? false,
+      focus: policy?.guards.focus ?? false,
+      redirect: policy?.guards.redirect ?? false,
+    },
+    deck: policy?.deck ?? false,
+  }), [
+    policy?.deck,
+    policy?.guards.focus,
+    policy?.guards.redirect,
+    policy?.guards.storage,
+    policy?.sandboxProfile,
+  ]);
   const navigationRef = useRef<PreviewSessionNavigation | null>(null);
 
   if (!scopedState.scoped) {
     navigationRef.current = null;
-  } else {
+  } else if (scopedState.scoped.previewPolicy || policy) {
     const navigation = buildPreviewSessionNavigation(scopedState.scoped, stablePolicy);
     if (!sameNavigation(navigationRef.current, navigation)) {
       navigationRef.current = navigation;
@@ -311,7 +329,8 @@ export function useProjectPreviewSessionNavigation({
 
   return {
     navigation: navigationRef.current,
-    loading: scopedState.loading,
+    loading: scopedState.loading
+      || (scopedState.scoped !== null && !scopedState.scoped.previewPolicy && policy === null),
     unavailable: scopedState.unavailable,
     expiresAt: scopedState.expiresAt,
   };
