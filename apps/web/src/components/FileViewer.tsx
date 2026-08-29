@@ -1858,6 +1858,10 @@ interface Props {
   installationId?: string | null;
   /** False while this viewer is retained offscreen for an instant tab revisit. */
   workspaceActive?: boolean;
+  /** False while another last-good viewer remains painted during a cold handoff. */
+  workspacePresented?: boolean;
+  /** Reports whether this retained viewer owns a promoted real-URL document. */
+  onPreviewReadyChange?: (fileName: string, ready: boolean) => void;
   /** Pin viewers that still own an in-progress edit so LRU eviction cannot drop work. */
   onRetainActivityChange?: (fileName: string, retain: boolean) => void;
   /** Register the safe manual-edit exit used to guard workspace navigation. */
@@ -1943,6 +1947,8 @@ export const FileViewer = memo(function FileViewer({
   metricsConsent,
   installationId,
   workspaceActive = true,
+  workspacePresented = workspaceActive,
+  onPreviewReadyChange,
   onRetainActivityChange,
   onManualEditExitHandlerChange,
   manualEditEntryAllowed = true,
@@ -2033,6 +2039,8 @@ export const FileViewer = memo(function FileViewer({
         metricsConsent={metricsConsent}
         installationId={installationId}
         workspaceActive={workspaceActive}
+        workspacePresented={workspacePresented}
+        onPreviewReadyChange={onPreviewReadyChange}
         onRetainActivityChange={onRetainActivityChange}
         onManualEditExitHandlerChange={onManualEditExitHandlerChange}
         manualEditEntryAllowed={manualEditEntryAllowed}
@@ -7445,6 +7453,8 @@ function HtmlViewer({
   metricsConsent = false,
   installationId,
   workspaceActive = true,
+  workspacePresented = workspaceActive,
+  onPreviewReadyChange,
   onRetainActivityChange,
   onManualEditExitHandlerChange,
   manualEditEntryAllowed = true,
@@ -7482,6 +7492,8 @@ function HtmlViewer({
   metricsConsent?: boolean;
   installationId?: string | null;
   workspaceActive?: boolean;
+  workspacePresented?: boolean;
+  onPreviewReadyChange?: (fileName: string, ready: boolean) => void;
   onRetainActivityChange?: (fileName: string, retain: boolean) => void;
   onManualEditExitHandlerChange?: (
     fileName: string,
@@ -7492,6 +7504,9 @@ function HtmlViewer({
 }) {
   const { locale, t } = useI18n();
   const iframeKeepAlivePool = useIframeKeepAlivePool();
+  useEffect(() => () => {
+    if (previewRuntimeConvergence) onPreviewReadyChange?.(file.name, false);
+  }, [file.name, onPreviewReadyChange, previewRuntimeConvergence]);
   // Retained viewers prewarm new file revisions behind the active tab. Keeping
   // the live metadata here is what lets an agent edit finish loading before
   // the user switches back; activation itself must not promote a stale
@@ -16423,7 +16438,7 @@ function HtmlViewer({
 
   return (
     <div ref={viewerRootRef} className={`viewer html-viewer${inTabPresent ? ' is-tab-present' : ''}${viewerOnly ? ' html-viewer--viewer-only' : ''}`}>
-      <div className="viewer-toolbar" style={workspaceActive ? undefined : { visibility: 'hidden' }}>
+      <div className="viewer-toolbar" style={workspacePresented ? undefined : { visibility: 'hidden' }}>
         <div className="viewer-toolbar-left">
           {showDeckThumbnailRail ? (
             <button
@@ -16828,13 +16843,13 @@ function HtmlViewer({
           ? createPortal(
               <div
                 data-od-file-actions-owner={file.name}
-                style={{ display: workspaceActive ? 'contents' : 'none' }}
+                style={{ display: workspacePresented ? 'contents' : 'none' }}
               >
                 {filePrimaryActions}
               </div>,
               chromeActionsHost,
             )
-          : workspaceActive
+          : workspacePresented
             ? filePrimaryActions
             : null
       ))(<>
@@ -17497,6 +17512,7 @@ function HtmlViewer({
                               viewerState={previewRuntimeViewerState}
                               bridgeModeState={previewRuntimeBridgeModeState}
                               active={workspaceActive && mode === 'preview'}
+                              presented={workspacePresented && mode === 'preview'}
                               navigationRetryToken={previewRuntimeNavigationRetryToken}
                               title={file.name}
                               onCurrentFrameChange={(frame) => {
@@ -17528,6 +17544,9 @@ function HtmlViewer({
                                 setPreviewRuntimeTimedOutGeneration(
                                   previewRuntimeNavigationGeneration,
                                 );
+                              }}
+                              onPromoted={() => {
+                                onPreviewReadyChange?.(file.name, true);
                               }}
                             />
                             {workspaceActive

@@ -1650,6 +1650,148 @@ describe('FileWorkspace launcher tab creation', () => {
     ))).toHaveLength(mintCount);
   });
 
+  it('keeps the last painted runtime viewer visible while an evicted HTML tab rematerializes', async () => {
+    const files = ['alpha.html', 'beta.html', 'gamma.html', 'delta.html'].map(workspaceFile);
+    projectPreviewNavigationCache.clear();
+    mockedFetchProjectFileText.mockImplementation(async (_projectId, fileName) => (
+      `<!doctype html><html><body><main>${fileName}</main></body></html>`
+    ));
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const rawUrl = typeof input === 'string' ? input : input.toString();
+      const url = new URL(rawUrl, window.location.href);
+      if (url.pathname === '/api/projects/project-1/files') {
+        return new Response(JSON.stringify({ files }), { status: 200 });
+      }
+      if (url.pathname === '/api/projects/project-1/preview-url') {
+        const fileName = url.searchParams.get('file');
+        if (!fileName) return new Response(null, { status: 400 });
+        const stem = fileName.replace('.html', '');
+        return new Response(JSON.stringify({
+          url: `/api/projects/project-1/preview/legacy-${stem}/${fileName}`,
+          file: fileName,
+          expiresAt: Date.now() + 60 * 60 * 1000,
+          scopedOrigin: {
+            normalUrl: `http://n-scope-${stem}.localhost:43111/${fileName}`,
+            poweredUrl: `http://p-scope-${stem}.localhost:43111/${fileName}`,
+            documentVersion: `${stem}-v1`,
+            previewPolicy: {
+              sandboxProfile: 'normal',
+              guards: { storage: false, focus: false, redirect: false },
+            },
+          },
+        }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ deployments: [] }), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    function Harness() {
+      const [tabsState, setTabsState] = useState<OpenTabsState>({
+        tabs: files.map((file) => file.name),
+        active: files[0]!.name,
+      });
+      return (
+        <IframeKeepAliveProvider>
+          <CollabProvider value={collabValue(teamContext('workspace-a', 'member-a'))}>
+            <FileWorkspace
+              projectId="project-1"
+              projectKind="prototype"
+              files={files}
+              liveArtifacts={[]}
+              onRefreshFiles={vi.fn()}
+              isDeck={false}
+              tabsState={tabsState}
+              onTabsStateChange={setTabsState}
+              previewRuntimeConvergence
+            />
+          </CollabProvider>
+        </IframeKeepAliveProvider>
+      );
+    }
+
+    const capabilities: PreviewRuntimeCapability[] = [
+      'content_measurement',
+      'scroll',
+      'snapshot',
+      'observability',
+      'selection',
+      'tweaks',
+      'palette',
+    ];
+    const settle = async (name: string) => {
+      const stem = name.replace('.html', '');
+      const frame = await waitFor(() => {
+        const candidate = document.querySelector(
+          `iframe[title="${name}"][data-testid="preview-runtime-frame-standby"]`,
+        ) as HTMLIFrameElement | null;
+        expect(candidate).not.toBeNull();
+        return candidate!;
+      });
+      for (const type of [
+        'od:preview:hello',
+        'od:preview:capabilities-applied',
+        'od:preview:visible-paint',
+      ] as const) {
+        act(() => {
+          window.dispatchEvent(new MessageEvent('message', {
+            source: frame.contentWindow,
+            data: {
+              type,
+              protocolVersion: PREVIEW_RUNTIME_PROTOCOL_VERSION,
+              sessionId: `scope-${stem}`,
+              documentVersion: `${stem}-v1`,
+              ...(type === 'od:preview:hello' ? { availableCapabilities: capabilities } : {}),
+              ...(type === 'od:preview:capabilities-applied'
+                ? { enabledCapabilities: capabilities }
+                : {}),
+            },
+          }));
+        });
+      }
+      await waitFor(() => expect(frame.dataset.odActive).toBe('true'));
+      return frame;
+    };
+    const viewer = (name: string) => document.querySelector(
+      `[data-testid="retained-file-viewer"][data-file-name="${name}"]`,
+    ) as HTMLElement | null;
+
+    render(<Harness />);
+    await settle('alpha.html');
+    for (const name of ['beta.html', 'gamma.html', 'delta.html']) {
+      fireEvent.click(screen.getByRole('tab', { name: new RegExp(name.replace('.', '\\.')) }));
+      await settle(name);
+    }
+    await waitFor(() => expect(viewer('alpha.html')).toBeNull());
+
+    fireEvent.click(screen.getByRole('tab', { name: /alpha\.html/i }));
+    await waitFor(() => expect(document.querySelector(
+      'iframe[title="alpha.html"][data-testid="preview-runtime-frame-standby"]',
+    )).not.toBeNull());
+
+    // The logical target is already alpha, but it has not painted yet. Keep
+    // the last-good delta surface presented while alpha remains inert and
+    // transparent; otherwise the workspace exposes its empty background.
+    expect(viewer('delta.html')?.style.opacity).toBe('');
+    expect(viewer('alpha.html')?.style.opacity).toBe('0');
+    expect(viewer('delta.html')?.querySelector<HTMLElement>('.viewer-toolbar')?.style.visibility)
+      .toBe('');
+    expect(viewer('alpha.html')?.querySelector<HTMLElement>('.viewer-toolbar')?.style.visibility)
+      .toBe('hidden');
+    expect(viewer('delta.html')?.hasAttribute('inert')).toBe(true);
+    expect(viewer('alpha.html')?.hasAttribute('inert')).toBe(true);
+    expect(viewer('delta.html')?.querySelector('iframe')?.dataset.odActive).toBe('true');
+    expect(viewer('alpha.html')?.querySelector('iframe')?.dataset.odActive).toBe('false');
+
+    await settle('alpha.html');
+    await waitFor(() => {
+      expect(viewer('alpha.html')?.style.opacity).toBe('');
+      expect(viewer('delta.html')?.style.opacity).toBe('0');
+      expect(viewer('alpha.html')?.hasAttribute('inert')).toBe(false);
+      expect(viewer('alpha.html')?.querySelector('iframe')?.dataset.odActive).toBe('true');
+      expect(viewer('delta.html')?.querySelector('iframe')?.dataset.odActive).toBe('false');
+    });
+  });
+
   it('evicts the fourth HTML tab without reattaching the three surviving preview frames', async () => {
     const files = ['alpha.html', 'beta.html', 'gamma.html', 'delta.html'].map(workspaceFile);
     mockedFetchProjectFileText.mockImplementation(async (_projectId, fileName) => (

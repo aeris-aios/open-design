@@ -3,6 +3,7 @@ import {
   useCallback,
   useDeferredValue,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -3260,6 +3261,48 @@ export function FileWorkspace({
       .filter((file): file is ProjectFile => file != null);
   }, [activeHtmlViewerFile, liveHtmlViewerFileNames, persistedTabs, protectedHtmlViewerFileNames, visibleFiles]);
   const mountedHtmlViewerNames = mountedHtmlViewerFiles.map((file) => file.name);
+  const htmlViewerReadyNamesRef = useRef({ projectId, names: new Set<string>() });
+  if (htmlViewerReadyNamesRef.current.projectId !== projectId) {
+    htmlViewerReadyNamesRef.current = { projectId, names: new Set() };
+  }
+  const activeHtmlViewerNameRef = useRef<string | null>(activeHtmlViewerFile?.name ?? null);
+  activeHtmlViewerNameRef.current = activeHtmlViewerFile?.name ?? null;
+  const [presentedHtmlViewerName, setPresentedHtmlViewerName] = useState<string | null>(null);
+  const handleHtmlViewerPreviewReadyChange = useCallback((fileName: string, ready: boolean) => {
+    const readyState = htmlViewerReadyNamesRef.current;
+    if (readyState.projectId !== projectId) return;
+    if (ready) {
+      readyState.names.add(fileName);
+      if (activeHtmlViewerNameRef.current === fileName) {
+        setPresentedHtmlViewerName(fileName);
+      }
+    } else {
+      readyState.names.delete(fileName);
+    }
+  }, [projectId]);
+  useLayoutEffect(() => {
+    const activeName = activeHtmlViewerFile?.name ?? null;
+    if (!previewRuntimeConvergence || !activeName) {
+      setPresentedHtmlViewerName(null);
+      return;
+    }
+    setPresentedHtmlViewerName((current) => {
+      if (htmlViewerReadyNamesRef.current.names.has(activeName)) return activeName;
+      // A cold LRU revisit has no current document yet. Keep the previous
+      // last-good viewer painted (but inert) until the target reports its
+      // first real visible paint; otherwise the workspace exposes a blank
+      // background between the tab click and the new iframe promotion.
+      if (current && mountedHtmlViewerNames.includes(current)) return current;
+      // First-ever materialization has no last-good surface, so present the
+      // target's localized loading/error state as before.
+      return activeName;
+    });
+  }, [activeHtmlViewerFile?.name, mountedHtmlViewerNames.join('\0'), previewRuntimeConvergence, projectId]);
+  const effectivePresentedHtmlViewerName = previewRuntimeConvergence
+    && presentedHtmlViewerName
+    && mountedHtmlViewerNames.includes(presentedHtmlViewerName)
+    ? presentedHtmlViewerName
+    : activeHtmlViewerFile?.name ?? null;
   const previousMountedHtmlViewersRef = useRef({ projectId, names: new Set<string>() });
   useEffect(() => {
     const next = new Set(mountedHtmlViewerNames);
@@ -3348,7 +3391,11 @@ export function FileWorkspace({
     [slideNavRequest, activeViewerFile?.name, slideNavDeliverableNonce],
   );
   const stableOpenFileReplacing = useStableHandler(openFileReplacing);
-  const renderFileViewer = (file: ProjectFile, workspaceActive: boolean) => (
+  const renderFileViewer = (
+    file: ProjectFile,
+    workspaceActive: boolean,
+    workspacePresented = workspaceActive,
+  ) => (
     <FileViewer
       projectId={projectId}
       projectKind={projectKind}
@@ -3394,6 +3441,8 @@ export function FileWorkspace({
       metricsConsent={metricsConsent}
       installationId={installationId}
       workspaceActive={workspaceActive}
+      workspacePresented={workspacePresented}
+      onPreviewReadyChange={handleHtmlViewerPreviewReadyChange}
       onRetainActivityChange={handleHtmlViewerRetainActivityChange}
       onManualEditExitHandlerChange={handleManualEditExitHandlerChange}
       manualEditEntryAllowed={
@@ -4509,26 +4558,27 @@ export function FileWorkspace({
         )}
         {!initialMaterializationPending ? mountedHtmlViewerFiles.map((file) => {
           const workspaceActive = activeHtmlViewerFile?.name === file.name;
+          const workspacePresented = effectivePresentedHtmlViewerName === file.name;
           return (
             <div
               key={`${projectId}:${file.name}`}
               ref={(element) => {
-                syncInertAttribute(element, !workspaceActive);
+                syncInertAttribute(element, !workspaceActive || !workspacePresented);
               }}
               data-testid="retained-file-viewer"
               data-file-name={file.name}
-              aria-hidden={workspaceActive ? undefined : true}
+              aria-hidden={workspacePresented ? undefined : true}
               style={{
                 display: 'flex',
-                flex: workspaceActive ? '1 1 auto' : undefined,
+                flex: workspacePresented ? '1 1 auto' : undefined,
                 flexDirection: 'column',
                 minHeight: 0,
-                ...(workspaceActive
+                ...(workspacePresented
                   ? {}
                   : RETAINED_VIEWER_INACTIVE_STYLE),
               }}
             >
-              {renderFileViewer(file, workspaceActive)}
+              {renderFileViewer(file, workspaceActive, workspacePresented)}
             </div>
           );
         }) : null}

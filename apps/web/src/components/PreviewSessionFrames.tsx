@@ -34,7 +34,10 @@ export interface PreviewSessionFramesProps extends Omit<
   fileName: string;
   navigation: PreviewSessionNavigation;
   enabledCapabilities?: readonly PreviewRuntimeCapability[];
+  /** Receives interaction and host bridge traffic. */
   active: boolean;
+  /** Remains painted during a cross-viewer handoff even when inactive. */
+  presented?: boolean;
   /** Bump to replace an unpromoted standby browsing context at the same URL. */
   navigationRetryToken?: number;
   onCurrentFrameChange?: (frame: HTMLIFrameElement | null) => void;
@@ -116,6 +119,7 @@ function PreviewSessionFramesForFile({
   navigation,
   enabledCapabilities = EMPTY_CAPABILITIES,
   active,
+  presented = active,
   navigationRetryToken = 0,
   onCurrentFrameChange,
   onStandbyFrameChange,
@@ -303,9 +307,9 @@ function PreviewSessionFramesForFile({
             previewSessionFramePolicy(current.sandboxProfile).powered ? 'true' : undefined
           }
           data-testid="preview-runtime-frame-current"
-          data-od-active={active ? 'true' : 'false'}
-          aria-hidden={active ? undefined : 'true'}
-          tabIndex={active ? 0 : -1}
+          data-od-active={presented ? 'true' : 'false'}
+          aria-hidden={presented ? undefined : 'true'}
+          tabIndex={active && presented ? 0 : -1}
         />
       ) : null}
       {standby ? (
