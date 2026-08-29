@@ -45,6 +45,12 @@ export function previewHtmlNeedsRedirectGuard(source: string | null | undefined)
 
 export function previewHtmlNeedsPoweredPreview(source: string | null | undefined): boolean {
   if (!source) return false;
+  // Babel standalone resolves external text/babel modules with XHR. A normal
+  // sandbox intentionally gives the document an opaque origin, so those
+  // same-directory requests fail CORS even though classic script tags still
+  // load. The session-scoped powered origin restores same-origin XHR without
+  // granting the artifact the host application's origin.
+  if (/<script\b(?=[^>]*\bsrc\s*=)(?=[^>]*\btype\s*=\s*["']?text\/babel\b)[^>]*>/i.test(source)) return true;
   if (/\bSharedArrayBuffer\b/.test(source)) return true;
   if (/\bnew\s+(?:Worker|SharedWorker)\s*\(/.test(source)) return true;
   if (/\bimportScripts\s*\(/.test(source)) return true;

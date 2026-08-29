@@ -134,6 +134,29 @@ describe('scanHtmlHeadForStreamingInjection', () => {
     expect(fixture.result.needsPoweredPreview).toBe(true);
   });
 
+  it('routes external Babel modules through a same-origin powered preview', async () => {
+    const fixture = await scan([
+      '<!doctype html><html><head><title>JSX modules</title></head><body>',
+      'x'.repeat((96 * 1024) + 1),
+      '<script src="./components/app.jsx" defer type=text/babel></script>',
+      '</body></html>',
+    ].join(''));
+    expect(fixture.result.needsPoweredPreview).toBe(true);
+  });
+
+  it('detects an external Babel module tag split across stream chunks', async () => {
+    const prefix = '<!doctype html><html><head></head><body>';
+    const splitTagPrefix = '<script src="./app.jsx" type="text/ba';
+    const padding = 'x'.repeat((64 * 1024) - prefix.length - splitTagPrefix.length);
+    const fixture = await scan([
+      prefix,
+      padding,
+      splitTagPrefix,
+      'bel"></script></body></html>',
+    ].join(''));
+    expect(fixture.result.needsPoweredPreview).toBe(true);
+  });
+
   it('collects Deck markup and inline navigation facts without retaining the document', async () => {
     const fixture = await scan([
       '<!doctype html><html><head></head><body>',

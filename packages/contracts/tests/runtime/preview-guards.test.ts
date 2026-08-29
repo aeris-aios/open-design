@@ -43,6 +43,10 @@ describe('preview document guards', () => {
     expect(previewHtmlNeedsPoweredPreview('<script>new Worker("./worker.js")</script>')).toBe(true);
     expect(previewHtmlNeedsPoweredPreview('<script>WebAssembly.instantiateStreaming(fetch("a.wasm"))</script>')).toBe(true);
     expect(previewHtmlNeedsPoweredPreview('<script>canvas.getContext("webgl2")</script>')).toBe(true);
+    expect(previewHtmlNeedsPoweredPreview('<script type="text/babel" src="./app.jsx"></script>')).toBe(true);
+    expect(previewHtmlNeedsPoweredPreview('<script src="./app.jsx" defer type=text/babel></script>')).toBe(true);
+    expect(previewHtmlNeedsPoweredPreview('<script src="./support.js"></script>')).toBe(false);
+    expect(previewHtmlNeedsPoweredPreview('<script type="text/babel">const value = 1;</script>')).toBe(false);
     expect(previewHtmlNeedsPoweredPreview('<main>Static document</main>')).toBe(false);
   });
 
