@@ -182,6 +182,7 @@ export function ExecutionShell({ shell, onOpenFile, fileScope, onRetryImage, ima
       open={open}
       onToggle={onToggle}
       expandable={items.length > 0}
+      deferBody
       className={hasTodo ? styles.hasTodo : undefined}
     >
       {items.length
@@ -340,6 +341,7 @@ function ThoughtsRow({ texts, elapsedMs, live, t }: {
          不是上面那只 96px 定高 + 渐隐 + 自己往上走的窗(用户 2026-08-27:
          「thought 展开应该有个最高高度, 可以滚动」)。两者互斥,见 `.scroll` 的注释。 */
       scroll={!live}
+      deferBody={!live}
       bodyRef={bodyRef}
       /* 一段都没有就不出箭头也不出 body。claude 的 thinking 全是空串(真实数据:
          本机 14 条 claude 共 1786 帧、非空 0 帧),此时这一行只报「在想」,
@@ -353,7 +355,10 @@ function ThoughtsRow({ texts, elapsedMs, live, t }: {
 /** 「执行计划 · N 步」:清单刚到时的全貌。每一步只有序号,还没跑,没有「哪类调用」可标 */
 function PlanRow({ steps, t }: { steps: string[]; t: RenderCtx['t'] }): ReactElement {
   return (
-    <Foldable summary={<><StatusMark status="ok" /><span>{t('chat.record.plan', { count: steps.length })}</span></>}>
+    <Foldable
+      summary={<><StatusMark status="ok" /><span>{t('chat.record.plan', { count: steps.length })}</span></>}
+      deferBody
+    >
       {steps.map((step, i) => (
         <div className={styles.tool} key={`${step}-${i}`}>
           <StatusMark status="pending" index={i + 1} />
@@ -402,6 +407,7 @@ function TodoRow({ segment, ctx }: { segment: TodoSegment; ctx: RenderCtx }): Re
       elapsed={elapsed ?? undefined}
       expandable={expandable}
       defaultOpen={segment.status === 'in_progress'}
+      deferBody
     >
       {expandable
         ? items.map((item, i) => renderItem(item, i, {

@@ -20,7 +20,7 @@
  * 记录见 `specs/current/chat-panel-feedback.md` §F-17。
  */
 import { afterEach, describe, expect, it } from 'vitest';
-import { cleanup, render } from '@testing-library/react';
+import { cleanup, fireEvent, render } from '@testing-library/react';
 import type { ReactElement } from 'react';
 import { I18nProvider } from '../../../src/i18n';
 import { ExecutionShell } from '../../../src/components/chat/ExecutionShell';
@@ -41,12 +41,22 @@ const show = (shell: Shell): ReactElement => (
 /** 思考那一格自己的 body */
 const thoughtsBody = (root: HTMLElement): HTMLElement | null =>
   root.querySelector('details[class*="thoughts"] > div[class*="body"]');
+const openCompletedShell = (root: HTMLElement): void => {
+  const summary = root.querySelector('details[class*="flat"] > summary');
+  if (summary) fireEvent.click(summary);
+};
+const openThoughts = (root: HTMLElement): void => {
+  const summary = root.querySelector('details[class*="thoughts"] > summary');
+  if (summary) fireEvent.click(summary);
+};
 
 const LONG = Array.from({ length: 14 }, (_, i) => `第 ${i + 1} 段推理,说的是这一步为什么这么做。`).join('\n\n');
 
 describe('思考过程展开后限高', () => {
   it('想完了的那一格,body 带滚动限高这一档', () => {
     const { container } = render(show(shellOf([think(LONG)], { status: 'done' })));
+    openCompletedShell(container);
+    openThoughts(container);
     const body = thoughtsBody(container);
     /* 正向对照:这一格真的渲染了、推理真的在里面 —— 少了它,组件没渲染时下面也会「通过」 */
     expect(body?.textContent).toContain('第 14 段推理');
@@ -70,6 +80,9 @@ describe('思考过程展开后限高', () => {
       } as unknown as ShellItem],
       { status: 'done' },
     )));
+    openCompletedShell(container);
+    const toolSummary = container.querySelector('details:not([class*="flat"]) > summary');
+    if (toolSummary) fireEvent.click(toolSummary);
     const tool = container.querySelector('details:not([class*="thoughts"]):not([class*="flat"]) > div[class*="body"]');
     expect(container.textContent).toContain('跑一条命令');
     expect(tool?.className ?? '').not.toMatch(/scroll/);

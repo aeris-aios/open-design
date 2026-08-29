@@ -42,6 +42,11 @@ export interface FoldableProps {
    * 高度改由 CSS 出,`stickToBottom` 没有任何实现,一并收掉。)
    */
   scroll?: boolean;
+  /**
+   * 历史重内容可延迟到首次展开再挂 DOM。首次打开后保持挂载，收起动画、滚动位置和
+   * 子组件状态都不会因再次折叠而丢失；defaultOpen / 受控 open 首帧仍立即挂载。
+   */
+  deferBody?: boolean;
   children?: ReactNode;
 }
 

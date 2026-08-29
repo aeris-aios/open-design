@@ -76,6 +76,7 @@ import {
 import {
   agentSupportsMidTurnSteering,
   hasCurrentAutomaticScenarioBinding,
+  isTodoWriteToolName,
   type AmrWalletSnapshot,
   type ByokChatProviderConfig,
   type ByokMediaDefaults,
@@ -7803,15 +7804,16 @@ export function ProjectView({
 
       const updateAssistant = (updater: (prev: ChatMessage) => ChatMessage) => {
         setMessages((curr) => {
-          let found = false;
-          const next = curr.map((m) => {
-            if (m.id !== assistantId) return m;
-            found = true;
-            const updated = updater(m);
+          const messageIndex = curr.findIndex((message) => message.id === assistantId);
+          if (messageIndex >= 0) {
+            const previous = curr[messageIndex]!;
+            const updated = updater(previous);
             latestAssistantMsg = updated;
-            return updated;
-          });
-          if (found) return next;
+            if (updated === previous) return curr;
+            const next = curr.slice();
+            next[messageIndex] = updated;
+            return next;
+          }
 
           // A workspace-authority refresh can reload the same conversation
           // while POST /runs is retrying. That authoritative read may still
@@ -7857,12 +7859,17 @@ export function ProjectView({
         }
         persistMessageById(assistantId, { keepalive: true });
       };
+      const pushedEventDeduper = createAdjacentAgentEventDeduper();
       const pushEvent = (ev: AgentEvent) => {
         textBuffer.flush();
-        updateAssistant((prev) => ({
-          ...prev,
-          events: appendCoalescedAgentEvent(prev.events ?? [], ev),
-        }));
+        if (pushedEventDeduper.isDuplicate(ev)) return;
+        updateAssistant((prev) => {
+          const previousEvents = prev.events ?? [];
+          const nextEvents = appendCoalescedAgentEvent(previousEvents, ev);
+          return nextEvents === previousEvents
+            ? prev
+            : { ...prev, events: nextEvents };
+        });
         /*
          * `<od-focus open="…">` —— agent 说「现在开这个」。
          *
@@ -8081,9 +8088,15 @@ export function ProjectView({
             applyAgentGeneratedTitle(ev.title);
             return;
           }
-          if (ev.kind === 'text') textBuffer.appendTextEvent(ev.text);
-          else if (ev.kind === 'thinking') textBuffer.appendEvent(ev);
-          else pushEvent(ev);
+          if (ev.kind === 'text') {
+            pushedEventDeduper.reset();
+            textBuffer.appendTextEvent(ev.text);
+          } else if (ev.kind === 'thinking') {
+            pushedEventDeduper.reset();
+            textBuffer.appendEvent(ev);
+          } else {
+            pushEvent(ev);
+          }
         },
         onArtifactCount: (count: number) => {
           daemonArtifactCount = count;
@@ -13714,6 +13727,7 @@ export function createBufferedTextUpdates({
   let disposed = false;
   let flushing = false;
   let needsFlush = false;
+  const nonDeltaEventDeduper = createAdjacentAgentEventDeduper();
   const hasDocument = typeof document !== 'undefined';
   const hasWindow = typeof window !== 'undefined';
 
@@ -13792,6 +13806,7 @@ export function createBufferedTextUpdates({
   const appendTextEvent = (delta: string) => {
     if (disposed) return;
     if (pendingThinkingEventDelta) flush();
+    nonDeltaEventDeduper.reset();
     pendingTextEventDelta += delta;
     needsFlush = true;
     scheduleFlush();
@@ -13805,16 +13820,21 @@ export function createBufferedTextUpdates({
     }
     if (ev.kind === 'thinking') {
       if (pendingTextEventDelta) flush();
+      nonDeltaEventDeduper.reset();
       pendingThinkingEventDelta += ev.text;
       needsFlush = true;
       scheduleFlush();
       return;
     }
     flush();
-    updateMessage((prev) => ({
-      ...prev,
-      events: appendCoalescedAgentEvent(prev.events ?? [], ev),
-    }));
+    if (nonDeltaEventDeduper.isDuplicate(ev)) return;
+    updateMessage((prev) => {
+      const previousEvents = prev.events ?? [];
+      const nextEvents = appendCoalescedAgentEvent(previousEvents, ev);
+      return nextEvents === previousEvents
+        ? prev
+        : { ...prev, events: nextEvents };
+    });
     persistSoon();
   };
 
@@ -13825,6 +13845,7 @@ export function createBufferedTextUpdates({
     pendingTextEventDelta = '';
     pendingThinkingEventDelta = '';
     needsFlush = false;
+    nonDeltaEventDeduper.reset();
     if (hasDocument) {
       document.removeEventListener('visibilitychange', onVisibilityChange);
     }
@@ -13861,6 +13882,58 @@ export function createBufferedTextUpdates({
   return { appendContent, appendTextEvent, appendEvent, flush, cancel, hasPendingText };
 }
 
+function isSnapshotAgentEvent(event: AgentEvent): event is Extract<AgentEvent, { kind: 'tool_use' }> {
+  return event.kind === 'tool_use' && isTodoWriteToolName(event.name);
+}
+
+function agentEventsAreIdentical(left: AgentEvent, right: AgentEvent): boolean {
+  if (left === right) return true;
+  if (
+    !isSnapshotAgentEvent(left)
+    || !isSnapshotAgentEvent(right)
+    || left.id !== right.id
+    || left.name !== right.name
+  ) return false;
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function createAdjacentAgentEventDeduper() {
+  let previous: AgentEvent | null = null;
+  let previousJson: string | null = null;
+  return {
+    isDuplicate(event: AgentEvent): boolean {
+      if (!isSnapshotAgentEvent(event)) {
+        previous = null;
+        previousJson = null;
+        return false;
+      }
+      if (!previous || !isSnapshotAgentEvent(previous)) {
+        previous = event;
+        return false;
+      }
+      if (previous === event) return true;
+      if (previous.id !== event.id || previous.name !== event.name) {
+        previous = event;
+        previousJson = null;
+        return false;
+      }
+      const eventJson = JSON.stringify(event);
+      const priorJson = previousJson ?? JSON.stringify(previous);
+      if (eventJson === priorJson) {
+        previousJson = priorJson;
+        return true;
+      }
+      previous = event;
+      previousJson = eventJson;
+      return false;
+    },
+    reset(): void {
+      previous = null;
+      previousJson = null;
+    },
+  };
+}
+
 function appendCoalescedAgentEvent(events: AgentEvent[], event: AgentEvent): AgentEvent[] {
   const last = events[events.length - 1];
   if (
@@ -13871,6 +13944,16 @@ function appendCoalescedAgentEvent(events: AgentEvent[], event: AgentEvent): Age
       ...events.slice(0, -1),
       { ...last, text: last.text + event.text },
     ];
+  }
+  if (
+    last
+    && event.kind !== 'text'
+    && event.kind !== 'thinking'
+    && isSnapshotAgentEvent(last)
+    && isSnapshotAgentEvent(event)
+    && agentEventsAreIdentical(last, event)
+  ) {
+    return events;
   }
   return [...events, event];
 }

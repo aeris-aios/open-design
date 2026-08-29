@@ -514,4 +514,74 @@ describe('message event persistence', () => {
       { kind: 'text', text: '</｜｜DSML｜｜invoke>\n</｜｜DSML｜｜tool_calls>\n```' },
     ]);
   });
+
+  it('compacts identical adjacent snapshots without dropping later state changes', () => {
+    const db = openDatabase(tempDir, { dataDir: tempDir });
+    const now = Date.now();
+    insertProject(db, {
+      id: 'proj-snapshot',
+      name: 'Snapshot compaction project',
+      createdAt: now,
+      updatedAt: now,
+    });
+    insertConversation(db, {
+      id: 'conv-snapshot',
+      projectId: 'proj-snapshot',
+      title: 'Snapshot compaction run',
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const pendingTodo = {
+      kind: 'tool_use',
+      id: 'todo-1',
+      name: 'TodoWrite',
+      input: { todos: [{ content: 'Audit old conversation', status: 'pending' }] },
+    };
+    const completedTodo = {
+      ...pendingTodo,
+      input: { todos: [{ content: 'Audit old conversation', status: 'completed' }] },
+    };
+    const pendingTodoCopy = () => ({
+      ...pendingTodo,
+      input: { todos: [{ content: 'Audit old conversation', status: 'pending' }] },
+    });
+    const questionForm = {
+      kind: 'text',
+      text: '<question-form>{"questions":[]}</question-form>',
+    };
+
+    upsertMessage(db, 'conv-snapshot', {
+      id: 'assistant-snapshot',
+      role: 'assistant',
+      content: questionForm.text,
+      runId: 'snapshot-run',
+      runStatus: 'succeeded',
+      events: [
+        { kind: 'status', label: 'thinking' },
+        ...Array.from({ length: 2_000 }, pendingTodoCopy),
+        questionForm,
+        // The intervening text is a semantic boundary, so an otherwise equal
+        // snapshot on its other side must remain in the historical stream.
+        ...Array.from({ length: 2_000 }, pendingTodoCopy),
+        completedTodo,
+        { kind: 'tool_use', id: 'bash-1', name: 'Bash', input: { command: 'pwd' } },
+        { kind: 'tool_use', id: 'bash-1', name: 'Bash', input: { command: 'pwd' } },
+        { kind: 'next_steps', suggestions: ['Open the result', 'Adjust the copy'] },
+      ],
+      startedAt: now,
+      endedAt: now,
+    });
+
+    expect(listMessages(db, 'conv-snapshot')[0]?.events).toEqual([
+      { kind: 'status', label: 'thinking' },
+      pendingTodo,
+      questionForm,
+      pendingTodo,
+      completedTodo,
+      { kind: 'tool_use', id: 'bash-1', name: 'Bash', input: { command: 'pwd' } },
+      { kind: 'tool_use', id: 'bash-1', name: 'Bash', input: { command: 'pwd' } },
+      { kind: 'next_steps', suggestions: ['Open the result', 'Adjust the copy'] },
+    ]);
+  });
 });

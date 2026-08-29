@@ -154,6 +154,7 @@ export function ToolRow({ row, onOpenFile, fileScope, onShowFailure }: ToolRowPr
         summary={<>{icon}<span className={styles.name}>{row.title}</span>{failButton}</>}
         elapsed={elapsed ?? undefined}
         defaultOpen={row.failed}
+        deferBody
       >
         <div className={styles.code}>
           <div className={`${styles.term} ${styles.cmd}`}><div>{row.command}</div></div>

@@ -17,6 +17,7 @@ import type {
 } from '@open-design/contracts';
 import {
   eventsEndedWithUnfinishedWork,
+  isTodoWriteToolName,
   latestTodoWriteInputFromEvents,
   stripArtifactFocusMarkers,
   stripDoneMarkers,
@@ -3042,6 +3043,7 @@ export function compactAdjacentMessageAgentEvents(
   incomingEvents: readonly DbRow[],
 ): DbRow[] {
   const events: DbRow[] = [];
+  let lastNonDeltaJson: string | undefined;
   for (const event of incomingEvents) {
     const kind = typeof event?.kind === 'string' ? event.kind : '';
     const last = events[events.length - 1];
@@ -3049,9 +3051,42 @@ export function compactAdjacentMessageAgentEvents(
       (kind === 'text' || kind === 'thinking') && typeof event?.text === 'string';
     if (isMergeableDelta && last?.kind === kind && typeof last.text === 'string') {
       events[events.length - 1] = { ...last, text: last.text + event.text };
-    } else {
-      events.push(event);
+      lastNonDeltaJson = undefined;
+      continue;
     }
+
+    if (isMergeableDelta) {
+      events.push(event);
+      lastNonDeltaJson = undefined;
+      continue;
+    }
+
+    // TodoWrite is a state-replacement snapshot, not an activity log. Stream
+    // reconnects and whole-message browser snapshots can replay the exact same
+    // state thousands of times; those byte-equal adjacent copies carry no UI
+    // meaning. Ordinary tool/status/result events remain untouched even when
+    // equal, and changed Todo snapshots still survive.
+    const comparableSnapshots =
+      last?.kind === 'tool_use'
+      && kind === 'tool_use'
+      && isTodoWriteToolName(last.name)
+      && isTodoWriteToolName(event.name)
+      && last.id === event.id
+      && last.name === event.name;
+    if (comparableSnapshots) {
+      if (last === event) continue;
+      const eventJson = JSON.stringify(event);
+      const previousJson = lastNonDeltaJson ?? JSON.stringify(last);
+      if (eventJson === previousJson) {
+        lastNonDeltaJson = previousJson;
+        continue;
+      }
+      events.push(event);
+      lastNonDeltaJson = eventJson;
+      continue;
+    }
+    events.push(event);
+    lastNonDeltaJson = undefined;
   }
   return events;
 }

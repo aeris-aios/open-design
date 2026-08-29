@@ -14,7 +14,14 @@
  *     所以不传 `open` 时用内部状态记住,不是每次渲染都把属性写回去。
  *  3. 耗时在箭头左边;没有耗时时箭头自己靠右(CSS 里靠 `margin-left:auto` 换手)。
  */
-import { type ReactElement, type Ref, type SyntheticEvent, useCallback, useState } from 'react';
+import {
+  type ReactElement,
+  type Ref,
+  type SyntheticEvent,
+  useCallback,
+  useEffect,
+  useState,
+} from 'react';
 import type { FoldableProps } from './contract';
 import { ChevronIcon } from './icons';
 import styles from './record.module.css';
@@ -29,14 +36,21 @@ export function Foldable({
   expandable = true,
   scroll,
   stream,
+  deferBody = false,
   bodyRef,
   className,
   children,
 }: FoldableProps & { stream?: boolean; bodyRef?: Ref<HTMLDivElement>; className?: string }): ReactElement {
   const [selfOpen, setSelfOpen] = useState(Boolean(defaultOpen));
+  const [bodyActivated, setBodyActivated] = useState(Boolean(defaultOpen || open));
   const controlled = open != null;
   const hasBody = children != null && children !== false;
   const isOpen = expandable && hasBody && (controlled ? Boolean(open) : selfOpen);
+  const shouldMountBody = !deferBody || isOpen || bodyActivated;
+
+  useEffect(() => {
+    if (isOpen && !bodyActivated) setBodyActivated(true);
+  }, [bodyActivated, isOpen]);
 
   const handleToggle = useCallback(
     (event: SyntheticEvent<HTMLDetailsElement>) => {
@@ -45,6 +59,7 @@ export function Foldable({
         if (next) event.currentTarget.open = false;
         return;
       }
+      if (next) setBodyActivated(true);
       if (!controlled) setSelfOpen(next);
       onToggle?.(next);
     },
@@ -60,13 +75,15 @@ export function Foldable({
 
   return (
     <details className={classes} open={isOpen} onToggle={handleToggle}>
-      <summary>
+      <summary onClick={() => {
+        if (deferBody && expandable && hasBody) setBodyActivated(true);
+      }}>
         {summary}
         {elapsed ? <span className={styles.meta}>{elapsed}</span> : null}
         {/* 没有东西可展开的时候给个箭头是在骗人 */}
         {expandable && hasBody ? <span className={styles.chev}><ChevronIcon /></span> : null}
       </summary>
-      {expandable && hasBody ? (
+      {expandable && hasBody && shouldMountBody ? (
         <div
           ref={bodyRef}
           className={[styles.body, stream ? styles.stream : styles.stack, scroll ? styles.scroll : null]

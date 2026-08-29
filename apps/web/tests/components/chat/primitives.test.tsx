@@ -90,6 +90,22 @@ describe('Foldable', () => {
     expect(document.querySelector('details')?.open).toBe(true);
   });
 
+  it('可延迟的历史正文在首次展开前不挂 DOM，展开一次后收起仍保留', () => {
+    render(
+      <Foldable summary={<span>已完成</span>} deferBody>
+        <p>很长的历史正文</p>
+      </Foldable>,
+    );
+    expect(screen.queryByText('很长的历史正文')).toBeNull();
+
+    fireEvent.click(screen.getByText('已完成'));
+    expect(screen.getByText('很长的历史正文')).toBeTruthy();
+
+    fireEvent.click(screen.getByText('已完成'));
+    expect(document.querySelector('details')?.open).toBe(false);
+    expect(screen.getByText('很长的历史正文')).toBeTruthy();
+  });
+
   it('耗时排在箭头左边', () => {
     render(<Foldable summary={<span>已完成</span>} elapsed="1m 12s"><p>x</p></Foldable>);
     const summary = document.querySelector('summary') as HTMLElement;
@@ -279,6 +295,8 @@ describe('命令折叠块(组件 11)', () => {
   it('有人话标题就折起来:标题在外,命令与输出在里面', () => {
     render(<ToolRow row={cmd()} />);
     expect(screen.getByText('构建产物,看能不能跑通')).toBeTruthy();
+    expect(screen.queryByText('npm run build')).toBeNull();
+    fireEvent.click(screen.getByText('构建产物,看能不能跑通'));
     expect(screen.getByText('npm run build')).toBeTruthy();
     expect(screen.getByText('8.4s')).toBeTruthy();
   });
@@ -296,6 +314,7 @@ describe('命令折叠块(组件 11)', () => {
 
   it('输出行按行首符号分绿红,认不出来的按普通行画', () => {
     render(<ToolRow row={cmd({ terminal: '✓ 成功那行\n普通那行\n✗ 失败那行' })} />);
+    fireEvent.click(screen.getByText('构建产物,看能不能跑通'));
     const cls = (t: string) => screen.getByText(t).className;
     expect(cls('✓ 成功那行')).toMatch(/ok/);
     expect(cls('✗ 失败那行')).toMatch(/er/);

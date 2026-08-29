@@ -14,7 +14,7 @@
  * 于是刚才那十几段推理**原地全部展开** —— 用户说的「怎么一结束全部释放出来了」。
  */
 import { afterEach, describe, expect, it } from 'vitest';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import type { ReactElement } from 'react';
 import { I18nProvider } from '../../../src/i18n';
 import { ExecutionShell } from '../../../src/components/chat/ExecutionShell';
@@ -43,7 +43,9 @@ const tool = (id: string): ShellItem => ({
 /** 只摊开**最外层那张壳**(跑完是收起的),里面的折叠保持它自己的默认态 */
 const openShell = (root: HTMLElement): void => {
   for (const d of Array.from(root.querySelectorAll('details'))) {
-    if (d.className.includes('flat')) d.open = true;
+    if (d.className.includes('flat') && !d.open) {
+      fireEvent.click(d.querySelector('summary')!);
+    }
   }
 };
 
@@ -70,7 +72,7 @@ describe('N2 跑完的 thinking 收进折叠行', () => {
     ])));
     openShell(container);
     const fold = screen.getByText('思考过程').closest('details');
-    fold!.open = true;   // 用户点开这一格
+    fireEvent.click(fold!.querySelector('summary')!);   // 用户点开这一格
     // 不只是「读得到」——必须读在折叠里,否则等于没折叠(否定断言会空转)
     expect(fold?.contains(screen.getByText('先判断这一屏属于哪种页面类型。'))).toBe(true);
     expect(fold?.contains(screen.getByText('设置页要和它共用同一套间距。'))).toBe(true);
