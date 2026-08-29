@@ -62,8 +62,9 @@ interface RenderedPreviewDocument extends PreviewSessionNavigation {
 
 const EMPTY_CAPABILITIES: readonly PreviewRuntimeCapability[] = [];
 // The bootstrap is injected before author scripts and emits visible-paint
-// after two animation frames. Five seconds therefore bounds a broken runtime
-// handshake without treating slow author resources as a successful preview.
+// after two animation frames. Standby frames remain paint-eligible while
+// transparent, so five seconds bounds a broken runtime handshake without
+// treating slow author resources as a successful preview.
 export const PREVIEW_SESSION_STANDBY_TIMEOUT_MS = 5_000;
 
 function identityKey(identity: PreviewRuntimeDocumentIdentity): string {
@@ -87,8 +88,8 @@ function documentKeepAliveKey(
 
 /**
  * Retain one last-good real-URL iframe while an exact new document version
- * paints in a hidden standby iframe. The component never assigns about:blank
- * and never mutates the URL of an existing browsing context.
+ * paints in a transparent, inert standby iframe. The component never assigns
+ * about:blank and never mutates the URL of an existing browsing context.
  *
  * FileViewer consumes this adapter through its internal convergence harness,
  * while the default path stays unchanged until the legacy URL/srcDoc stack can
@@ -188,6 +189,11 @@ function PreviewSessionFramesForFile({
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => session.handleMessage(event);
     window.addEventListener('message', handleMessage);
+    // A cached scoped URL can execute the bootstrap during the child iframe's
+    // layout effects, before this passive host listener exists. The bootstrap
+    // answers probes idempotently, so repeat it only after the receive path is
+    // live instead of relying on navigation timing.
+    session.probe();
     return () => window.removeEventListener('message', handleMessage);
   }, [session]);
 
@@ -298,7 +304,7 @@ function PreviewSessionFramesForFile({
           }
           data-testid="preview-runtime-frame-current"
           data-od-active={active ? 'true' : 'false'}
-          aria-hidden={active ? undefined : true}
+          aria-hidden={active ? undefined : 'true'}
           tabIndex={active ? 0 : -1}
         />
       ) : null}
@@ -316,7 +322,8 @@ function PreviewSessionFramesForFile({
           }
           data-testid="preview-runtime-frame-standby"
           data-od-active="false"
-          aria-hidden
+          data-od-standby="true"
+          aria-hidden="true"
           tabIndex={-1}
         />
       ) : null}

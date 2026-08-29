@@ -74,6 +74,22 @@ describe('PreviewSession', () => {
     expect(promoted).toHaveBeenCalledWith(first, null);
   });
 
+  it('can reprobe retained documents after a host listener attaches late', () => {
+    const session = new PreviewSession();
+    const first = document('v1');
+    session.stageDocument(first);
+    vi.mocked(first.target.postMessage).mockClear();
+
+    (session as PreviewSession & { probe: () => void }).probe();
+
+    expect(first.target.postMessage).toHaveBeenCalledWith({
+      type: 'od:preview:probe',
+      protocolVersion: PREVIEW_RUNTIME_PROTOCOL_VERSION,
+      sessionId: 'session-1',
+      documentVersion: 'v1',
+    }, '*');
+  });
+
   it('retains last-good until a replacement visibly paints', () => {
     const promoted = vi.fn();
     const session = new PreviewSession({ callbacks: { onPromoted: promoted } });

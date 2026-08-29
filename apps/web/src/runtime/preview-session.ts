@@ -131,6 +131,18 @@ export class PreviewSession {
     this.#emitSnapshot();
   }
 
+  /**
+   * Ask retained documents to repeat their lifecycle handshake.
+   *
+   * A pooled real-URL document can finish from Chromium's cache before the
+   * React host installs its window message listener. Reprobing after listener
+   * installation closes that race without navigating or replacing the frame.
+   */
+  probe(): void {
+    this.#standby?.controller.probe();
+    this.#current?.controller.probe();
+  }
+
   handleMessage(event: PreviewRuntimeMessageEvent): PreviewRuntimeMessage | null {
     return this.#standby?.controller.handleMessage(event)
       ?? this.#current?.controller.handleMessage(event)

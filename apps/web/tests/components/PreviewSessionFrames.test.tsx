@@ -60,7 +60,7 @@ function settle(frame: HTMLIFrameElement, document: PreviewSessionNavigation) {
 }
 
 describe('PreviewSessionFrames', () => {
-  it('keeps standby hidden until exact visible paint, then promotes the same frame', () => {
+  it('keeps standby paintable but inert until exact visible paint, then promotes the same frame', () => {
     const first = navigation('v1');
     const onCurrentFrameChange = vi.fn();
     render(
@@ -79,6 +79,9 @@ describe('PreviewSessionFrames', () => {
 
     const standby = screen.getByTestId('preview-runtime-frame-standby') as HTMLIFrameElement;
     expect(standby.dataset.odActive).toBe('false');
+    expect(standby.dataset.odStandby).toBe('true');
+    expect(standby).toHaveAttribute('aria-hidden', 'true');
+    expect(standby).toHaveAttribute('tabindex', '-1');
     signal(standby, first, 'od:preview:hello');
     signal(standby, first, 'od:preview:ready');
     expect(screen.queryByTestId('preview-runtime-frame-current')).toBeNull();
@@ -89,6 +92,7 @@ describe('PreviewSessionFrames', () => {
     const current = screen.getByTestId('preview-runtime-frame-current');
     expect(current).toBe(standby);
     expect(current).toHaveAttribute('data-od-active', 'true');
+    expect(current).not.toHaveAttribute('data-od-standby');
     expect(onCurrentFrameChange.mock.calls.filter(([frame]) => frame === standby)).toHaveLength(1);
   });
 

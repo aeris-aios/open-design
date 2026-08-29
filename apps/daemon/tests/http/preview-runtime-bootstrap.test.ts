@@ -126,6 +126,106 @@ describe('preview runtime bootstrap', () => {
     });
   });
 
+  it('falls back when background Chromium pauses animation frames', () => {
+    const bootstrap = buildPreviewRuntimeBootstrap(identity);
+    const source = bootstrap.replace(/^<script[^>]*>/u, '').replace(/<\/script>$/u, '');
+    const messages: unknown[] = [];
+    const animationFrames: Array<() => void> = [];
+    const timers: Array<() => void> = [];
+    let layoutReads = 0;
+    const context: Record<string, any> = {
+      document: {
+        readyState: 'complete',
+        documentElement: {
+          getBoundingClientRect: () => {
+            layoutReads += 1;
+            return { width: 800, height: 600 };
+          },
+        },
+      },
+      parent: { postMessage: (message: unknown) => messages.push(message) },
+      queueMicrotask: (callback: () => void) => callback(),
+      requestAnimationFrame: (callback: () => void) => {
+        animationFrames.push(callback);
+        return animationFrames.length;
+      },
+      setTimeout: (callback: () => void) => {
+        timers.push(callback);
+        return timers.length;
+      },
+      clearTimeout: () => {},
+      Set,
+    };
+    context.window = context;
+    context.addEventListener = () => {};
+
+    vm.runInNewContext(source, context);
+
+    expect(messages.map(parsePreviewRuntimeMessage)).toEqual([
+      {
+        type: 'od:preview:hello',
+        protocolVersion: 1,
+        ...identity,
+        availableCapabilities: [],
+      },
+      { type: 'od:preview:ready', protocolVersion: 1, ...identity },
+    ]);
+    expect(animationFrames).toHaveLength(1);
+    expect(timers).toHaveLength(1);
+
+    timers[0]?.();
+    expect(layoutReads).toBe(1);
+    expect(messages.map(parsePreviewRuntimeMessage).at(-1)).toEqual({
+      type: 'od:preview:visible-paint',
+      protocolVersion: 1,
+      ...identity,
+    });
+
+    animationFrames.shift()?.();
+    animationFrames.shift()?.();
+    expect(messages.filter((message) => (
+      parsePreviewRuntimeMessage(message)?.type === 'od:preview:visible-paint'
+    ))).toHaveLength(1);
+  });
+
+  it('captures native schedulers before authored scripts can replace them', () => {
+    const bootstrap = buildPreviewRuntimeBootstrap(identity);
+    const source = bootstrap.replace(/^<script[^>]*>/u, '').replace(/<\/script>$/u, '');
+    const listeners = new Map<string, Array<() => void>>();
+    const animationFrames: Array<() => void> = [];
+    const timers: Array<() => void> = [];
+    const context: Record<string, any> = {
+      document: { readyState: 'loading', documentElement: null },
+      parent: { postMessage: () => {} },
+      requestAnimationFrame: (callback: () => void) => {
+        animationFrames.push(callback);
+        return animationFrames.length;
+      },
+      setTimeout: (callback: () => void) => {
+        timers.push(callback);
+        return timers.length;
+      },
+      clearTimeout: () => {},
+      Set,
+    };
+    context.window = context;
+    context.addEventListener = (type: string, listener: () => void) => {
+      listeners.set(type, [...(listeners.get(type) ?? []), listener]);
+    };
+
+    vm.runInNewContext(source, context);
+    context.requestAnimationFrame = () => {
+      throw new Error('authored requestAnimationFrame replacement');
+    };
+    context.setTimeout = () => {
+      throw new Error('authored setTimeout replacement');
+    };
+
+    expect(() => listeners.get('DOMContentLoaded')?.[0]?.()).not.toThrow();
+    expect(animationFrames).toHaveLength(1);
+    expect(timers).toHaveLength(1);
+  });
+
   it('installs capability modules once and applies idempotent enable/disable transitions', () => {
     const bootstrap = buildPreviewRuntimeBootstrap({
       ...identity,

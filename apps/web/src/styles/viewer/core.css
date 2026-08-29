@@ -1307,6 +1307,15 @@
   visibility: hidden;
   pointer-events: none;
 }
+/* A terminal-runtime standby must finish layout and compositor paint before
+   atomic promotion. Keep it visually transparent and non-interactive instead
+   of visibility:hidden, which pauses child-frame animation frames and can
+   leave Electron with a blank surface when the same iframe becomes current. */
+.artifact-preview-transport-stack iframe[data-od-active='false'][data-od-standby='true'] {
+  visibility: visible;
+  opacity: 0;
+  pointer-events: none;
+}
 /* First-ever URL-load of an artifact: the iframe's own navigation can queue
    behind heavy same-origin traffic (e.g. drafts-grid cover iframes), which
    otherwise reads as a dead white pane. Sits above both transport iframes
