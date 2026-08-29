@@ -40,6 +40,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ProjectFile } from '../../src/types';
 import { emptyManualEditStyles, type ManualEditTarget } from '../../src/edit-mode/types';
+import { __resetPreviewIsolationCache } from '../../src/runtime/powered-preview';
 
 // ---------------------------------------------------------------------------
 // ManualEditPanel mock — captures the props FileViewer passes so tests can
@@ -79,6 +80,7 @@ import { FileViewer } from '../../src/components/FileViewer';
 afterEach(() => {
   cleanup();
   panelState.props = null;
+  __resetPreviewIsolationCache();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -659,7 +661,7 @@ describe('FileViewer srcDoc reload — prevSourceBeforeReloadRef race conditions
     });
   });
 
-  it('keeps a 43-file Babel prototype on the guarded real-URL transport', async () => {
+  it('keeps a 43-file Babel prototype on the powered real-URL transport', async () => {
     const externalScripts = Array.from(
       { length: 43 },
       (_, index) => `<script type="text/babel" src="./components/screen-${index + 1}.jsx"></script>`,
@@ -675,7 +677,25 @@ describe('FileViewer srcDoc reload — prevSourceBeforeReloadRef race conditions
       '<main id="root"></main>',
       '</body></html>',
     ].join('');
-    vi.stubGlobal('fetch', fetchReturning(html));
+    const fetchMock = fetchReturning(html);
+    fetchMock.mockImplementation(async (input: string | URL | Request) => {
+      const url = typeof input === 'string'
+        ? input
+        : input instanceof Request
+          ? input.url
+          : String(input);
+      if (url === '/api/preview/isolation') {
+        return new Response(JSON.stringify({
+          supported: true,
+          baseOrigin: 'http://127.0.0.1:43111',
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      if (url.startsWith(RAW_URL_PREFIX)) {
+        return new Response(html, { status: 200 });
+      }
+      return new Response('', { status: 404 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
 
     render(
       <FileViewer
@@ -698,15 +718,20 @@ describe('FileViewer srcDoc reload — prevSourceBeforeReloadRef race conditions
       expect(frame.getAttribute('data-od-render-mode')).toBe('url-load');
       expect(frame.getAttribute('data-od-active')).toBe('true');
       const src = new URL(frame.getAttribute('src') ?? '', 'http://localhost');
-      expect(src.pathname).toBe('/api/projects/project-1/raw/prototypes/booking/index.html');
+      expect(src.origin).toBe('http://localhost:43111');
+      expect(src.pathname).toBe('/api/projects/project-1/powered/prototypes/booking/index.html');
       expect(src.searchParams.getAll('odPreviewBridge')).toEqual([
         'scroll',
         'selection',
         'snapshot',
         'observability',
-        'sandbox',
-        'focus',
       ]);
+      // External Babel modules require a real same-origin document so Babel's
+      // XHR loader can fetch sibling JSX files. Powered mode supplies that
+      // origin directly; opaque-origin storage/focus shims must not be layered
+      // on top of it.
+      expect(frame.getAttribute('data-od-powered')).toBe('true');
+      expect(frame.getAttribute('sandbox')).toContain('allow-same-origin');
       expect(src.searchParams.getAll('odPreviewBridge')).not.toContain('redirect');
     });
 

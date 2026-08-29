@@ -311,6 +311,12 @@ describe('PreviewRuntimeTransport', () => {
     postMessage.mockClear();
     signal(frame, 'od:preview:visible-paint', capabilities);
     expect(screen.getByTestId('preview-runtime-frame-current')).toBe(frame);
-    expect(postMessage).not.toHaveBeenCalled();
+    // Promotion asks the now-active Deck for its current state. This is a
+    // read-only reconciliation probe; host-owned state restoration above must
+    // still finish before the frame becomes current.
+    expect(postMessage).toHaveBeenCalledTimes(1);
+    expect(postMessage).toHaveBeenCalledWith({
+      type: 'od:slide-state-probe',
+    }, '*');
   });
 });

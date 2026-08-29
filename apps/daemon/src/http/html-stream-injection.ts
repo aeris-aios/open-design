@@ -47,6 +47,8 @@ export interface HtmlHeadScanResult {
   hasFrameworkDeckId: boolean;
   /** Whether inline authored scripts already implement the od:slide protocol. */
   hasInlineSlideMessageListener: boolean;
+  /** Declared version of the authored Deck protocol, or zero for legacy decks. */
+  artifactDeckProtocolVersion: number;
   /** Whether inline authored scripts implement keyboard slide navigation. */
   hasInlineKeydownNavigation: boolean;
   /** Whether inline authored scripts implement hash-based slide navigation. */
@@ -97,9 +99,17 @@ function rawTextCloseStart(input: string, tagName: string): number {
   return -1;
 }
 
-function tagHasExactId(token: string, expected: string): boolean {
-  const match = /[\t\n\f\r ]id[\t\n\f\r ]*=[\t\n\f\r ]*(?:"([^"]*)"|'([^']*)'|([^\t\n\f\r />]+))/iu.exec(token);
+function tagHasExactAttributeValue(token: string, name: string, expected: string): boolean {
+  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = new RegExp(
+    `[\\t\\n\\f\\r ]${escapedName}[\\t\\n\\f\\r ]*=[\\t\\n\\f\\r ]*(?:"([^"]*)"|'([^']*)'|([^\\t\\n\\f\\r />]+))`,
+    'iu',
+  ).exec(token);
   return (match?.[1] ?? match?.[2] ?? match?.[3]) === expected;
+}
+
+function tagHasExactId(token: string, expected: string): boolean {
+  return tagHasExactAttributeValue(token, 'id', expected);
 }
 
 /**
@@ -126,6 +136,7 @@ export async function scanHtmlHeadForStreamingInjection(
   let needsPoweredPreview = false;
   let hasDeckStageElement = false;
   let hasFrameworkDeckId = false;
+  let artifactDeckProtocolVersion = 0;
   let registersSlideMessageListener = false;
   let mentionsSlideMessage = false;
   let registersKeydownListener = false;
@@ -161,6 +172,7 @@ export async function scanHtmlHeadForStreamingInjection(
     hasDeckStageElement,
     hasFrameworkDeckId,
     hasInlineSlideMessageListener: registersSlideMessageListener && mentionsSlideMessage,
+    artifactDeckProtocolVersion,
     hasInlineKeydownNavigation: registersKeydownListener && mentionsNavigationKey,
     hasInlineHashNavigation: listensForHashChange && readsLocationHash,
     inlineHashIndexPrefix: usesSlashHashIndexPrefix ? '#/' : '#',
@@ -301,6 +313,9 @@ export async function scanHtmlHeadForStreamingInjection(
       if (templateDepth === 0) {
         if (tag.name === 'deck-stage') hasDeckStageElement = true;
         if (tagHasExactId(token, 'deck-stage')) hasFrameworkDeckId = true;
+        if (tagHasExactAttributeValue(token, 'data-od-deck-protocol', '1')) {
+          artifactDeckProtocolVersion = 1;
+        }
       }
 
       if (!headScanDone && tag.name === 'html') {

@@ -159,7 +159,7 @@ describe('scanHtmlHeadForStreamingInjection', () => {
 
   it('collects Deck markup and inline navigation facts without retaining the document', async () => {
     const fixture = await scan([
-      '<!doctype html><html><head></head><body>',
+      '<!doctype html><html data-od-deck-protocol="1"><head></head><body>',
       '<main id="deck-stage"><deck-stage><section class="slide">One</section></deck-stage></main>',
       '<script>window.addEventListener("message",function(event){if(event.data.type==="od:slide"){};});</script>',
       '<script>window.addEventListener("keydown",function(event){if(event.key==="ArrowRight"){};});</script>',
@@ -172,6 +172,7 @@ describe('scanHtmlHeadForStreamingInjection', () => {
       hasDeckStageElement: true,
       hasFrameworkDeckId: true,
       hasInlineSlideMessageListener: true,
+      artifactDeckProtocolVersion: 1,
       hasInlineKeydownNavigation: true,
       hasInlineHashNavigation: true,
       inlineHashIndexPrefix: '#/',

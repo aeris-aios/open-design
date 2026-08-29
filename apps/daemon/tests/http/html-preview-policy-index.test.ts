@@ -15,6 +15,7 @@ function result(overrides: Partial<HtmlHeadScanResult> = {}): HtmlHeadScanResult
     hasDeckStageElement: false,
     hasFrameworkDeckId: false,
     hasInlineSlideMessageListener: false,
+    artifactDeckProtocolVersion: 0,
     hasInlineKeydownNavigation: false,
     hasInlineHashNavigation: false,
     inlineHashIndexPrefix: '#',
