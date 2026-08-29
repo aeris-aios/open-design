@@ -3952,9 +3952,14 @@ function injectDeckBridge(
     odDeckProtocolVersion = ${DECK_PROTOCOL_VERSION};
     odHasExternalSlideMessageListener = true;
   });
+  function odIsSupportedSlideMessage(data) {
+    return !!data &&
+      data.type === 'od:slide' &&
+      (data.protocolVersion == null || data.protocolVersion === ${DECK_PROTOCOL_VERSION});
+  }
   addOdSlideMessageListener(function(ev){
     var data = ev && ev.data;
-    if (!data || data.type !== 'od:slide') return;
+    if (!odIsSupportedSlideMessage(data)) return;
     var before = activeIndex(slides());
     odSlideMessageBeforeIndex = before;
     setTimeout(function(){
@@ -3963,7 +3968,7 @@ function injectDeckBridge(
   }, true);
   addOdSlideMessageListener(function(ev){
     var data = ev && ev.data;
-    if (!data || data.type !== 'od:slide') return;
+    if (!odIsSupportedSlideMessage(data)) return;
     // Every newer host intent cancels an older multi-step jump, including a
     // request for the slide that is CURRENTLY visible. The older jump may not
     // have dispatched its first accepted key yet (the artifact can register on

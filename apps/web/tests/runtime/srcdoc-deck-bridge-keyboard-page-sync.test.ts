@@ -54,6 +54,8 @@ interface CustomDeckOptions {
   directIndexControls?: boolean;
   /** Keep direct-index controls visible but ignore their click handlers. */
   ignoreDirectIndexControls?: boolean;
+  /** Advertise a canonical deck protocol version in the source document. */
+  protocolVersion?: number;
 }
 
 function setupCustomCounterDeck(options: CustomDeckOptions = {}) {
@@ -75,7 +77,10 @@ function setupCustomCounterDeck(options: CustomDeckOptions = {}) {
     </div>
     <div class="deck-pager"><span id="pager-cur">1</span> / <span id="pager-total">3</span></div>
   `;
-  const srcdoc = buildSrcdoc(`<!doctype html><html><body>${bodyHtml}</body></html>`, {
+  const protocolAttribute = options.protocolVersion == null
+    ? ''
+    : ` data-od-deck-protocol="${options.protocolVersion}"`;
+  const srcdoc = buildSrcdoc(`<!doctype html><html${protocolAttribute}><body>${bodyHtml}</body></html>`, {
     deck: true,
   });
   const script = extractDeckBridgeScript(srcdoc);
@@ -359,6 +364,41 @@ describe('deck bridge - keyboard paging keeps page counters in sync', () => {
       expect(win.document.querySelectorAll('.slide')[2]?.classList.contains('is-active')).toBe(true);
       expect(visited).toEqual([1, 2]);
       expect(slideStatesOf(parentPostMessage).at(-1)).toMatchObject({ active: 2, count: 3 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('ignores future-version bridge commands while accepting legacy and v1 navigation', async () => {
+    vi.useFakeTimers();
+    try {
+      const { win, track, pagerCur, visited } = setupCustomCounterDeck({
+        listenOn: 'window',
+        protocolVersion: 1,
+      });
+      visited.length = 0;
+
+      win.dispatchEvent(new win.MessageEvent('message', {
+        data: { type: 'od:slide', action: 'go', index: 2, protocolVersion: 2 },
+      }));
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(track.style.transform).toBe('translateX(-0vw)');
+      expect(pagerCur.textContent).toBe('1');
+      expect(visited).toEqual([]);
+
+      win.dispatchEvent(new win.MessageEvent('message', {
+        data: { type: 'od:slide', action: 'next' },
+      }));
+      await vi.advanceTimersByTimeAsync(100);
+      expect(pagerCur.textContent).toBe('2');
+
+      win.dispatchEvent(new win.MessageEvent('message', {
+        data: { type: 'od:slide', action: 'next', protocolVersion: 1 },
+      }));
+      await vi.advanceTimersByTimeAsync(100);
+      expect(track.style.transform).toBe('translateX(-200vw)');
+      expect(pagerCur.textContent).toBe('3');
+      expect(visited).toEqual([1, 2]);
     } finally {
       vi.useRealTimers();
     }
