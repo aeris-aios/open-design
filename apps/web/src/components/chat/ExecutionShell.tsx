@@ -56,9 +56,21 @@ export interface ExecutionShellProps {
   /** 生图失败格的「重试」—— 没有回调时那一格只画不点(稿子也允许只画) */
   onRetryImage?: (row: ImageRowData, index: number) => void;
   imageSrc?: (path: string) => string;
+  /**
+   * Product history defers collapsed bodies by default. Static design mirrors
+   * can disable this so their non-hydrated HTML remains inspectable.
+   */
+  deferCollapsedBodies?: boolean;
 }
 
-export function ExecutionShell({ shell, onOpenFile, fileScope, onRetryImage, imageSrc }: ExecutionShellProps): ReactElement {
+export function ExecutionShell({
+  shell,
+  onOpenFile,
+  fileScope,
+  onRetryImage,
+  imageSrc,
+  deferCollapsedBodies = true,
+}: ExecutionShellProps): ReactElement {
   const t = useT();
   const running = shell.status === 'running' && !shell.stopped;
   const elapsed = formatShellElapsed(shell.elapsedMs);
@@ -182,12 +194,13 @@ export function ExecutionShell({ shell, onOpenFile, fileScope, onRetryImage, ima
       open={open}
       onToggle={onToggle}
       expandable={items.length > 0}
-      deferBody
+      deferBody={deferCollapsedBodies}
       className={hasTodo ? styles.hasTodo : undefined}
     >
       {items.length
         ? items.map((item, i) => renderItem(item, i, {
             t, onOpenFile, fileScope, onRetryImage, imageSrc, thinkingNow, running,
+            deferCollapsedBodies,
             liveTextIndex: liveTextIndexOf(items, running),
           }))
         : null}
@@ -218,6 +231,8 @@ interface RenderCtx {
   thinkingNow: boolean;
   /** 这一轮还在跑吗 —— 抽屉里那一摞要自己算 `liveTextIndex`,得知道这件事 */
   running: boolean;
+  /** Whether initially collapsed historical bodies mount on first expansion. */
+  deferCollapsedBodies: boolean;
   /**
    * **这一摞**里「还在往里写」的那一段叙述排第几 —— 只有它逐字化开。
    * 不在跑的时候是 `-1`(历史消息重渲染时不能再化开一遍)。
@@ -239,11 +254,20 @@ function renderItem(item: GroupedShellItem, index: number, ctx: RenderCtx): Reac
         elapsedMs={item.elapsedMs}
         live={item.live === true}
         t={ctx.t}
+        deferBody={ctx.deferCollapsedBodies}
       />
     );
   }
   if (item.kind === 'tool') {
-    return <ToolRow key={`tool-${item.id}-${index}`} row={item} onOpenFile={ctx.onOpenFile} fileScope={ctx.fileScope} />;
+    return (
+      <ToolRow
+        key={`tool-${item.id}-${index}`}
+        row={item}
+        onOpenFile={ctx.onOpenFile}
+        fileScope={ctx.fileScope}
+        deferBody={ctx.deferCollapsedBodies}
+      />
+    );
   }
   if (item.kind === 'text') {
     /*
@@ -265,7 +289,14 @@ function renderItem(item: GroupedShellItem, index: number, ctx: RenderCtx): Reac
     );
   }
   if (item.kind === 'plan') {
-    return <PlanRow key={`plan-${index}`} steps={item.steps} t={ctx.t} />;
+    return (
+      <PlanRow
+        key={`plan-${index}`}
+        steps={item.steps}
+        t={ctx.t}
+        deferBody={ctx.deferCollapsedBodies}
+      />
+    );
   }
   return <TodoRow key={`todo-${item.segment.content}-${index}`} segment={item.segment} ctx={ctx} />;
 }
@@ -295,11 +326,12 @@ function renderItem(item: GroupedShellItem, index: number, ctx: RenderCtx): Reac
  * **正在想的时候不显示** —— 和进行中的 todo 同一条规矩(`TodoRow` 的
  * `status === 'in_progress'` 那一档):还没结束的事报不出时长,报了也只会每帧跳。
  */
-function ThoughtsRow({ texts, elapsedMs, live, t }: {
+function ThoughtsRow({ texts, elapsedMs, live, t, deferBody }: {
   texts: string[];
   elapsedMs: number | null;
   live: boolean;
   t: RenderCtx['t'];
+  deferBody: boolean;
 }): ReactElement {
   const elapsed = live ? null : formatElapsed(elapsedMs);
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -341,7 +373,7 @@ function ThoughtsRow({ texts, elapsedMs, live, t }: {
          不是上面那只 96px 定高 + 渐隐 + 自己往上走的窗(用户 2026-08-27:
          「thought 展开应该有个最高高度, 可以滚动」)。两者互斥,见 `.scroll` 的注释。 */
       scroll={!live}
-      deferBody={!live}
+      deferBody={deferBody && !live}
       bodyRef={bodyRef}
       /* 一段都没有就不出箭头也不出 body。claude 的 thinking 全是空串(真实数据:
          本机 14 条 claude 共 1786 帧、非空 0 帧),此时这一行只报「在想」,
@@ -353,11 +385,15 @@ function ThoughtsRow({ texts, elapsedMs, live, t }: {
 }
 
 /** 「执行计划 · N 步」:清单刚到时的全貌。每一步只有序号,还没跑,没有「哪类调用」可标 */
-function PlanRow({ steps, t }: { steps: string[]; t: RenderCtx['t'] }): ReactElement {
+function PlanRow({ steps, t, deferBody }: {
+  steps: string[];
+  t: RenderCtx['t'];
+  deferBody: boolean;
+}): ReactElement {
   return (
     <Foldable
       summary={<><StatusMark status="ok" /><span>{t('chat.record.plan', { count: steps.length })}</span></>}
-      deferBody
+      deferBody={deferBody}
     >
       {steps.map((step, i) => (
         <div className={styles.tool} key={`${step}-${i}`}>
@@ -407,7 +443,7 @@ function TodoRow({ segment, ctx }: { segment: TodoSegment; ctx: RenderCtx }): Re
       elapsed={elapsed ?? undefined}
       expandable={expandable}
       defaultOpen={segment.status === 'in_progress'}
-      deferBody
+      deferBody={ctx.deferCollapsedBodies}
     >
       {expandable
         ? items.map((item, i) => renderItem(item, i, {

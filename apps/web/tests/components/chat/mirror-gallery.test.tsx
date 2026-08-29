@@ -2065,7 +2065,7 @@ function renderCell(cell: Cell): string {
           于是同一个组件在陈列页里是一个样、在产品里是另一个样。
           用户连着截了四次图问「这个消息怎么还是这个样式」,根因就在这儿。 */}
       <div className="app"><div className="root" data-chat-root="">
-        <ExecutionShell shell={shell} />
+        <ExecutionShell shell={shell} deferCollapsedBodies={false} />
       </div></div>
     </I18nProvider>,
   ));

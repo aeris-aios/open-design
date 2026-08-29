@@ -30,9 +30,17 @@ export interface ToolRowProps {
   fileScope?: RecordFileScope;
   /** 点「失败」看原因;不传就不出那颗按钮 */
   onShowFailure?: (row: ToolRowData) => void;
+  /** Static mirrors can keep collapsed command bodies in the emitted HTML. */
+  deferBody?: boolean;
 }
 
-export function ToolRow({ row, onOpenFile, fileScope, onShowFailure }: ToolRowProps): ReactElement {
+export function ToolRow({
+  row,
+  onOpenFile,
+  fileScope,
+  onShowFailure,
+  deferBody = true,
+}: ToolRowProps): ReactElement {
   const t = useT();
   const elapsed = formatElapsed(row.elapsedMs);
   const icon = <span className={styles.icon}>{toolIcon(row.tool)}</span>;
@@ -154,7 +162,7 @@ export function ToolRow({ row, onOpenFile, fileScope, onShowFailure }: ToolRowPr
         summary={<>{icon}<span className={styles.name}>{row.title}</span>{failButton}</>}
         elapsed={elapsed ?? undefined}
         defaultOpen={row.failed}
-        deferBody
+        deferBody={deferBody}
       >
         <div className={styles.code}>
           <div className={`${styles.term} ${styles.cmd}`}><div>{row.command}</div></div>

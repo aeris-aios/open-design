@@ -297,7 +297,7 @@
 
 ### 21. 新 Chat Panel 对旧版本会话的兼容性验收
 
-- 状态：**channel 历史体检与精确版本回放均已完成；P0 已在本地修复并通过聚焦回归，P1 性能优化进行中，另有 1 个低优先级语义图标问题**。完整截图报告见飞书文档 `Chat Panel Next 旧会话兼容性验收报告（2026-08-29）`。
+- 状态：**channel 历史体检与精确版本回放均已完成；P0 与 P1 已在本地修复并通过聚焦回归 / 同机 A/B，另有 1 个低优先级语义图标问题**。完整截图报告见飞书文档 `Chat Panel Next 旧会话兼容性验收报告（2026-08-29）`。
 - 离线历史重放：只读扫描 dev / stable / legacy-beta / beta / prerelease 共 5 份 channel 数据库，覆盖 95 个会话、243 条 assistant message、126,835 个事件。`buildTurnBlocks` 异常 0、同条消息内重复结论 0；实际 UI / API 重放的 DSML 残留为 0。这里的 channel 目录只能证明数据来源，单条历史消息没有持久化客户端 commit / version，不能据此宣称其精确生成版本。
 - 精确版本回放：分别在 `main@a8ec5784eb13a248f5ff3586800819fa070ea250` 与 `open-design-v0.21.0@dbbd3b42eab9609065637452b347f903d7125ecd` 的 daemon/runtime/parser/DB 持久化链生成同一份确定性 Thinking + Todo + 两次媒体工具调用 fixture，再复制不可变 producer DB 给当前分支 `c90c1e899e` 消费。producer DB SHA-256 分别为 `aed1a4078f813aac03a59101dcaefc4daeed879fd6a1047c4aed57703fa49e65` 与 `211fb9389ce1a0f7b73d4c8298b1cb771a184435362d693526417d25a6534664`。
 - 精确版本结果：两组当前 UI 首次打开及连续 2 次硬刷新均保持 `assistant=1`、`details=5`、消息内图片 `=2`、结论 `=1`、DSML `=0`；两张图片都按当前 ImageRow 恢复。fixture 故意保留第二项 Todo 为 `in_progress`，因此 footer 显示“已停止，仍有未完成任务”，这验证 unfinished 历史语义，不是回放失败。producer 原始 DB 未被当前 daemon migration 修改。
@@ -305,9 +305,11 @@
 - 组合与刷新：stable 的 Question Form + Plan + ToolRow + 结论 + 错误卡组合、legacy-beta 缺失 `run_status`、beta 手动停止、prerelease 87 个 details 的长执行记录均可打开；多组 2–3 次硬刷新后消息数、结论数、Question Form 数与 terminal footer 稳定，无重复 assistant hash、无协议残留。首次从“手动展开全部 details”进入刷新时 hash 会因折叠状态复位变化，后续轮次稳定，不是正文重复。
 - 交互验证：旧文档附件点击会打开对应文件标签；旧绝对路径 Markdown 链接能解析为当前项目文件并在 workspace 内切换；未回答 Question Form 连续刷新仍保持可交互。
 - P0 上线阻断（本地已修）：设计稿 #16 明确“点击建议只填入输入框，不直接发送”，但原实现会立即持久化 user message 并创建新 run。现已改为 `composerRef.setDraft(prompt, { entryFrom: 'next_step' })`；live 回合与经过 JSON 持久化边界的历史 replay 红绿用例均断言只填草稿、`onSend` 未调用、消息数不变。相关 3 个文件 56 条聚焦测试通过，待集成后真实 UI 复验。
-- P1 性能风险：单条 63,472 events / 约 3,300 DOM nodes 的旧 beta turn，在已热开发 runtime 上硬刷新到消息 ready 约 3.3–4.3s；展开 details 的同步 layout 约 1.2–1.3ms，瓶颈更可能在历史事件读取、归一化和首屏渲染，而非 disclosure 动画。没有卡死或崩溃，但上线前应给长会话设性能门槛。
+- P1 性能（本地已修）：精确 63,472-event Beta message `ab7ff827…` 中，61,614 条 thinking + 1,771 条 text 在 daemon 归一化后只有 125 events / 2 blocks，parse + normalize + serialize + client parse + build 合计仅十几毫秒；消息 API 热读为 5.6–9.2ms，确认 3 秒以上首开不在 parser / API。补丁把已结束、初始折叠的 ExecutionShell / Thoughts / Plan / Todo / 命令正文改为首次展开再挂 DOM，live / failed / in-progress / default-open 首帧仍挂载，且首次展开后再次折叠不会丢子状态。完全相同的相邻 `TodoWrite` 快照另在 daemon 与 live buffer 两侧窄范围折叠，普通 Bash / 其他工具不做深比较。
+- P1 同机 A/B：同一 Beta 数据副本、同一 63,472-event 会话、同一 Playwright 脚本、均预热排除 Next 冷编译；`c90c1e89` 三次 ready 为 13.35s / 10.75s / 8.02s（中位 10.75s），补丁后为 5.73s / 5.12s / 6.07s（中位 5.73s，约 -46.7%）。目标 assistant 初始后代 DOM 从 2,799 降到 119（约 -95.7%），初始 details 从 29 降到 1。该数据来自 dev runtime，证明方向与量级，不替代 production / Beta 包门槛。
+- P1 重复快照样本：真实 9,280-event TodoWrite 样本在通用原型中从 9,280 events / 4.19MB 压为 15 events / 2.2KB；最终实现进一步收窄为 TodoWrite-only，测试覆盖 pending→completed 变化、Question Form 文本边界、next_steps 保留以及相同 Bash 不去重，避免普通 same-id/different-state 流的 stringify 退化。
 - P2 语义图标：prerelease 历史里的删除命令已正确显示“删除”，但 ToolRow 仍复用写入的铅笔 icon；数据和动作识别正确，仅视觉语义未闭环。
-- 验证边界：按用户要求未跑全量测试；本轮使用只读历史扫描、不可变 producer DB、隔离 consumer 副本、真实 Web UI、硬刷新、DOM 结构断言和设计稿截图对照。仅修复已确认的 P0，并只跑聚焦测试；P1 需以可复现实测证明收益后再集成。
+- 验证边界：按用户要求未跑全量测试；本轮使用只读历史扫描、不可变 producer DB、隔离 consumer 副本、真实 Web UI、硬刷新、DOM 结构断言和设计稿截图对照。P0 / P1 只跑聚焦测试与单一长会话 A/B；web typecheck 仍被 3 个既有无关测试类型错误阻断（`thinking-markdown.test.tsx:37`、`artifact-card-desktop-viewport.test.ts:46/49`）。
 
 ## 已完成 / 已合入本分支
 
