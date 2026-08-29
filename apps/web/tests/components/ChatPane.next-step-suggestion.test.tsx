@@ -1,27 +1,24 @@
 // @vitest-environment jsdom
 
 /**
- * 点一条「下一步引导」= 把那句话**直接发出去**。
+ * 点一条「下一步引导」只会把建议填入 Composer。
  *
- * 上一版这三行是固定的工具箱目录,点下去是 `composerRef.setDraft(prompt)` ——
- * 往输入框里填草稿,人再按一次回车。产品裁决(2026-08-26)把这一族换成
- * agent 现写的三条行为引导,而稿子那三句(「再加一页订单列表」…)本来就是
- * 一句能直接发的话,所以中间那一步没有理由存在,行尾也因此没有 `›`。
+ * 结构化 `next_steps` 在刚结束的 live 回合和历史 replay 中共用同一条线:
+ * `next_steps` 事件 → `AssistantMessage` → `NextStepActions`
+ * → `ChatPane.handleNextStepSuggestion` → `composerRef.setDraft`。
  *
- * 这条钉的是**整条线**:`next_steps` 事件 → `AssistantMessage` → `NextStepActions`
- * → `ChatPane.handleNextStepSuggestion` → `onSend`。中间任何一节断了它都红。
+ * 点击本身不得调用 `onSend`;否则会在用户尚未确认时持久化消息、
+ * 创建 run 并可能产生费用。
  */
 
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { forwardRef } from 'react';
+import { forwardRef, useImperativeHandle, useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ChatPane } from '../../src/components/ChatPane';
-import type { ChatSendMeta } from '../../src/components/ChatComposer';
 import type { AppConfig, ChatMessage } from '../../src/types';
 
 type OnSend = Parameters<typeof ChatPane>[0]['onSend'];
-type SendArgs = Parameters<OnSend>;
 
 const translate = (key: string, vars?: Record<string, string | number>) =>
   vars && Object.keys(vars).length > 0 ? `${key} ${Object.values(vars).join(' ')}` : key;
@@ -36,7 +33,21 @@ vi.mock('../../src/i18n', async (importOriginal) => {
 });
 
 vi.mock('../../src/components/ChatComposer', () => ({
-  ChatComposer: forwardRef((_props, _ref) => <div data-testid="composer" />),
+  ChatComposer: forwardRef((_props, ref) => {
+    const [draft, setDraft] = useState('');
+    useImperativeHandle(ref, () => ({
+      setDraft,
+      restoreDraft: ({ text }: { text: string }) => setDraft(text),
+      focus: () => undefined,
+      applyDesignToolboxAction: () => undefined,
+      applyDesignToolboxSkill: () => undefined,
+      openDesignToolbox: () => undefined,
+      openPluginsPanel: () => undefined,
+      scheduleComposerPanelClose: () => undefined,
+      openPlusMenu: () => undefined,
+    }));
+    return <div data-testid="composer-draft">{draft}</div>;
+  }),
 }));
 
 afterEach(() => {
@@ -73,10 +84,23 @@ function deliveredMessage(withSuggestions = true): ChatMessage {
   } as ChatMessage;
 }
 
-function renderChat(onSend: OnSend, withSuggestions = true) {
+function replayedMessage(): ChatMessage {
+  // A history response crosses a JSON persistence boundary before ChatPane
+  // receives the same ChatMessage shape as a just-completed live turn.
+  return JSON.parse(JSON.stringify({
+    ...deliveredMessage(),
+    id: 'persisted-msg-1',
+  })) as ChatMessage;
+}
+
+function renderChat(
+  onSend: OnSend,
+  withSuggestions = true,
+  message: ChatMessage = deliveredMessage(withSuggestions),
+) {
   return render(
     <ChatPane
-      messages={[deliveredMessage(withSuggestions)]}
+      messages={[message]}
       streaming={false}
       error={null}
       projectId="project-1"
@@ -97,22 +121,24 @@ function renderChat(onSend: OnSend, withSuggestions = true) {
 }
 
 describe('ChatPane · 下一步引导', () => {
-  it('点一条就把那句话当作用户的下一条消息发出去', () => {
+  it.each([
+    ['刚结束的 live 回合', deliveredMessage()],
+    ['历史 replay', replayedMessage()],
+  ])('%s:点击只填入草稿,不新增消息或 run', (_label, message) => {
     const onSend = vi.fn<OnSend>(() => undefined);
-    renderChat(onSend);
+    renderChat(onSend, true, message);
 
     const row = screen.getByTestId('next-step-suggestion-1');
     expect(row.textContent).toContain('把商品卡换成两列布局');
+    const assistantCountBefore = screen.getAllByTestId('assistant-flow').length;
+    const userCountBefore = screen.queryAllByTestId('user-message').length;
 
     fireEvent.click(row);
 
-    expect(onSend).toHaveBeenCalledTimes(1);
-    const call = onSend.mock.calls[0]!;
-    expect(call[0]).toBe('把商品卡换成两列布局');
-    expect(call[1]).toEqual([]);
-    expect(call[2]).toEqual([]);
-    // 归因走 next_step —— 和这一族原来的埋点口径一致
-    expect(call[3] as ChatSendMeta).toMatchObject({ entryFrom: 'next_step' });
+    expect(screen.getByTestId('composer-draft').textContent).toBe('把商品卡换成两列布局');
+    expect(onSend).not.toHaveBeenCalled();
+    expect(screen.getAllByTestId('assistant-flow')).toHaveLength(assistantCountBefore);
+    expect(screen.queryAllByTestId('user-message')).toHaveLength(userCountBefore);
   });
 
   it('旧会话(没有 next_steps 事件)不出这一行', () => {

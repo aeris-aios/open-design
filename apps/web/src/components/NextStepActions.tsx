@@ -234,9 +234,10 @@ interface Props {
    */
   suggestions?: string[];
   /**
-   * Send one suggestion as the user's next message. Unlike every other handler
-   * here, this does NOT seed the composer — the suggestion IS the sentence, so
-   * clicking it sends it. That is why the rows carry no trailing chevron.
+   * Seed the composer with one suggestion. The user may edit it and must send
+   * explicitly; clicking a suggestion must never persist a message or create a
+   * run by itself. The rows carry no trailing chevron because they do not open
+   * another menu.
    */
   onSuggestion?: (text: string) => void;
   variant?: NextStepActionsVariant;
@@ -484,9 +485,9 @@ export function NextStepActions({
   );
 
   /**
-   * 点一条建议 = 把那句话当作用户的下一条消息**直接发出去**。
-   * 不是打开菜单、也不是往输入框里填草稿 —— 稿子那三句本身就是能发的动作,
-   * 所以行尾没有 `›`。
+   * 点一条建议 = 把那句话填入 Composer,等用户确认或改写后显式发送。
+   * 点击本身不能落消息、建 run 或产生费用。行尾没有 `›`,因为它不打开
+   * 下一层菜单,而不是因为会自动发送。
    *
    * 上报的是**位置**不是文字:建议是模型现写的、关于用户自己项目的话,
    * 不该进埋点载荷。

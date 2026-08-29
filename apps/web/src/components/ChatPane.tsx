@@ -1406,21 +1406,17 @@ export function ChatPane({
   }, [onSessionModeChange, sessionMode]);
 
   /**
-   * 点一条「下一步引导」= 把那句话当作用户的下一条消息**直接发出去**。
-   *
-   * 和上面几个 next-step 回调不一样:它们往输入框里塞草稿(动作背后还有参数
-   * 要人确认),而这三条本来就是**一句能直接发的话** —— 模型是照着「用户下一
-   * 条消息该怎么写」写的。塞进草稿再让人按一次回车,是凭空多一步。
-   *
-   * 走的是和「重试这张图」同一条正常发送路径(`onSend`),不是伪造事件。
+   * 下一步建议只是可编辑的起草入口。它与其他 next-step prompt
+   * 共用 Composer 的 `setDraft` 路径,保留 `entryFrom` 归因;只有用户
+   * 显式点击发送才会调用 `onSend`、持久化消息并创建 run。
    */
   const handleNextStepSuggestion = useCallback(
     (text: string) => {
       const prompt = text.trim();
       if (!prompt) return;
-      void onSend(prompt, [], [], { entryFrom: 'next_step' });
+      composerRef.current?.setDraft(prompt, { entryFrom: 'next_step' });
     },
-    [onSend],
+    [],
   );
 
   const handleChatRailNavigate = useCallback(
@@ -4331,7 +4327,7 @@ function ChatRows({
   onNextStepCreateDesignSystem?: () => void;
   nextStepCreateDesignSystemBusy?: boolean;
   onPickSkill?: (skillId: string) => void;
-  /** 把一条「下一步引导」当作用户的下一条消息直接发出去 */
+  /** 把一条「下一步引导」填入 Composer,等用户确认后发送 */
   onNextStepSuggestion?: (text: string) => void;
   /** `anchorId` 同上。 */
   onArtifactDownload?: (fileName: string, anchorId?: string) => void;
