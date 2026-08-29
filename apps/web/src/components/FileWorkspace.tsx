@@ -173,12 +173,6 @@ import type { CommentSendResult } from './comment-send-result';
 
 type TranslateFn = (key: keyof Dict, vars?: Record<string, string | number>) => string;
 
-// Internal packaged-Electron acceptance gate. The product build remains on
-// the legacy transport until the convergence matrix passes; test packages can
-// opt into the terminal runtime without a user-visible setting or URL switch.
-const PREVIEW_RUNTIME_CONVERGENCE_BUILD_ENABLED =
-  process.env.NEXT_PUBLIC_OD_PREVIEW_RUNTIME_CONVERGENCE === '1';
-
 function syncInertAttribute(element: HTMLElement | null, inert: boolean): void {
   if (!element) return;
   // React 18 treats `inert` as an unknown string attribute while React 19
@@ -1379,7 +1373,10 @@ export function FileWorkspace({
   headerActions,
   viewerOnly = false,
   materializationPending = false,
-  previewRuntimeConvergence = PREVIEW_RUNTIME_CONVERGENCE_BUILD_ENABLED,
+  // Product entry points opt into the converged real-URL runtime explicitly.
+  // Keep the component default on the legacy comparator until Phase 4 deletes
+  // that implementation and its focused parity tests together.
+  previewRuntimeConvergence = false,
   readonlyNotice,
   fileSyncBadge = null,
 }: Props) {

@@ -3064,6 +3064,7 @@ export function DesignSystemDetailView({
             {workspaceProjectId ? (
               <FileWorkspace
                 projectId={workspaceProjectId}
+                previewRuntimeConvergence
                 projectKind="prototype"
                 files={workspaceProjectFiles}
                 filesGeneration={workspaceFilesGeneration}
