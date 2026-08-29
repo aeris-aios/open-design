@@ -9971,6 +9971,108 @@ describe('FileViewer tweaks toolbar', () => {
     expect(document.body.contains(first)).toBe(false);
   });
 
+  it('ignores file-list refreshes when the converged document identity is unchanged', async () => {
+    const file = htmlPreviewFile({ name: 'stable.html', path: 'stable.html', mtime: 1_000, size: 100 });
+    const sessionId = 'scope-stable';
+    const documentVersion = '100:1000';
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = typeof input === 'string'
+        ? input
+        : input instanceof Request
+          ? input.url
+          : String(input);
+      if (url.startsWith('/api/projects/project-1/raw/stable.html')) {
+        return new Response('<!doctype html><main>Stable</main>', {
+          status: 200,
+          headers: { 'Content-Type': 'text/html' },
+        });
+      }
+      if (url === '/api/projects/project-1/files') {
+        return new Response(JSON.stringify({ files: [file] }), { status: 200 });
+      }
+      if (url.includes('/api/projects/project-1/preview-url')) {
+        return new Response(JSON.stringify({
+          url: '/api/projects/project-1/preview/legacy-scope/stable.html',
+          file: 'stable.html',
+          expiresAt: Date.now() + 60 * 60 * 1000,
+          scopedOrigin: {
+            normalUrl: `http://n-${sessionId}.localhost:43111/stable.html`,
+            poweredUrl: `http://p-${sessionId}.localhost:43111/stable.html`,
+            documentVersion,
+            previewPolicy: {
+              sandboxProfile: 'normal',
+              guards: { storage: false, focus: false, redirect: false },
+              deck: false,
+            },
+          },
+        }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ deployments: [] }), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const view = (filesRefreshKey: number) => (
+      <IframeKeepAliveProvider>
+        <FileViewer
+          projectId="project-1"
+          projectKind="prototype"
+          file={file}
+          filesRefreshKey={filesRefreshKey}
+          previewRuntimeConvergence
+        />
+      </IframeKeepAliveProvider>
+    );
+    const { rerender } = render(view(0));
+    const frame = await waitFor(() => (
+      screen.getByTestId('preview-runtime-frame-standby') as HTMLIFrameElement
+    ));
+    const capabilities: PreviewRuntimeCapability[] = [
+      'content_measurement',
+      'scroll',
+      'snapshot',
+      'observability',
+      'selection',
+      'tweaks',
+      'palette',
+    ];
+    for (const type of [
+      'od:preview:hello',
+      'od:preview:capabilities-applied',
+      'od:preview:visible-paint',
+    ] as const) {
+      act(() => {
+        window.dispatchEvent(new MessageEvent('message', {
+          source: frame.contentWindow,
+          data: {
+            type,
+            protocolVersion: PREVIEW_RUNTIME_PROTOCOL_VERSION,
+            sessionId,
+            documentVersion,
+            ...(type === 'od:preview:hello'
+              ? { availableCapabilities: capabilities }
+              : {}),
+            ...(type === 'od:preview:capabilities-applied'
+              ? { enabledCapabilities: capabilities }
+              : {}),
+          },
+        }));
+      });
+    }
+    expect(screen.getByTestId('preview-runtime-frame-current')).toBe(frame);
+
+    rerender(view(7));
+    rerender(view(9));
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByTestId('preview-runtime-frame-current')).toBe(frame);
+    expect(screen.queryByTestId('preview-runtime-frame-standby')).toBeNull();
+    expect(fetchMock.mock.calls.filter(([input]) => (
+      String(input).includes('/api/projects/project-1/preview-url')
+    ))).toHaveLength(1);
+  });
+
   it('navigates a converged deck directly without replacing its real-URL frame', async () => {
     const file = htmlPreviewFile({
       name: 'deck.html',

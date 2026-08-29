@@ -9561,7 +9561,11 @@ function HtmlViewer({
     previewRuntimeConvergence
     && sourceAuthorizationScopeKey !== null
     && liveHtml === undefined;
-  const previewRuntimeRevisionKey = `${sourceSnapshotRefreshKey}:${reloadKey}`;
+  // Match the daemon's exact HTML document identity. filesRefreshKey is a
+  // catalog/SSE reconciliation generation and may advance several times for
+  // one unchanged file; including it here minted redundant scopes and staged
+  // byte-identical iframes. reloadKey remains an explicit user navigation.
+  const previewRuntimeRevisionKey = `${file.size}:${file.mtime}:${reloadKey}`;
   const previewRuntimeScopedNavigation = useProjectScopedPreviewNavigation({
     projectId,
     fileName: file.name,
