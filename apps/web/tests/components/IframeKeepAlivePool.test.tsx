@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   IframeKeepAliveProvider,
   PooledIframe,
   previewIframeKeepAliveKey,
+  useIframeKeepAlivePool,
 } from '../../src/components/IframeKeepAlivePool';
 
 afterEach(cleanup);
@@ -73,5 +74,47 @@ describe('PooledIframe', () => {
 
     rerender(<Harness fileName="b.html" />);
     expect(screen.getByTestId('pooled-frame')).not.toBe(frameB);
+  });
+
+  it('matches a versioned runtime frame by its logical file name during eviction', () => {
+    const runtimeKey = `${previewIframeKeepAliveKey('project-1', 'index.html')}\0scope-0001\0v1`;
+    function PoolContents({ shown }: { shown: boolean }) {
+      const pool = useIframeKeepAlivePool();
+      return (
+        <>
+          <button
+            type="button"
+            onClick={() => pool.evictMatching((entry) => (
+              entry.projectId === 'project-1' && entry.fileName === 'index.html'
+            ))}
+          >
+            evict index
+          </button>
+          {shown ? (
+            <PooledIframe
+              cacheKey={runtimeKey}
+              src="http://n-scope-0001.localhost:17456/index.html"
+              title="index.html"
+              data-testid="pooled-frame"
+            />
+          ) : null}
+        </>
+      );
+    }
+    const view = (shown: boolean) => (
+      <IframeKeepAliveProvider>
+        <PoolContents shown={shown} />
+      </IframeKeepAliveProvider>
+    );
+
+    const { container, rerender } = render(view(true));
+    const frame = screen.getByTestId('pooled-frame');
+    rerender(view(false));
+    expect(container.querySelector('.iframe-keep-alive-pool iframe')).toBe(frame);
+
+    fireEvent.click(screen.getByRole('button', { name: 'evict index' }));
+
+    expect(frame.isConnected).toBe(false);
+    expect(container.querySelector('.iframe-keep-alive-pool iframe')).toBeNull();
   });
 });

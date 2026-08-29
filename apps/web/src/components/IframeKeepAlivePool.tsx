@@ -70,9 +70,16 @@ function parkIframeElement(frame: HTMLIFrameElement) {
 function parseKeepAliveKey(key: string): { projectId: string; fileName: string } {
   const separator = key.indexOf('\0');
   if (separator < 0) return { projectId: key, fileName: '' };
+  const fileAndRevision = key.slice(separator + 1);
+  const revisionSeparator = fileAndRevision.indexOf('\0');
   return {
     projectId: key.slice(0, separator),
-    fileName: key.slice(separator + 1),
+    // Terminal runtime keys append session/version identity after a second
+    // NUL. Pool metadata must keep the logical file name so workspace LRU and
+    // deletion cleanup can evict every revision of that file together.
+    fileName: revisionSeparator < 0
+      ? fileAndRevision
+      : fileAndRevision.slice(0, revisionSeparator),
   };
 }
 
