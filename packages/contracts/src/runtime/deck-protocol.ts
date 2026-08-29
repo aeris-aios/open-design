@@ -11,14 +11,23 @@ export const DECK_PROTOCOL_V1_CAPABILITIES = [
 
 export type DeckNavigationAction = 'next' | 'prev' | 'first' | 'last' | 'go';
 
-export interface DeckNavigateMessage {
+interface DeckNavigateMessageBase {
   type: typeof DECK_NAVIGATE_MESSAGE_TYPE;
-  action: DeckNavigationAction;
-  /** Zero-based target index. Required when action is `go`. */
-  index?: number;
   /** Omitted by legacy hosts; v1 runtimes intentionally accept both forms. */
   protocolVersion?: typeof DECK_PROTOCOL_VERSION;
 }
+
+export type DeckNavigateMessage = DeckNavigateMessageBase & (
+  | {
+      action: 'go';
+      /** Zero-based target index. */
+      index: number;
+    }
+  | {
+      action: Exclude<DeckNavigationAction, 'go'>;
+      index?: never;
+    }
+);
 
 export interface DeckStateMessage {
   type: typeof DECK_STATE_MESSAGE_TYPE;

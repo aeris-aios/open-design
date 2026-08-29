@@ -52,6 +52,8 @@ interface CustomDeckOptions {
   navigationLockMs?: number;
   /** Expose one artifact-owned direct-index control per slide. */
   directIndexControls?: boolean;
+  /** Keep direct-index controls visible but ignore their click handlers. */
+  ignoreDirectIndexControls?: boolean;
 }
 
 function setupCustomCounterDeck(options: CustomDeckOptions = {}) {
@@ -134,7 +136,7 @@ function setupCustomCounterDeck(options: CustomDeckOptions = {}) {
       const dot = win.document.createElement('button');
       dot.className = 'nav-dot';
       dot.addEventListener('click', () => {
-        if (navigationLocked) return;
+        if (options.ignoreDirectIndexControls || navigationLocked) return;
         apply(index);
         lockNavigation();
       });
@@ -334,25 +336,32 @@ describe('deck bridge - keyboard paging keeps page counters in sync', () => {
     expect(slideStatesOf(parentPostMessage).at(-1)).toMatchObject({ active: 1, count: 3 });
   });
 
-  it('routes a selected thumbnail through the same keyboard path as footer paging', () => {
-    const { win, parentPostMessage, track, pagerCur, visited } = setupCustomCounterDeck({
-      directIndexControls: true,
-      listenOn: 'window',
-    });
-    visited.length = 0;
+  it('reaches a selected thumbnail before the direct-index retry window', async () => {
+    vi.useFakeTimers();
+    try {
+      const { win, parentPostMessage, track, pagerCur, visited } = setupCustomCounterDeck({
+        directIndexControls: true,
+        ignoreDirectIndexControls: true,
+        listenOn: 'window',
+      });
+      visited.length = 0;
 
-    win.dispatchEvent(new win.MessageEvent('message', {
-      data: { type: 'od:slide', action: 'go', index: 2 },
-    }));
+      win.dispatchEvent(new win.MessageEvent('message', {
+        data: { type: 'od:slide', action: 'go', index: 2 },
+      }));
+      await vi.advanceTimersByTimeAsync(1499);
 
-    // The keyboard handler is synchronous, so the bridge reaches the target
-    // in the same task without entering the 1.5s direct-index retry path.
-    // Both steps happen before the browser can paint an intermediate slide.
-    expect(track.style.transform).toBe('translateX(-200vw)');
-    expect(pagerCur.textContent).toBe('3');
-    expect(win.document.querySelectorAll('.slide')[2]?.classList.contains('is-active')).toBe(true);
-    expect(visited).toEqual([1, 2]);
-    expect(slideStatesOf(parentPostMessage).at(-1)).toMatchObject({ active: 2, count: 3 });
+      // The authored dots deliberately ignore clicks, matching the reported
+      // legacy deck. Keyboard navigation must still reach the target before
+      // the bridge's 1.5s direct-index retry window can expire.
+      expect(track.style.transform).toBe('translateX(-200vw)');
+      expect(pagerCur.textContent).toBe('3');
+      expect(win.document.querySelectorAll('.slide')[2]?.classList.contains('is-active')).toBe(true);
+      expect(visited).toEqual([1, 2]);
+      expect(slideStatesOf(parentPostMessage).at(-1)).toMatchObject({ active: 2, count: 3 });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('keeps keyboard-only deck state in sync across direct selection and later paging', async () => {
