@@ -114,6 +114,7 @@ import {
   buildTweaksRuntimeModule,
 } from '../../http/preview-runtime-modules.js';
 import type { RouteDeps } from '../../server-context.js';
+import type { ProjectWatchFileIdentity } from '../../project-watchers.js';
 import { listSkills } from '../../skills.js';
 import { isSafeId } from '../../projects.js';
 import {
@@ -288,7 +289,34 @@ function sameLocalCatalogScopes(left: unknown, right: unknown): boolean {
   return JSON.stringify(left ?? null) === JSON.stringify(right ?? null);
 }
 
+interface HtmlPreviewPolicyFileIdentity {
+  filePath: string;
+  size: number;
+  mtime: number;
+  mime?: string;
+}
+
+function htmlPreviewDocumentVersion(meta: { size: number; mtime: number }): string {
+  return `${meta.size}:${meta.mtime}`;
+}
+
+function prewarmHtmlPreviewPolicyFile(
+  index: HtmlPreviewPolicyIndex,
+  fileName: string,
+  file: HtmlPreviewPolicyFileIdentity,
+): void {
+  const isHtml = file.mime
+    ? /^text\/html(?:;|$)/i.test(file.mime)
+    : /\.html?$/i.test(fileName);
+  if (!isHtml) return;
+  index.prewarm({
+    filePath: file.filePath,
+    documentVersion: htmlPreviewDocumentVersion(file),
+  });
+}
+
 export interface RegisterProjectRoutesDeps extends RouteDeps<'db' | 'design' | 'http' | 'paths' | 'projectStore' | 'projectFiles' | 'conversations' | 'templates' | 'status' | 'events' | 'ids' | 'telemetry' | 'appConfig' | 'agents' | 'validation' | 'collabSync'> {
+  htmlPreviewPolicyIndex?: HtmlPreviewPolicyIndex;
   pluginScope?: {
     loadRegistry: (options: {
       workspaceId?: string | null;
@@ -1963,11 +1991,12 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
     deleteWorkspaceProject,
     countWorkspaceProjectRefs,
   } = ctx.projectStore;
-  const { writeProjectFile, readProjectFile, ensureProject, listFiles, listTabs, setTabs, resolveProjectDir } = ctx.projectFiles;
+  const { writeProjectFile, readProjectFile, ensureProject, listFiles, listTabs, setTabs, resolveProjectDir, resolveProjectFilePath } = ctx.projectFiles;
   const { insertConversation } = ctx.conversations;
   const { getTemplate, listTemplates, deleteTemplate, insertTemplate, findTemplateByNameAndProject, updateTemplate } = ctx.templates;
   const { listLatestProjectRunStatuses, listProjectsAwaitingInput, normalizeProjectDisplayStatus, composeProjectDisplayStatus, listProjects, listUnboundProjects } = ctx.status;
   const { subscribeFileEvents, activeProjectEventSinks } = ctx.events;
+  const htmlPreviewPolicyIndex = ctx.htmlPreviewPolicyIndex ?? new HtmlPreviewPolicyIndex();
   const { randomId } = ctx.ids;
   const { validateProjectDesignSystemId, validateProjectSkillId } = ctx.validation;
   const { collabSync, teamProjectCatalog, workspaceTypes } = ctx;
@@ -5235,7 +5264,27 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
       }
       sinks.add(projectEventSink);
       const watchProject = getProject(db, req.params.id);
-      sub = subscribeFileEvents(PROJECTS_DIR, req.params.id, (evt: any) => {
+      sub = subscribeFileEvents(PROJECTS_DIR, req.params.id, (
+        evt: any,
+        file?: ProjectWatchFileIdentity,
+      ) => {
+        if (evt.kind !== 'unlink') {
+          if (file) {
+            prewarmHtmlPreviewPolicyFile(htmlPreviewPolicyIndex, evt.path, file);
+          } else {
+            // Custom watcher adapters may not provide an exact identity. Keep
+            // them compatible while production's always-stat watcher starts
+            // classification synchronously before the SSE reaches the Web.
+            void resolveProjectFilePath(
+              PROJECTS_DIR,
+              req.params.id,
+              evt.path,
+              watchProject?.metadata,
+            ).then((resolved: HtmlPreviewPolicyFileIdentity) => {
+              prewarmHtmlPreviewPolicyFile(htmlPreviewPolicyIndex, evt.path, resolved);
+            }).catch(() => undefined);
+          }
+        }
         sse.send('file-changed', evt);
       }, { metadata: watchProject?.metadata });
       sub.ready.then(() => sse.send('ready', { projectId: req.params.id })).catch(() => {});
@@ -5469,6 +5518,7 @@ export function registerProjectArtifactRoutes(app: Express, ctx: RegisterProject
 
 export interface RegisterProjectFileRoutesDeps extends RouteDeps<'db' | 'http' | 'paths' | 'uploads' | 'node' | 'projectStore' | 'projectFiles' | 'documents' | 'artifacts' | 'projectPreviewScopes'> {
   getResolvedPort: () => number;
+  htmlPreviewPolicyIndex?: HtmlPreviewPolicyIndex;
   verifyWorkspaceRequestAuthority?: VerifyWorkspaceRequestAuthority;
   authorizeProjectRequest?: AuthorizeProjectRequest;
   /** Startup-hydrated O(1) quarantine lookup for stale Team mirrors. */
@@ -5514,7 +5564,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
   const { buildDocumentPreview } = ctx.documents;
   const { validateArtifactManifestInput } = ctx.artifacts;
   const { projectPreviewScopes } = ctx;
-  const htmlPreviewPolicyIndex = new HtmlPreviewPolicyIndex();
+  const htmlPreviewPolicyIndex = ctx.htmlPreviewPolicyIndex ?? new HtmlPreviewPolicyIndex();
   const prewarmHtmlPreviewPolicy = (
     projectId: string,
     fileName: string,
@@ -5522,11 +5572,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
   ): void => {
     void resolveProjectFilePath(PROJECTS_DIR, projectId, fileName, metadata)
       .then((meta: { filePath: string; mime: string; mtime: number; size: number }) => {
-        if (!/^text\/html(?:;|$)/i.test(meta.mime)) return;
-        htmlPreviewPolicyIndex.prewarm({
-          filePath: meta.filePath,
-          documentVersion: htmlPreviewDocumentVersion(meta),
-        });
+        prewarmHtmlPreviewPolicyFile(htmlPreviewPolicyIndex, fileName, meta);
       })
       .catch(() => undefined);
   };
@@ -5558,10 +5604,6 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
     'palette',
     'edit',
   ] as const satisfies readonly PreviewRuntimeCapability[];
-
-  function htmlPreviewDocumentVersion(meta: { size: number; mtime: number }): string {
-    return `${meta.size}:${meta.mtime}`;
-  }
 
   function setProjectPreviewHeaders(res: Response) {
     res.setHeader('Cache-Control', 'no-store');

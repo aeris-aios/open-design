@@ -11,6 +11,7 @@ import {
   makeIgnored,
   subscribe,
   type ProjectWatchEvent,
+  type ProjectWatchFileIdentity,
   type ProjectWatcherOptions,
 } from '../src/project-watchers.js';
 
@@ -239,6 +240,49 @@ describe('project-watchers (real chokidar)', () => {
       });
 
       expect(events.every((e) => e.type === 'file-changed')).toBe(true);
+    } finally {
+      await sub.unsubscribe();
+      await rm(root, { recursive: true, force: true });
+    }
+  }, REAL_WATCHER_TEST_TIMEOUT_MS);
+
+  it('reports an exact settled file identity with add and change events', async () => {
+    const { root, projectId } = await makeProjectsRoot();
+    const projectRoot = path.join(root, projectId);
+    const observed: Array<{
+      event: ProjectWatchEvent;
+      file: ProjectWatchFileIdentity | undefined;
+    }> = [];
+    const sub = subscribe(root, projectId, (event, file) => {
+      observed.push({ event, file });
+    }, FAST_WATCH_OPTIONS);
+    await sub.ready;
+
+    try {
+      const filePath = path.join(projectRoot, 'preview.html');
+      await writeFile(filePath, '<!doctype html><p>first</p>');
+      await waitFor(() => observed.some(({ event }) => (
+        event.kind === 'add' && event.path === 'preview.html'
+      )));
+
+      const added = observed.find(({ event }) => event.kind === 'add');
+      expect(added?.file).toMatchObject({
+        filePath,
+        size: Buffer.byteLength('<!doctype html><p>first</p>'),
+      });
+      expect(added?.file?.mtime).toBeGreaterThan(0);
+
+      await writeFile(filePath, '<!doctype html><p>second revision</p>');
+      await waitFor(() => observed.some(({ event }) => (
+        event.kind === 'change' && event.path === 'preview.html'
+      )));
+
+      const changed = observed.find(({ event }) => event.kind === 'change');
+      expect(changed?.file).toMatchObject({
+        filePath,
+        size: Buffer.byteLength('<!doctype html><p>second revision</p>'),
+      });
+      expect(changed?.file?.mtime).toBeGreaterThanOrEqual(added?.file?.mtime ?? 0);
     } finally {
       await sub.unsubscribe();
       await rm(root, { recursive: true, force: true });

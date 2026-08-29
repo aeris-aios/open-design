@@ -492,6 +492,7 @@ import { readOpenCodeServiceFailure } from './runtimes/opencode-log.js';
 import { createAgentStderrVisibilityFilter } from './amr-stderr-filter.js';
 import { createQoderStreamHandler } from './runtimes/qoder-stream.js';
 import { subscribe as subscribeFileEvents } from './project-watchers.js';
+import { HtmlPreviewPolicyIndex } from './http/html-preview-policy-index.js';
 import { importFigmaFromBytes } from './figma/figma-import.js';
 import { renderDesignSystemPreview } from './design-systems/preview.js';
 import { renderDesignSystemShowcase } from './design-systems/showcase.js';
@@ -2927,6 +2928,7 @@ export async function startServer({
   app.use('/api/brands/:id/extract-from-html', express.json({ limit: '32mb' }));
   app.use(express.json({ limit: '4mb' }));
   const projectPreviewScopes = createProjectPreviewScopeRegistry();
+  const htmlPreviewPolicyIndex = new HtmlPreviewPolicyIndex();
 
   // Plan §3.K1 — API-token middleware.
   //
@@ -8285,6 +8287,7 @@ export async function startServer({
       ),
     },
     events: projectEventDeps,
+    htmlPreviewPolicyIndex,
     ids: idDeps,
     telemetry: {
       reportFinalizedMessage,
@@ -8777,6 +8780,7 @@ export async function startServer({
     documents: { buildDocumentPreview },
     artifacts: artifactDeps,
     projectPreviewScopes,
+    htmlPreviewPolicyIndex,
     getResolvedPort: () => resolvedPort,
     verifyWorkspaceRequestAuthority,
   });

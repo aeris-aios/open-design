@@ -21,7 +21,15 @@ import { projectDir, resolveProjectDir } from './projects.js';
 const WATCHER_ONLY_IGNORE_NAMES = new Set(['.ds_store']);
 export type ProjectWatchKind = 'add' | 'change' | 'unlink';
 export interface ProjectWatchEvent { type: 'file-changed'; path: string; kind: ProjectWatchKind }
-export type ProjectWatchCallback = (evt: ProjectWatchEvent) => void;
+export interface ProjectWatchFileIdentity {
+  filePath: string;
+  size: number;
+  mtime: number;
+}
+export type ProjectWatchCallback = (
+  evt: ProjectWatchEvent,
+  file?: ProjectWatchFileIdentity,
+) => void;
 type ProjectWatchIgnored = (absPath: string, stats?: Stats) => boolean;
 export interface ProjectWatcherOptions {
   ignored?: ProjectWatchIgnored;
@@ -80,6 +88,9 @@ function createWatcher(
     // path ignore predicate keeps emitted events project-scoped, an unhandled
     // symlink would still cost descriptors and surface external FS activity.
     followSymlinks: false,
+    // add/change subscribers use this exact settled size + mtime identity to
+    // start versioned background work before the UI reacts to the SSE event.
+    alwaysStat: true,
     usePolling,
     ...(usePolling ? { interval: 100, binaryInterval: 300 } : {}),
   };
@@ -107,13 +118,16 @@ function makeEntry(dir: string, opts: Required<Pick<ProjectWatcherOptions, 'igno
     resolveReady();
   };
 
-  const broadcast = (kind: ProjectWatchKind) => (absPath: string) => {
+  const broadcast = (kind: ProjectWatchKind) => (absPath: string, stats?: Stats) => {
     const rel = path.relative(dir, absPath);
     if (!rel || rel.startsWith('..')) return;
     const evt: ProjectWatchEvent = { type: 'file-changed', path: rel.split(path.sep).join('/'), kind };
+    const file = stats && kind !== 'unlink'
+      ? { filePath: absPath, size: stats.size, mtime: stats.mtimeMs }
+      : undefined;
     for (const cb of entry.subscribers) {
       try {
-        cb(evt);
+        cb(evt, file);
       } catch (err) {
         // A buggy subscriber must not poison siblings. Log in dev so the bug
         // doesn't go silent during local testing.
