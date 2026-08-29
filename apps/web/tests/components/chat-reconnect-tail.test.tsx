@@ -9,20 +9,13 @@
  *   · 重连中出现,带「第几次 / 共几次」
  *   · 次数用尽转失败态,并给出一颗把事交回给人的〔重新连接〕
  *   · 恢复后**自动消失**,历史消息里不残留
- *   · 与组件 20 · PauseLine **不同时出现**
  */
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { forwardRef, useState } from 'react';
+import { forwardRef } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ChatPane } from '../../src/components/ChatPane';
-import { PauseLine } from '../../src/components/chat/PauseLine';
-import { Reconnect } from '../../src/components/chat/Reconnect';
-import {
-  type ChatReconnectSignal,
-  type ChatReconnectView,
-  nextChatReconnectView,
-} from '../../src/runtime/chat/reconnect-state';
+import type { ChatReconnectView } from '../../src/runtime/chat/reconnect-state';
 import type { AppConfig, ChatMessage } from '../../src/types';
 
 const translate = (key: string, vars?: Record<string, string | number>) => {
@@ -197,64 +190,5 @@ describe('S29 · 重连行挂在流水尾部', () => {
       ],
     });
     expect(screen.queryByTestId('chat-reconnect')).toBeNull();
-  });
-});
-
-/**
- * 与组件 20 的互斥。两者都由**同一份运行记录**推出来,所以这里不是各摆一个组件
- * 看它们碰不碰,而是把真实的信号序列走一遍,每一步都检查屏幕上至多只有一行。
- */
-function Tail({ signals }: { signals: ChatReconnectSignal[] }) {
-  const [i, setI] = useState(0);
-  const applied = signals.slice(0, i);
-  const reconnect = applied.reduce<ChatReconnectView | null>(
-    (acc, signal) => nextChatReconnectView(acc, signal),
-    null,
-  );
-  // PauseLine 的显示条件:这一轮落在 canceled,且是用户自己按的停。
-  const canceled = applied.some((s) => s.kind === 'settled' && s.status === 'canceled');
-
-  return (
-    <>
-      <button type="button" data-testid="step" onClick={() => setI((n) => n + 1)}>
-        step
-      </button>
-      {reconnect ? (
-        <Reconnect
-          attempt={reconnect.attempt}
-          max={reconnect.max}
-          exhausted={reconnect.exhausted}
-          onReconnect={() => undefined}
-        />
-      ) : null}
-      <PauseLine cancelOrigin={canceled ? 'user_stop' : null} remainingSteps={3} />
-    </>
-  );
-}
-
-describe('S29 · 与组件 20 PauseLine 不同时出现', () => {
-  it('never puts both lines on screen, at any step of a stop-while-offline', () => {
-    const signals: ChatReconnectSignal[] = [
-      { kind: 'transport', runId: 'run-1', conversationId: CONV, attempt: 1, max: 5, phase: 'reconnecting' },
-      { kind: 'transport', runId: 'run-1', conversationId: CONV, attempt: 2, max: 5, phase: 'reconnecting' },
-      // 用户在掉线期间按下停止
-      { kind: 'settled', runId: 'run-1', status: 'canceled' },
-    ];
-    render(<Tail signals={signals} />);
-    const step = screen.getByTestId('step');
-
-    const onScreen = () => ({
-      reconnect: screen.queryByTestId('chat-reconnect') !== null,
-      pause: screen.queryByTestId('chat-pause-line') !== null,
-    });
-
-    expect(onScreen()).toEqual({ reconnect: false, pause: false });
-    fireEvent.click(step);
-    expect(onScreen()).toEqual({ reconnect: true, pause: false });
-    fireEvent.click(step);
-    expect(onScreen()).toEqual({ reconnect: true, pause: false });
-    fireEvent.click(step);
-    // 停下来那一刻:重连行让位,暂停行接手。掉线本身永远不走暂停行。
-    expect(onScreen()).toEqual({ reconnect: false, pause: true });
   });
 });

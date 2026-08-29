@@ -84,7 +84,6 @@ import {
   latestTodoWriteInputFromMessages,
   parseTodoWriteInput,
   previousTodosByAssistantMessageId,
-  unfinishedTodosFromEvents,
 } from '../runtime/todos';
 import type { AppConfig, ChatAttachment, ChatCommentAttachment, ChatMessage, ChatMessageFeedbackChange, Conversation, DesignSystemSummary, PreviewComment, Project, ProjectFile, ProjectMetadata, SkillSummary } from '../types';
 import { agentDisplayName } from '../utils/agentLabels';
@@ -142,7 +141,6 @@ import { UpgradeCard } from './chat/UpgradeCard';
 import { SupportDialog } from './chat/SupportDialog';
 import { supportChannels } from './chat/support-channels';
 import { ExportLogsAction } from './chat/ExportLogsAction';
-import { PauseLine } from './chat/PauseLine';
 import { repoConnectCopy } from './design-system-github-evidence';
 import { isRenderableSketchJson, SketchPreview } from './SketchPreview';
 import type { SettingsSection } from './SettingsDialog';
@@ -1953,25 +1951,6 @@ export function ChatPane({
       'noopener,noreferrer',
     );
   }, [amrProfile, analytics.track, config?.installationId, config?.telemetry?.metrics]);
-  /**
-   * 「这一轮是你自己按停的」——交付稿第 81 格那一行灰字的**唯一**判据。
-   *
-   * 只认最后一轮(和报错卡同一个取法):后面又跑了一轮,上一轮的暂停就不该再挂在
-   * 流水末尾。`cancelOrigin === 'user_stop'` 是 daemon 给的证据,证不出就不说 ——
-   * 缺字段(旧 daemon)或 daemon 关机 / 项目清理杀掉的,一律不画,否则 daemon
-   * 重启后这一行会谎报(盘点 R8)。
-   *
-   * 还在跑 / 还在重连的一轮不是 `canceled`,所以这一行和「重连」结构上不会同时出现。
-   */
-  const userStoppedTurn = useMemo(() => {
-    if (streaming) return null;
-    const last = displayMessages[displayMessages.length - 1];
-    if (!last || last.role !== 'assistant' || last.id !== lastAssistantId) return null;
-    if (last.runStatus !== 'canceled' || last.cancelOrigin !== 'user_stop') return null;
-    // 一步不剩就不出这一行:那一轮已经跑完,「这轮被你停了」由回合状态行去报。
-    const remainingSteps = unfinishedTodosFromEvents(last.events).length;
-    return remainingSteps > 0 ? { remainingSteps } : null;
-  }, [displayMessages, lastAssistantId, streaming]);
   const visibleRecoveryActionTypes = useMemo(() => {
     const actions: TrackingRunRecoveryActionType[] = [];
     if (!retryAssistant || !onRetry || !runFailureUi) return actions;
@@ -3734,17 +3713,15 @@ export function ChatPane({
                   />
                 ) : null}
                 {/*
-                 * 流水最后一行,三者**互斥**,顺序即优先级。
-                 *
-                 * 组件 20(暂停)自己的注释把这条边界写死了:「断线不走这一行 ——
-                 * 那由组件 22 · 重连全程接管。掉线时调用方渲染 `Reconnect`,
-                 * 不渲染这一行;**两者不同时出现是调用方的接线约束**」。
-                 * 所以重连排在前面,`userStoppedTurn` 那一支要显式让位 ——
-                 * 靠两个 `? :` 各判各的,迟早会同时出现。
-                 *
                  * 组件 22(重连,第 82–84 格 · S29):产品裁决用设计稿现有的设计,
                  * 位置在**会话中最后一行**。`reconnect` 为空就整行不在 ——
                  * 「恢复后自动消失」是这样成立的,不是靠再画一句「已恢复」。
+                 *
+                 * run 被用户手动终止时不在这里再画一条暂停状态。它已经由对应
+                 * AssistantMessage 的回合 footer 显示「已手动停止」;live 消息与
+                 * 历史回放都走同一份 `displayMessages` 渲染路径,尾部重复一行会让
+                 * 同一个 terminal status 出现两次。真正的暂停任务形态仍由组件 20
+                 * 自己保留,不能拿 run 的 `canceled/user_stop` 冒充。
                  */}
                 {reconnect ? (
                   <Reconnect
@@ -3756,14 +3733,6 @@ export function ChatPane({
                        daemon 重跑一轮时连接是通的,给一颗「重新连接」既没有对应的
                        动作,也会让用户以为是自己网络的问题。 */
                     onReconnect={reconnect.reason === 'transport' ? onManualReconnect : undefined}
-                  />
-                ) : userStoppedTurn ? (
-                  /* 「已手动暂停任务」那一行(交付稿第 81 格)。判据见 `userStoppedTurn`;
-                     写在 `reconnect` 的 else 分支里,而不是另起一个 `? :` —— 这样
-                     「两者不同时出现」由结构保证,不靠两处判据碰巧不重叠。 */
-                  <PauseLine
-                    cancelOrigin="user_stop"
-                    remainingSteps={userStoppedTurn.remainingSteps}
                   />
                 ) : null}
                 {/* Dynamic spacer: when a turn is anchored to the top, this

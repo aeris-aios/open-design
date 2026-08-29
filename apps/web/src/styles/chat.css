@@ -2165,12 +2165,27 @@
 .composer-send.stop:focus-visible .composer-run-label { visibility: hidden; }
 .composer-send.stop:hover .composer-stop-label,
 .composer-send.stop:focus-visible .composer-stop-label { visibility: visible; }
+/* Admission is not a running process yet, so it cannot be stopped. Keep the
+   animated pill fully visible while an async pre-run gate is deciding, and do
+   not apply the stop-on-hover label swap to this disabled state. */
+.composer-send.stop.admission-pending:disabled {
+  opacity: 1;
+  background: var(--text-strong);
+  border-color: var(--text-strong);
+  color: var(--bg-panel);
+}
+.composer-send.stop.admission-pending:hover .composer-run-label,
+.composer-send.stop.admission-pending:focus-visible .composer-run-label { visibility: visible; }
 /* Same hover formula as the home send pill: lighten the ink ground 14%
    instead of jumping to the lighter --text gray. */
 .composer-send.stop:hover {
   background: color-mix(in srgb, var(--text-strong) 86%, #fff);
   border-color: transparent;
   color: var(--bg-panel);
+}
+.composer-send.stop.admission-pending:hover {
+  background: var(--text-strong);
+  border-color: var(--text-strong);
 }
 .composer-run-glyph {
   display: block;

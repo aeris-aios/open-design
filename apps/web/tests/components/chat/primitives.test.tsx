@@ -335,7 +335,9 @@ describe('生图行(组件 12)', () => {
   it('还在出:球 + 计数 + 一排大格,出了的填上、没出的留位', () => {
     render(<ImageRow row={img({ done: 2, thumbs: ['a.png', 'b.png'], pending: true, elapsedMs: null })} />);
     expect(screen.getByText('2/4')).toBeTruthy();
-    expect(document.querySelector('[data-orb]')).not.toBeNull();
+    const running = screen.getByRole('img', { name: '进行中' });
+    expect(running.className).toMatch(/run/);
+    expect(document.querySelector('[data-orb]')).toBeNull();
     const shots = [...document.querySelectorAll('[class*="imgs"] > *')];
     expect(shots).toHaveLength(4);
     expect(shots.filter((s) => s.className.includes('load'))).toHaveLength(2);

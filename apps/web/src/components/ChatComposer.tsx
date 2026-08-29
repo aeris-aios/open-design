@@ -626,6 +626,12 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
     // is cleared. Keep a synchronous latch so a second Enter/click in that
     // window cannot enqueue the same still-visible payload again.
     const composedSendPendingRef = useRef(false);
+    // The latch above prevents duplicates, but a ref alone leaves the UI
+    // completely unchanged while an async admission gate (notably AMR's
+    // workspace billing check) is pending. Mirror it in state so Send turns
+    // into an immediate, non-interactive "Preparing..." pill instead of
+    // looking like the click was lost.
+    const [composedSendPending, setComposedSendPending] = useState(false);
     const previousSessionModeRef = useRef(sessionMode);
 
     useEffect(() => {
@@ -1603,6 +1609,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
         },
       ).finally(() => {
         composedSendPendingRef.current = false;
+        setComposedSendPending(false);
       });
     }
 
@@ -1612,11 +1619,13 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
     ): boolean {
       if (composedSendPendingRef.current) return false;
       composedSendPendingRef.current = true;
+      setComposedSendPending(true);
       try {
         finishComposedSend(send(), pendingMetadata);
         return true;
       } catch (error) {
         composedSendPendingRef.current = false;
+        setComposedSendPending(false);
         throw error;
       }
     }
@@ -3205,8 +3214,9 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
       draft.trim().length > 0
       || staged.length > 0
       || liveCommentAttachments.length > 0;
+    const showAdmissionPendingButton = composedSendPending && !streaming;
     const showStopButton = streaming && !hasComposerPayload;
-    const showSendButton = !streaming || hasComposerPayload;
+    const showSendButton = (!streaming || hasComposerPayload) && !showAdmissionPendingButton;
     /* 托盘里要摆的那一排卡:已传好的 `staged` 与还在传 / 传失败的 `pendingUploads`
        合成一排,顺序按用户当初挑文件的顺序(合并规则是纯函数,单测在
        `tests/runtime/chat/staged-attachment.test.ts`)。
@@ -3768,6 +3778,21 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
             {leadingAccessory}
             <span className="composer-spacer" />
             {footerAccessory}
+            {showAdmissionPendingButton ? (
+              <button
+                type="button"
+                className="composer-send stop admission-pending"
+                data-testid="chat-send-pending"
+                disabled
+                aria-busy="true"
+                aria-label={t('assistant.statusPreparing')}
+              >
+                <ComposerRunIcon className="composer-run-glyph" />
+                <span className="composer-run-labels">
+                  <span className="composer-run-label">{t('assistant.statusPreparing')}</span>
+                </span>
+              </button>
+            ) : null}
             {showStopButton ? (
               <button
                 type="button"

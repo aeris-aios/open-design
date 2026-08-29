@@ -552,9 +552,9 @@ export interface DaemonStreamOptions {
    * 这一轮**被谁取消了**,由 `POST /api/runs/:id/cancel` 的应答如实带回。
    *
    * 只有走这条端点的取消才会拿到 `user_stop` —— 也就是「人按了停止」这件事的
-   * 唯一证据。UI 靠它决定要不要画那一行「已手动暂停任务」:
-   * `runStatus: 'canceled'` 自己分不出用户按停与 daemon 关机 / 项目清理杀掉,
-   * 照那个判据画,daemon 重启后会谎报(盘点 R8)。
+   * 唯一证据。它保留取消来源供持久化、诊断和归因使用;run 的终态展示由
+   * AssistantMessage footer 接管,不能再据此追加「已手动暂停任务」独立行 ——
+   * `user_stop` 表达的是终止 run,不等于任务进入可继续的 paused 状态。
    *
    * 旧 daemon 不带这个字段时**不发**这条回调 —— 证不出是用户按的就不说是。
    */
@@ -591,9 +591,9 @@ export interface DaemonReattachOptions {
    * 这一轮**被谁取消了**,由 `POST /api/runs/:id/cancel` 的应答如实带回。
    *
    * 只有走这条端点的取消才会拿到 `user_stop` —— 也就是「人按了停止」这件事的
-   * 唯一证据。UI 靠它决定要不要画那一行「已手动暂停任务」:
-   * `runStatus: 'canceled'` 自己分不出用户按停与 daemon 关机 / 项目清理杀掉,
-   * 照那个判据画,daemon 重启后会谎报(盘点 R8)。
+   * 唯一证据。它保留取消来源供持久化、诊断和归因使用;run 的终态展示由
+   * AssistantMessage footer 接管,不能再据此追加「已手动暂停任务」独立行 ——
+   * `user_stop` 表达的是终止 run,不等于任务进入可继续的 paused 状态。
    *
    * 旧 daemon 不带这个字段时**不发**这条回调 —— 证不出是用户按的就不说是。
    */

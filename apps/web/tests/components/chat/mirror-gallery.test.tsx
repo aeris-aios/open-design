@@ -1609,10 +1609,10 @@ const EDGE: Cell[] = [
   },
   {
     gid: 81, sub: '20-1', cmp: '暂停任务', state: '默认 · 一句话,到此为止', family: '边界',
-    node: () => <div className={CAGE_EDGE}><PauseLine cancelOrigin="user_stop" remainingSteps={0} /></div>,
+    node: () => <div className={CAGE_EDGE}><PauseLine /></div>,
     notes: [
-      '**只有 `user_stop` 才画这一行**:客户端今天只看 `runStatus: canceled`,把「用户按停」和「daemon 关机 / 项目清理杀掉」混成一种 —— 照那个判据画,daemon 重启后这一行会谎报',
-      '非用户主动取消时说什么,是新文案,待产品定(T25);缺字段的旧 daemon 一律不画',
+      '**只展示真正的 paused-task 状态**:`runStatus: canceled` / `cancelOrigin: user_stop` 是 run 终止,由回合 footer 报「已手动停止」,不能拿来驱动这一行',
+      '当前产品运行路径不挂载这一行;保留组件 20 的设计形态,等独立 paused-task 领域事实接入',
     ],
   },
   {

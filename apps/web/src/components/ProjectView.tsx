@@ -2827,7 +2827,7 @@ export function ProjectView({
    *
    * 读数来自传输层的 `onReconnect`(`providers/daemon.ts` 的 `DaemonReconnectState`),
    * 推演规则全在 `runtime/chat/reconnect-state.ts` —— 包括「恢复后整行消失」
-   * 与「和组件 20 PauseLine 不同时出现」这两条边界。这里只做搬运。
+   * 与「run 落终态后整行消失」这两条边界。这里只做搬运。
    */
   const [reconnectView, setReconnectView] = useState<ChatReconnectView | null>(null);
   const pushReconnectSignal = useCallback((signal: ChatReconnectSignal) => {
@@ -8821,8 +8821,8 @@ export function ProjectView({
             const endedAt = isTerminalRunStatus(runStatus) ? Date.now() : undefined;
             const runMayFinalize =
               !supersededRunsRef.current.has(controller);
-            // 这一轮落终态,掉线那一行就该让位 —— canceled 交给组件 20(PauseLine),
-            // succeeded 直接消失(不留「已恢复」)。见 reconnect-state 的规则表。
+            // 这一轮落终态,掉线那一行就该消失。canceled 由回合 footer 报结果,
+            // succeeded 同样不留「已恢复」。见 reconnect-state 的规则表。
             if (currentRunId) {
               pushReconnectSignal({ kind: 'settled', runId: currentRunId, status: runStatus });
             }

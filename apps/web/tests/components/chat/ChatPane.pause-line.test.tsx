@@ -1,14 +1,8 @@
 // @vitest-environment jsdom
 //
-// 红测:交付稿第 81 格「暂停任务」那一行灰字,产品的渲染路径要真的画出来。
-//
-// `apps/web/src/components/chat/PauseLine.tsx` 写好之后**零消费者** —— 只有陈列页
-// import 它。这里的每一条断言都从 `<ChatPane>` 出发。
-//
-// 最要紧的一条不是「出得来」,是「**不该出的时候不出**」:客户端今天只看
-// `runStatus: 'canceled'`,会把「用户按停」和「daemon 关机 / 项目清理杀掉」
-// 混成一种。照那个判据画,daemon 重启后这一行就会谎报「你手动停了任务」。
-// 判据只能是 `cancelOrigin === 'user_stop'`,缺字段(旧 daemon 不发)也不画。
+// 回归:run 的手动终止已经由 AssistantMessage footer 报「已手动停止」。ChatPane
+// 不能再把同一份 `canceled/user_stop` 映射成流水尾部的 PauseLine。live 状态更新和
+// 历史回放最终都进入 `displayMessages`,两条路径都在这里钉住。
 
 import { cleanup, render, screen } from '@testing-library/react';
 import { forwardRef } from 'react';
@@ -86,8 +80,8 @@ function stoppedMessage(overrides: Partial<ChatMessage> = {}): ChatMessage {
   } as ChatMessage;
 }
 
-function renderChat(opts: { messages: ChatMessage[]; streaming?: boolean }) {
-  return render(
+function pane(opts: { messages: ChatMessage[]; streaming?: boolean }) {
+  return (
     <ChatPane
       messages={opts.messages}
       streaming={opts.streaming ?? false}
@@ -105,92 +99,34 @@ function renderChat(opts: { messages: ChatMessage[]; streaming?: boolean }) {
       onSelectConversation={vi.fn()}
       onDeleteConversation={vi.fn()}
       config={{ agentId: 'amr', agentCliEnv: {} } as unknown as AppConfig}
-    />,
+    />
   );
 }
 
-describe('ChatPane — 暂停任务那一行', () => {
-  it('用户按停(user_stop)时,流水里出现这一行', () => {
-    const { container } = renderChat({ messages: [stoppedMessage()] });
+function renderChat(opts: { messages: ChatMessage[]; streaming?: boolean }) {
+  const view = render(pane(opts));
+  return {
+    ...view,
+    show: (next: { messages: ChatMessage[]; streaming?: boolean }) => view.rerender(pane(next)),
+  };
+}
 
-    const line = screen.getByTestId('chat-pause-line');
-    expect(line).toBeTruthy();
-    expect(line.textContent).toContain('chat.edge.paused');
-    expect(container.querySelector('.chat-log')?.contains(line)).toBe(true);
-    // 边界 1:无操作 —— 这一行里不该有任何按钮。
-    expect(line.querySelector('button')).toBeNull();
-    // 边界 2:不摊剩余步骤 —— 一个数字都不往屏幕上放。
-    expect(line.textContent).not.toMatch(/\d/);
-  });
+describe('ChatPane — run 手动终止不冒充 paused task', () => {
+  it('live run 从 running 落到 canceled 时不追加独立暂停行', () => {
+    const live = stoppedMessage({ runStatus: 'running', cancelOrigin: undefined });
+    const { show } = renderChat({ messages: [live], streaming: true });
 
-  // 这条最重要:它防的是谎报。
-  it('daemon 关机 / 项目清理杀掉的,不出这一行', () => {
-    for (const origin of ['daemon_shutdown', 'project_cleanup', 'unknown'] as const) {
-      renderChat({ messages: [stoppedMessage({ cancelOrigin: origin })] });
-      expect(screen.queryByTestId('chat-pause-line')).toBeNull();
-      cleanup();
-    }
-  });
+    show({ messages: [stoppedMessage()], streaming: false });
 
-  it('缺 cancelOrigin(旧 daemon 不发)时也不出 —— 证不出是用户按的就不说是', () => {
-    renderChat({ messages: [stoppedMessage({ cancelOrigin: undefined })] });
+    expect(screen.getByTestId('assistant-msg-stopped')).toBeTruthy();
     expect(screen.queryByTestId('chat-pause-line')).toBeNull();
   });
 
-  it('剩余为 0 时不出现(那一轮已经跑完,由回合状态行去报)', () => {
-    renderChat({
-      messages: [
-        stoppedMessage({
-          events: [
-            {
-              kind: 'tool_use',
-              id: 'todo-2',
-              name: 'TodoWrite',
-              input: {
-                todos: [
-                  { content: '梳理页面结构', status: 'completed' },
-                  { content: '铺商品卡', status: 'completed' },
-                ],
-              },
-            },
-          ] as never,
-        }),
-      ],
-    });
-    expect(screen.queryByTestId('chat-pause-line')).toBeNull();
-  });
+  it('历史回放中的 canceled/user_stop 也只交给回合 footer,不追加独立暂停行', () => {
+    const persisted = JSON.parse(JSON.stringify(stoppedMessage())) as ChatMessage;
+    renderChat({ messages: [persisted], streaming: false });
 
-  // 边界 3:断线不走这一行 —— 那由「重连」那一族全程接管。一条还在跑 / 还在
-  // 重连的 run 不是 canceled,所以两者结构上不会同时出现。
-  it('还在跑(掉线重连中)时不出这一行', () => {
-    renderChat({
-      messages: [stoppedMessage({ runStatus: 'running', cancelOrigin: undefined })],
-      streaming: true,
-    });
-    expect(screen.queryByTestId('chat-pause-line')).toBeNull();
-  });
-
-  it('只盖最后一轮:后面又跑了一轮就不再显示上一轮的暂停行', () => {
-    renderChat({
-      messages: [
-        stoppedMessage(),
-        {
-          id: 'msg-user',
-          role: 'user',
-          content: '继续',
-          createdAt: 2,
-        } as ChatMessage,
-        {
-          id: 'msg-after',
-          role: 'assistant',
-          content: '好的。',
-          createdAt: 3,
-          runId: 'run-after',
-          runStatus: 'succeeded',
-          agentId: 'amr',
-        } as ChatMessage,
-      ],
-    });
+    expect(screen.getByTestId('assistant-msg-stopped')).toBeTruthy();
     expect(screen.queryByTestId('chat-pause-line')).toBeNull();
   });
 });

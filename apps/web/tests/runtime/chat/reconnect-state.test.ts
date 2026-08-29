@@ -6,10 +6,9 @@
  *
  *   1. 恢复后整行消失,不留「已恢复」          → `cleared` / `succeeded` 归 null
  *   2. 次数用尽换成「重新连接」交回给人          → `exhausted` 立住,不被随后的 failed 抹掉
- *   3. 与组件 20 · PauseLine 不同时出现          → 落到 `canceled` 立刻归 null
+ *   3. run 落终态后不残留重连行                 → 落到 `canceled` 立刻归 null
  *
- * 第 3 条是接线约束(`PauseLine.tsx` 把它写死在文档里,自己不判),
- * 而 PauseLine 只在 `runStatus: 'canceled'` + `cancelOrigin: 'user_stop'` 时才画。
+ * 第 3 条保证 run 的终态由回合 footer 接管,不在流水尾部残留另一条状态。
  * 所以「掉线那一行在 canceled 上必须让位」就是这条约束的**结构性**保证:
  * 两者的显示条件在数据层就交不上,不靠调用方记得写 else。
  */
@@ -161,10 +160,9 @@ describe('nextChatReconnectView · 交回给人之后又接上了', () => {
   });
 });
 
-describe('nextChatReconnectView · 与组件 20 PauseLine 互斥', () => {
+describe('nextChatReconnectView · run 落终态后撤掉重连行', () => {
   it('yields the row the moment the run lands on canceled', () => {
-    // 用户在掉线期间按了停:PauseLine 的显示条件(canceled + user_stop)成立,
-    // 这一行必须同时消失 —— 两者不同时出现。
+    // 用户在掉线期间按了停:终态由回合 footer 报,重连行必须同时消失。
     const dropped = nextChatReconnectView(null, reconnecting(3));
     expect(nextChatReconnectView(dropped, { kind: 'settled', runId: RUN, status: 'canceled' })).toBeNull();
   });

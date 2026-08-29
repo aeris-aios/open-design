@@ -251,6 +251,28 @@
 - 额外 i18n 修复：suppressed-direction StatusPill、SkillPluginCandidateCard busy 文案、`context_compaction` 已知状态均已接入 typed Dict 和 19 locale；未知 runtime status 仍原样展示，不做盲译。这些仍保留 assistant structured / recovery UI 的专用样式，不混同为黑色用户气泡。
 - 聚焦验证：自动 DS prompt 渲染用例 1 条通过（32 skipped），prompt 识别用例 4 条通过；新增 zh-CN 系统 copy 用例 4 条通过并覆盖 unknown runtime label 保留；`git diff --check` 通过。未跑全量测试。
 
+### 17. AMR 发送前权威预检期间界面静默
+
+- 状态：**已修复，随本批提交推送**。
+- 复现：使用 AMR 发送后，workspace billing 权威预检可能等待数秒；消息在预检通过前不会持久化，而 Composer 原来只有防重复提交的 ref 锁，没有任何可见状态，看起来像点击无效或客户端卡死。
+- 修复：保留预检先于消息持久化的计费安全边界；异步 send admission 期间，发送键立即切换为带动态矩阵的“正在准备”胶囊并禁止再次点击，预检通过后再进入正常 streaming / stop 状态。余额拦截时仍不会伪造已发送消息。
+- 聚焦验证：`ChatComposer.infinite-render.test.tsx` 新增 deferred send gate 用例，覆盖即时反馈、draft 保留、resolve 后清理。
+
+### 18. 生图运行行首误用灰色 thinking-orb
+
+- 状态：**已修复，随本批提交推送**。
+- 复现：设计稿“生成配套插图 N/M”运行态的行首是绿色自转球；生产 `ImageRow` 却直接使用单色 `Orb solving`，与壳头 / thinking 的灰色动效混在一起。
+- 修复：复用现有步骤级 `StatusMark status=running`，即设计稿已经对齐的八层锥形渐变绿色自转球；未新增另一套动画或色值。
+- 聚焦验证：`primitives.test.tsx` 断言运行中 ImageRow 使用绿色 run mark，且不再渲染 `[data-orb]`。最终与 AMR pending、手动终止 / 重连相关用例合计 8 文件 103 条通过；未跑全量测试。
+
+### 19. 手动终止后重复显示独立“已手动暂停任务”行
+
+- 状态：**已修复，随本批提交推送**。
+- 复现：用户手动停止一轮后，Assistant footer 已显示“已手动停止”，ChatPane 流水尾部又根据 `canceled + cancelOrigin:user_stop + unfinished todos` 追加“已手动暂停任务”，同一终态出现两遍；刷新后的历史回放也会复现。
+- 根因：`cancelOrigin:user_stop` 证明的是用户终止 run，不代表任务进入可恢复的 paused-task 领域状态；旧接线把两种语义混为一谈。
+- 修复：删除 ChatPane 对 run canceled 状态的 PauseLine 映射，只保留回合 footer；PauseLine 设计组件仍保留给未来真正的 paused-task 状态，但不再接受 `RunCancelOrigin` / Todo 余量作为输入。重连终态撤行和“继续剩余任务”入口保持不变。
+- 聚焦验证：覆盖 live `running -> canceled` 与 JSON 历史回放，两条路径均只显示 footer、不再出现 `chat-pause-line`；最终与 AMR pending、生图状态、重连 / Todo 相关用例合计 8 文件 103 条通过，`git diff --check` 通过；未跑全量测试。
+
 ## 已完成 / 已合入本分支
 
 ### 修复批次 `c5b047dfd9 fix(chat): address module feedback regressions`

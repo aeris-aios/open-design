@@ -21,12 +21,9 @@
  *      `manual-retry-expired`)。按下之后要走的整条链都在异步里,daemon 没回来时
  *      它在半路就断了,屏幕原封不动 —— 而「点了没变化」和「按钮坏了」长得一模一样。
  *      于是按下**无条件**翻回「正在重新连接」,并由一把统一的到期闸把它送回 22-3。
- *   3. **与组件 20 · PauseLine 不同时出现**。`PauseLine` 自己不判这件事(它的文档把这条
- *      写成「调用方的接线约束」),而它的显示条件是 `runStatus: 'canceled'` +
- *      `cancelOrigin: 'user_stop'`。于是这里让**任何** `canceled` 立刻把重连行撤掉:
- *      两者的显示条件在数据层就交不上,不依赖调用方记得写 else。
- *      反方向(掉线不许走暂停行)由 `PauseLine` 只认 `user_stop` 保证 —— 掉线永远
- *      产不出 `user_stop`。
+ *   3. **run 落终态后整行消失**。`canceled` 由 AssistantMessage 的回合 footer
+ *      报「已手动停止」,不再追加 PauseLine;`succeeded` 同样不留「已恢复」。所以这里
+ *      让任何 terminal status 立刻撤掉重连行,避免历史回放残留一条陈年连接状态。
  */
 import type { ChatRunStatus } from '@open-design/contracts';
 
@@ -103,7 +100,7 @@ export type ChatReconnectSignal =
       max: number;
       phase: 'reconnecting' | 'cleared' | 'exhausted';
     }
-  /** 这一轮落了终态。`canceled` 是 PauseLine 的地盘,见文件头第 3 条。 */
+  /** 这一轮落了终态。`canceled` 的结果由回合 footer 展示,见文件头第 3 条。 */
   | { kind: 'settled'; runId: string; status: ChatRunStatus }
   /**
    * daemon 把 agent 那一轮重跑了 —— 逐字来自 SSE 上的 `run_retry_attempted`

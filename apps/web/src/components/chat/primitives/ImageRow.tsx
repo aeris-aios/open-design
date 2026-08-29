@@ -17,7 +17,7 @@ import type { ImageRow as ImageRowData } from '../../../runtime/chat/contract';
 import { formatElapsed } from '../../../runtime/chat/format';
 import { PixelLiquid } from '../../PixelLiquid';
 import { ImageIcon, RetryIcon } from './icons';
-import { Orb } from './Orb';
+import { StatusMark } from './StatusMark';
 import styles from './record.module.css';
 
 export interface ImageRowProps {
@@ -71,7 +71,7 @@ export function ImageRow({ row, onRetry, onOpenImage, imageSrc }: ImageRowProps)
     <>
       <div className={styles.tool}>
         {row.pending
-          ? <Orb state="solving" box={15} label={t('chat.record.running')} className={styles.mark} />
+          ? <StatusMark status="running" />
           : <span className={styles.icon}><ImageIcon /></span>}
         <span className={styles.name}>{t('chat.record.imageBatch')}</span>
         <span className={`${styles.meta} ${styles.num}`}>{row.done}/{row.total}</span>
