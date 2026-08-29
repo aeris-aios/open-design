@@ -12,7 +12,7 @@ const TOOL_CALL_CLOSE_CANONICALS = ['toolcall', 'edit'];
 const DSML_TOOL_PROTOCOL_TAIL_CANONICAL =
   '</||dsml||parameter></||dsml||invoke></||dsml||tool_calls>';
 const DSML_TOOL_PROTOCOL_TAIL_RE =
-  /<\/\s*(?:\|\||｜｜)\s*DSML\s*(?:\|\||｜｜)\s*parameter\s*>\s*<\/\s*(?:\|\||｜｜)\s*DSML\s*(?:\|\||｜｜)\s*invoke\s*>\s*<\/\s*(?:\|\||｜｜)\s*DSML\s*(?:\|\||｜｜)\s*tool_calls\s*>\s*$/i;
+  /<\/\s*(?:[|｜]\s*){2}DSML\s*(?:[|｜]\s*){2}parameter\s*>\s*<\/\s*(?:[|｜]\s*){2}DSML\s*(?:[|｜]\s*){2}invoke\s*>\s*<\/\s*(?:[|｜]\s*){2}DSML\s*(?:[|｜]\s*){2}tool_calls\s*>\s*$/i;
 const MAX_CANDIDATE_LENGTH = 512;
 
 export interface ArtifactTextSuppressor {

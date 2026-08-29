@@ -422,6 +422,53 @@ describe('message event persistence', () => {
     expect(stored.eventsJson).toContain('</｜｜DSML｜｜tool_calls>');
   });
 
+  it('scrubs spaced ASCII-pipe DSML protocol tails from historical playback', () => {
+    const db = openDatabase(tempDir, { dataDir: tempDir });
+    const now = Date.now();
+    const protocolTail = [
+      '</| | DSML | | parameter>',
+      '</| | DSML | | invoke>',
+      '</| | DSML | | tool_calls>',
+    ].join('\n');
+    insertProject(db, {
+      id: 'proj-spaced-dsml',
+      name: 'Spaced DSML history project',
+      createdAt: now,
+      updatedAt: now,
+    });
+    insertConversation(db, {
+      id: 'conv-spaced-dsml',
+      projectId: 'proj-spaced-dsml',
+      title: 'Spaced DSML history',
+      createdAt: now,
+      updatedAt: now,
+    });
+    upsertMessage(db, 'conv-spaced-dsml', {
+      id: 'assistant-spaced-dsml',
+      role: 'assistant',
+      content: `保留这段建议\n${protocolTail}`,
+      runId: 'agent-run-spaced-dsml',
+      runStatus: 'succeeded',
+      events: [
+        { kind: 'text', text: '保留这段建议\n</| | DS' },
+        { kind: 'status', label: 'streaming' },
+        { kind: 'text', text: 'ML | | parameter>\n</| | DSML | | invoke>\n' },
+        { kind: 'tool_result', id: 'followups', name: 'suggest_followups' },
+        { kind: 'text', text: '</| | DSML | | tool_calls>' },
+      ],
+      startedAt: now,
+      endedAt: now,
+    });
+
+    const [message] = listMessages(db, 'conv-spaced-dsml');
+    expect(message?.content).toBe('保留这段建议\n');
+    expect(message?.events).toEqual([
+      { kind: 'text', text: '保留这段建议\n' },
+      { kind: 'status', label: 'streaming' },
+      { kind: 'tool_result', id: 'followups', name: 'suggest_followups' },
+    ]);
+  });
+
   it('preserves historical DSML-looking code across text events', () => {
     const db = openDatabase(tempDir, { dataDir: tempDir });
     const now = Date.now();

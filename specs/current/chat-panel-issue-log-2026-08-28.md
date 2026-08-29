@@ -17,6 +17,14 @@
 5. 完成 OPEND-2403 thinking Markdown 主审、提交与推送。
 6. 按飞书文档推进 Question Form 组件族上线前再设计。
 
+## 2026-08-29 全量复核口径
+
+- **不能宣称本需求全部关闭**。仍未实现的是 #1 / #15 Design Harness 与普通 Chat Panel host protocol 共用；OPEND-2410 仍只是确认“Agent 没有调用 Todo 工具”，没有代码修复；Question Form 组件族仍待设计评审。
+- 已推送但主要只有聚焦测试、尚无对应真实操作 E2E 的项目：#2、#3、#4、#6、#7 的真实高速模型性能、#8 最终 media-task 版本、#9 全部文字角色、#11、#12、#14、#16、#17、#18、#19。交接时不得把“测试绿”写成“真机验收完成”。
+- 有明确 post-fix 手工 UI 证据：#5 Question Form packaged 验证、#9 助手正文 computed style、#10 分享 tooltip。
+- #13 DSML 已于 2026-08-29 使用正确的 test-AMR 环境完成真实 live + reload E2E，详见对应条目；这次不是打包安装包验收，当前 Beta 安装包仍未因本补丁重打。
+- 新增 #20：消息队列卡片与 Composer 左右边界未对齐，已修代码和聚焦回归，待提交后再做真实队列视觉复验。
+
 ## 待修复 / 待设计
 
 ### 1. Design Harness 开启后缺少底部三行下一步建议
@@ -139,7 +147,7 @@
 
 ### 6. ToolRow 的 command 动作识别不足
 
-- 状态：**已修复，待提交推送**。
+- 状态：**已修复并推送**，包含于 `bb4292e82b fix(chat): close remaining panel regressions`；尚无真实会话 ToolRow 渲染 E2E。
 - 样本：只读抽样本机 stable / beta / prerelease 的 332 条真实 OD shell command，不记录会话正文、绝对路径或凭据。
 - 旧规则：246 / 332 条回落成“执行”。
 - 新规则：83 条保守保留为真正的通用执行；其余识别为读取 107、搜索 102、新建 / 写入 33、改写 4、删除 3。
@@ -168,7 +176,7 @@
 
 ### 8. OPEND-2195：生图逐张计数
 
-- 状态：**已实现，待本地真机生成验收 / 提交推送**。
+- 状态：**已实现并推送**，包含于 `bb4292e82b fix(chat): close remaining panel regressions`；最终 media-task / ImageRow 补丁尚未重新跑完整顺序生图 E2E。
 - 根因：ChatPanel 只从 shell command 中数 `media generate` 猜总数，完全没有消费既有的 `GET /api/projects/:id/media/tasks`；同时真实 CLI 成功输出是 `{ file: {...} }`，旧解析器却只认顶层 `status/path`。
 - 当前实现：
   - media task 持久化 `runId`，升级旧 SQLite schema 时幂等新增 `run_id`。
@@ -182,7 +190,7 @@
 
 ### 9. Chat Panel 全量字体角色对齐
 
-- 状态：**深度审计完成，P0/P1/P2 已修复，待提交推送**。
+- 状态：**深度审计完成，P0/P1/P2 已修复并推送**，包含于 `bb4292e82b fix(chat): close remaining panel regressions`；只对助手正文做了 post-fix computed-style 真机复验，并非每个文字角色都已 E2E。
 - 唯一基准仍为 `/Users/elian/Documents/od-design-artifacts/chat-panel-next.html`，不是凭观感统一字号。
 - 本轮范围扩大为 Chat 中每一种可见文字角色：壳头 / Todo / thinking / 过程正文 / ToolRow 动词、命令、文件名、耗时、失败态 / 壳外结论 / 状态行 / Question Form / 生图行 / 附件与产物卡。
 - 用户真机指出同一执行流内普通正文、等宽命令、ToolRow 标题、thinking 标题与耗时看起来各不一致；需逐角色记录稿件值、生产 selector、computed value 与是否语义上应当不同，不能粗暴“一刀切”。
@@ -192,7 +200,7 @@
 
 ### 10. 分享菜单 tooltip 跑位
 
-- 状态：**已修复并真机复验，待提交推送**。
+- 状态：**已修复、真机复验并推送**，包含于 `bb4292e82b fix(chat): close remaining panel regressions`。
 - 复现：预览区“分享”菜单中，hover 分区标题右侧问号后，说明 tooltip 掉到菜单下方 / 右下侧并遮压后续内容。
 - 当前线索：问号使用共享 `TooltipLayer` portal，但显式声明 `data-tooltip-placement="bottom"`；需确认预期应为向左 / 向上，以及 portal 与锚定菜单的 fixed 坐标是否有二次偏移，不能用 margin 伪修。
 - 根因：菜单层级 `--z-menu: 9000` 按全局规则高于 hint 的 `--z-hint: 4000`，而这个 hint 恰好由菜单内部触发；向下放置后大部分气泡被菜单自己盖住，只在菜单下方 / 右下侧露出。
@@ -201,7 +209,7 @@
 
 ### 11. 会话切换弹层下半部点击无响应
 
-- 状态：**已修复，待提交推送**。
+- 状态：**已修复并推送**，包含于 `bb4292e82b fix(chat): close remaining panel regressions`；聚焦测试覆盖 meta 区点击，尚未对截图中的下半部真实点击做 post-fix E2E。
 - 复现：点击 ChatPanel 右上角会话切换后，列表下半部的会话行（含 `0 msg / 2 msg` 元数据区域）点击无响应，无法切换。
 - 审计重点：整行与右侧删除按钮的命中区、透明遮罩、pointer-events、z-index / stacking context、拖动区域；同时判断是否与上述 tooltip / portal 层叠问题同源。
 - 根因一：行虽然有 pointer / hover，但 `onSelect` 只绑在标题 button；messageCount、耗时和空白区域天然不响应。根因二：菜单困在 header `z=7`，而消息 rail 是 `z=8` 且带 20px 透明命中区，菜单最右侧约 12px 被截获。
@@ -210,7 +218,7 @@
 
 ### 12. 顺序生图时缺少运行中 ImageRow
 
-- 状态：**已修复，待真机复验 / 提交推送**。
+- 状态：**已修复并推送**，包含于 `bb4292e82b fix(chat): close remaining panel regressions`；最终版本尚未重新跑顺序生图 E2E。
 - 复现：AMR / ACP 按顺序逐张调用媒体生成时，执行计划只显示 Todo 行；当前正在生成的图片没有出现设计稿中的 Media ToolRow，也看不到绿色 PixelLiquid loading。
 - 用户裁决：逐张生成可以接受；每个正在生成的调用至少显示一行、一个绿色 loading cell，不需要为了凑总数伪造尚未创建的图片任务。
 - 根因：ACP 的 terminal tool pair 在工具结束时才落 `tool_use`，而 ChatPane 原来需要先从事件中看到 media command 才开始轮询 task；首个运行中 task 因而既没有 tool event，也没有被拉取 / 消费。
@@ -219,15 +227,20 @@
 
 ### 13. DSML 内部协议尾标泄漏到最终正文
 
-- 状态：**已修复，待真机复验 / 提交推送（P1）**。
+- 状态：**已修复并完成 test-AMR live + reload E2E，当前补丁待提交推送（P1）**。
 - 复现：AMR 会话结论末尾出现 `</｜｜DSML｜｜parameter>`、`</｜｜DSML｜｜invoke>`、`</｜｜DSML｜｜tool_calls>`；这些是内部工具调用序列化协议，不是 Agent 正文。
-- 根因：ACP 文本抑制器只认识 `<tool_call>` / `<edit>` 和 DSML artifact block，不认识 AMR 泄出的 `</｜｜DSML｜｜parameter>...</｜｜DSML｜｜tool_calls>` 工具协议尾标。
-- 修复：工具文本抑制器新增精确三段 DSML protocol tail 剥离，覆盖全角 / ASCII 竖线和跨 chunk；DB 读取历史 assistant message 时做同一精确 scrub，修复已经落库的旧会话展示。正常 Markdown / 代码示例不剥离。
-- 聚焦验证：`text-suppression.test.ts`、`acp.test.ts`、`db-message-events.test.ts` 已覆盖流式跨 chunk、ASCII variant、代码保留和历史回放 scrub。
+- 根因一：截图时真正承载该项目的 `chatpanel-e2e` daemon 是 09:35 启动的旧进程，早于 `bb4292e82b`，所以新抑制器根本没进入真实运行链；不能把旧 daemon 上的截图当作新代码回归。
+- 根因二：历史 scrub 的正则只接受紧邻的 `||` / `｜｜`，对 `| | DSML | |` 这种管道内部含空格的变体不稳健。实时 suppressor 会 compact 空格，但 DB 历史回放没有同等能力。
+- 修复：工具文本抑制器精确剥离三段 DSML protocol tail，覆盖全角 / ASCII 竖线、管道内部空格和跨 chunk；DB 读取历史 assistant message 时做同一精确 scrub。正常 Markdown / 代码示例不剥离。
+- 聚焦验证：`text-suppression.test.ts`、`db-message-events.test.ts` 本轮 23/23 通过，新增 spaced ASCII、split stream、跨 status / tool event 历史回放；`git diff --check` 通过。
+- 真实 E2E 环境：namespace `chatpanel-e2e`，daemon `http://127.0.0.1:56183`，web `http://127.0.0.1:56184`；AMR profile 曾错误回落 `prod` 且余额为 0，已通过 app config 修正为 `test`，wallet 返回 `$19.8977`，UI 显示 `$19.90`。
+- 历史回放：原项目 `3d02a559-745b-44c2-a8e4-2c82c9468a6d` / 原会话 `ed6de411-4f5d-4b33-b977-5d2c72d29404` 在新 daemon 上打开后，协议残留计数为 0，旧的三条建议可见。
+- 新实时回合：会话 `a04e85da-b1b3-4c57-8b3e-9c09ebbe2a5f`，run `0b53f7f8-847f-43d5-b749-7d9d2a1fee51`。发送后立即显示进行中，40s 后为已完成；正文 `DSML E2E 验证完成`，三条 `next_steps` 正常展示。live 协议残留 0，reload 后协议残留仍为 0、建议仍为 3 条；run events 中无 `parameter / invoke / tool_calls` 尾标，存在结构化 `next_steps` 事件。
+- 验收边界：这是最新源码 + test-AMR 的开发桌面 / web / daemon E2E；尚未重打、安装并验证新的 Beta 包。
 
 ### 14. 成功轮因最后 Todo 快照陈旧而误显示“已停止”
 
-- 状态：**已修复，待真机复验 / 提交推送**。
+- 状态：**已修复并推送**，包含于 `bb4292e82b fix(chat): close remaining panel regressions`；只有聚焦测试，尚无真实 stale Todo 成功轮 E2E。
 - 真实现场：run `9529a731-88c2-4693-ae72-abafdd5703ea` 的状态为 `succeeded`，已有最终总结并发出匹配本轮 nonce 的 `<od-done>`；但 Agent 在完成总结后漏发最后一次 TodoWrite，末项“简短总结新图”仍为 `in_progress`。
 - 旧 UI：只把最后 TodoWrite 快照当权威，因而显示“已停止，仍有未完成任务”并提供“继续剩余任务”。这不代表进程取消或媒体任务失败。
 - 修复：不粗暴信任所有 `succeeded`；只有 `runStatus=succeeded` 且事件里存在本轮 `done_key` 匹配的 `<od-done key="…"/>`，并且 marker 后有可见最终结论时，才把陈旧 Todo 判为已交付。失败 run、截断 run、空 marker、错误 nonce、代码里的 marker 仍保留未完成入口。
@@ -244,7 +257,7 @@
 
 ### 16. “基于此项目创建设计系统”自动消息仍使用旧灰卡
 
-- 状态：**已修复，待真机复验 / 提交推送**。
+- 状态：**已修复并推送**，包含于 `bb4292e82b fix(chat): close remaining panel regressions`；只有聚焦测试，尚无菜单触发后的 post-fix E2E。
 - 复现：在 FileWorkspace 菜单点击“基于此项目创建设计系统”后，客户端会自动发送一条隐藏的长 prompt；ChatPane 将它替换为一张灰色英文状态卡 `Creating design system workspace`，与新版黑色用户消息不一致，中文界面也暴露硬编码英文。
 - 审计结论：这是唯一一个把 user-side auto prompt 渲染为专用旧卡的分支。设计稿没有这种灰卡，语义上也仍是用户触发并自动发送的请求；应归入设计稿 #1“用户消息-文本”。附件、Question Form 回填、Thinking、Plan、ToolRow、Queue、升级、报错、暂停和重连均有各自设计稿角色，不应统一涂黑。
 - 修复：复用 canonical `UserBubble`，只展示现有 typed i18n 文案 `designFiles.createDesignSystemFromProject`，不泄露内部长 prompt；复制动作复制可见的本地化摘要。移除旧灰卡、两个硬编码英文 display 常量和废弃 CSS；首轮 fallback 会话标题同步复用该 i18n key。
@@ -253,25 +266,34 @@
 
 ### 17. AMR 发送前权威预检期间界面静默
 
-- 状态：**已修复，随本批提交推送**。
+- 状态：**已修复并推送**，包含于 `c60bbe7f5b fix(chat): tighten pending and terminal feedback`；test-AMR E2E 已确认消息发送后立即出现“进行中”，但未人为制造慢余额预检来单独复验“正在准备”胶囊。
 - 复现：使用 AMR 发送后，workspace billing 权威预检可能等待数秒；消息在预检通过前不会持久化，而 Composer 原来只有防重复提交的 ref 锁，没有任何可见状态，看起来像点击无效或客户端卡死。
 - 修复：保留预检先于消息持久化的计费安全边界；异步 send admission 期间，发送键立即切换为带动态矩阵的“正在准备”胶囊并禁止再次点击，预检通过后再进入正常 streaming / stop 状态。余额拦截时仍不会伪造已发送消息。
 - 聚焦验证：`ChatComposer.infinite-render.test.tsx` 新增 deferred send gate 用例，覆盖即时反馈、draft 保留、resolve 后清理。
 
 ### 18. 生图运行行首误用灰色 thinking-orb
 
-- 状态：**已修复，随本批提交推送**。
+- 状态：**已修复并推送**，包含于 `c60bbe7f5b fix(chat): tighten pending and terminal feedback`；只有 primitive 聚焦测试，尚无最终顺序生图 E2E。
 - 复现：设计稿“生成配套插图 N/M”运行态的行首是绿色自转球；生产 `ImageRow` 却直接使用单色 `Orb solving`，与壳头 / thinking 的灰色动效混在一起。
 - 修复：复用现有步骤级 `StatusMark status=running`，即设计稿已经对齐的八层锥形渐变绿色自转球；未新增另一套动画或色值。
 - 聚焦验证：`primitives.test.tsx` 断言运行中 ImageRow 使用绿色 run mark，且不再渲染 `[data-orb]`。最终与 AMR pending、手动终止 / 重连相关用例合计 8 文件 103 条通过；未跑全量测试。
 
 ### 19. 手动终止后重复显示独立“已手动暂停任务”行
 
-- 状态：**已修复，随本批提交推送**。
+- 状态：**已修复并推送**，包含于 `c60bbe7f5b fix(chat): tighten pending and terminal feedback`；2026-08-29 已补 test-AMR 真实手动停止 E2E。
 - 复现：用户手动停止一轮后，Assistant footer 已显示“已手动停止”，ChatPane 流水尾部又根据 `canceled + cancelOrigin:user_stop + unfinished todos` 追加“已手动暂停任务”，同一终态出现两遍；刷新后的历史回放也会复现。
 - 根因：`cancelOrigin:user_stop` 证明的是用户终止 run，不代表任务进入可恢复的 paused-task 领域状态；旧接线把两种语义混为一谈。
 - 修复：删除 ChatPane 对 run canceled 状态的 PauseLine 映射，只保留回合 footer；PauseLine 设计组件仍保留给未来真正的 paused-task 状态，但不再接受 `RunCancelOrigin` / Todo 余量作为输入。重连终态撤行和“继续剩余任务”入口保持不变。
 - 聚焦验证：覆盖 live `running -> canceled` 与 JSON 历史回放，两条路径均只显示 footer、不再出现 `chat-pause-line`；最终与 AMR pending、生图状态、重连 / Todo 相关用例合计 8 文件 103 条通过，`git diff --check` 通过；未跑全量测试。
+- 真实 E2E：test-AMR 运行中点击停止后，回合底部只出现一次“已手动停止”与“继续剩余任务”，没有再出现独立“已手动暂停任务”行。
+
+### 20. Composer 上方消息队列外框左右未对齐
+
+- 状态：**已修复，当前补丁待提交；聚焦测试已绿，待真实队列视觉复验**。
+- 复现：队列卡片的左右外框比下方 Composer shell 各外凸约 16px。
+- 根因：Composer 自身水平 padding 为 16px，但晚写的 `.chat-queued-send-strip { width: 100%; margin-inline: 0 }` 覆盖了早先内缩；恢复淡边框后，队列作为 Composer 的兄弟节点自然占满 pane，比输入框外框更宽。
+- 修复：在 `.pane` 以 `--chat-composer-inline-inset: 16px` 作为横向基线单一来源；Composer padding、queue margin 和 queue `calc()` width 共用该 token。
+- 红绿验证：`queue-strip-border.test.tsx` 在旧 CSS 下先红，修复后相关 3 个文件 19 条测试通过；仅有既有 jsdom canvas warning，未跑全量测试 / typecheck。
 
 ## 已完成 / 已合入本分支
 
@@ -319,10 +341,9 @@
 
 ## 下一次接手时先做
 
-1. `git status --short --branch`，确认 OPEND-2403 未提交改动仍在。
-2. 主审并跑 OPEND-2403 的聚焦测试，确认无回归后提交推送。
-3. 为“strategy successor 已在 hydration 中物化”添加红测并修复重复结论。
-4. 将 Chat turn host protocol 抽成共享 contributor，补 Design Harness request / production 测试。
-5. 完整修复 OPEND-2404 的两端语义：Run 不打开，显式点击能打开。
-6. 排查绝对路径 Markdown 链接的生成、解析和项目内导航链。
-7. 每完成一项，更新本文对应状态和验证结果。
+1. `git status --short --branch`，确认 DSML spaced-pipe 与 queue alignment 补丁是否已经提交推送。
+2. 优先修 #1 / #15：将 Chat turn host protocol 抽成普通 run 与 Design Harness 共用 contributor，并补 Harness 开 / 关 A/B 覆盖；改提示词前先审查 exact-input / cache 边界。
+3. 为 OPEND-2410 决定产品方案：修 Agent Todo contract，或新增诚实的 `plan_missing` 状态；不要在客户端伪造 Todo。
+4. 按上述全量复核清单补缺失的 post-fix 真机 / E2E，尤其是 OPEND-2195 / #12 顺序生图、#11 会话行下半部、#19 手动停止、#2 Ctrl+Shift+R。
+5. 跟进 Question Form 组件族设计评审；视觉基准仍是 `chat-panel-next.html`。
+6. 每完成一项，更新本文对应状态、测试层级和是否真实 E2E，禁止把聚焦测试写成真机验收。

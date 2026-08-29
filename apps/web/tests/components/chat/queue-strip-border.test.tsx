@@ -163,6 +163,7 @@ function rulesFor(selector: string): Rule[] {
 
 const STRIP = '.chat-queued-send-strip';
 const ROW = '.chat-queued-send-row';
+const COMPOSER = '.composer';
 
 describe('先证明这把尺子是准的', () => {
   it('规则解析不是空的,而且没被 @media / @keyframes 带偏', () => {
@@ -179,6 +180,27 @@ describe('先证明这把尺子是准的', () => {
 });
 
 describe('队列条的外框', () => {
+  it('外框左右边界与下方 composer shell 对齐', () => {
+    const insetToken = '--chat-composer-inline-inset';
+    const composerPadding = effective(COMPOSER, 'padding');
+    const stripMargin = effective(STRIP, 'margin-inline');
+    const stripWidth = effective(STRIP, 'width');
+
+    expect(
+      composerPadding,
+      'composer 的水平内距和队列的水平外距必须共用同一个 token,' +
+        '否则面板宽度或 composer 间距一调整就会再次错位',
+    ).toContain(insetToken);
+    expect(stripMargin).toContain(insetToken);
+    expect(
+      stripWidth,
+      '队列是 composer 同列的兄弟节点,margin 内缩后宽度也要同步减去两侧,' +
+        '不然 border-box 会从右侧溢出',
+    ).toContain(insetToken);
+    expect(stripWidth).toMatch(/^calc\(/);
+    expect(stripWidth).toMatch(/\*\s*2/);
+  });
+
   it('层叠走完之后,外框仍然看得见 —— 没有被后面的 border: 0 抹掉', () => {
     const border = effective(STRIP, 'border');
     expect(
