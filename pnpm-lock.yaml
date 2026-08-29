@@ -740,6 +740,9 @@ importers:
       esbuild:
         specifier: 0.28.0
         version: 0.28.0
+      tsx:
+        specifier: 4.22.3
+        version: 4.22.3
       typescript:
         specifier: 5.9.3
         version: 5.9.3

@@ -32,7 +32,7 @@
     }
   },
   "scripts": {
-    "build": "node ./esbuild.config.mjs && tsc -p tsconfig.json --emitDeclarationOnly",
+    "build": "tsx ./esbuild.config.ts && tsc -p tsconfig.json --emitDeclarationOnly",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
@@ -41,6 +41,7 @@
   },
   "devDependencies": {
     "esbuild": "0.28.0",
+    "tsx": "4.22.3",
     "typescript": "5.9.3",
     "vitest": "4.1.6"
   },
