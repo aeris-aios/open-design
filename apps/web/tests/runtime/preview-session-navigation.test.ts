@@ -34,6 +34,7 @@ describe('buildPreviewSessionNavigation', () => {
       documentVersion: '10:20',
       url: scoped.normalUrl,
       sandboxProfile: 'normal',
+      deck: false,
     });
   });
 
@@ -52,6 +53,22 @@ describe('buildPreviewSessionNavigation', () => {
     expect(new URL(result.url).origin).toBe('http://p-scope-0001.localhost:17456');
     expect(new URL(result.url).searchParams.getAll('odPreviewBridge')).toEqual([]);
     expect(result.sandboxProfile).toBe('powered');
+  });
+
+  it('prefers daemon Deck classification over a stale host fallback', () => {
+    const authoritative = {
+      ...scoped,
+      previewPolicy: {
+        sandboxProfile: 'normal' as const,
+        guards: { storage: false, focus: false, redirect: false },
+        deck: true,
+      },
+    };
+
+    const result = buildPreviewSessionNavigation(authoritative, policy({ deck: false }));
+
+    expect(new URL(result.url).searchParams.getAll('odPreviewRuntime')).toEqual(['deck']);
+    expect(result.deck).toBe(true);
   });
 
   it('adds passive guards and deck runtime without changing the file path', () => {

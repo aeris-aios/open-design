@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import { StringDecoder } from 'node:string_decoder';
 
+import { legacyDeckScreenNumber } from '@open-design/contracts/runtime/deck-stage-fallback';
 import {
   previewHtmlHasLoadTimeLocationNavigation,
   previewHtmlNeedsFocusGuard,
@@ -13,6 +14,28 @@ import { ManualEditSourceAnnotator } from '@open-design/preview-runtime/manual-e
 
 const MAX_TAG_BYTES = 256 * 1024;
 const RAW_TEXT_TAGS = new Set(['noscript', 'script', 'style', 'title', 'textarea']);
+const VOID_ELEMENTS = new Set([
+  'area',
+  'base',
+  'br',
+  'col',
+  'embed',
+  'hr',
+  'img',
+  'input',
+  'link',
+  'meta',
+  'param',
+  'source',
+  'track',
+  'wbr',
+]);
+const EXPLICIT_DECK_SLIDE_CLASSES = new Set([
+  'slide',
+  'deck-slide',
+  'ppt-slide',
+  'slide-frame',
+]);
 const IMPLICIT_HEAD_TAGS = new Set([
   'base',
   'basefont',
@@ -45,6 +68,10 @@ export interface HtmlHeadScanResult {
   hasDeckStageElement: boolean;
   /** Whether real parsed markup contains the framework's id="deck-stage" marker. */
   hasFrameworkDeckId: boolean;
+  /** Whether real parsed markup contains an explicit Deck slide class. */
+  hasExplicitDeckSlideElement: boolean;
+  /** Whether numbered legacy screen sections share one direct parent. */
+  hasLegacyDeckScreenSlides: boolean;
   /** Whether inline authored scripts already implement the od:slide protocol. */
   hasInlineSlideMessageListener: boolean;
   /** Declared version of the authored Deck protocol, or zero for legacy decks. */
@@ -99,17 +126,27 @@ function rawTextCloseStart(input: string, tagName: string): number {
   return -1;
 }
 
-function tagHasExactAttributeValue(token: string, name: string, expected: string): boolean {
+function tagAttributeValue(token: string, name: string): string | null {
   const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const match = new RegExp(
     `[\\t\\n\\f\\r ]${escapedName}[\\t\\n\\f\\r ]*=[\\t\\n\\f\\r ]*(?:"([^"]*)"|'([^']*)'|([^\\t\\n\\f\\r />]+))`,
     'iu',
   ).exec(token);
-  return (match?.[1] ?? match?.[2] ?? match?.[3]) === expected;
+  return match?.[1] ?? match?.[2] ?? match?.[3] ?? null;
+}
+
+function tagHasExactAttributeValue(token: string, name: string, expected: string): boolean {
+  return tagAttributeValue(token, name) === expected;
 }
 
 function tagHasExactId(token: string, expected: string): boolean {
   return tagHasExactAttributeValue(token, 'id', expected);
+}
+
+function tagHasAnyClassToken(token: string, expected: ReadonlySet<string>): boolean {
+  const value = tagAttributeValue(token, 'class');
+  if (value === null) return false;
+  return value.split(/[\t\n\f\r ]+/u).some((name) => expected.has(name.toLowerCase()));
 }
 
 /**
@@ -136,6 +173,8 @@ export async function scanHtmlHeadForStreamingInjection(
   let needsPoweredPreview = false;
   let hasDeckStageElement = false;
   let hasFrameworkDeckId = false;
+  let hasExplicitDeckSlideElement = false;
+  let hasLegacyDeckScreenSlides = false;
   let artifactDeckProtocolVersion = 0;
   let registersSlideMessageListener = false;
   let mentionsSlideMessage = false;
@@ -153,6 +192,9 @@ export async function scanHtmlHeadForStreamingInjection(
   let templateDepth = 0;
   let headScanDone = false;
   let scanDone = false;
+  let nextElementId = 1;
+  const elementStack: Array<{ id: number; tag: string }> = [];
+  const legacyScreenNumbersByParent = new Map<number, Set<number>>();
 
   const consume = (length: number): void => {
     buffer = buffer.slice(length);
@@ -171,6 +213,8 @@ export async function scanHtmlHeadForStreamingInjection(
     needsPoweredPreview,
     hasDeckStageElement,
     hasFrameworkDeckId,
+    hasExplicitDeckSlideElement,
+    hasLegacyDeckScreenSlides,
     hasInlineSlideMessageListener: registersSlideMessageListener && mentionsSlideMessage,
     artifactDeckProtocolVersion,
     hasInlineKeydownNavigation: registersKeydownListener && mentionsNavigationKey,
@@ -307,12 +351,30 @@ export async function scanHtmlHeadForStreamingInjection(
       if (tag.closing) {
         if (tag.name === 'template' && templateDepth > 0) templateDepth -= 1;
         if (tag.name === 'head' && templateDepth === 0) headScanDone = true;
+        for (let index = elementStack.length - 1; index >= 0; index -= 1) {
+          if (elementStack[index]!.tag !== tag.name) continue;
+          elementStack.length = index;
+          break;
+        }
         continue;
       }
 
+      const parentId = elementStack.at(-1)?.id ?? 0;
       if (templateDepth === 0) {
         if (tag.name === 'deck-stage') hasDeckStageElement = true;
         if (tagHasExactId(token, 'deck-stage')) hasFrameworkDeckId = true;
+        if (tagHasAnyClassToken(token, EXPLICIT_DECK_SLIDE_CLASSES)) {
+          hasExplicitDeckSlideElement = true;
+        }
+        if (tag.name === 'section') {
+          const screenNumber = legacyDeckScreenNumber(tagAttributeValue(token, 'data-screen-label'));
+          if (screenNumber !== null) {
+            const numbers = legacyScreenNumbersByParent.get(parentId) ?? new Set<number>();
+            numbers.add(screenNumber);
+            legacyScreenNumbersByParent.set(parentId, numbers);
+            if (numbers.size > 1) hasLegacyDeckScreenSlides = true;
+          }
+        }
         if (tagHasExactAttributeValue(token, 'data-od-deck-protocol', '1')) {
           artifactDeckProtocolVersion = 1;
         }
@@ -344,6 +406,10 @@ export async function scanHtmlHeadForStreamingInjection(
       }
 
       if (!headScanDone) prelude = false;
+      if (!VOID_ELEMENTS.has(tag.name) && !/\/\s*>$/u.test(token)) {
+        elementStack.push({ id: nextElementId, tag: tag.name });
+        nextElementId += 1;
+      }
       // HTML ignores self-closing syntax on non-void raw-text/RCDATA
       // elements. `<script/>` therefore still consumes text until a matching
       // end tag, and markup-shaped text inside it must remain inert.

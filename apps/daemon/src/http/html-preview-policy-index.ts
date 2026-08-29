@@ -11,6 +11,7 @@ export interface HtmlPreviewPolicyRequest {
 export interface HtmlPreviewPolicy {
   documentVersion: string;
   sandboxProfile: 'normal' | 'powered';
+  deck: boolean;
   guards: {
     storage: boolean;
     focus: boolean;
@@ -40,6 +41,10 @@ function policyFromScan(
   return {
     documentVersion,
     sandboxProfile: scan.needsPoweredPreview ? 'powered' : 'normal',
+    deck: scan.hasDeckStageElement
+      || scan.hasFrameworkDeckId
+      || scan.hasExplicitDeckSlideElement
+      || scan.hasLegacyDeckScreenSlides,
     guards: {
       storage: scan.needsSandboxShim || !scan.complete,
       focus: scan.needsFocusGuard || !scan.complete,

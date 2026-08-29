@@ -216,6 +216,12 @@ export interface ProjectPreviewPolicy {
     focus: boolean;
     redirect: boolean;
   };
+  /**
+   * Daemon-authoritative Deck classification for this exact document version.
+   * Optional only for rolling compatibility with daemons that predate the
+   * single-real-URL runtime policy.
+   */
+  deck?: boolean;
 }
 
 export interface ProjectPreviewScopeRenewResponse {

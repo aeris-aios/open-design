@@ -8,6 +8,7 @@ function document(version: string): PreviewSessionDocument {
     documentVersion: version,
     url: `http://n-session.localhost/index.html?v=${version}`,
     sandboxProfile: 'normal',
+    deck: false,
     target: { postMessage: vi.fn() },
   };
 }

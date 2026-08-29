@@ -14,6 +14,8 @@ function result(overrides: Partial<HtmlHeadScanResult> = {}): HtmlHeadScanResult
     needsPoweredPreview: false,
     hasDeckStageElement: false,
     hasFrameworkDeckId: false,
+    hasExplicitDeckSlideElement: false,
+    hasLegacyDeckScreenSlides: false,
     hasInlineSlideMessageListener: false,
     artifactDeckProtocolVersion: 0,
     hasInlineKeydownNavigation: false,
@@ -51,6 +53,20 @@ describe('HtmlPreviewPolicyIndex', () => {
     await expect(second).resolves.toMatchObject({ documentVersion: 'v1', guards: { focus: true } });
     await index.get(request);
     expect(scan).toHaveBeenCalledTimes(1);
+  });
+
+  it('classifies Deck navigation from the exact daemon-scanned document', async () => {
+    const index = new HtmlPreviewPolicyIndex({
+      scan: vi.fn(async () => result({ hasDeckStageElement: true })),
+    });
+
+    await expect(index.get({
+      filePath: '/project/deck.html',
+      documentVersion: 'deck-v1',
+    })).resolves.toMatchObject({
+      documentVersion: 'deck-v1',
+      deck: true,
+    });
   });
 
   it('does not let an older in-flight version replace the current entry', async () => {

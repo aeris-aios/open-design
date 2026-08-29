@@ -337,5 +337,6 @@ function navigationOf(document: PreviewSessionDocument): PreviewSessionNavigatio
     documentVersion: document.documentVersion,
     url: document.url,
     sandboxProfile: document.sandboxProfile,
+    deck: document.deck,
   };
 }

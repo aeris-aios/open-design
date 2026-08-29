@@ -29,6 +29,7 @@ function navigation(
     documentVersion: version,
     url: `http://${sandboxProfile === 'powered' ? 'p' : 'n'}-scope-0001.localhost:17456/index.html?v=${version}`,
     sandboxProfile,
+    deck: false,
   };
 }
 

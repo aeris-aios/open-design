@@ -19,6 +19,7 @@ const navigation: PreviewSessionNavigation = {
   documentVersion: 'v1',
   url: 'http://n-scope-0001.localhost:17456/index.html?v=v1',
   sandboxProfile: 'normal',
+  deck: false,
 };
 
 const defaultViewerState: PreviewRuntimeViewerState = {

@@ -171,6 +171,7 @@ describe('scanHtmlHeadForStreamingInjection', () => {
     expect(fixture.result).toMatchObject({
       hasDeckStageElement: true,
       hasFrameworkDeckId: true,
+      hasExplicitDeckSlideElement: true,
       hasInlineSlideMessageListener: true,
       artifactDeckProtocolVersion: 1,
       hasInlineKeydownNavigation: true,
@@ -178,6 +179,33 @@ describe('scanHtmlHeadForStreamingInjection', () => {
       inlineHashIndexPrefix: '#/',
       complete: true,
     });
+  });
+
+  it('classifies explicit and legacy Deck slides from real markup only', async () => {
+    const explicit = await scan([
+      '<html><head><script>const fake=`<section class="slide">fake</section>`;</script></head>',
+      '<body><template><section class="ppt-slide">inert</section></template>',
+      '<main><section class="deck-slide">real</section></main></body></html>',
+    ].join(''));
+    expect(explicit.result.hasExplicitDeckSlideElement).toBe(true);
+
+    const legacy = await scan([
+      '<html><body><main>',
+      '<section data-screen-label="01 Cover">One</section>',
+      '<section data-screen-label="02 Plan">Two</section>',
+      '</main></body></html>',
+    ].join(''));
+    expect(legacy.result.hasLegacyDeckScreenSlides).toBe(true);
+
+    const unrelated = await scan([
+      '<html><body>',
+      '<main><section data-screen-label="01 Card">One</section></main>',
+      '<aside><section data-screen-label="02 Card">Two</section></aside>',
+      '<script>const fake=`<section class="slide">fake</section>`;</script>',
+      '</body></html>',
+    ].join(''));
+    expect(unrelated.result.hasExplicitDeckSlideElement).toBe(false);
+    expect(unrelated.result.hasLegacyDeckScreenSlides).toBe(false);
   });
 
   it('keeps Deck source detection correct across 64 KiB read boundaries', async () => {

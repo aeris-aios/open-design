@@ -1671,6 +1671,7 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
         previewPolicy: {
           sandboxProfile: 'normal' | 'powered';
           guards: { storage: boolean; focus: boolean; redirect: boolean };
+          deck: boolean;
         };
       };
     };
@@ -1683,8 +1684,9 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
       poweredUrl: `http://p-${scope}.localhost:${port}/prototypes/booking/index.html`,
       documentVersion: expect.stringMatching(/^\d+:\d+(?:\.\d+)?$/u),
       previewPolicy: {
-        sandboxProfile: 'normal',
+        sandboxProfile: 'powered',
         guards: { storage: true, focus: true, redirect: false },
+        deck: false,
       },
     });
     const normalHost = `n-${scope}.localhost:${port}`;
@@ -1751,7 +1753,9 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
     expect(smallDeck.body).toContain("register('deck'");
     expect(smallDeck.body).toContain('__odDeckStageFallbackInstalled');
     expect(smallDeck.body).toContain('var odHasArtifactKeydownListener = true;');
-    expect(smallDeck.body).toContain('var odHasExternalSlideMessageListener = true;');
+    expect(smallDeck.body).toContain(
+      'var odHasExternalSlideMessageListener = true || odDeckProtocolVersion === 1;',
+    );
     const smallDeckStage = /<main\b[^>]*\bid="deck-stage"[^>]*>/u.exec(smallDeck.body);
     expect(smallDeckStage).not.toBeNull();
     expect(smallDeck.body.indexOf('__odDeckStageFallbackInstalled')).toBeLessThan(smallDeckStage!.index);
@@ -1765,7 +1769,9 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
     expect(largeDeck.body).toContain("register('deck'");
     expect(largeDeck.body).toContain('__odDeckStageFallbackInstalled');
     expect(largeDeck.body).toContain('var odHasArtifactKeydownListener = true;');
-    expect(largeDeck.body).toContain('var odHasExternalSlideMessageListener = true;');
+    expect(largeDeck.body).toContain(
+      'var odHasExternalSlideMessageListener = true || odDeckProtocolVersion === 1;',
+    );
     const largeDeckStage = /<main\b[^>]*\bid="deck-stage"[^>]*>/u.exec(largeDeck.body);
     expect(largeDeckStage).not.toBeNull();
     expect(largeDeck.body.indexOf('__odDeckStageFallbackInstalled')).toBeLessThan(largeDeckStage!.index);

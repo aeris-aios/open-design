@@ -9848,7 +9848,75 @@ function HtmlViewer({
     const s = routingHtmlSource;
     return sourceLooksLikeDeckPreview(s);
   }, [routingHtmlSource]);
-  const effectiveDeck = isDeck || (!passiveLargeHtmlPreview && looksLikeDeck);
+  const sourceDeckHint = isDeck || (!passiveLargeHtmlPreview && looksLikeDeck);
+  // Settled URL documents receive daemon guards and powered-profile selection
+  // before authored scripts run. Host heuristics remain only as an old-daemon
+  // fallback and for the legacy transport.
+  const activeServerPassiveGuards = serverPassivePreviewGuards?.identity === currentSourceIdentity
+    ? serverPassivePreviewGuards.guards
+    : null;
+  const needsSandboxShim = useMemo(() => {
+    const s = routingHtmlSource;
+    return activeServerPassiveGuards?.sandbox === true || (s != null && htmlNeedsSandboxShim(s));
+  }, [activeServerPassiveGuards?.sandbox, routingHtmlSource]);
+  const needsFocusGuard = useMemo(() => {
+    const s = routingHtmlSource;
+    return activeServerPassiveGuards?.focus === true || (s != null && htmlNeedsFocusGuard(s));
+  }, [activeServerPassiveGuards?.focus, routingHtmlSource]);
+  const needsRedirectGuard = useMemo(() => {
+    const s = routingHtmlSource;
+    return activeServerPassiveGuards?.redirect === true || (s != null && htmlNeedsRedirectGuard(s));
+  }, [activeServerPassiveGuards?.redirect, routingHtmlSource]);
+  const needsPowered = useMemo(() => {
+    if (serverPoweredPreviewRequired) return true;
+    const s = routingHtmlSource;
+    return s != null && htmlNeedsPoweredPreview(s);
+  }, [routingHtmlSource, serverPoweredPreviewRequired]);
+  const previewRuntimePolicy = {
+    sandboxProfile: needsPowered ? 'powered' as const : 'normal' as const,
+    guards: {
+      storage: needsSandboxShim && !needsPowered,
+      focus: needsFocusGuard && !needsPowered,
+      redirect: needsRedirectGuard && !needsPowered,
+    },
+    deck: sourceDeckHint,
+  };
+  // The exact daemon-owned file version is the classification authority for
+  // the converged transport. Source text is still fetched for Code, export,
+  // thumbnails, and legacy fallback, but it must not sit on the first-paint
+  // critical path of a real URL document.
+  const previewRuntimeNavigationEnabled =
+    previewRuntimeConvergence
+    && sourceAuthorizationScopeKey !== null
+    && liveHtml === undefined;
+  const previewRuntimeRevisionKey = `${sourceSnapshotRefreshKey}:${reloadKey}`;
+  const previewRuntimeNavigation = useProjectPreviewSessionNavigation({
+    projectId,
+    fileName: file.name,
+    revisionKey: previewRuntimeRevisionKey,
+    authorizationKey: sourceAuthorizationScopeKey ?? 'pending',
+    policy: previewRuntimePolicy,
+    enabled: previewRuntimeNavigationEnabled,
+    retainLastGoodWhenDisabled: true,
+  });
+  const daemonDeckPolicy = previewRuntimeConvergence
+    ? previewRuntimeNavigation.navigation?.deck
+    : undefined;
+  const effectiveDeck = isDeck || (daemonDeckPolicy ?? sourceDeckHint);
+  const previewRuntimeNavigationGeneration = previewRuntimeNavigation.navigation
+    ? [
+        projectId,
+        file.name,
+        previewRuntimeRevisionKey,
+        previewRuntimeNavigation.navigation.sessionId,
+        previewRuntimeNavigation.navigation.documentVersion,
+      ].join('\u0000')
+    : null;
+  useEffect(() => {
+    setPreviewRuntimeTimedOutGeneration((failedGeneration) => (
+      failedGeneration === previewRuntimeNavigationGeneration ? failedGeneration : null
+    ));
+  }, [previewRuntimeNavigationGeneration]);
   const previewZoomPercent = resolveDesktopPreviewZoomPercent({
     zoomMode,
     viewport: previewViewport,
@@ -10063,31 +10131,6 @@ function HtmlViewer({
   const manualEditPageStylesEnabled = typeof source === 'string' && isManualEditFullHtmlDocument(source);
   const urlModeBridge = hasUrlModeBridge(routingHtmlSource);
   const manualEditRequiresSrcDoc = manualEditMode || manualEditSrcDocActive;
-  const activeServerPassiveGuards = serverPassivePreviewGuards?.identity === currentSourceIdentity
-    ? serverPassivePreviewGuards.guards
-    : null;
-  // When we URL-load the iframe directly, skip every in-host inlining /
-  // srcDoc-rebuilding step. The browser does the asset resolution itself,
-  // while the daemon injects passive document guards before authored scripts.
-  // Fall back to srcDoc only for in-memory HTML that has not landed on disk.
-  // Settled large documents receive these guards through the daemon's
-  // byte-preserving streaming injection path.
-  // Memoized on `source` so HtmlViewer's frequent re-renders (board/inspect/
-  // edit mode toggles, slide nav) don't re-scan the HTML each time.
-  const needsSandboxShim = useMemo(() => {
-    const s = routingHtmlSource;
-    return activeServerPassiveGuards?.sandbox === true || (s != null && htmlNeedsSandboxShim(s));
-  }, [activeServerPassiveGuards?.sandbox, routingHtmlSource]);
-  const needsFocusGuard = useMemo(() => {
-    const s = routingHtmlSource;
-    return activeServerPassiveGuards?.focus === true || (s != null && htmlNeedsFocusGuard(s));
-  }, [activeServerPassiveGuards?.focus, routingHtmlSource]);
-  // A self-redirecting artifact needs the redirect-loop guard on whichever
-  // transport owns the document (nexu-io/open-design#710).
-  const needsRedirectGuard = useMemo(() => {
-    const s = routingHtmlSource;
-    return activeServerPassiveGuards?.redirect === true || (s != null && htmlNeedsRedirectGuard(s));
-  }, [activeServerPassiveGuards?.redirect, routingHtmlSource]);
   const urlDocumentGuardsAvailable = liveHtml === undefined;
   // Set by the injected guard's `od:redirect-loop-blocked` postMessage. The
   // browser makes `window.location` unforgeable, so a runaway reload can only be
@@ -10203,65 +10246,6 @@ function HtmlViewer({
     workspaceActive,
     workspaceContext,
   ]);
-  // A real WebGL/Worker/WASM/SharedArrayBuffer artifact needs the "powered
-  // preview" path — a cross-origin-isolated iframe with allow-same-origin —
-  // which the opaque preview sandbox cannot provide (issue #724). Powered mode
-  // supersedes the shim/focus-guard srcDoc fallbacks below: those exist only to
-  // work around the opaque origin (localStorage SecurityError, focus theft),
-  // and powered mode fixes the root cause with a REAL same-origin document, so
-  // routing such an artifact to srcDoc would strip exactly the capabilities it
-  // needs. The interactive-bridge srcDoc modes (deck/inspect/edit/palette/
-  // tweaks/comment) still win — they require host-injected bridges powered mode
-  // can't carry.
-  const needsPowered = useMemo(() => {
-    if (serverPoweredPreviewRequired) return true;
-    const s = routingHtmlSource;
-    return s != null && htmlNeedsPoweredPreview(s);
-  }, [routingHtmlSource, serverPoweredPreviewRequired]);
-  const previewRuntimePolicy = {
-    sandboxProfile: needsPowered ? 'powered' as const : 'normal' as const,
-    guards: {
-      storage: needsSandboxShim && !needsPowered,
-      focus: needsFocusGuard && !needsPowered,
-      redirect: needsRedirectGuard && !needsPowered,
-    },
-    deck: effectiveDeck,
-  };
-  // The convergence transport must never mint from a previous file's retained
-  // source classification. It also cannot represent an in-memory agent/edit
-  // snapshot: the real URL is the settled daemon-owned document, so retain the
-  // last good frame until those bytes land rather than navigating to stale
-  // disk content.
-  const previewRuntimeNavigationEnabled =
-    previewRuntimeConvergence
-    && sourceAuthorizationScopeKey !== null
-    && liveHtml === undefined
-    && routingSourceIdentity === currentSourceIdentity
-    && routingHtmlSource !== null;
-  const previewRuntimeRevisionKey = `${sourceSnapshotRefreshKey}:${reloadKey}`;
-  const previewRuntimeNavigation = useProjectPreviewSessionNavigation({
-    projectId,
-    fileName: file.name,
-    revisionKey: previewRuntimeRevisionKey,
-    authorizationKey: sourceAuthorizationScopeKey ?? 'pending',
-    policy: previewRuntimePolicy,
-    enabled: previewRuntimeNavigationEnabled,
-    retainLastGoodWhenDisabled: true,
-  });
-  const previewRuntimeNavigationGeneration = previewRuntimeNavigation.navigation
-    ? [
-        projectId,
-        file.name,
-        previewRuntimeRevisionKey,
-        previewRuntimeNavigation.navigation.sessionId,
-        previewRuntimeNavigation.navigation.documentVersion,
-      ].join('\u0000')
-    : null;
-  useEffect(() => {
-    setPreviewRuntimeTimedOutGeneration((failedGeneration) => (
-      failedGeneration === previewRuntimeNavigationGeneration ? failedGeneration : null
-    ));
-  }, [previewRuntimeNavigationGeneration]);
   const previewRuntimeViewerState = {
     deck: effectiveDeck,
     comment: boardMode,
@@ -15912,7 +15896,9 @@ function HtmlViewer({
     if (state === 'failed') return t('fileViewer.deployLinkFailed');
     return t('fileViewer.deployLinkPreparingLabel');
   };
-  const initialPreviewLoading = source === null && !sourceEverLoadedRef.current;
+  const initialPreviewLoading = !previewRuntimeConvergence
+    && source === null
+    && !sourceEverLoadedRef.current;
   const sourceModeLoading = mode === 'source' && source === null;
   const boardAvailable = mode === 'preview' && source !== null;
   const showPreviewToolbarControls = mode === 'preview';

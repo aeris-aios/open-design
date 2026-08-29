@@ -2586,6 +2586,7 @@ export async function fetchProjectScopedPreviewNavigation(
       && typeof previewPolicy.guards?.storage === 'boolean'
       && typeof previewPolicy.guards?.focus === 'boolean'
       && typeof previewPolicy.guards?.redirect === 'boolean'
+      && (previewPolicy.deck === undefined || typeof previewPolicy.deck === 'boolean')
     );
     const normalMatch = /^n-([A-Za-z0-9_-]{8,128})\.localhost$/u.exec(normal.hostname);
     const poweredMatch = /^p-([A-Za-z0-9_-]{8,128})\.localhost$/u.exec(powered.hostname);

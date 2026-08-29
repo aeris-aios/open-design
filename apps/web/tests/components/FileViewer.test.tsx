@@ -9218,7 +9218,7 @@ describe('FileViewer tweaks toolbar', () => {
     ))).toHaveLength(1);
   });
 
-  it('does not mint a converged navigation before the current file source is classified', async () => {
+  it('mints converged navigation from daemon policy without waiting for source text', async () => {
     const file = htmlPreviewFile({ name: 'gated.html', path: 'gated.html' });
     const sourceResponse = deferredResponse();
     const fetchMock = vi.fn(async (input: string | URL | Request) => {
@@ -9242,6 +9242,11 @@ describe('FileViewer tweaks toolbar', () => {
             normalUrl: 'http://n-scope-0002.localhost:43111/gated.html',
             poweredUrl: 'http://p-scope-0002.localhost:43111/gated.html',
             documentVersion: 'gated-v1',
+            previewPolicy: {
+              sandboxProfile: 'normal',
+              guards: { storage: false, focus: false, redirect: false },
+              deck: true,
+            },
           },
         }), { status: 200 });
       }
@@ -9263,25 +9268,29 @@ describe('FileViewer tweaks toolbar', () => {
         String(input).startsWith('/api/projects/project-1/raw/gated.html')
       ))).toBe(true);
     });
-    expect(fetchMock.mock.calls.some(([input]) => (
-      String(input).includes('/api/projects/project-1/preview-url')
-    ))).toBe(false);
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.some(([input]) => (
+        String(input).includes('/api/projects/project-1/preview-url')
+      ))).toBe(true);
+    });
+    expect(await screen.findByTestId('preview-runtime-frame-standby')).toHaveAttribute(
+      'src',
+      'http://n-scope-0002.localhost:43111/gated.html?odPreviewRuntime=deck',
+    );
 
     sourceResponse.resolve(new Response(
       '<!doctype html><html><body><main>Ready</main></body></html>',
       { status: 200, headers: { 'Content-Type': 'text/html' } },
     ));
     await waitFor(() => {
-      expect(fetchMock.mock.calls.some(([input]) => (
-        String(input).includes('/api/projects/project-1/preview-url')
-      ))).toBe(true);
-    });
-    await waitFor(() => {
       expect(screen.getByTestId('preview-runtime-frame-standby')).toHaveAttribute(
         'src',
-        'http://n-scope-0002.localhost:43111/gated.html',
+        'http://n-scope-0002.localhost:43111/gated.html?odPreviewRuntime=deck',
       );
     });
+    expect(fetchMock.mock.calls.filter(([input]) => (
+      String(input).includes('/api/projects/project-1/preview-url')
+    ))).toHaveLength(1);
   });
 
   it('surfaces an initial converged navigation failure and recovers on explicit reload', async () => {

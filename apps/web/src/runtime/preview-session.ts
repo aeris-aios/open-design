@@ -12,6 +12,7 @@ import {
 export interface PreviewSessionDocument extends PreviewRuntimeDocumentIdentity {
   url: string;
   sandboxProfile: 'normal' | 'powered';
+  deck: boolean;
   target: PreviewRuntimeMessageTarget;
 }
 

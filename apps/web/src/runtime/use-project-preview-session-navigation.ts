@@ -68,7 +68,8 @@ function sameNavigation(
   return left?.sessionId === right.sessionId
     && left.documentVersion === right.documentVersion
     && left.url === right.url
-    && left.sandboxProfile === right.sandboxProfile;
+    && left.sandboxProfile === right.sandboxProfile
+    && left.deck === right.deck;
 }
 
 /**

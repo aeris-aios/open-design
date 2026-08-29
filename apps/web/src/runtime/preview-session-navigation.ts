@@ -4,6 +4,7 @@ import type { ProjectScopedPreviewNavigation } from '../providers/registry';
 export interface PreviewSessionNavigation extends PreviewRuntimeDocumentIdentity {
   url: string;
   sandboxProfile: 'normal' | 'powered';
+  deck: boolean;
 }
 
 export interface PreviewSessionNavigationPolicy {
@@ -52,6 +53,7 @@ export function buildPreviewSessionNavigation(
 ): PreviewSessionNavigation {
   const sandboxProfile = scoped.previewPolicy?.sandboxProfile ?? policy.sandboxProfile;
   const guards = scoped.previewPolicy?.guards ?? policy.guards;
+  const deck = scoped.previewPolicy?.deck ?? policy.deck;
   const url = new URL(
     sandboxProfile === 'powered' ? scoped.poweredUrl : scoped.normalUrl,
   );
@@ -61,12 +63,13 @@ export function buildPreviewSessionNavigation(
     if (guards.focus) url.searchParams.append('odPreviewBridge', 'focus');
     if (guards.redirect) url.searchParams.append('odPreviewBridge', 'redirect');
   }
-  if (policy.deck) url.searchParams.append('odPreviewRuntime', 'deck');
+  if (deck) url.searchParams.append('odPreviewRuntime', 'deck');
 
   return {
     sessionId: scoped.sessionId,
     documentVersion: scoped.documentVersion,
     url: url.href,
     sandboxProfile,
+    deck,
   };
 }

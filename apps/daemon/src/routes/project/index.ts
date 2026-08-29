@@ -6512,6 +6512,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
                       previewPolicy: {
                         sandboxProfile: previewPolicy.sandboxProfile,
                         guards: previewPolicy.guards,
+                        deck: previewPolicy.deck,
                       },
                     }
                   : {}),
