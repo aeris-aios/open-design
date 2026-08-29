@@ -99,6 +99,15 @@ export class HtmlPreviewPolicyIndex {
     return promise;
   }
 
+  /**
+   * Start exact-version classification before a foreground preview needs it.
+   * Failures remain retryable through get(); background callers deliberately
+   * do not own or observe the scan promise.
+   */
+  prewarm(request: HtmlPreviewPolicyRequest): void {
+    void this.get(request).catch(() => undefined);
+  }
+
   invalidate(filePath: string): void {
     this.#entries.delete(filePath);
   }

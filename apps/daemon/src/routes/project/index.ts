@@ -5515,6 +5515,21 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
   const { validateArtifactManifestInput } = ctx.artifacts;
   const { projectPreviewScopes } = ctx;
   const htmlPreviewPolicyIndex = new HtmlPreviewPolicyIndex();
+  const prewarmHtmlPreviewPolicy = (
+    projectId: string,
+    fileName: string,
+    metadata: unknown,
+  ): void => {
+    void resolveProjectFilePath(PROJECTS_DIR, projectId, fileName, metadata)
+      .then((meta: { filePath: string; mime: string; mtime: number; size: number }) => {
+        if (!/^text\/html(?:;|$)/i.test(meta.mime)) return;
+        htmlPreviewPolicyIndex.prewarm({
+          filePath: meta.filePath,
+          documentVersion: htmlPreviewDocumentVersion(meta),
+        });
+      })
+      .catch(() => undefined);
+  };
   const projectPreviewIframeSandbox = 'allow-scripts allow-forms';
   const projectPreviewCsp = [
     `sandbox ${projectPreviewIframeSandbox}`,
@@ -7645,6 +7660,11 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
                 (versionLock) => writeAndCapture(versionLock),
               )
               : await writeAndCapture();
+            prewarmHtmlPreviewPolicy(
+              req.params.id,
+              meta.name,
+              uploadProject?.metadata,
+            );
             /** @type {import('@open-design/contracts').ProjectFileResponse} */
             const body = {
               file: meta,
@@ -7763,6 +7783,11 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
             (versionLock) => writeAndCapture(versionLock),
           )
           : await writeAndCapture();
+        prewarmHtmlPreviewPolicy(
+          req.params.id,
+          meta.name,
+          uploadProject?.metadata,
+        );
         /** @type {import('@open-design/contracts').ProjectFileResponse} */
         const body = {
           file: meta,

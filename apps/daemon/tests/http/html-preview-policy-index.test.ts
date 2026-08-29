@@ -55,6 +55,42 @@ describe('HtmlPreviewPolicyIndex', () => {
     expect(scan).toHaveBeenCalledTimes(1);
   });
 
+  it('prewarms a version without making callers own the scan promise', async () => {
+    const pending = deferred<HtmlHeadScanResult>();
+    const scan = vi.fn(() => pending.promise);
+    const index = new HtmlPreviewPolicyIndex({ scan });
+    const request = { filePath: '/project/index.html', documentVersion: 'v1' };
+
+    index.prewarm(request);
+    expect(scan).toHaveBeenCalledTimes(1);
+
+    const foreground = index.get(request);
+    expect(scan).toHaveBeenCalledTimes(1);
+    pending.resolve(result({ needsPoweredPreview: true }));
+
+    await expect(foreground).resolves.toMatchObject({
+      documentVersion: 'v1',
+      sandboxProfile: 'powered',
+    });
+  });
+
+  it('allows a foreground retry after a failed background prewarm', async () => {
+    const first = deferred<HtmlHeadScanResult>();
+    const scan = vi.fn()
+      .mockReturnValueOnce(first.promise)
+      .mockResolvedValueOnce(result());
+    const index = new HtmlPreviewPolicyIndex({ scan });
+    const request = { filePath: '/project/index.html', documentVersion: 'v1' };
+
+    index.prewarm(request);
+    first.reject(new Error('temporary read failure'));
+    await first.promise.catch(() => undefined);
+    await Promise.resolve();
+
+    await expect(index.get(request)).resolves.toMatchObject({ documentVersion: 'v1' });
+    expect(scan).toHaveBeenCalledTimes(2);
+  });
+
   it('classifies Deck navigation from the exact daemon-scanned document', async () => {
     const index = new HtmlPreviewPolicyIndex({
       scan: vi.fn(async () => result({ hasDeckStageElement: true })),
