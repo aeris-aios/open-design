@@ -295,6 +295,7 @@ export function TooltipLayer() {
       ref={tooltipRef}
       className="od-tooltip-layer"
       role="tooltip"
+      data-tooltip-context={state.target.closest('[role="menu"]') ? 'menu' : undefined}
       style={{
         transform: `translate3d(${state.style.x}px, ${state.style.y}px, 0)`,
         visibility: state.style.visibility,

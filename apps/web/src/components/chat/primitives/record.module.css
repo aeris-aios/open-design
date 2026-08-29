@@ -763,6 +763,7 @@
   overflow: hidden;
   border: var(--chat-stroke) solid var(--chat-border);
   background: var(--chat-bg-subtle);
+  padding: 0;
 }
 /* 失败格:不描红框,红只留给「重试」两个字 —— 一排格子并排时,
    描红的那格先让人看到「这格跟别的不一样」,还得再看一眼才知道哪不一样 */
@@ -803,7 +804,7 @@
 .strip .th:hover { border-color: var(--chat-text-soft); }
 
 /* 占位图:一块纯灰压住图片该占的范围,不画界面细节 —— 评审看的是框和排布 */
-.mini { display: block; width: 100%; height: 100%; background: var(--chat-bg-muted); }
+.mini { display: block; width: 100%; height: 100%; object-fit: cover; background: var(--chat-bg-muted); }
 /* 还没出来的格子:设计稿 21:02 版把它从「幕布」换成了像素液体(见 `PixelLiquid`)。
    为什么液体比幕布对:幕布要求格子里【已经有一张图】,它演的是「图正在显出来」;
    而这一格要说的是【还没生成出来】—— 那时候什么都还没有,底下没有图可以糊。

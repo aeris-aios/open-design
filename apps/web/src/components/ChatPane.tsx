@@ -23,7 +23,7 @@ import {
   type ReactNode,
 } from 'react';
 import { createPortal } from 'react-dom';
-import { hasOdCard, OD_NEXT_STRATEGY_ID } from '@open-design/contracts';
+import { hasOdCard, OD_NEXT_STRATEGY_ID, type ProjectMediaTask } from '@open-design/contracts';
 import { useAnalytics } from '../analytics/provider';
 import { getResolvedDeviceId } from '../analytics/client';
 import {
@@ -61,7 +61,7 @@ import {
 import type { Dict } from '../i18n/types';
 import { copyToClipboard } from '../lib/copy-to-clipboard';
 import { useLiquidGlass } from '../hooks/useLiquidGlass';
-import { projectRawUrl } from '../providers/registry';
+import { fetchProjectMediaTasks, projectRawUrl } from '../providers/registry';
 import { appendResourceQuery } from '../collab/workspace-identity';
 import { useProjectCollabContext } from '../collab/collab-context';
 import { takeComposerSeedFor } from '../state/libraryHandoff';
@@ -78,11 +78,7 @@ import type {
   TrackingProjectKind,
   TrackingRunRecoveryActionType,
 } from '@open-design/contracts/analytics';
-import {
-  DESIGN_SYSTEM_WORKSPACE_DISPLAY_DESCRIPTION,
-  DESIGN_SYSTEM_WORKSPACE_DISPLAY_TITLE,
-  isDesignSystemWorkspacePrompt,
-} from '../design-system-auto-prompt';
+import { isDesignSystemWorkspacePrompt } from '../design-system-auto-prompt';
 import {
   isTodoWriteToolName,
   latestTodoWriteInputFromMessages,
@@ -1032,6 +1028,57 @@ function hasVisibleBrandAssistantEvent(event: NonNullable<ChatMessage['events']>
   }
 }
 
+function mediaTaskRunKey(
+  messages: ChatMessage[],
+  includeLatestAssistantRun: boolean,
+): string {
+  const runIds = new Set<string>();
+  for (const message of messages) {
+    if (message.role !== 'assistant' || !message.runId) continue;
+    const hasMediaCall = (message.events ?? []).some((event) => {
+      if (event.kind !== 'tool_use' || !event.input || typeof event.input !== 'object') return false;
+      const command = (event.input as Record<string, unknown>).command;
+      return typeof command === 'string' && /media\s+generate/.test(command) && !/--help\b/.test(command);
+    });
+    if (hasMediaCall) runIds.add(message.runId);
+  }
+  /*
+   * ACP reports terminal-backed tool_use only after the command exits. While
+   * an image call is still running, the run's media task is therefore the
+   * first (and only) observable signal. Track the active streaming run even
+   * before a media command appears so polling can discover that task.
+   */
+  if (includeLatestAssistantRun) {
+    const latestRunId = latestAssistantRunId(messages);
+    if (latestRunId) runIds.add(latestRunId);
+  }
+  return [...runIds].sort().join(',');
+}
+
+function sameMediaTasks(a: ProjectMediaTask[], b: ProjectMediaTask[]): boolean {
+  if (a.length !== b.length) return false;
+  return a.every((task, index) => {
+    const other = b[index];
+    return other !== undefined
+      && task.taskId === other.taskId
+      && task.runId === other.runId
+      && task.status === other.status
+      && task.startedAt === other.startedAt
+      && task.endedAt === other.endedAt
+      && task.file?.name === other.file?.name
+      && task.error?.code === other.error?.code
+      && task.error?.message === other.error?.message;
+  });
+}
+
+function latestAssistantRunId(messages: ChatMessage[]): string | undefined {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message?.role === 'assistant') return message.runId;
+  }
+  return undefined;
+}
+
 export function ChatPane({
   messages,
   streaming,
@@ -1178,6 +1225,55 @@ export function ChatPane({
     ),
     [messages, projectMetadata],
   );
+  const trackedMediaRunKey = useMemo(
+    () => mediaTaskRunKey(displayMessages, streaming),
+    [displayMessages, streaming],
+  );
+  const liveMediaRun = useMemo(() => {
+    if (!streaming || !trackedMediaRunKey) return false;
+    const runId = latestAssistantRunId(displayMessages);
+    return Boolean(runId && trackedMediaRunKey.split(',').includes(runId));
+  }, [displayMessages, streaming, trackedMediaRunKey]);
+  const [projectMediaTasks, setProjectMediaTasks] = useState<ProjectMediaTask[]>([]);
+  useEffect(() => {
+    if (!projectId || !trackedMediaRunKey) {
+      setProjectMediaTasks([]);
+      return;
+    }
+    const trackedRunIds = new Set(trackedMediaRunKey.split(','));
+    let canceled = false;
+    let timer: number | undefined;
+    const refresh = async (): Promise<void> => {
+      try {
+        const response = await fetchProjectMediaTasks(projectId, workspaceContext);
+        if (canceled) return;
+        const relevant = response.tasks
+          .filter((task) => task.surface === 'image' && task.runId && trackedRunIds.has(task.runId))
+          .sort((a, b) => a.startedAt - b.startedAt);
+        setProjectMediaTasks((current) => sameMediaTasks(current, relevant) ? current : relevant);
+        if (liveMediaRun || relevant.some((task) => task.status === 'queued' || task.status === 'running')) {
+          timer = window.setTimeout(() => void refresh(), 750);
+        }
+      } catch {
+        if (!canceled && liveMediaRun) timer = window.setTimeout(() => void refresh(), 1500);
+      }
+    };
+    void refresh();
+    return () => {
+      canceled = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [liveMediaRun, projectId, trackedMediaRunKey, workspaceContext]);
+  const mediaTasksByRunId = useMemo(() => {
+    const grouped = new Map<string, ProjectMediaTask[]>();
+    for (const task of projectMediaTasks) {
+      if (!task.runId) continue;
+      const tasks = grouped.get(task.runId) ?? [];
+      tasks.push(task);
+      grouped.set(task.runId, tasks);
+    }
+    return grouped;
+  }, [projectMediaTasks]);
   const amrProfile = config?.agentCliEnv?.amr?.[AMR_PROFILE_ENV_KEY] ?? null;
   const [inlineAmrLoginStatus, setInlineAmrLoginStatus] =
     useState<VelaLoginStatus | null>(null);
@@ -1387,8 +1483,12 @@ export function ChatPane({
   }, []);
   const clearQuotes = useCallback(() => setQuotes([]), []);
 
-  const handleRetryImage = useCallback((row: { total: number; done: number; failed: number }) => {
-    void onSend(t('chat.record.retryImage', { count: Math.max(1, row.failed) }), [], []);
+  const handleRetryImage = useCallback((row: { total: number; done: number; failed: number }, index: number) => {
+    // The media-task row now preserves actual task order. Keep the localized
+    // retry sentence, and append the universal slot coordinate so the agent
+    // retries only the clicked output when more than one cell failed.
+    const prompt = `${t('chat.record.retryImage', { count: 1 })} (${index + 1}/${row.total})`;
+    void onSend(prompt, [], []);
   }, [onSend, t]);
   const latestAssistantForBrandState = useMemo(() => {
     for (let i = displayMessages.length - 1; i >= 0; i -= 1) {
@@ -3293,6 +3393,7 @@ export function ChatPane({
                   projectMetadata={projectMetadata}
                   projectFileNames={projectFileNames}
                   projectResolvedDir={projectResolvedDir}
+                  mediaTasksByRunId={mediaTasksByRunId}
                   onRequestOpenFile={onRequestOpenFile}
                   onRequestPluginDetails={onRequestPluginDetails}
                   onRequestDesignSystemDetails={onRequestDesignSystemDetails}
@@ -4165,6 +4266,7 @@ function ChatRows({
   projectMetadata,
   projectFileNames,
   projectResolvedDir,
+  mediaTasksByRunId,
   onRequestOpenFile,
   onRequestPluginDetails,
   onRequestDesignSystemDetails,
@@ -4224,6 +4326,7 @@ function ChatRows({
   // Daemon-resolved on-disk working directory of the current project —
   // positive-proof anchor for chat file-link routing (see AssistantMessage).
   projectResolvedDir?: string | null;
+  mediaTasksByRunId: Map<string, ProjectMediaTask[]>;
   onRequestOpenFile?: (name: string) => void;
   onRequestPluginDetails?: (pluginId: string) => void;
   onRequestDesignSystemDetails?: (system: DesignSystemSummary) => void;
@@ -4410,6 +4513,7 @@ function ChatRows({
         projectMetadata={projectMetadata}
         projectFileNames={projectFileNames}
         projectResolvedDir={projectResolvedDir}
+        mediaTasks={m.runId ? mediaTasksByRunId.get(m.runId) : undefined}
         onRequestOpenFile={onRequestOpenFile}
         onRetryImage={onRetryImage}
         onRequestPluginFolderAgentAction={onRequestPluginFolderAgentAction}
@@ -5364,13 +5468,13 @@ function ConversationRow({
     <div
       className={`chat-conv-item${active ? ' active' : ''}`}
       data-testid={`conversation-item-${conversation.id}`}
+      onClick={onSelect}
     >
       <button
         type="button"
         className="chat-conv-item-name"
         data-testid={`conversation-select-${conversation.id}`}
         style={{ background: 'transparent', border: 'none', padding: 0, textAlign: 'left' }}
-        onClick={onSelect}
       >
         {displayTitle}
       </button>
@@ -5458,6 +5562,14 @@ const UserMessage = memo(UserMessageImpl);
   );
   const [copied, setCopied] = useState(false);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout>>();
+  const isDesignSystemWorkspaceRequest = isDesignSystemWorkspacePrompt(message.content);
+  // The design-system handoff stores a long implementation prompt so the
+  // agent can build the workspace. In chat, represent the user's actual menu
+  // action instead: localized, concise, and rendered by the canonical user
+  // bubble from the chat-panel design.
+  const displayContent = isDesignSystemWorkspaceRequest
+    ? t('designFiles.createDesignSystemFromProject')
+    : message.content;
 
   useEffect(() => {
     return () => {
@@ -5466,9 +5578,9 @@ const UserMessage = memo(UserMessageImpl);
   }, []);
 
   async function handleCopy() {
-    if (!message.content) return;
+    if (!displayContent) return;
     if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
-    const ok = await copyToClipboard(message.content);
+    const ok = await copyToClipboard(displayContent);
     if (!ok) return;
     setCopied(true);
     copyTimerRef.current = setTimeout(() => {
@@ -5477,7 +5589,6 @@ const UserMessage = memo(UserMessageImpl);
     }, 2000);
   }
 
-  const isDesignSystemWorkspaceRequest = isDesignSystemWorkspacePrompt(message.content);
   // 发送时间一直都在(`ChatMessage.createdAt`),只是从来没渲染过 —— hover 才浮出。
   const clock = formatMessageClock(message.createdAt);
 
@@ -5545,21 +5656,9 @@ const UserMessage = memo(UserMessageImpl);
             ))}
           </div>
         ) : null}
-        {message.content && isDesignSystemWorkspaceRequest ? (
-          <div className="user-text-wrap user-status-wrap">
-            <div className="user-status-card design-system-generation-status">
-              <span className="user-status-card__icon">
-                <Icon name="blocks" size={15} />
-              </span>
-              <span className="user-status-card__copy">
-                <strong>{DESIGN_SYSTEM_WORKSPACE_DISPLAY_TITLE}</strong>
-                <span>{DESIGN_SYSTEM_WORKSPACE_DISPLAY_DESCRIPTION}</span>
-              </span>
-            </div>
-          </div>
-        ) : message.content ? (
+        {message.content ? (
           <div className="user-text-wrap">
-            <UserBubble content={message.content} t={t} />
+            <UserBubble content={displayContent} t={t} />
             <div className="user-actions">
               {/* 稿子**渲染出来**是「时间 → 复制 → 重试」(它的说明文字写的是「时间在最右」,
                   和自己的 DOM 打架;用户 2026-08-26 指认以渲染为准)。

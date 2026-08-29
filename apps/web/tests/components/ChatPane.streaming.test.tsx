@@ -1217,9 +1217,14 @@ Expected output:
       />,
     );
 
-    expect(screen.getByText('Creating design system workspace')).toBeTruthy();
+    // The test i18n stub returns keys. The important contract is that this
+    // system-authored summary now goes through the typed locale dictionary and
+    // the canonical user bubble, instead of a one-off grey status card.
+    const bubble = screen.getByText('designFiles.createDesignSystemFromProject').closest('.user-bubble');
+    expect(bubble).toBeTruthy();
     expect(screen.queryByText(DESIGN_SYSTEM_WORKSPACE_PROMPT_PREFIX, { exact: false })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'chat.copyPrompt' })).toBeNull();
+    expect(document.querySelector('.user-status-card')).toBeNull();
+    expect(screen.getByRole('button', { name: 'chat.copyPrompt' })).toBeTruthy();
   });
 
   it('keeps composer idle while active-run messages still render as streaming', () => {

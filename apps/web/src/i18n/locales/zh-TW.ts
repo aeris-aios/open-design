@@ -1398,6 +1398,7 @@ export const zhTW: Dict = {
   "pluginCard.publish": "發布",
   "pluginCard.contribute": "貢獻",
   "pluginCard.starting": "正在啟動…",
+  "pluginCard.creating": "建立中…",
   "pluginCard.detailsAria": "檢視 {title} 的詳情",
   "pluginCard.chooseUseAria": "選擇 {title} 的使用方式",
   "pluginCard.useOptionsAria": "{title} 的使用選項",
@@ -3808,6 +3809,7 @@ export const zhTW: Dict = {
   "assistant.thoughtFor": "已深度思考（用時 {s} 秒）",
   "assistant.systemReminder": "系統提示",
   "assistant.possiblePromptInjection": "可能的提示詞注入",
+  "assistant.designSystemDirectionLocked": "已選擇目前的設計系統，視覺方向已鎖定。",
   "assistant.waitingFirstOutput": "等待首批輸出中",
   "assistant.statusBootingAgent": "正在啟動代理",
   "assistant.statusPreparing": "準備中...",
@@ -3815,6 +3817,7 @@ export const zhTW: Dict = {
   "assistant.statusRequesting": "正在傳送請求",
   "assistant.statusThinking": "思考中",
   "assistant.statusStreaming": "串流輸出中",
+  "assistant.statusCompactingContext": "正在壓縮上下文",
   "assistant.slowHint":
     "耗時比平時更久。一般 5–10 秒內會出現表單，可以「停止」後重新表達。",
   "assistant.verbEditing": "編輯",

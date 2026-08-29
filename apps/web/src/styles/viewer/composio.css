@@ -3993,7 +3993,7 @@ body.entry-resizing { cursor: col-resize; user-select: none; }
   align-items: center;
   gap: 5px;
   margin-inline-end: 4px;
-  font-weight: 500;
+  font-weight: 400;
   color: var(--text-faint);
   font-size: 12px;
 }

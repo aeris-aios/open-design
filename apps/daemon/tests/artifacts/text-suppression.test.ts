@@ -108,3 +108,42 @@ test('tool call suppressor preserves OD UI markup', () => {
     '<od-card type="task-brief">{"summary":"x"}</od-card>',
   );
 });
+
+test('tool call suppressor strips a split fullwidth DSML protocol tail', () => {
+  const suppressor = createToolCallTextSuppressor();
+
+  assert.equal(suppressor.strip('保留这段建议</｜｜DS'), '保留这段建议');
+  assert.equal(suppressor.strip('ML｜｜parameter>\n</｜｜DSML｜｜inv'), '');
+  assert.equal(
+    suppressor.strip('oke>\n</｜｜DSML｜｜tool_calls>\n'),
+    '',
+  );
+  assert.equal(suppressor.flush(), '');
+});
+
+test('tool call suppressor strips the ASCII-pipe DSML protocol tail', () => {
+  const suppressor = createToolCallTextSuppressor();
+
+  assert.equal(
+    suppressor.strip(
+      'Keep this</||DSML||parameter>\n</||DSML||invoke>\n</||DSML||tool_calls>',
+    ),
+    'Keep this',
+  );
+  assert.equal(suppressor.flush(), '');
+});
+
+test('tool call suppressor preserves DSML-looking Markdown and code', () => {
+  const suppressor = createToolCallTextSuppressor();
+  const markdown = [
+    'Literal `</｜｜DSML｜｜parameter>` stays.',
+    '```xml',
+    '</｜｜DSML｜｜parameter>',
+    '</｜｜DSML｜｜invoke>',
+    '</｜｜DSML｜｜tool_calls>',
+    '```',
+  ].join('\n');
+
+  assert.equal(suppressor.strip(markdown), markdown);
+  assert.equal(suppressor.flush(), '');
+});

@@ -1,3 +1,5 @@
+import { renderDoneMarker } from './done-marker.js';
+
 /**
  * Canonical "did the run's declared work actually finish?" predicate.
  *
@@ -33,6 +35,142 @@ export function stopReasonIsTruncation(stopReason: unknown): boolean {
 /** True when a single TodoWrite task status represents unfinished work. */
 export function todoStatusIsUnfinished(status: unknown): boolean {
   return status !== 'completed';
+}
+
+interface CodeRange {
+  start: number;
+  end: number;
+}
+
+/**
+ * Only the canonical per-run marker is completion evidence. The prompt asks
+ * the model to copy this exact form and explicitly says that a fenced marker
+ * is ignored, so this predicate deliberately fails closed on alternate tag
+ * spellings and markers inside fenced/inline code.
+ */
+export function textHasAuthenticatedDoneConclusion(text: unknown, key: unknown): boolean {
+  const at = authenticatedDoneMarkerIndex(text, key);
+  if (at < 0 || typeof text !== 'string' || typeof key !== 'string') return false;
+  return text.slice(at + renderDoneMarker(key).length).trim().length > 0;
+}
+
+/** True when the exact per-run marker occurs outside Markdown code. */
+export function textHasAuthenticatedDoneMarker(text: unknown, key: unknown): boolean {
+  return authenticatedDoneMarkerIndex(text, key) >= 0;
+}
+
+function authenticatedDoneMarkerIndex(text: unknown, key: unknown): number {
+  if (typeof text !== 'string' || typeof key !== 'string' || !key) return -1;
+  const marker = renderDoneMarker(key);
+  const skipped = markdownCodeRanges(text);
+  let from = 0;
+  for (;;) {
+    const at = text.indexOf(marker, from);
+    if (at < 0) return -1;
+    if (!skipped.some((range) => at >= range.start && at < range.end)) {
+      return at;
+    }
+    from = at + marker.length;
+  }
+}
+
+export interface AuthenticatedDoneCaptureState {
+  markerTail: string;
+  awaitingConclusion: boolean;
+  authenticatedConclusion: boolean;
+}
+
+/**
+ * Incremental live-stream companion to `textHasAuthenticatedDoneConclusion`.
+ *
+ * `fullVisibleText` is the caller's existing reply accumulator; this state
+ * deliberately keeps only a marker-length tail and one boolean. Once a valid
+ * marker has arrived without prose, later whitespace deltas do no rescanning;
+ * the first non-whitespace delta authenticates the conclusion in O(1).
+ */
+export function advanceAuthenticatedDoneCapture(args: {
+  fullVisibleText: string;
+  delta: string;
+  key: string;
+  state?: Partial<AuthenticatedDoneCaptureState> | null;
+}): AuthenticatedDoneCaptureState {
+  const previous: AuthenticatedDoneCaptureState = {
+    markerTail: args.state?.markerTail ?? '',
+    awaitingConclusion: args.state?.awaitingConclusion === true,
+    authenticatedConclusion: args.state?.authenticatedConclusion === true,
+  };
+  if (previous.authenticatedConclusion || !args.key || !args.delta) return previous;
+
+  const marker = renderDoneMarker(args.key);
+  const candidate = `${previous.markerTail}${args.delta}`;
+  const markerArrived = candidate.includes(marker);
+  const next: AuthenticatedDoneCaptureState = {
+    ...previous,
+    markerTail: candidate.slice(-(marker.length - 1)),
+  };
+
+  if (markerArrived && textHasAuthenticatedDoneMarker(args.fullVisibleText, args.key)) {
+    if (textHasAuthenticatedDoneConclusion(args.fullVisibleText, args.key)) {
+      next.authenticatedConclusion = true;
+      next.awaitingConclusion = false;
+    } else {
+      next.awaitingConclusion = true;
+    }
+  } else if (previous.awaitingConclusion && args.delta.trim().length > 0) {
+    next.authenticatedConclusion = true;
+    next.awaitingConclusion = false;
+  }
+  return next;
+}
+
+/**
+ * Persisted-event form of `textHasAuthenticatedDoneConclusion`. A `done_key`
+ * without its matching marker is not evidence; neither is a marker without a
+ * visible final answer after it.
+ */
+export function eventsHaveAuthenticatedDoneConclusion(events: unknown): boolean {
+  if (!Array.isArray(events)) return false;
+  let key = '';
+  let text = '';
+  for (const event of events) {
+    if (!event || typeof event !== 'object') continue;
+    const record = event as { kind?: unknown; key?: unknown; text?: unknown };
+    if (!key && record.kind === 'done_key' && typeof record.key === 'string') {
+      key = record.key.trim();
+    } else if (record.kind === 'text' && typeof record.text === 'string') {
+      text += record.text;
+    }
+  }
+  return textHasAuthenticatedDoneConclusion(text, key);
+}
+
+function markdownCodeRanges(text: string): CodeRange[] {
+  const ranges: CodeRange[] = [];
+  let position = 0;
+  let fenceStart = -1;
+  while (position < text.length) {
+    const eol = text.indexOf('\n', position);
+    const end = eol < 0 ? text.length : eol;
+    const line = text.slice(position, end);
+    if (fenceStart < 0) {
+      if (eol >= 0 && /^```(?:\w[\w+-]*)?\s*$/.test(line)) fenceStart = position;
+    } else if (eol >= 0 && /^```\s*$/.test(line)) {
+      ranges.push({ start: fenceStart, end: eol + 1 });
+      fenceStart = -1;
+    }
+    if (eol < 0) break;
+    position = eol + 1;
+  }
+  if (fenceStart >= 0) ranges.push({ start: fenceStart, end: text.length });
+
+  const inline = /`[^`]+`/g;
+  let match: RegExpExecArray | null;
+  while ((match = inline.exec(text)) !== null) {
+    if (!ranges.some((range) => match!.index >= range.start && match!.index < range.end)) {
+      ranges.push({ start: match.index, end: match.index + match[0].length });
+    }
+  }
+  return ranges;
 }
 
 /**
@@ -118,6 +256,11 @@ export function eventsEndedWithUnfinishedWork(events: unknown): boolean {
       return true;
     }
   }
+  // A matching nonce plus a visible conclusion is the agent's authenticated
+  // completion declaration. The per-turn contract says to emit this marker
+  // only once the work is done, so it outranks an older Todo snapshot exactly
+  // like the verified strategy verdict does. Truncation above still wins.
+  if (eventsHaveAuthenticatedDoneConclusion(events)) return false;
   for (let i = events.length - 1; i >= 0; i -= 1) {
     const event = events[i];
     if (

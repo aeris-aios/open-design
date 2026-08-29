@@ -30,6 +30,7 @@ import type {
   ProjectFileVersionSource,
   ProjectFileVersionResponse,
   ProjectFileVersionsResponse,
+  ProjectMediaTasksResponse,
   RestoreProjectFileVersionResponse,
   SocialShareRequest,
   SocialShareResponse,
@@ -266,6 +267,21 @@ export async function fetchSkills(
   } catch {
     return [];
   }
+}
+
+export async function fetchProjectMediaTasks(
+  projectId: string,
+  workspaceContext?: WorkspaceCollabContext | null,
+): Promise<ProjectMediaTasksResponse> {
+  const resp = await fetch(
+    `/api/projects/${encodeURIComponent(projectId)}/media/tasks?includeDone=1`,
+    {
+      cache: 'no-store',
+      ...(workspaceContext ? { headers: workspaceProjectHeaders(workspaceContext) } : {}),
+    },
+  );
+  if (!resp.ok) throw new Error(`media tasks ${resp.status}`);
+  return await resp.json() as ProjectMediaTasksResponse;
 }
 
 // Design templates — the rendering catalogue (decks, prototypes, image/

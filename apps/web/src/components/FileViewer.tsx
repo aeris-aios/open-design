@@ -7031,7 +7031,7 @@ function ReactComponentViewer({
                             data-tooltip={shareAccess === 'private'
                               ? t('fileViewer.workspaceSharePrivateDescription')
                               : t('fileViewer.workspaceShareWorkspaceDescription')}
-                            data-tooltip-placement="bottom"
+                            data-tooltip-placement="top"
                             onClick={(e) => e.stopPropagation()}
                           >
                             <RemixIcon name="question-line" size={14} />
@@ -7108,7 +7108,7 @@ function ReactComponentViewer({
                             data-testid="publish-help"
                             aria-label={t('fileViewer.publishSingleFileDescription')}
                             data-tooltip={t('fileViewer.publishSingleFileDescription')}
-                            data-tooltip-placement="bottom"
+                            data-tooltip-placement="top"
                             onClick={(e) => e.stopPropagation()}
                           >
                             <RemixIcon name="question-line" size={14} />
@@ -16798,7 +16798,7 @@ function HtmlViewer({
                           data-tooltip={shareAccess === 'private'
                             ? t('fileViewer.workspaceSharePrivateDescription')
                             : t('fileViewer.workspaceShareWorkspaceDescription')}
-                          data-tooltip-placement="bottom"
+                          data-tooltip-placement="top"
                           onClick={(e) => e.stopPropagation()}
                         >
                           <RemixIcon name="question-line" size={14} />
@@ -16881,7 +16881,7 @@ function HtmlViewer({
                           data-testid="publish-help"
                           aria-label={t('fileViewer.publishSingleFileDescription')}
                           data-tooltip={t('fileViewer.publishSingleFileDescription')}
-                          data-tooltip-placement="bottom"
+                          data-tooltip-placement="top"
                           onClick={(e) => e.stopPropagation()}
                         >
                           <RemixIcon name="question-line" size={14} />

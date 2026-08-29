@@ -55,9 +55,10 @@ export interface ExecutionShellProps {
   fileScope?: RecordFileScope;
   /** 生图失败格的「重试」—— 没有回调时那一格只画不点(稿子也允许只画) */
   onRetryImage?: (row: ImageRowData, index: number) => void;
+  imageSrc?: (path: string) => string;
 }
 
-export function ExecutionShell({ shell, onOpenFile, fileScope, onRetryImage }: ExecutionShellProps): ReactElement {
+export function ExecutionShell({ shell, onOpenFile, fileScope, onRetryImage, imageSrc }: ExecutionShellProps): ReactElement {
   const t = useT();
   const running = shell.status === 'running' && !shell.stopped;
   const elapsed = formatShellElapsed(shell.elapsedMs);
@@ -185,7 +186,7 @@ export function ExecutionShell({ shell, onOpenFile, fileScope, onRetryImage }: E
     >
       {items.length
         ? items.map((item, i) => renderItem(item, i, {
-            t, onOpenFile, fileScope, onRetryImage, thinkingNow, running,
+            t, onOpenFile, fileScope, onRetryImage, imageSrc, thinkingNow, running,
             liveTextIndex: liveTextIndexOf(items, running),
           }))
         : null}
@@ -211,6 +212,7 @@ interface RenderCtx {
   onOpenFile?: (path: string) => void;
   fileScope?: RecordFileScope;
   onRetryImage?: (row: ImageRowData, index: number) => void;
+  imageSrc?: (path: string) => string;
   /** 模型此刻在想 —— 传给 todo 抽屉,让它认出自己那一摞里的 `live` 格 */
   thinkingNow: boolean;
   /** 这一轮还在跑吗 —— 抽屉里那一摞要自己算 `liveTextIndex`,得知道这件事 */
@@ -251,7 +253,15 @@ function renderItem(item: GroupedShellItem, index: number, ctx: RenderCtx): Reac
     return <SayText key={`text-${index}`} text={item.text} live={index === ctx.liveTextIndex} />;
   }
   if (item.kind === 'image') {
-    return <ImageRow key={`img-${item.id}-${index}`} row={item} onRetry={ctx.onRetryImage} />;
+    return (
+      <ImageRow
+        key={`img-${item.id}-${index}`}
+        row={item}
+        onRetry={ctx.onRetryImage}
+        onOpenImage={ctx.onOpenFile ? (path) => ctx.onOpenFile?.(path) : undefined}
+        imageSrc={ctx.imageSrc}
+      />
+    );
   }
   if (item.kind === 'plan') {
     return <PlanRow key={`plan-${index}`} steps={item.steps} t={ctx.t} />;
@@ -306,7 +316,7 @@ function ThoughtsRow({ texts, elapsedMs, live, t }: {
       <>
         {/* 不给标签:紧跟着的就是「思考中」那行字 */}
         <span className={styles.icon}><Orb state="composing" box={20} className={styles.orb} /></span>
-        <span className={`${styles.shimmer} ${styles.head}`}>
+        <span className={styles.shimmer}>
           {t('chat.record.thinking')}
           <span className={styles.dots} aria-hidden><i /><i /><i /></span>
         </span>

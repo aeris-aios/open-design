@@ -546,6 +546,130 @@ describe('生图落行(D3 的唯一例外)', () => {
     expect(row.pending).toBe(false);
   });
 
+  it('读取 od media generate 的真实成功 envelope', () => {
+    const blocks = buildTurnBlocks({
+      events: call('g1', 'Bash', { command: 'od media generate x' }, {
+        content: JSON.stringify({ file: { name: 'actual-output.png', size: 42, kind: 'image', mime: 'image/png' } }),
+      }),
+      ...done(),
+    });
+    const row = nth(images(nth(shells(blocks), 0).items), 0);
+    expect([row.done, row.failed, row.pending]).toEqual([1, 0, false]);
+    expect(row.thumbs).toEqual(['actual-output.png']);
+  });
+
+  it('历史回放里结果被安全打码时,仍用调用入参还原已完成的生图行', () => {
+    const blocks = buildTurnBlocks({
+      events: call(
+        'g1',
+        'Bash',
+        {
+          command: '"$OD_NODE_BIN" "$OD_BIN" media generate --output e2e-image-1.png',
+          file_path: 'e2e-image-1.png',
+        },
+        {
+          content: '[REDACTED:acp_bash_output:509_chars]',
+          startedAt: 1_000,
+          completedAt: 3_600,
+        },
+      ),
+      ...done(),
+    });
+    const shell = nth(shells(blocks), 0);
+    const row = nth(images(shell.items), 0);
+    expect(tools(shell.items)).toHaveLength(0);
+    expect([row.total, row.done, row.failed, row.pending]).toEqual([1, 1, 0, false]);
+    expect(row.thumbs).toEqual(['e2e-image-1.png']);
+    expect(row.cells).toEqual([{ status: 'done', path: 'e2e-image-1.png' }]);
+    expect(row.elapsedMs).toBe(2_600);
+  });
+
+  it('media task 是逐张状态真相,并保留失败格的实际顺序', () => {
+    const blocks = buildTurnBlocks({
+      events: [{
+        kind: 'tool_use',
+        id: 'g1',
+        name: 'Bash',
+        input: { command: 'od media generate a && od media generate b && od media generate c && od media generate d' },
+      }],
+      mediaTasks: [
+        { taskId: 'm1', runId: 'run', status: 'done', surface: 'image', startedAt: 100, endedAt: 500, elapsed: 0, progress: [], progressCount: 0, file: { name: 'one.png' } },
+        { taskId: 'm2', runId: 'run', status: 'failed', surface: 'image', startedAt: 200, endedAt: 600, elapsed: 0, progress: [], progressCount: 0, error: { message: 'failed' } },
+        { taskId: 'm3', runId: 'run', status: 'running', surface: 'image', startedAt: 300, endedAt: null, elapsed: 0, progress: [], progressCount: 0 },
+      ],
+      runStatus: 'running',
+    });
+    const row = nth(images(nth(shells(blocks), 0).items), 0);
+    expect([row.total, row.done, row.failed, row.pending]).toEqual([4, 1, 1, true]);
+    expect(row.thumbs).toEqual(['one.png']);
+    expect(row.cells).toEqual([
+      { taskId: 'm1', status: 'done', path: 'one.png' },
+      { taskId: 'm2', status: 'failed' },
+      { taskId: 'm3', status: 'pending' },
+      { status: 'pending' },
+    ]);
+  });
+
+  it('terminal tool_use 到达前,每个未消费的运行中 task 都在当前 todo 里单独落一格', () => {
+    const blocks = buildTurnBlocks({
+      events: todo('todo-1', [['生成配套插图', 'in_progress']]),
+      mediaTasks: [
+        { taskId: 'm1', runId: 'run', status: 'running', surface: 'image', startedAt: 100, endedAt: null, elapsed: 0, progress: [], progressCount: 0 },
+        { taskId: 'm2', runId: 'run', status: 'running', surface: 'image', startedAt: 200, endedAt: null, elapsed: 0, progress: [], progressCount: 0 },
+      ],
+      runStatus: 'running',
+    });
+
+    const segment = nth(nth(shells(blocks), 0).segments, 0);
+    const rows = images(segment.items);
+    expect(rows).toHaveLength(2);
+    expect(rows.map((row) => [row.id, row.total, row.done, row.failed, row.pending])).toEqual([
+      ['media-task:m1', 1, 0, 0, true],
+      ['media-task:m2', 1, 0, 0, true],
+    ]);
+    expect(rows.map((row) => row.cells)).toEqual([
+      [{ taskId: 'm1', status: 'pending' }],
+      [{ taskId: 'm2', status: 'pending' }],
+    ]);
+  });
+
+  it('terminal tool_use 消费 task 后不再追加一条 task 占位行', () => {
+    const blocks = buildTurnBlocks({
+      events: [
+        ...todo('todo-1', [['生成配套插图', 'in_progress']]),
+        { kind: 'tool_use', id: 'g1', name: 'Bash', input: { command: 'od media generate a' } },
+      ],
+      mediaTasks: [
+        { taskId: 'm1', runId: 'run', status: 'running', surface: 'image', startedAt: 100, endedAt: null, elapsed: 0, progress: [], progressCount: 0 },
+      ],
+      runStatus: 'running',
+    });
+
+    const segment = nth(nth(shells(blocks), 0).segments, 0);
+    const rows = images(segment.items);
+    expect(rows).toHaveLength(1);
+    expect(nth(rows, 0).id).toBe('g1');
+    expect(nth(rows, 0).cells).toEqual([{ taskId: 'm1', status: 'pending' }]);
+  });
+
+  it('命令已结束但后续 task 没创建时,未启动的格子也收敛为失败', () => {
+    const blocks = buildTurnBlocks({
+      events: call(
+        'g1',
+        'Bash',
+        { command: 'od media generate a && od media generate b' },
+        { content: JSON.stringify({ taskId: 'm1', status: 'failed', error: { message: 'provider failed' } }) },
+      ),
+      mediaTasks: [
+        { taskId: 'm1', runId: 'run', status: 'failed', surface: 'image', startedAt: 100, endedAt: 200, elapsed: 0, progress: [], progressCount: 0, error: { message: 'provider failed' } },
+      ],
+      ...done('failed'),
+    });
+    const row = nth(images(nth(shells(blocks), 0).items), 0);
+    expect([row.failed, row.pending]).toEqual([2, false]);
+    expect(row.cells?.map((cell) => cell.status)).toEqual(['failed', 'failed']);
+  });
+
   it('parse 不动的行用正则兜住 status', () => {
     const blocks = buildTurnBlocks({
       events: call('g1', 'Bash', { command: 'od media generate x' }, { content: '{"status": "succeeded", "path": ' }),

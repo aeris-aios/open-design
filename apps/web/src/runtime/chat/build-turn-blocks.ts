@@ -21,7 +21,7 @@
  * 用户会看到文字跳一下 —— 候选 E 就是因为这个代价被否的。所以所有落点都要「一次到位」,
  * 只有 run 结束那一刻允许有一次重排(liftConclusion)。
  */
-import type { PersistedAgentEvent } from '@open-design/contracts';
+import type { PersistedAgentEvent, ProjectMediaTask } from '@open-design/contracts';
 import {
   OD_DONE_KEY_ATTR_RE,
   OD_DONE_OPEN_TAG,
@@ -419,6 +419,11 @@ export function buildTurnBlocks(input: BuildTurnInput): TurnBlock[] {
 
   const results = new Map<string, Extract<PersistedAgentEvent, { kind: 'tool_result' }>>();
   for (const e of events) if (e.kind === 'tool_result') results.set(e.toolUseId, e);
+  const mediaTasks = (input.mediaTasks ?? [])
+    .filter((task) => task.surface === 'image')
+    .slice()
+    .sort((a, b) => a.startedAt - b.startedAt);
+  let mediaTaskCursor = 0;
 
   const activeShell = (): ExecutionShell | null => todoCard ?? top;
   /** 内容落点:进行中的 todo → 它的 items;有清单卡但 todo 都关了 → 卡片层;否则 → 第一张壳 */
@@ -721,7 +726,13 @@ export function buildTurnBlocks(input: BuildTurnInput): TurnBlock[] {
       continue;
     }
 
-    const shot = readImageCall(event, results.get(event.id));
+    const command = isCommandTool(event.name) ? commandOf(event.input) : '';
+    const mediaCallCount = mediaGenerateCount(command);
+    const taskSlice = mediaCallCount > 0
+      ? mediaTasks.slice(mediaTaskCursor, mediaTaskCursor + mediaCallCount)
+      : [];
+    if (mediaCallCount > 0) mediaTaskCursor += mediaCallCount;
+    const shot = readImageCall(event, results.get(event.id), taskSlice);
     if (shot) {
       ensureShell();
       stamp(event.startedAt);
@@ -736,6 +747,7 @@ export function buildTurnBlocks(input: BuildTurnInput): TurnBlock[] {
         last.done += shot.done;
         last.failed += shot.failed;
         last.thumbs.push(...shot.thumbs);
+        if (shot.cells) last.cells = [...(last.cells ?? []), ...shot.cells];
         last.pending = last.pending || shot.pending;
         if (shot.elapsedMs != null) last.elapsedMs = (last.elapsedMs ?? 0) + shot.elapsedMs;
       } else {
@@ -752,7 +764,32 @@ export function buildTurnBlocks(input: BuildTurnInput): TurnBlock[] {
     sink().push(row);
   }
 
-  if (turnIsLive) ensureShell();
+  if (turnIsLive) {
+    /*
+     * ACP emits a terminal-backed media tool_use only after the command has
+     * exited. Until then, media-task polling is the sole witness that image
+     * generation is in progress. Put each unconsumed active task in its own
+     * one-cell row at the current sink (normally the active Todo).
+     *
+     * Once tool_use arrives, the cursor above consumes the same task and this
+     * slice becomes empty, so the provisional row cannot duplicate the
+     * event-backed ImageRow.
+     */
+    const activeUnconsumedTasks = mediaTasks
+      .slice(mediaTaskCursor)
+      .filter((task) => task.status === 'queued' || task.status === 'running');
+    if (activeUnconsumedTasks.length > 0) {
+      ensureShell();
+      const shell = activeShell();
+      if (shell) shell.thinking = false;
+      openText = null;
+      for (const task of activeUnconsumedTasks) {
+        stamp(task.startedAt);
+        sink().push(pendingMediaTaskRow(task));
+      }
+    }
+    ensureShell();
+  }
   finishTurn();
   /*
    * 空壳不留(B47):跑完之后壳里一件东西都没有,那一行孤零零的「已完成」
@@ -1092,6 +1129,24 @@ function closeRunningSegments(shell: ExecutionShell): void {
 /** 查用法不算生图 */
 const MEDIA_GENERATE_RE = /media\s+generate/;
 
+function mediaGenerateCount(command: string): number {
+  return (command.match(/media\s+generate/g) ?? []).length;
+}
+
+function pendingMediaTaskRow(task: ProjectMediaTask): ImageRow {
+  return {
+    kind: 'image',
+    id: `media-task:${task.taskId}`,
+    total: 1,
+    done: 0,
+    failed: 0,
+    thumbs: [],
+    cells: [{ taskId: task.taskId, status: 'pending' }],
+    pending: true,
+    elapsedMs: null,
+  };
+}
+
 /**
  * 认出一次生图调用,并把结果读成「出了几张 / 砸了几张 / 图在哪」。
  *
@@ -1103,16 +1158,63 @@ const MEDIA_GENERATE_RE = /media\s+generate/;
 function readImageCall(
   event: Extract<PersistedAgentEvent, { kind: 'tool_use' }>,
   result: Extract<PersistedAgentEvent, { kind: 'tool_result' }> | undefined,
+  tasks: ProjectMediaTask[] = [],
 ): ImageRow | null {
   if (!isCommandTool(event.name)) return null;
   const command = commandOf(event.input);
   if (!MEDIA_GENERATE_RE.test(command) || /--help\b/.test(command)) return null;
 
   // 一条命令里可以串好几次生成,数出来就是这一行要摆几个格子
-  const total = Math.max(1, (command.match(/media\s+generate/g) ?? []).length);
+  const total = Math.max(1, mediaGenerateCount(command), tasks.length);
   let done = 0;
   let failed = 0;
   const thumbs: string[] = [];
+  let replayCells: ImageRow['cells'];
+
+  if (tasks.length > 0) {
+    const cells: NonNullable<ImageRow['cells']> = tasks.map((task) => {
+      const path = task.file?.name?.trim();
+      if (task.status === 'done') {
+        done += 1;
+        if (path) thumbs.push(path);
+        return {
+          taskId: task.taskId,
+          status: 'done' as const,
+          ...(path ? { path } : {}),
+        };
+      }
+      if (task.status === 'failed' || task.status === 'interrupted') {
+        failed += 1;
+        return { taskId: task.taskId, status: 'failed' as const };
+      }
+      return { taskId: task.taskId, status: 'pending' as const };
+    });
+    while (cells.length < total) {
+      if (result) {
+        failed += 1;
+        cells.push({ status: 'failed' });
+      } else {
+        cells.push({ status: 'pending' });
+      }
+    }
+
+    const startedAt = Math.min(...tasks.map((task) => task.startedAt));
+    const terminalEnds = tasks.map((task) => task.endedAt).filter((at): at is number => at != null);
+    const elapsedMs = terminalEnds.length === tasks.length
+      ? Math.max(...terminalEnds) - startedAt
+      : null;
+    return {
+      kind: 'image',
+      id: event.id,
+      total,
+      done,
+      failed,
+      thumbs,
+      cells,
+      pending: cells.some((cell) => cell.status === 'pending'),
+      elapsedMs: elapsedMs != null && elapsedMs >= UNKNOWN_ELAPSED_BELOW_MS ? elapsedMs : null,
+    };
+  }
 
   if (result?.content) {
     for (const line of result.content.split('\n')) {
@@ -1125,6 +1227,14 @@ function readImageCall(
         if (parsed && typeof parsed === 'object') {
           const rec = parsed as Record<string, unknown>;
           if (typeof rec.status === 'string') status = rec.status;
+          const nestedFile = rec.file;
+          if (nestedFile && typeof nestedFile === 'object') {
+            const name = (nestedFile as Record<string, unknown>).name;
+            if (typeof name === 'string' && name) {
+              status ??= 'done';
+              path = name;
+            }
+          }
           for (const key of ['path', 'file', 'outputPath', 'url']) {
             const v = rec[key];
             if (typeof v === 'string' && v) { path = v; break; }
@@ -1144,8 +1254,27 @@ function readImageCall(
 
   if (result && done + failed === 0) {
     const looksBroken = result.isError || /failed|error|required|unknown|not found/i.test(result.content ?? '');
-    if (!looksBroken) return null;      // 不是生图,交给普通工具行
-    failed = total;
+    const declaredOutput = fileOf(event.input)?.path.trim();
+    if (looksBroken) {
+      failed = total;
+      replayCells = Array.from({ length: total }, () => ({ status: 'failed' as const }));
+    } else if (declaredOutput && total === 1) {
+      /*
+       * ACP 会把已落库的 Bash stdout 安全打码成 `[REDACTED:…]`。重开会话时 media task
+       * 又可能已经过了短期运行态 TTL,只剩 tool_use 入参里的 `file_path`。那不是一次
+       * 普通读文件:命令本身明确是 media generate、结果也正常返回,输出路径又由调用
+       * 结构直接给出,足够还原一张已经完成的图。不能因为看不到 stdout 就退化成
+       * 「读取 xxx.png」,否则刷新后组件 12 整行消失。
+       *
+       * 多图命令只有一个 file_path 时不猜其余格子的结果,仍交给普通工具行。真实批量
+       * 调用应由逐行 envelope 或短期 media task 提供每格真相。
+       */
+      done = 1;
+      thumbs.push(declaredOutput);
+      replayCells = [{ status: 'done', path: declaredOutput }];
+    } else {
+      return null;      // 不是可证明的生图,交给普通工具行
+    }
   }
 
   let elapsedMs: number | null = null;
@@ -1161,6 +1290,7 @@ function readImageCall(
     done,
     failed,
     thumbs,
+    ...(replayCells ? { cells: replayCells } : {}),
     pending: !result,
     elapsedMs,
   };

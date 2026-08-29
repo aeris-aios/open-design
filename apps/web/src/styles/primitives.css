@@ -162,6 +162,15 @@ button:disabled {
   white-space: normal;
   will-change: transform;
 }
+/* A hint opened FROM INSIDE an already-open menu belongs to that menu. The
+   default ladder deliberately keeps unrelated hints below menus, but applying
+   that rule to a menu's own help trigger hides most of the bubble behind its
+   parent surface. Lift only this scoped case; activation still dismisses the
+   hint before another menu can open, so the global menu > hint invariant stays
+   intact for every unrelated tooltip. */
+.od-tooltip-layer[data-tooltip-context="menu"] {
+  z-index: calc(var(--z-menu) + 1);
+}
 
 /* -------- Inputs ---------------------------------------------------- */
 input, textarea, select {

@@ -27,7 +27,12 @@ import {
   executionProfileFromStreamFormat,
   PLUGIN_SHARE_ACTION_PLUGIN_IDS,
 } from '@open-design/contracts';
-import { isTodoWriteToolName, stopReasonIsTruncation, todoItemsFromTodoWriteInput } from '@open-design/contracts';
+import {
+  advanceAuthenticatedDoneCapture,
+  isTodoWriteToolName,
+  stopReasonIsTruncation,
+  todoItemsFromTodoWriteInput,
+} from '@open-design/contracts';
 import { renderDoneMarker } from '@open-design/contracts';
 import {
   renderUnfinishedTodoRecall,
@@ -11934,6 +11939,48 @@ export async function startServer({
         typeof data.delta === 'string'
       ) {
         visibleAssistantText += data.delta;
+        const doneCapture = advanceAuthenticatedDoneCapture({
+          fullVisibleText: visibleAssistantText,
+          delta: data.delta,
+          key: typeof run.doneKey === 'string' ? run.doneKey : '',
+          state: {
+            markerTail: run.completionMarkerTail,
+            awaitingConclusion: run.completionMarkerAwaitingConclusion,
+            authenticatedConclusion: run.authenticatedDoneConclusion,
+          },
+        });
+        run.completionMarkerTail = doneCapture.markerTail;
+        run.completionMarkerAwaitingConclusion = doneCapture.awaitingConclusion;
+        run.authenticatedDoneConclusion = doneCapture.authenticatedConclusion;
+      } else if (event === 'stdout' && data && typeof data.chunk === 'string') {
+        // Plain runtimes have no existing full text_delta accumulator. Reuse
+        // the bounded artifact stdout head rather than retaining a second
+        // unbounded copy solely for completion detection. The cap is already
+        // the daemon's declared realistic-output bound; once exceeded we fail
+        // closed on a NEW marker, but can still finish a marker seen before it.
+        run.plainStdoutTotalBytes = (run.plainStdoutTotalBytes ?? 0) + data.chunk.length;
+        if ((run.plainArtifactStdout?.length ?? 0) < PLAIN_ARTIFACT_STDOUT_CAP) {
+          run.plainArtifactStdout =
+            ((run.plainArtifactStdout ?? '') + data.chunk).slice(0, PLAIN_ARTIFACT_STDOUT_CAP);
+        }
+        if (
+          run.plainStdoutTotalBytes <= PLAIN_ARTIFACT_STDOUT_CAP
+          || run.completionMarkerAwaitingConclusion
+        ) {
+          const doneCapture = advanceAuthenticatedDoneCapture({
+            fullVisibleText: run.plainArtifactStdout ?? '',
+            delta: data.chunk,
+            key: typeof run.doneKey === 'string' ? run.doneKey : '',
+            state: {
+              markerTail: run.completionMarkerTail,
+              awaitingConclusion: run.completionMarkerAwaitingConclusion,
+              authenticatedConclusion: run.authenticatedDoneConclusion,
+            },
+          });
+          run.completionMarkerTail = doneCapture.markerTail;
+          run.completionMarkerAwaitingConclusion = doneCapture.awaitingConclusion;
+          run.authenticatedDoneConclusion = doneCapture.authenticatedConclusion;
+        }
       }
       // Accumulate the visible reply for the memory extractor from whichever
       // channel this agent family uses: `agent` text_delta (structured streams)
@@ -11962,13 +12009,6 @@ export async function startServer({
       // head to the tail-biased run.events at their exact stream offset, so no
       // artifact is lost and none is double-counted regardless of where in the
       // stream it appears.
-      if (event === 'stdout' && data && typeof data.chunk === 'string') {
-        run.plainStdoutTotalBytes = (run.plainStdoutTotalBytes ?? 0) + data.chunk.length;
-        if ((run.plainArtifactStdout?.length ?? 0) < PLAIN_ARTIFACT_STDOUT_CAP) {
-          run.plainArtifactStdout =
-            ((run.plainArtifactStdout ?? '') + data.chunk).slice(0, PLAIN_ARTIFACT_STDOUT_CAP);
-        }
-      }
       if (event === 'stderr' && data && typeof data.chunk === 'string' && data.chunk) {
         failureStderrWindow = `${failureStderrWindow}${data.chunk}`.slice(
           -FAILURE_STDERR_WINDOW_CAP,
@@ -15870,6 +15910,24 @@ export async function startServer({
             persistRunEventToAssistantMessage(db, run, tailEvent, tailData);
             design.runs.emit(run, tailEvent, tailData);
             strategyVisibleEmitted += tail;
+            // The frozen Harness prompt currently does not receive the nonce,
+            // so its authoritative completion signal remains the verified
+            // strategy verdict. Still fold a marker if a future frozen bundle
+            // explicitly carries the protocol; this close-time tail bypasses
+            // send() and would otherwise be the only uncovered visible path.
+            const doneCapture = advanceAuthenticatedDoneCapture({
+              fullVisibleText: strategyProtocolResult.visibleText,
+              delta: tail,
+              key: typeof run.doneKey === 'string' ? run.doneKey : '',
+              state: {
+                markerTail: run.completionMarkerTail,
+                awaitingConclusion: run.completionMarkerAwaitingConclusion,
+                authenticatedConclusion: run.authenticatedDoneConclusion,
+              },
+            });
+            run.completionMarkerTail = doneCapture.markerTail;
+            run.completionMarkerAwaitingConclusion = doneCapture.awaitingConclusion;
+            run.authenticatedDoneConclusion = doneCapture.authenticatedConclusion;
           }
         }
         try {

@@ -30,6 +30,7 @@ import {
   collapseWorkspaceProjectHomes,
   type WorkspaceProjectHomeRow,
 } from './collab/workspace-project-home.js';
+import { scrubDsmlToolProtocolTail } from './artifacts/text-suppression.js';
 import { migrateCritique } from './critique/persistence.js';
 import { migrateMediaTasks } from './media/tasks.js';
 import { migrateLibrary } from './library-store.js';
@@ -4289,10 +4290,18 @@ function normalizeMessage(db: SqliteDb, row: DbRow, eventBatches?: DbRow[][]) {
       });
     }
   }
+  const scrubProtocolTail = row.role === 'assistant'
+    ? scrubDsmlToolProtocolTail
+    : (text: string) => text;
+  const visibleEvents = row.role === 'assistant'
+    ? scrubDsmlToolProtocolTailFromEvents(materializedEvents.events)
+    : materializedEvents.events;
   return {
     id: row.id,
     role: row.role,
-    content: `${typeof row.content === 'string' ? row.content : ''}${materializedEvents.textDelta}`,
+    content: scrubProtocolTail(
+      `${typeof row.content === 'string' ? row.content : ''}${materializedEvents.textDelta}`,
+    ),
     agentId: row.agentId ?? undefined,
     agentName: row.agentName ?? undefined,
     runId: row.runId ?? undefined,
@@ -4301,7 +4310,7 @@ function normalizeMessage(db: SqliteDb, row: DbRow, eventBatches?: DbRow[][]) {
     lastRunEventId: row.lastRunEventId ?? undefined,
     events:
       eventsJson !== null || materializedEvents.batchCount > 0
-        ? materializedEvents.events
+        ? visibleEvents
         : undefined,
     attachments: parseJsonOrUndef(row.attachmentsJson),
     commentAttachments: parseJsonOrUndef(row.commentAttachmentsJson),
@@ -4319,6 +4328,47 @@ function normalizeMessage(db: SqliteDb, row: DbRow, eventBatches?: DbRow[][]) {
     startedAt: row.startedAt ?? undefined,
     endedAt: row.endedAt ?? undefined,
   };
+}
+
+const DSML_PROTOCOL_TAIL_EVENT_LOOKBACK = 512;
+
+/**
+ * Historical agent_message_chunk deltas can be separated by diagnostic or
+ * tool events, so adjacent-text compaction is not sufficient. Treat only the
+ * concatenated visible text suffix as a stream, then remove the matched tail
+ * backwards from its source events while leaving non-text events untouched.
+ */
+function scrubDsmlToolProtocolTailFromEvents(events: readonly DbRow[]): DbRow[] {
+  let suffix = '';
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    if (event?.kind !== 'text' || typeof event.text !== 'string') continue;
+    const remaining = DSML_PROTOCOL_TAIL_EVENT_LOOKBACK - suffix.length;
+    if (remaining <= 0) break;
+    suffix = `${event.text.slice(-remaining)}${suffix}`;
+  }
+
+  const visibleSuffix = scrubDsmlToolProtocolTail(suffix);
+  let charsToRemove = suffix.length - visibleSuffix.length;
+  if (charsToRemove <= 0) return [...events];
+
+  const visibleEvents = [...events];
+  const emptiedTextEventIndexes = new Set<number>();
+  for (let index = visibleEvents.length - 1; index >= 0 && charsToRemove > 0; index -= 1) {
+    const event = visibleEvents[index];
+    if (event?.kind !== 'text' || typeof event.text !== 'string') continue;
+    if (charsToRemove >= event.text.length) {
+      charsToRemove -= event.text.length;
+      emptiedTextEventIndexes.add(index);
+      continue;
+    }
+    visibleEvents[index] = {
+      ...event,
+      text: event.text.slice(0, event.text.length - charsToRemove),
+    };
+    charsToRemove = 0;
+  }
+  return visibleEvents.filter((_, index) => !emptiedTextEventIndexes.has(index));
 }
 
 function normalizeMessageSessionMode(value: unknown): ChatSessionMode | undefined {

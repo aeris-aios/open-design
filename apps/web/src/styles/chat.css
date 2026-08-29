@@ -18,11 +18,11 @@
   height: 38px;
   position: sticky;
   top: 0;
-  /* Above the jump-to-latest pill (z-index: 6). The history menu belongs to
-     this sticky stacking context, so lifting the header lets the menu cover
-     the pill only where they overlap without removing that navigation
-     affordance from the rest of the pane (OPEND-2420 / supersedes #4123). */
-  z-index: 7;
+  /* Above the jump-to-latest pill (z-index: 6) and the message rail
+     (z-index: 8). The history menu belongs to this sticky stacking context,
+     so the header must clear both chat overlays or the rail's transparent
+     20px hit zone steals clicks from the menu's trailing edge. */
+  z-index: 9;
 }
 .chat-project-header::after {
   content: '';
@@ -949,10 +949,6 @@
   align-items: flex-end;
   max-width: 100%;
 }
-.msg.user .user-status-wrap {
-  display: flex;
-  justify-content: flex-end;
-}
 .msg.assistant .op-waiting {
   display: inline-flex;
   align-items: center;
@@ -992,46 +988,6 @@
   font-size: 12px;
   font-style: italic;
 }
-.user-status-card {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  max-width: min(320px, 100%);
-  padding: 9px 11px;
-  border-radius: 14px 14px 4px 14px;
-  background: var(--bg-fill-tertiary);
-  border: none;
-  box-shadow: none;
-  color: var(--text);
-  text-align: start;
-}
-.user-status-card__icon {
-  width: 28px;
-  height: 28px;
-  border-radius: var(--radius);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 auto;
-  color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
-}
-.user-status-card__copy {
-  min-width: 0;
-  display: grid;
-  gap: 2px;
-}
-.user-status-card__copy strong {
-  font-size: 13px;
-  line-height: 1.2;
-  font-weight: 600;
-}
-.user-status-card__copy span {
-  font-size: 12px;
-  line-height: 1.35;
-  color: var(--text-muted);
-}
-
 /* Hover-revealed footer below the user bubble: time + copy (Lobe style) */
 /* 操作位在气泡【下方】,距气泡 4px、右缘对齐:单行 / 多行合并成同一种情况,
    气泡的 padding 或 line-height 再怎么改都不会错位(#50 / #51)。

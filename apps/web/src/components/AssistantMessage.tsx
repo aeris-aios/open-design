@@ -52,6 +52,7 @@ import {
 } from "../artifacts/question-form";
 import {
   foldArtifactFocusSelections,
+  eventsHaveAuthenticatedDoneConclusion,
   declaredArtifactCards,
   hasOdCard,
   narrowProducedFilesToFocus,
@@ -111,6 +112,7 @@ import type {
   ProjectMetadata,
   SkillSummary,
 } from "../types";
+import type { ProjectMediaTask } from '@open-design/contracts';
 
 type TranslateFn = (
   key: keyof Dict,
@@ -320,7 +322,7 @@ function SkillPluginCandidateCard({
             onClick={() => void share("contribute-open-design")}
           >
             <Icon name={busy === "contribute" ? "spinner" : "share"} size={13} />
-            <span>{busy === "contribute" ? "Starting..." : t("skillPluginCandidate.contributeToMain")}</span>
+            <span>{busy === "contribute" ? t("pluginCard.starting") : t("skillPluginCandidate.contributeToMain")}</span>
           </button>
         }
         details={
@@ -333,7 +335,7 @@ function SkillPluginCandidateCard({
               onClick={() => void createDraft()}
             >
               <Icon name={busy === "draft" ? "spinner" : "plus"} size={13} />
-              <span>{busy === "draft" ? "Creating..." : t("skillPluginCandidate.createForMe")}</span>
+              <span>{busy === "draft" ? t("pluginCard.creating") : t("skillPluginCandidate.createForMe")}</span>
             </button>
           </div>
         }
@@ -364,6 +366,7 @@ interface Props {
   // classifying absolute disk hrefs in chat file links — see
   // `resolveChatFileLink`.
   projectResolvedDir?: string | null;
+  mediaTasks?: ProjectMediaTask[];
   onRequestOpenFile?: (name: string) => void;
   /**
    * 生图失败格的「重试」。这一层不知道怎么重发,只把「第几张砸了」交给 ChatPane ——
@@ -482,6 +485,7 @@ const ASSISTANT_MESSAGE_COMPARED_PROPS: Array<keyof Props> = [
   'projectMetadata',
   'projectFileNames',
   'projectResolvedDir',
+  'mediaTasks',
   'onRequestOpenFile',
   'onRequestPluginFolderAgentAction',
   'activePluginActionPaths',
@@ -588,6 +592,7 @@ function AssistantMessageImpl({
   projectMetadata,
   projectFileNames,
   projectResolvedDir,
+  mediaTasks = [],
   onRequestOpenFile,
   onRetryImage,
   onBrandBrowserAssistConfirm,
@@ -629,6 +634,11 @@ function AssistantMessageImpl({
   nextStepVariant = 'default',
 }: Props) {
   const t = useT();
+  const { workspaceContext } = useProjectCollabContext();
+  const imageSrc = useCallback(
+    (path: string) => projectId ? projectFileUrl(projectId, path, workspaceContext) : path,
+    [projectId, workspaceContext],
+  );
   // A blocked strategy task is a sticky terminal verdict: the daemon rejects
   // every further continuation with 409 STRATEGY_TASK_STATE_MISMATCH, so the
   // turn's question forms must stop accepting submissions and explain why.
@@ -650,6 +660,12 @@ function AssistantMessageImpl({
         ? ([{ kind: "text", text: message.content }] satisfies AgentEvent[])
         : [];
   const displayEvents = useMemo(() => dedupeToolUsesById(events), [events]);
+  const completedWithAuthenticatedDone = useMemo(
+    () =>
+      message.runStatus === "succeeded" &&
+      eventsHaveAuthenticatedDoneConclusion(displayEvents),
+    [displayEvents, message.runStatus],
+  );
   // ChatPane owns one canonical conversation-level Todo card above the
   // composer. Strip TodoWrite snapshots from individual messages so plans do
   // not appear twice or jump around as history is virtualized.
@@ -700,6 +716,7 @@ function AssistantMessageImpl({
   const nextTurn = useMemo(() => {
     const turn = buildTurnBlocks({
       events: displayEvents,
+      ...(mediaTasks.length ? { mediaTasks } : {}),
       runStatus: turnRunStatus,
       // 只在本轮清单里出现过的条目上取值(`build-turn-blocks` 的 `previous.has`),
       // 所以 agent 不重发时它是纯空转,不会凭空造出任何一行。
@@ -721,7 +738,7 @@ function AssistantMessageImpl({
     };
     // `message.endedAt` 从 undefined 变成时刻**就在轮次终止那一刻** —— 不进依赖的话
     // 兜底耗时会停在「还没有终点」的那一版,壳头刚收起时秒数是空的。
-  }, [displayEvents, turnRunStatus, nowMs, previousTodos, message.endedAt, streaming, lastEventAtMs]);
+  }, [displayEvents, turnRunStatus, nowMs, previousTodos, message.endedAt, streaming, lastEventAtMs, mediaTasks]);
   /**
    * 执行记录里**真的有东西**。
    *
@@ -1011,7 +1028,7 @@ function AssistantMessageImpl({
   // A settled `completed` strategy verdict outranks a stale TodoWrite snapshot:
   // the deliverable was verified on disk, so the footer must not report the
   // turn as stopped with unfinished work (and must not withhold next steps).
-  const unfinishedTodos = streaming
+  const unfinishedTodos = streaming || completedWithAuthenticatedDone
     ? []
     : continuableUnfinishedTodos({ events, strategyTaskDelivered: message.strategyTaskDelivered });
   const hasTodoSnapshot = events.some(
@@ -1028,7 +1045,7 @@ function AssistantMessageImpl({
    * 本轮没发清单才回落到带过来的那份。它不依赖任何 agent 能力 —— 21 家从不发清单的
    * runtime 走的就是第二条路。
    */
-  const continuableTodos = streaming
+  const continuableTodos = streaming || completedWithAuthenticatedDone
     ? []
     : hasTodoSnapshot
       ? unfinishedTodos
@@ -1240,6 +1257,8 @@ function AssistantMessageImpl({
                这三样正是正文 markdown 链接判归属用的同一套(见 chatFileLinkClickHandler),
                判据本身在 `runtime/chat/record-file-open.ts`。 */
             fileScope={recordFileScope}
+            onRetryImage={onRetryImage}
+            imageSrc={imageSrc}
           />
         ))}
         {outerBlocks.map((b, i) => {
@@ -3104,9 +3123,7 @@ function ProseBlock({
         if (seg.kind === "suppressed-direction") {
           return (
             <div key={seg.key} className="status-pill" data-testid="status-pill">
-              <span className="status-label">
-                Active design system selected. Visual direction is already locked.
-              </span>
+              <span className="status-label">{t("assistant.designSystemDirectionLocked")}</span>
             </div>
           );
         }
@@ -3763,9 +3780,11 @@ function StatusPill({
   label: string;
   detail?: string | undefined;
 }) {
+  const t = useT();
   const variant =
     label === "error" ? "error" : label === "warning" ? "warning" : undefined;
-  const displayLabel = label === "context_compaction" ? "compacting context" : label;
+  const displayLabel =
+    label === "context_compaction" ? t("assistant.statusCompactingContext") : label;
   return (
     <div
       className={`status-pill${variant ? ` is-${variant}` : ""}`}

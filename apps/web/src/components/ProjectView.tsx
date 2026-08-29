@@ -214,10 +214,7 @@ import {
   summarizeDesignSystemPackageAudit,
 } from '../runtime/design-system-package-audit';
 import { isLiveArtifactTabId, liveArtifactTabId } from '../types';
-import {
-  DESIGN_SYSTEM_WORKSPACE_DISPLAY_TITLE,
-  isDesignSystemWorkspacePrompt,
-} from '../design-system-auto-prompt';
+import { isDesignSystemWorkspacePrompt } from '../design-system-auto-prompt';
 import {
   createConversation,
   deleteConversation as deleteConversationApi,
@@ -7673,7 +7670,7 @@ export function ProjectView({
       }
       const isFirstTurn = !retryTarget && historyBase.length === 0;
       const fallbackFirstTurnTitle = isDesignSystemWorkspacePrompt(prompt)
-        ? DESIGN_SYSTEM_WORKSPACE_DISPLAY_TITLE
+        ? t('designFiles.createDesignSystemFromProject')
         : summarizeProjectNameFromPrompt(prompt) || prompt.slice(0, 60).trim();
       const fallbackProjectName = summarizeProjectNameFromPrompt(prompt);
       // If this is the first turn, derive a working title from the prompt

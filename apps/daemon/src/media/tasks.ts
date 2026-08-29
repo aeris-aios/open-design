@@ -32,6 +32,7 @@ export interface MediaTaskError {
 export interface MediaTaskRow {
   id: string;
   projectId: string;
+  runId?: string;
   status: MediaTaskStatus;
   surface?: string;
   model?: string;
@@ -47,6 +48,7 @@ export interface MediaTaskRow {
 export interface MediaTaskInsert {
   id: string;
   projectId: string;
+  runId?: string;
   status?: MediaTaskStatus;
   surface?: string;
   model?: string;
@@ -60,6 +62,7 @@ export interface MediaTaskInsert {
 }
 
 export interface MediaTaskPatch {
+  runId?: string | null;
   status?: MediaTaskStatus;
   surface?: string | null;
   model?: string | null;
@@ -74,6 +77,7 @@ export interface MediaTaskPatch {
 interface RawMediaTaskRow {
   id: string;
   projectId: string;
+  runId: string | null;
   status: string;
   surface: string | null;
   model: string | null;
@@ -99,6 +103,7 @@ const TERMINAL_STATUSES = new Set(['done', 'failed', 'interrupted']);
 const COLS = `
   id,
   project_id AS projectId,
+  run_id AS runId,
   status,
   surface,
   model,
@@ -116,6 +121,7 @@ export function migrateMediaTasks(db: Database.Database): void {
     CREATE TABLE IF NOT EXISTS media_tasks (
       id TEXT PRIMARY KEY,
       project_id TEXT NOT NULL,
+      run_id TEXT,
       status TEXT NOT NULL CHECK (status IN
         ('queued','running','done','failed','interrupted')),
       surface TEXT,
@@ -136,6 +142,10 @@ export function migrateMediaTasks(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_media_tasks_status
       ON media_tasks(status, updated_at DESC);
   `);
+  const columns = db.prepare(`PRAGMA table_info(media_tasks)`).all() as Array<{ name: string }>;
+  if (!columns.some((column) => column.name === 'run_id')) {
+    db.exec(`ALTER TABLE media_tasks ADD COLUMN run_id TEXT`);
+  }
 }
 
 export function insertMediaTask(
@@ -148,12 +158,13 @@ export function insertMediaTask(
   const startedAt = input.startedAt ?? now;
   db.prepare(
     `INSERT INTO media_tasks
-       (id, project_id, status, surface, model, progress_json, file_json,
+       (id, project_id, run_id, status, surface, model, progress_json, file_json,
         error_json, started_at, ended_at, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     input.id,
     input.projectId,
+    input.runId ?? null,
     status,
     input.surface ?? null,
     input.model ?? null,
@@ -193,6 +204,7 @@ export function updateMediaTask(
   db.prepare(
     `UPDATE media_tasks
         SET status = ?,
+            run_id = ?,
             surface = ?,
             model = ?,
             progress_json = ?,
@@ -204,6 +216,7 @@ export function updateMediaTask(
       WHERE id = ?`,
   ).run(
     status,
+    'runId' in patch ? patch.runId ?? null : existing.runId ?? null,
     'surface' in patch ? patch.surface ?? null : existing.surface ?? null,
     'model' in patch ? patch.model ?? null : existing.model ?? null,
     JSON.stringify(patch.progress ?? existing.progress),
@@ -309,6 +322,7 @@ function normalizeRow(raw: RawMediaTaskRow): MediaTaskRow {
   };
   if (raw.surface !== null) row.surface = raw.surface;
   if (raw.model !== null) row.model = raw.model;
+  if (raw.runId !== null) row.runId = raw.runId;
   return row;
 }
 

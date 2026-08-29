@@ -170,6 +170,8 @@ describe('N7-b 壳头在思考时仍是「进行中」', () => {
     expect(label.closest('details[class*="flat"] > summary')).toBeNull();
     // 动画三件套:扫光 + 三个点,和原来壳头上那一套同源
     expect(label.className).toMatch(/shimmer/);
+    // 稿子里壳头才用 head 档；壳内 live thinking 是 500 / muted 的普通 shimmer。
+    expect(label.className).not.toMatch(/head/);
     expect(label.querySelector('[class*="dots"]')).not.toBeNull();
   });
 

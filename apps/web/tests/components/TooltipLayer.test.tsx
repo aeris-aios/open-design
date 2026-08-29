@@ -69,4 +69,25 @@ describe('TooltipLayer', () => {
       expect(screen.queryByRole('tooltip')).toBeNull();
     });
   });
+
+  it('lifts only a tooltip whose trigger lives inside an open menu', () => {
+    render(
+      <>
+        <div role="menu">
+          <button
+            type="button"
+            className="od-tooltip"
+            data-tooltip="Only one file can be shared"
+            data-tooltip-placement="top"
+          >
+            Help
+          </button>
+        </div>
+        <TooltipLayer />
+      </>,
+    );
+
+    fireEvent.pointerOver(screen.getByRole('button', { name: 'Help' }));
+    expect(screen.getByRole('tooltip').getAttribute('data-tooltip-context')).toBe('menu');
+  });
 });

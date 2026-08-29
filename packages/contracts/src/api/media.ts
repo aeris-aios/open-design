@@ -13,6 +13,51 @@ export const MEDIA_SURFACES = [
 
 export type MediaSurface = (typeof MEDIA_SURFACES)[number];
 
+export const MEDIA_TASK_STATUSES = [
+  'queued',
+  'running',
+  'done',
+  'failed',
+  'interrupted',
+] as const;
+
+export type MediaTaskStatus = (typeof MEDIA_TASK_STATUSES)[number];
+
+export interface ProjectMediaTaskFile {
+  name: string;
+  size?: number;
+  kind?: string;
+  mime?: string;
+}
+
+export interface ProjectMediaTaskError {
+  message: string;
+  status?: number;
+  code?: string;
+  subject?: 'prompt' | 'input_image' | 'output_image';
+  retryable?: boolean;
+}
+
+/** A project media task snapshot consumed by ChatPanel's per-output progress row. */
+export interface ProjectMediaTask {
+  taskId: string;
+  runId?: string;
+  status: MediaTaskStatus;
+  startedAt: number;
+  endedAt: number | null;
+  elapsed: number;
+  surface?: string;
+  model?: string;
+  progress: string[];
+  progressCount: number;
+  file?: ProjectMediaTaskFile;
+  error?: ProjectMediaTaskError;
+}
+
+export interface ProjectMediaTasksResponse {
+  tasks: ProjectMediaTask[];
+}
+
 export const MEDIA_POLICY_DENIAL_CODES = [
   'MEDIA_EXECUTION_DISABLED',
   'MEDIA_SURFACE_DENIED',

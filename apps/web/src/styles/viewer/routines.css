@@ -1830,9 +1830,10 @@
 .app .msg.assistant .prose-block,
 .chat-skin .msg.assistant .prose-block {
   max-width: 68ch;
-  color: var(--text);
-  font-size: var(--prose-font-size, 15px);
-  line-height: var(--prose-line-height, 1.75);
+  color: var(--text-strong);
+  font-size: var(--prose-font-size, 13px);
+  line-height: var(--prose-line-height, 1.7);
+  letter-spacing: normal;
 }
 .app .msg.assistant .prose-block .md-p + .md-p,
 .chat-skin .msg.assistant .prose-block .md-p + .md-p {

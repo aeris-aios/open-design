@@ -8,7 +8,7 @@
  * 架构视角:`specs/current/chat-panel-dev-design.md`
  * 参考实现:`docs/design/chat-sim/sim.js`(评审载体,15 个场景在跑)
  */
-import type { PersistedAgentEvent } from '@open-design/contracts';
+import type { PersistedAgentEvent, ProjectMediaTask } from '@open-design/contracts';
 
 export type { ToolKind } from './tool-kind';
 export type { ArtifactKind, DiffStat } from './format';
@@ -101,6 +101,12 @@ export interface ImageRow {
   failed: number;
   /** 出好的图,按完成顺序 */
   thumbs: string[];
+  /** Stable task order, so partial failures stay in their actual cells. */
+  cells?: Array<{
+    taskId?: string;
+    status: 'pending' | 'done' | 'failed';
+    path?: string;
+  }>;
   /** 还有调用没回来 */
   pending: boolean;
   elapsedMs: number | null;
@@ -207,6 +213,8 @@ export type TurnBlock = ExecutionShell | ProseBlock;
 
 export interface BuildTurnInput {
   events: PersistedAgentEvent[];
+  /** Media tasks already scoped to this message's run, oldest first. */
+  mediaTasks?: ProjectMediaTask[];
   /** run 终止态;终止即收起,不依赖 agent 发 done(D18) */
   runStatus?: 'queued' | 'running' | 'succeeded' | 'failed' | 'canceled';
   /** 上一轮的清单,用于召回判定(D17) */

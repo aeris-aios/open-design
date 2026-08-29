@@ -1762,6 +1762,7 @@ export interface Dict {
   'pluginCard.publish': string;
   'pluginCard.contribute': string;
   'pluginCard.starting': string;
+  'pluginCard.creating': string;
   'pluginCard.detailsAria': string;
   'pluginCard.chooseUseAria': string;
   'pluginCard.useOptionsAria': string;
@@ -4494,6 +4495,7 @@ export interface Dict {
   'assistant.thoughtFor': string;
   'assistant.systemReminder': string;
   'assistant.possiblePromptInjection': string;
+  'assistant.designSystemDirectionLocked': string;
   'assistant.waitingFirstOutput': string;
   'assistant.statusBootingAgent': string;
   'assistant.statusPreparing': string;
@@ -4501,6 +4503,7 @@ export interface Dict {
   'assistant.statusRequesting': string;
   'assistant.statusThinking': string;
   'assistant.statusStreaming': string;
+  'assistant.statusCompactingContext': string;
   'assistant.slowHint': string;
   'assistant.verbEditing': string;
   'assistant.verbWriting': string;

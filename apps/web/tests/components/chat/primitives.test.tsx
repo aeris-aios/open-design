@@ -336,10 +336,35 @@ describe('生图行(组件 12)', () => {
     render(<ImageRow row={img({ done: 2, thumbs: ['a.png', 'b.png'], pending: true, elapsedMs: null })} />);
     expect(screen.getByText('2/4')).toBeTruthy();
     expect(document.querySelector('[data-orb]')).not.toBeNull();
-    const shots = [...document.querySelectorAll('[class*="imgs"] > span')];
+    const shots = [...document.querySelectorAll('[class*="imgs"] > *')];
     expect(shots).toHaveLength(4);
     expect(shots.filter((s) => s.className.includes('load'))).toHaveLength(2);
     expect(document.querySelector('[class*="strip"]')).toBeNull();   // 没出完不收行
+  });
+
+  it('逐张状态保持 task 顺序,完成格显示真实缩略图', () => {
+    const onRetry = vi.fn();
+    render(
+      <ImageRow
+        row={img({
+          done: 1,
+          failed: 1,
+          pending: true,
+          thumbs: ['first.png'],
+          cells: [
+            { taskId: 'one', status: 'done', path: 'first.png' },
+            { taskId: 'two', status: 'failed' },
+            { taskId: 'three', status: 'pending' },
+            { status: 'pending' },
+          ],
+        })}
+        onRetry={onRetry}
+        imageSrc={(path) => `/raw/${path}`}
+      />,
+    );
+    expect(document.querySelector('img')?.getAttribute('src')).toBe('/raw/first.png');
+    fireEvent.click(screen.getByRole('button', { name: '重试' }));
+    expect(onRetry).toHaveBeenCalledWith(expect.objectContaining({ kind: 'image' }), 1);
   });
 
   it('出完了有失败:不收行,失败那格给「重试」', () => {

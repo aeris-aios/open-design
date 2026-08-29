@@ -1035,6 +1035,7 @@ export function registerMediaRoutes(app: Express, ctx: RegisterMediaRoutesDeps) 
       includeTerminal: includeDone,
     }).map((t: any) => ({
         taskId: t.id,
+        ...(t.runId ? { runId: t.runId } : {}),
         status: t.status,
         startedAt: t.startedAt,
         endedAt: t.endedAt,

@@ -954,6 +954,9 @@ export function createChatRunService({
       // `endedWithUnfinishedWork` from them via the canonical predicate.
       lastTodoSnapshot: null,
       truncatedMidTurn: false,
+      authenticatedDoneConclusion: false,
+      completionMarkerTail: '',
+      completionMarkerAwaitingConclusion: false,
       endedWithUnfinishedWork: false,
       artifactCount: undefined as number | undefined,
       artifactPaths: undefined as string[] | undefined,
@@ -1155,6 +1158,9 @@ export function createChatRunService({
     run.deliverableEntryFile = undefined;
     run.deliverableArtifactKind = undefined;
     run.endedWithUnfinishedWork = false;
+    run.authenticatedDoneConclusion = false;
+    run.completionMarkerTail = '';
+    run.completionMarkerAwaitingConclusion = false;
     run.child = null;
     run.acpSession = null;
     run.childPid = null;
@@ -1357,9 +1363,18 @@ export function createChatRunService({
     // the agent's own checklist is routinely left with a stale `pending` item.
     // Truncation stays an independent term — a cut-off generation is unfinished
     // whatever verdict was recorded.
+    // The normal composer teaches the model this run's nonce; a matching
+    // marker plus conclusion is therefore stronger than a stale self-reported
+    // Todo snapshot. OD Next's frozen Harness prompt currently bypasses that
+    // per-turn instruction, so its normal completion authority remains
+    // strategyTaskProvesDelivery below (the marker path is unreachable unless
+    // a future frozen bundle explicitly adopts the protocol).
+    const authenticatedDoneProvesDelivery =
+      status === 'succeeded' && run.authenticatedDoneConclusion === true;
     run.endedWithUnfinishedWork =
       Boolean(run.truncatedMidTurn)
       || (!strategyTaskProvesDelivery(run.strategyTask)
+        && !authenticatedDoneProvesDelivery
         && todoSnapshotHasUnfinishedWork(run.lastTodoSnapshot));
     // Commit the terminal Run snapshot before exposing its terminal event. The
     // optional outbox hook is local-only and synchronous by contract.

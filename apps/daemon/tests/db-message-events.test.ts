@@ -368,4 +368,103 @@ describe('message event persistence', () => {
       { kind: 'text', text: 'y'.repeat(1_500) },
     ]);
   });
+
+  it('scrubs historical DSML protocol tails from loaded content and text events', () => {
+    const db = openDatabase(tempDir, { dataDir: tempDir });
+    const now = Date.now();
+    const protocolTail = [
+      '</｜｜DSML｜｜parameter>',
+      '</｜｜DSML｜｜invoke>',
+      '</｜｜DSML｜｜tool_calls>',
+    ].join('\n');
+    insertProject(db, {
+      id: 'proj-dsml',
+      name: 'DSML history project',
+      createdAt: now,
+      updatedAt: now,
+    });
+    insertConversation(db, {
+      id: 'conv-dsml',
+      projectId: 'proj-dsml',
+      title: 'DSML history',
+      createdAt: now,
+      updatedAt: now,
+    });
+    upsertMessage(db, 'conv-dsml', {
+      id: 'assistant-dsml',
+      role: 'assistant',
+      content: `保留这段建议${protocolTail}`,
+      runId: 'agent-run-dsml',
+      runStatus: 'succeeded',
+      events: [
+        { kind: 'text', text: '保留这段建议</｜｜DSML｜｜para' },
+        { kind: 'status', label: 'streaming' },
+        { kind: 'text', text: 'meter>\n</｜｜DSML｜｜invoke>\n' },
+        { kind: 'tool_result', id: 'followups', name: 'suggest_followups' },
+        { kind: 'text', text: '</｜｜DSML｜｜tool_calls>' },
+      ],
+      startedAt: now,
+      endedAt: now,
+    });
+
+    const [message] = listMessages(db, 'conv-dsml');
+    expect(message?.content).toBe('保留这段建议');
+    expect(message?.events).toEqual([
+      { kind: 'text', text: '保留这段建议' },
+      { kind: 'status', label: 'streaming' },
+      { kind: 'tool_result', id: 'followups', name: 'suggest_followups' },
+    ]);
+
+    const stored = db.prepare(
+      `SELECT content, events_json AS eventsJson FROM messages WHERE id = ?`,
+    ).get('assistant-dsml') as { content: string; eventsJson: string };
+    expect(stored.content).toContain('</｜｜DSML｜｜parameter>');
+    expect(stored.eventsJson).toContain('</｜｜DSML｜｜tool_calls>');
+  });
+
+  it('preserves historical DSML-looking code across text events', () => {
+    const db = openDatabase(tempDir, { dataDir: tempDir });
+    const now = Date.now();
+    const markdown = [
+      '```xml',
+      '</｜｜DSML｜｜parameter>',
+      '</｜｜DSML｜｜invoke>',
+      '</｜｜DSML｜｜tool_calls>',
+      '```',
+    ].join('\n');
+    insertProject(db, {
+      id: 'proj-dsml-code',
+      name: 'DSML code project',
+      createdAt: now,
+      updatedAt: now,
+    });
+    insertConversation(db, {
+      id: 'conv-dsml-code',
+      projectId: 'proj-dsml-code',
+      title: 'DSML code history',
+      createdAt: now,
+      updatedAt: now,
+    });
+    upsertMessage(db, 'conv-dsml-code', {
+      id: 'assistant-dsml-code',
+      role: 'assistant',
+      content: markdown,
+      runStatus: 'succeeded',
+      events: [
+        { kind: 'text', text: '```xml\n</｜｜DSML｜｜parameter>\n' },
+        { kind: 'status', label: 'streaming' },
+        { kind: 'text', text: '</｜｜DSML｜｜invoke>\n</｜｜DSML｜｜tool_calls>\n```' },
+      ],
+      startedAt: now,
+      endedAt: now,
+    });
+
+    const [message] = listMessages(db, 'conv-dsml-code');
+    expect(message?.content).toBe(markdown);
+    expect(message?.events).toEqual([
+      { kind: 'text', text: '```xml\n</｜｜DSML｜｜parameter>\n' },
+      { kind: 'status', label: 'streaming' },
+      { kind: 'text', text: '</｜｜DSML｜｜invoke>\n</｜｜DSML｜｜tool_calls>\n```' },
+    ]);
+  });
 });

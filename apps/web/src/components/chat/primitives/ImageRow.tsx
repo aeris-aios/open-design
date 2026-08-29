@@ -26,9 +26,11 @@ export interface ImageRowProps {
   onRetry?: (row: ImageRowData, index: number) => void;
   /** 点缩略图看大图 */
   onOpenImage?: (path: string, index: number) => void;
+  /** Resolve a project-relative output name to its authenticated preview URL. */
+  imageSrc?: (path: string) => string;
 }
 
-export function ImageRow({ row, onRetry, onOpenImage }: ImageRowProps): ReactElement {
+export function ImageRow({ row, onRetry, onOpenImage, imageSrc }: ImageRowProps): ReactElement {
   const t = useT();
   const settled = !row.pending && row.done + row.failed >= row.total;
 
@@ -52,7 +54,9 @@ export function ImageRow({ row, onRetry, onOpenImage }: ImageRowProps): ReactEle
                 aria-label={label}
                 onClick={path && onOpenImage ? () => onOpenImage(path, i) : undefined}
               >
-                <span className={styles.mini} />
+                {path && imageSrc
+                  ? <img className={styles.mini} src={imageSrc(path)} alt="" loading="lazy" />
+                  : <span className={styles.mini} />}
               </button>
             );
           })}
@@ -74,14 +78,28 @@ export function ImageRow({ row, onRetry, onOpenImage }: ImageRowProps): ReactEle
       </div>
       <div className={styles.imgs}>
         {Array.from({ length: row.total }, (_, i) => {
-          if (i < row.done) {
+          const cell = row.cells?.[i];
+          const status = cell?.status ?? (i < row.done
+            ? 'done'
+            : i < row.done + row.failed ? 'failed' : 'pending');
+          if (status === 'done') {
+            const path = cell?.path ?? row.thumbs[i];
             return (
-              <span key={i} className={styles.shot} data-image-cell="done">
-                <span className={styles.mini} />
-              </span>
+              <button
+                key={i}
+                type="button"
+                className={styles.shot}
+                data-image-cell="done"
+                aria-label={t('chat.record.viewImage', { index: i + 1 })}
+                onClick={path && onOpenImage ? () => onOpenImage(path, i) : undefined}
+              >
+                {path && imageSrc
+                  ? <img className={styles.mini} src={imageSrc(path)} alt="" loading="lazy" />
+                  : <span className={styles.mini} />}
+              </button>
             );
           }
-          if (i < row.done + row.failed) {
+          if (status === 'failed') {
             const inner = <><RetryIcon />{t('chat.record.retry')}</>;
             return (
               <span key={i} className={`${styles.shot} ${styles.fail}`} data-image-cell="failed">

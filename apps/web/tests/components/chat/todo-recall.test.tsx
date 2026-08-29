@@ -198,6 +198,30 @@ describe('ChatPane 真的把 previousTodos 递下去了', () => {
 });
 
 describe('〔继续剩余任务〕—— agent 不照做时的用户出口', () => {
+  it('成功回合已用本轮 od-done 交付最终总结时,漏收尾的 Todo 快照不再伪装成未完成', () => {
+    const onContinueRemainingTasks = vi.fn();
+    const doneKey = 'a7f3c91ed2b40561';
+    const messages: ChatMessage[] = [
+      { id: 'u1', role: 'user', content: '生成一张新图', createdAt: 1 } as ChatMessage,
+      msg([
+        { kind: 'done_key', key: doneKey },
+        todoWrite([
+          { content: '生成新图', status: 'completed' },
+          { content: '简短总结新图', status: 'in_progress' },
+        ]),
+        { kind: 'text', text: '图片已经生成。' },
+        { kind: 'text', text: `<od-done key="${doneKey}"/>新图已经生成并保存到项目。` },
+      ] as PersistedAgentEvent[], { id: 'a1', runStatus: 'succeeded' }),
+    ];
+
+    const { getByTestId, queryByTestId } = render(
+      chatPaneEl(messages, { onContinueRemainingTasks, onAssistantFeedback: vi.fn() }),
+    );
+
+    expect(getByTestId('assistant-label').textContent).toContain('已完成');
+    expect(queryByTestId('assistant-continue-remaining')).toBeNull();
+  });
+
   it('最后一轮留着没做完的活时,按钮在,点了把那几条发回去', () => {
     const onContinueRemainingTasks = vi.fn();
     const messages: ChatMessage[] = [

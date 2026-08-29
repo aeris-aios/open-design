@@ -100,6 +100,25 @@ describe('ChatPane session switcher', () => {
     expect(onSelectConversation).toHaveBeenCalledWith('conv-2');
   });
 
+  it('selects a conversation when its row metadata is clicked', () => {
+    const onSelectConversation = vi.fn();
+    renderChatPane({
+      conversations: [
+        conversation({ id: 'conv-1', title: 'Contract review draft' }),
+        conversation({ id: 'conv-2', title: 'Pricing page copy', messageCount: 2 }),
+      ],
+      activeConversationId: 'conv-1',
+      onSelectConversation,
+    });
+
+    fireEvent.click(screen.getByTestId('conversation-history-trigger'));
+    fireEvent.click(screen.getByTestId('conversation-meta-conv-2'));
+
+    expect(onSelectConversation).toHaveBeenCalledTimes(1);
+    expect(onSelectConversation).toHaveBeenCalledWith('conv-2');
+    expect(screen.queryByTestId('conversation-history-menu')).toBeNull();
+  });
+
   it('shows an untitled label for conversations without a title', () => {
     renderChatPane({
       conversations: [conversation({ id: 'conv-1', title: null })],

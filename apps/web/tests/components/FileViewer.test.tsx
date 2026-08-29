@@ -6825,6 +6825,10 @@ describe('FileViewer SVG artifacts', () => {
       // single-file limitation unreadable for keyboard and touch users.
       expect(help.tagName).toBe('BUTTON');
       expect(help).toHaveProperty('type', 'button');
+      // The help sits at the menu's trailing edge. Opening downward placed the
+      // bubble under the action rows (and most of it behind the higher menu
+      // layer); it belongs above its own section label.
+      expect(help.getAttribute('data-tooltip-placement')).toBe('top');
       help.focus();
       expect(document.activeElement).toBe(help);
 
@@ -6879,6 +6883,7 @@ describe('FileViewer SVG artifacts', () => {
     const help = await screen.findByTestId('workspace-access-help');
     expect(help.tagName).toBe('BUTTON');
     expect(help).toHaveProperty('type', 'button');
+    expect(help.getAttribute('data-tooltip-placement')).toBe('top');
     expect(help.closest('[role="menuitem"]')).toBeNull();
     help.focus();
     expect(document.activeElement).toBe(help);

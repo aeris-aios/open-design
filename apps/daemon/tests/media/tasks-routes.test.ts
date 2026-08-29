@@ -29,6 +29,44 @@ describe('media task route recovery', () => {
     closeDatabase();
   });
 
+  it('lists image tasks with persisted run ownership for ChatPanel progress', async () => {
+    const dataDir = process.env.OD_DATA_DIR;
+    const db = openDatabase(process.cwd(), dataDir === undefined ? {} : { dataDir });
+    const projectId = `project_${randomUUID()}`;
+    const runId = `run_${randomUUID()}`;
+    const now = Date.now();
+    insertProject(db, {
+      id: projectId,
+      name: 'ChatPanel media project',
+      createdAt: now,
+      updatedAt: now,
+    });
+    insertMediaTask(db, {
+      id: `task_${randomUUID()}`,
+      projectId,
+      runId,
+      status: 'done',
+      surface: 'image',
+      progress: ['done'],
+      file: { name: 'generated.png', size: 3, kind: 'image', mime: 'image/png' },
+      startedAt: now - 500,
+      endedAt: now,
+    });
+
+    const started = await startServer({ port: 0, returnServer: true }) as {
+      url: string;
+      server: http.Server;
+    };
+    server = started.server;
+    const response = await fetch(
+      `${started.url}/api/projects/${encodeURIComponent(projectId)}/media/tasks?includeDone=1`,
+    );
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      tasks: [{ runId, status: 'done', surface: 'image', file: { name: 'generated.png' } }],
+    });
+  });
+
   it('accepts only a same-project token explicitly allowed to poll media tasks', async () => {
     const dataDir = process.env.OD_DATA_DIR;
     const db = openDatabase(process.cwd(), dataDir === undefined ? {} : { dataDir });
