@@ -10,9 +10,11 @@
  * lets the host advance / rewind slides without relying on the iframe
  * having keyboard focus. The host posts:
  *   { type: 'od:slide', action: 'next' | 'prev' | 'first' | 'last' | 'go', index?: number }
+ *   { type: 'od:slide-state-probe' }
  * and the iframe responds with:
  *   { type: 'od:slide-state', active: number, count: number }
- * after every navigation so the host can render its own counter / dots.
+ * after every navigation or state probe so the host can render its own
+ * counter / dots after atomic promotion.
  */
 import {
   DECK_EXPLICIT_SLIDE_SELECTOR,
@@ -4070,6 +4072,11 @@ export function buildDeckBridgeAssets(
       return;
     }
     applyBridgeFallback();
+  });
+  addOdSlideMessageListener(function(ev){
+    var data = ev && ev.data;
+    if (!data || data.type !== 'od:slide-state-probe') return;
+    report();
   });
   function ownDeckButton(id, action){
     var btn = document.getElementById(id);

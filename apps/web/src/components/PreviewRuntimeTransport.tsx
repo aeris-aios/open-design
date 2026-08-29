@@ -121,13 +121,19 @@ export function PreviewRuntimeTransport({
     if (frame) {
       retainedCurrentFrameRef.current = frame;
       // Capability acknowledgement restores the complete host state before a
-      // standby is allowed to paint and promote. Replaying again on promotion
-      // duplicates slide/edit/comment work. Reactivation is likewise owned by
-      // the semantic-state effect below, so the ref callback never replays.
+      // standby is allowed to paint and promote. Do not replay navigation or
+      // edit/comment work here: that could double-drive authored runtimes.
     } else if (active) {
       retainedCurrentFrameRef.current = null;
     }
     callbacksRef.current.onCurrentFrameChange?.(frame);
+    if (frame && appliedCapabilitiesRef.current.get(frame)?.includes('deck')) {
+      // The Deck module reports synchronously while applying the pre-promotion
+      // host-owned slide. Active-frame filters correctly ignore that standby
+      // report, so query state once the exact frame has become current. This
+      // message never navigates and is safe on Preview/Code reactivation.
+      frame.contentWindow?.postMessage({ type: 'od:slide-state-probe' }, '*');
+    }
   }, [active]);
 
   useEffect(() => {

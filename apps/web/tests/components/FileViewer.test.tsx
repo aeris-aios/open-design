@@ -9721,15 +9721,26 @@ describe('FileViewer tweaks toolbar', () => {
 
     signal('od:preview:hello');
     signal('od:preview:capabilities-applied');
-    signal('od:preview:visible-paint');
-    expect(screen.getByTestId('preview-runtime-frame-current')).toBe(frame);
-
+    // The deck capability replay runs before atomic promotion so the new
+    // document is already on the host-owned slide when it becomes visible.
+    // Its synchronous state report arrives while the frame is still standby
+    // and is deliberately ignored by active-frame filters.
     act(() => {
       window.dispatchEvent(new MessageEvent('message', {
         source: frame.contentWindow,
         data: { type: 'od:slide-state', active: 0, count: 5 },
       }));
     });
+    signal('od:preview:visible-paint');
+    expect(screen.getByTestId('preview-runtime-frame-current')).toBe(frame);
+    expect(postMessage).toHaveBeenCalledWith({ type: 'od:slide-state-probe' }, '*');
+    act(() => {
+      window.dispatchEvent(new MessageEvent('message', {
+        source: frame.contentWindow,
+        data: { type: 'od:slide-state', active: 0, count: 5 },
+      }));
+    });
+
     const slideFive = (await screen.findAllByTitle('Slide 5 / 5')).find(
       (element) => element instanceof HTMLButtonElement,
     );
