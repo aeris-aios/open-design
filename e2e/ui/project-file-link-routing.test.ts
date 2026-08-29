@@ -4,7 +4,7 @@ import { applyStandardMocks } from '@/playwright/mock-factory';
 import { expectAllProjectFilesActive, openAllProjectFiles } from '@/playwright/workspace';
 import { T } from '@/timeouts';
 
-const ACTIVE_ARTIFACT_PREVIEW_SELECTOR = '[data-testid="artifact-preview-frame"]:visible, [data-testid="live-artifact-preview-frame"]:visible';
+const ACTIVE_ARTIFACT_PREVIEW_SELECTOR = '[data-testid="artifact-preview-frame"]:not([data-od-handoff-pending]):visible, [data-testid="live-artifact-preview-frame"]:visible';
 
 test.describe.configure({ timeout: 30_000 });
 

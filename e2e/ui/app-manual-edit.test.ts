@@ -7,7 +7,7 @@ import { pathToFileURL } from 'node:url';
 import { T } from '@/timeouts';
 
 const STORAGE_KEY = 'open-design:config';
-const ACTIVE_ARTIFACT_PREVIEW_SELECTOR = '[data-testid="artifact-preview-frame"]:visible, [data-testid="live-artifact-preview-frame"]:visible';
+const ACTIVE_ARTIFACT_PREVIEW_SELECTOR = '[data-testid="artifact-preview-frame"]:not([data-od-handoff-pending]):visible, [data-testid="live-artifact-preview-frame"]:visible';
 
 test.describe.configure({ timeout: T.xlong });
 

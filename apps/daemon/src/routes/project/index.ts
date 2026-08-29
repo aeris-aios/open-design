@@ -760,6 +760,47 @@ const URL_PREVIEW_SELECTION_BRIDGE = `<script data-od-url-selection-bridge>
     try { return window.CSS && CSS.escape ? CSS.escape(value) : String(value).replace(/"/g, '\\\\"'); }
     catch (_) { return String(value); }
   }
+  function previewHtmlFileForLink(link){
+    if (!link || link.hasAttribute('download')) return null;
+    var target = String(link.getAttribute('target') || '').toLowerCase();
+    if (target && target !== '_self') return null;
+    var href = link.getAttribute('href');
+    if (!href || href.charAt(0) === '#') return null;
+    try {
+      var baseUrl = new URL(document.baseURI || location.href);
+      var nextUrl = new URL(href, baseUrl);
+      if (nextUrl.origin !== baseUrl.origin) return null;
+      var fileRoot = null;
+      var projectMarker = '/api/projects/';
+      var projectIndex = baseUrl.pathname.indexOf(projectMarker);
+      if (projectIndex < 0) return null;
+      var projectIdStart = projectIndex + projectMarker.length;
+      var routeMarkerStart = baseUrl.pathname.indexOf('/', projectIdStart);
+      if (routeMarkerStart < 0 || routeMarkerStart === projectIdStart) return null;
+      var rawMarker = '/raw/';
+      if (baseUrl.pathname.slice(routeMarkerStart, routeMarkerStart + rawMarker.length) === rawMarker) {
+        fileRoot = baseUrl.pathname.slice(0, routeMarkerStart + rawMarker.length);
+      } else {
+        var previewMarker = '/preview/';
+        if (baseUrl.pathname.slice(routeMarkerStart, routeMarkerStart + previewMarker.length) !== previewMarker) return null;
+        var scopeStart = routeMarkerStart + previewMarker.length;
+        var scopeEnd = baseUrl.pathname.indexOf('/', scopeStart);
+        if (scopeEnd < 0 || scopeEnd === scopeStart) return null;
+        fileRoot = baseUrl.pathname.slice(0, scopeEnd + 1);
+      }
+      if (nextUrl.pathname.indexOf(fileRoot) !== 0) return null;
+      var fileName = decodeURIComponent(nextUrl.pathname.slice(fileRoot.length));
+      if (
+        !fileName ||
+        fileName.charAt(0) === '/' ||
+        fileName.split('/').some(function(part){ return !part || part === '.' || part === '..'; }) ||
+        !/\\.html?$/i.test(fileName)
+      ) return null;
+      return { fileName: fileName, search: nextUrl.search || '', hash: nextUrl.hash || '' };
+    } catch (_) {
+      return null;
+    }
+  }
   function ensureStyle(){
     if (document.querySelector('style[data-od-url-selection-style]')) return;
     var style = document.createElement('style');
@@ -1235,6 +1276,23 @@ const URL_PREVIEW_SELECTION_BRIDGE = `<script data-od-url-selection-bridge>
     }
     hoveredId = null;
     window.parent.postMessage({ type: 'od:comment-leave' }, '*');
+  }, true);
+  // Keep same-project HTML navigation in the workspace even on the canonical
+  // URL transport. Otherwise leaving Manual Edit makes a link replace the
+  // iframe document while the workspace tab still points at the old file.
+  document.addEventListener('click', function(ev){
+    if (commentEnabled || ev.defaultPrevented || ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
+    var origin = ev.target;
+    var link = origin && origin.closest ? origin.closest('a[href]') : null;
+    var destination = previewHtmlFileForLink(link);
+    if (!destination) return;
+    ev.preventDefault();
+    window.parent.postMessage({
+      type: 'od:preview-open-file',
+      fileName: destination.fileName,
+      search: destination.search,
+      hash: destination.hash
+    }, '*');
   }, true);
   document.addEventListener('click', function(ev){
     if (!commentEnabled || mode !== 'picker') return;

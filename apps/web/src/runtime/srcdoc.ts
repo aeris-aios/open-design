@@ -2429,6 +2429,31 @@ function meaningfulDomFallbackTarget(el) {
     if (!el || String(el.tagName || '').toLowerCase() !== String(entry && entry.tag || '').toLowerCase()) return null;
     return el;
   }
+  function runtimeStateAnnotationElement(annotation){
+    var el = null;
+    var hasStableIdentity = false;
+    if (annotation && typeof annotation.id === 'string' && annotation.id.length <= 4096) {
+      hasStableIdentity = true;
+      try { el = document.getElementById(annotation.id); } catch (_) { el = null; }
+      if (!el) return null;
+    }
+    if (annotation && typeof annotation.odId === 'string' && annotation.odId.length <= 4096) {
+      hasStableIdentity = true;
+      if (el) {
+        var currentOdId = el.getAttribute && el.getAttribute('data-od-id');
+        // A full-body runtime snapshot may put a different logical screen at
+        // the same DOM path (or even under the same app-shell id). Never copy
+        // the source page's edit identity onto that replacement screen.
+        if (currentOdId && currentOdId !== annotation.odId) return null;
+      } else {
+        try { el = document.querySelector('[data-od-id="' + esc(annotation.odId) + '"]'); } catch (_) { el = null; }
+        if (!el) return null;
+      }
+    }
+    if (!hasStableIdentity) el = runtimeStateElementAtPath(annotation && annotation.path);
+    if (!el || String(el.tagName || '').toLowerCase() !== String(annotation && annotation.tag || '').toLowerCase()) return null;
+    return el;
+  }
   function captureRuntimeStateAnnotations(){
     if (!document.body) return [];
     var nodes = document.body.querySelectorAll(
@@ -2460,7 +2485,7 @@ function meaningfulDomFallbackTarget(el) {
     if (!Array.isArray(annotations)) return;
     for (var i = 0; i < annotations.length; i++) {
       var annotation = annotations[i];
-      var el = runtimeStateElement(annotation);
+      var el = runtimeStateAnnotationElement(annotation);
       if (!el || !annotation.attrs) continue;
       var names = Object.keys(annotation.attrs);
       for (var n = 0; n < names.length; n++) {
@@ -2471,6 +2496,10 @@ function meaningfulDomFallbackTarget(el) {
           name !== 'data-od-edit' &&
           name !== 'data-od-label'
         ) continue;
+        // The frozen runtime DOM is authoritative for annotations it already
+        // carries. Source-only markers merely fill gaps on the same logical
+        // element; they must never overwrite a runtime-rendered page identity.
+        if (el.hasAttribute(name)) continue;
         try { el.setAttribute(name, annotation.attrs[name]); } catch (_) {}
       }
     }

@@ -1378,6 +1378,8 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
     expect(html).toContain('data-od-url-selection-bridge');
     expect(html).toContain("type: 'od:comment-target'");
     expect(html).toContain("type: 'od:preview-runtime-state-captured'");
+    expect(html).toContain("type: 'od:preview-open-file'");
+    expect(html).toContain('function previewHtmlFileForLink(');
     expect(html).toContain('bodyHtml: bodyHtml');
     expect(html).toContain("scriptAttrName.indexOf('data-od-url-') === 0");
     expect(html).toContain('roots: roots');

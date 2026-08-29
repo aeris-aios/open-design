@@ -570,6 +570,40 @@ describe('selection bridge — empty annotation surface (#890)', () => {
     ]);
   });
 
+  it('does not copy stale source annotations onto a different runtime-rendered page', async () => {
+    const { win } = setupBridgeDom(
+      '<main data-od-id="today-screen" data-od-source-path="path-0"><h1>Today page</h1></main>',
+      'inspect',
+      [],
+      'runtime-state-generation',
+    );
+
+    win.dispatchEvent(
+      new win.MessageEvent('message', {
+        data: {
+          type: 'od:preview-runtime-state-restore',
+          id: 'restore-profile-page',
+          generation: 'runtime-state-generation',
+          state: {
+            version: 1,
+            hash: '',
+            bodyHtml: '<main data-od-id="profile-screen"><h1>Profile page</h1></main>',
+            roots: [],
+            htmlAttrs: {},
+            bodyAttrs: {},
+            entries: [],
+          },
+        },
+      }),
+    );
+
+    await new Promise<void>((resolve) => win.setTimeout(resolve, 120));
+    const profile = win.document.querySelector('[data-od-id="profile-screen"]');
+    expect(profile?.textContent).toContain('Profile page');
+    expect(profile?.getAttribute('data-od-source-path')).toBeNull();
+    expect(win.document.querySelector('[data-od-id="today-screen"]')).toBeNull();
+  });
+
   it('posts od:comment-target for the annotated card when the device-frame iframe is clicked', async () => {
     const { win, parentPostMessage } = setupBridgeDom(
       '<article data-od-id="tablet-card" class="frame-card"><div class="meta">Tablet edition</div><iframe id="f" class="tablet-frame" title="Tablet edition" src="about:blank"></iframe></article>',
