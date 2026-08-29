@@ -341,14 +341,7 @@ export function buildSrcdoc(
   const isFullDoc = head.startsWith("<!doctype") || head.startsWith("<html");
   const wrapped = isFullDoc
     ? html
-    : `<!doctype html>
-<html>
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-  </head>
-  <body>${html}</body>
-</html>`;
+    : normalizeHtmlFragmentLikeNavigation(html);
   // Sanitize <title> text before any other transformation so that when the
   // user prints the preview iframe (Cmd+P → Save as PDF), Chromium uses the
   // sanitized title as the default filename — one that Microsoft Teams will
@@ -405,6 +398,7 @@ export function buildSrcdoc(
     ? injectSelectionBridge(withDeck, {
         initialCommentMode: !!options.commentBridge,
         initialInspectMode: !!options.inspectBridge,
+        runtimeStateGeneration: options.transportActivationGeneration ?? '',
       })
     : withDeck;
   const withPalette = options.paletteBridge
@@ -432,6 +426,32 @@ export function buildSrcdoc(
 }
 
 /**
+ * Give fragment-shaped artifacts the same document structure and compat mode
+ * they receive when Chromium navigates directly to the raw URL.
+ *
+ * Wrapping every fragment in a standards-mode `<body>` changes two observable
+ * browser behaviours:
+ *   - a source without a doctype switches from URL-load quirks mode to srcDoc
+ *     standards mode; and
+ *   - leading metadata such as `<title>`, `<link>`, and `<style>` becomes a
+ *     body child. Runtime-state handoff later replaces `body.innerHTML`, which
+ *     deletes those authored styles and leaves Edit visibly unstyled.
+ *
+ * DOMParser applies the same tree-builder rules as a document navigation: it
+ * synthesizes html/head/body, promotes leading metadata into head, and retains
+ * the absence of a doctype. In non-DOM environments, leaving the fragment
+ * untouched lets the eventual iframe parser perform that normalization.
+ */
+function normalizeHtmlFragmentLikeNavigation(html: string): string {
+  if (typeof DOMParser === 'undefined') return html;
+  try {
+    return serializeHtmlDocument(new DOMParser().parseFromString(html, 'text/html'));
+  } catch {
+    return html;
+  }
+}
+
+/**
  * Build the lazy transport shell.
  *
  * The shell does two things:
@@ -444,9 +464,9 @@ export function buildSrcdoc(
  *      key-driven re-mount), in which case the message is dropped and the
  *      iframe stays stuck on the empty shell. See #2253.
  */
-export function buildLazySrcdocTransport(): string {
-  return `<!doctype html>
-<html>
+export function buildLazySrcdocTransport(options: { quirksMode?: boolean } = {}): string {
+  const doctype = options.quirksMode ? '' : '<!doctype html>\n';
+  return `${doctype}<html>
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -466,7 +486,7 @@ export function buildLazySrcdocTransport(): string {
           }
         } catch (_) { /* sandboxed parent — host falls back to onLoad */ }
       }
-      window.addEventListener('message', function(ev){
+      function handleTransportMessage(ev){
         var data = ev && ev.data;
         if (data && data.type === 'od:srcdoc-transport-shell-probe') {
           announceReady();
@@ -474,10 +494,14 @@ export function buildLazySrcdocTransport(): string {
         }
         if (!data || data.type !== 'od:srcdoc-transport-activate' || typeof data.html !== 'string' || typeof data.generation !== 'string' || !data.generation) return;
         stopReadyAnnouncements();
+        if (typeof window.removeEventListener === 'function') {
+          window.removeEventListener('message', handleTransportMessage);
+        }
         document.open();
         document.write(data.html);
         document.close();
-      });
+      }
+      window.addEventListener('message', handleTransportMessage);
       announceReady();
       // A cached app-lifetime Blob can finish long before React attaches the
       // parent's listener. Keep announcing until activation instead of
@@ -586,9 +610,19 @@ function injectSrcdocTransportActivationBridge(doc: string, generation: string):
       return;
     }
     if (!data || data.type !== 'od:srcdoc-transport-activate' || typeof data.html !== 'string' || typeof data.generation !== 'string' || !data.generation) return;
-    document.open();
-    document.write(data.html);
-    document.close();
+    // document.open/write keeps the current Window realm. Re-running an
+    // authored classic script there can fail before execution when it declares
+    // a top-level let/const that the previous document already declared. Ask
+    // the host to remount the shared bootstrap so this generation gets a fresh
+    // realm, then let the one-shot shell perform the initial write.
+    try {
+      if (window.parent && window.parent !== window) {
+        window.parent.postMessage({
+          type: 'od:srcdoc-transport-reset-required',
+          generation: data.generation
+        }, '*');
+      }
+    } catch (_) { /* sandboxed parent — host recovery will remount on timeout */ }
   });
   announceReady();
 })();</script>`;
@@ -1783,13 +1817,19 @@ function injectPreviewRedirectGuard(
 // damage. Any parent able to postMessage here can already mount the iframe.
 function injectSelectionBridge(
   doc: string,
-  options: { initialCommentMode?: boolean; initialInspectMode?: boolean } = {},
+  options: {
+    initialCommentMode?: boolean;
+    initialInspectMode?: boolean;
+    runtimeStateGeneration?: string;
+  } = {},
 ): string {
   const initialComment = options.initialCommentMode ? 'true' : 'false';
   const initialInspect = options.initialInspectMode ? 'true' : 'false';
+  const runtimeStateGeneration = JSON.stringify(options.runtimeStateGeneration ?? '');
   const script = `<script data-od-selection-bridge>(function(){
   var commentEnabled = ${initialComment};
   var inspectEnabled = ${initialInspect};
+  var runtimeStateGeneration = ${runtimeStateGeneration};
   // Comment mode has two sub-tools (kept on the host side as boardTool):
   //   'picker' — click-to-select an element for annotation.
   //   'pod'    — pointer-drag a freeform stroke that the host turns into a
@@ -2323,8 +2363,8 @@ function meaningfulDomFallbackTarget(el) {
     rebuildStyleSheet();
     postOverrides();
   }
-  // Reapply the bounded UI state captured from the URL-loaded twin before
-  // Manual Edit became active. data-od-* stays owned by this srcDoc's bridges.
+  // Reapply the frozen DOM captured from the URL-loaded twin before Manual
+  // Edit became active. srcDoc-only source annotations are retained locally.
   function runtimeStateAttributeAllowed(name){
     return name === 'class' ||
       name === 'style' ||
@@ -2354,6 +2394,19 @@ function meaningfulDomFallbackTarget(el) {
       try { el.setAttribute(name, value); } catch (_) {}
     }
   }
+  function runtimeStatePath(el){
+    var path = [];
+    var node = el;
+    while (node && node !== document.body) {
+      var parent = node.parentElement;
+      if (!parent || path.length >= 64) return null;
+      var index = Array.prototype.indexOf.call(parent.children, node);
+      if (index < 0 || index > 100000) return null;
+      path.unshift(index);
+      node = parent;
+    }
+    return node === document.body ? path : null;
+  }
   function runtimeStateElementAtPath(path){
     if (!Array.isArray(path) || path.length > 64) return null;
     var node = document.body;
@@ -2376,6 +2429,52 @@ function meaningfulDomFallbackTarget(el) {
     if (!el || String(el.tagName || '').toLowerCase() !== String(entry && entry.tag || '').toLowerCase()) return null;
     return el;
   }
+  function captureRuntimeStateAnnotations(){
+    if (!document.body) return [];
+    var nodes = document.body.querySelectorAll(
+      '[data-od-source-path], [data-od-id], [data-od-edit], [data-od-label]'
+    );
+    var annotations = [];
+    var count = Math.min(nodes.length, 3500);
+    for (var i = 0; i < count; i++) {
+      var el = nodes[i];
+      var path = runtimeStatePath(el);
+      if (!path) continue;
+      var annotation = {
+        path: path,
+        tag: String(el.tagName || '').toLowerCase(),
+        attrs: Object.create(null)
+      };
+      if (el.id) annotation.id = String(el.id);
+      var odId = el.getAttribute('data-od-id');
+      if (odId) annotation.odId = String(odId);
+      var names = ['data-od-source-path', 'data-od-id', 'data-od-edit', 'data-od-label'];
+      for (var n = 0; n < names.length; n++) {
+        if (el.hasAttribute(names[n])) annotation.attrs[names[n]] = String(el.getAttribute(names[n]) || '');
+      }
+      annotations.push(annotation);
+    }
+    return annotations;
+  }
+  function restoreRuntimeStateAnnotations(annotations){
+    if (!Array.isArray(annotations)) return;
+    for (var i = 0; i < annotations.length; i++) {
+      var annotation = annotations[i];
+      var el = runtimeStateElement(annotation);
+      if (!el || !annotation.attrs) continue;
+      var names = Object.keys(annotation.attrs);
+      for (var n = 0; n < names.length; n++) {
+        var name = names[n];
+        if (
+          name !== 'data-od-source-path' &&
+          name !== 'data-od-id' &&
+          name !== 'data-od-edit' &&
+          name !== 'data-od-label'
+        ) continue;
+        try { el.setAttribute(name, annotation.attrs[name]); } catch (_) {}
+      }
+    }
+  }
   function restoreRuntimeState(state){
     if (
       !state ||
@@ -2383,7 +2482,18 @@ function meaningfulDomFallbackTarget(el) {
       !Array.isArray(state.entries) ||
       state.entries.length > 3500
     ) return;
-    if (Array.isArray(state.roots) && state.roots.length <= 64) {
+    if (
+      document.body &&
+      typeof state.bodyHtml === 'string' &&
+      state.bodyHtml.length <= 2097152
+    ) {
+      // Source annotations describe where an edit must be persisted in the
+      // authored file. The URL document does not carry these srcDoc-only
+      // markers, so retain them across the complete frozen-body replacement.
+      var sourceAnnotations = captureRuntimeStateAnnotations();
+      document.body.innerHTML = state.bodyHtml;
+      restoreRuntimeStateAnnotations(sourceAnnotations);
+    } else if (Array.isArray(state.roots) && state.roots.length <= 64) {
       var rootHtmlLength = 0;
       for (var r = 0; r < state.roots.length; r++) {
         var root = state.roots[r];
@@ -2438,30 +2548,67 @@ function meaningfulDomFallbackTarget(el) {
   // Retried restores help state survive an asynchronous artifact boot, but
   // after the user interacts the live document is authoritative. Invalidate
   // the pending handoff before its rAF/timeout callbacks can replay stale state.
+  // Programmatic scroll events emitted by restoreRuntimeState must not cancel
+  // their own handoff; the iframe remains non-interactive until the final
+  // restore acknowledgement makes it visible.
   document.addEventListener('pointerdown', cancelScheduledRuntimeStateRestore, true);
   document.addEventListener('click', cancelScheduledRuntimeStateRestore, true);
   document.addEventListener('keydown', cancelScheduledRuntimeStateRestore, true);
   document.addEventListener('input', cancelScheduledRuntimeStateRestore, true);
   document.addEventListener('change', cancelScheduledRuntimeStateRestore, true);
-  document.addEventListener('scroll', cancelScheduledRuntimeStateRestore, true);
-  function scheduleRuntimeStateRestore(state){
+  function scheduleRuntimeStateRestore(state, onComplete){
     runtimeStateRestoreSequence += 1;
     var sequence = runtimeStateRestoreSequence;
     function restoreIfCurrent(){
-      if (sequence !== runtimeStateRestoreSequence) return;
+      if (sequence !== runtimeStateRestoreSequence) return false;
       restoreRuntimeState(state);
+      return true;
     }
     restoreIfCurrent();
     window.requestAnimationFrame(function(){
       restoreIfCurrent();
-      window.setTimeout(restoreIfCurrent, 80);
+      window.setTimeout(function(){
+        if (restoreIfCurrent() && typeof onComplete === 'function') onComplete();
+      }, 80);
     });
+  }
+  function runtimeStateRestoreGeneration(){
+    if (runtimeStateGeneration) return runtimeStateGeneration;
+    var completionMarker = document.querySelector('template[data-od-srcdoc-transport-body-complete]');
+    return completionMarker
+      ? String(completionMarker.getAttribute('data-od-srcdoc-transport-body-complete') || '')
+      : '';
+  }
+  function postRuntimeStateRestoreReady(){
+    var generation = runtimeStateRestoreGeneration();
+    if (!generation) return;
+    try {
+      window.parent.postMessage({
+        type: 'od:preview-runtime-state-restore-ready',
+        generation: generation
+      }, '*');
+    } catch (_) {}
   }
   window.addEventListener('message', function(ev){
     var data = ev && ev.data;
     if (!data || !data.type) return;
     if (data.type === 'od:preview-runtime-state-restore') {
-      scheduleRuntimeStateRestore(data.state);
+      var currentGeneration = runtimeStateRestoreGeneration();
+      if (
+        typeof data.generation !== 'string' ||
+        !data.generation ||
+        data.generation !== currentGeneration
+      ) return;
+      scheduleRuntimeStateRestore(data.state, function(){
+        if (typeof data.id !== 'string' || !data.id) return;
+        try {
+          window.parent.postMessage({
+            type: 'od:preview-runtime-state-restored',
+            id: data.id,
+            generation: currentGeneration
+          }, '*');
+        } catch (_) {}
+      });
       return;
     }
     if (data.type === 'od:preview-scroll-capture') {
@@ -2560,6 +2707,11 @@ function meaningfulDomFallbackTarget(el) {
       return;
     }
   });
+  // The transport head can be challenged and verified before this body-level
+  // bridge has installed its restore listener. Announce the exact generation
+  // only after installation so the host can replay any retained URL snapshot
+  // that an earlier postMessage raced past.
+  postRuntimeStateRestoreReady();
   function pickerActive(){ return inspectEnabled || (commentEnabled && mode === 'picker'); }
   document.addEventListener('mouseover', function(ev){
     if (!pickerActive()) return;

@@ -100,10 +100,12 @@ function setupBridgeDom(
   bodyHtml: string,
   mode: 'inspect' | 'comment',
   visibleSelectors: string[] = [],
+  transportActivationGeneration?: string,
 ) {
   const srcdoc = buildSrcdoc(`<!doctype html><html><body>${bodyHtml}</body></html>`, {
     inspectBridge: mode === 'inspect',
     commentBridge: mode === 'comment',
+    transportActivationGeneration,
   });
   const script = extractBridgeScript(srcdoc);
   const bridgeStyle = extractSelectionBridgeStyle(srcdoc);
@@ -472,12 +474,15 @@ describe('selection bridge — empty annotation surface (#890)', () => {
       '<main id="home" data-page="home"><h1>Home</h1></main>' +
         '<main id="profile" data-page="profile" hidden><h1>Profile</h1></main>',
       'inspect',
+      [],
+      'runtime-state-generation',
     );
 
     win.dispatchEvent(
       new win.MessageEvent('message', {
         data: {
           type: 'od:preview-runtime-state-restore',
+          generation: 'runtime-state-generation',
           state: {
             version: 1,
             hash: '',
@@ -520,15 +525,19 @@ describe('selection bridge — empty annotation surface (#890)', () => {
   });
 
   it('restores the current page content before manual edit activates', async () => {
-    const { win } = setupBridgeDom(
+    const { win, parentPostMessage } = setupBridgeDom(
       '<main id="app" data-page="today"><h1 data-od-source-path="path-0-0">Today page</h1></main>',
       'inspect',
+      [],
+      'runtime-state-generation',
     );
 
     win.dispatchEvent(
       new win.MessageEvent('message', {
         data: {
           type: 'od:preview-runtime-state-restore',
+          id: 'restore-after-settle',
+          generation: 'runtime-state-generation',
           state: {
             version: 1,
             hash: '',
@@ -550,6 +559,15 @@ describe('selection bridge — empty annotation surface (#890)', () => {
     expect(win.document.querySelector('[data-od-id="profile-screen"] h1')?.textContent).toBe('Profile page');
     expect(win.document.body.textContent).toContain('Current page content');
     expect(win.document.body.textContent).not.toContain('Today page');
+    expect(postedMessages(parentPostMessage, 'od:preview-runtime-state-restored')).toHaveLength(0);
+
+    await new Promise<void>((resolve) => win.setTimeout(resolve, 120));
+    expect(postedMessages(parentPostMessage, 'od:preview-runtime-state-restored')).toEqual([
+      expect.objectContaining({
+        id: 'restore-after-settle',
+        generation: 'runtime-state-generation',
+      }),
+    ]);
   });
 
   it('posts od:comment-target for the annotated card when the device-frame iframe is clicked', async () => {

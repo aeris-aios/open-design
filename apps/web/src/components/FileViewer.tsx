@@ -384,12 +384,13 @@ const POWERED_PREVIEW_SANDBOX =
 const POWERED_PREVIEW_ALLOW =
   'accelerometer; autoplay; camera; cross-origin-isolated; fullscreen; gamepad; gyroscope; microphone; xr-spatial-tracking';
 const BASE_PREVIEW_BRIDGE_QUERY = 'odPreviewBridge=scroll&odPreviewBridge=selection&odPreviewBridge=snapshot&odPreviewBridge=observability';
-// Generic runtime UI state carried across the URL-load -> srcDoc transport
-// switch. This preserves the current page of multi-page prototypes while
-// leaving artifact scripts and business state inside their sandboxed frames.
+// Frozen DOM state carried across the URL-load -> srcDoc transport switch.
+// The rendered body covers arbitrary app shells; bounded entries retain DOM
+// properties that innerHTML cannot serialize (form values and scroll offsets).
 const PREVIEW_RUNTIME_STATE_MAX_ELEMENTS = 3500;
 const PREVIEW_RUNTIME_STATE_MAX_ROOTS = 64;
 const PREVIEW_RUNTIME_STATE_MAX_ROOT_HTML = 2 * 1024 * 1024;
+const PREVIEW_RUNTIME_STATE_MAX_BODY_HTML = 2 * 1024 * 1024;
 type PreviewRuntimeStateEntry = {
   path: number[];
   tag: string;
@@ -412,6 +413,7 @@ type PreviewRuntimeStateRoot = {
 type PreviewRuntimeState = {
   version: 1;
   hash: string;
+  bodyHtml?: string | null;
   roots?: PreviewRuntimeStateRoot[];
   htmlAttrs: Record<string, string>;
   bodyAttrs: Record<string, string>;
@@ -440,6 +442,10 @@ function isPreviewRuntimeState(value: unknown): value is PreviewRuntimeState {
     state.version !== 1 ||
     typeof state.hash !== 'string' ||
     state.hash.length > 4096 ||
+    (state.bodyHtml !== undefined && state.bodyHtml !== null && (
+      typeof state.bodyHtml !== 'string' ||
+      state.bodyHtml.length > PREVIEW_RUNTIME_STATE_MAX_BODY_HTML
+    )) ||
     (state.roots !== undefined && (
       !Array.isArray(state.roots) ||
       state.roots.length > PREVIEW_RUNTIME_STATE_MAX_ROOTS ||
@@ -654,12 +660,7 @@ type SrcDocTransportCacheEntry = {
   srcDoc: string;
 };
 const htmlPreviewSrcDocTransportState = new Map<string, SrcDocTransportCacheEntry>();
-type SharedPreviewBootstrapUrl = {
-  createObjectURL: typeof URL.createObjectURL;
-  html: string;
-  url: string;
-};
-let sharedPreviewBootstrapUrl: SharedPreviewBootstrapUrl | null = null;
+const sharedPreviewBootstrapUrls = new WeakMap<typeof URL.createObjectURL, Map<string, string>>();
 function nextPreviewContentMeasurementDocumentEpoch(): string {
   previewContentMeasurementDocumentEpochSequence += 1;
   return `preview-document-${previewContentMeasurementDocumentEpochSequence}`;
@@ -687,20 +688,21 @@ function cacheSrcDocTransport(key: string, entry: SrcDocTransportCacheEntry) {
     if (oldest != null) htmlPreviewSrcDocTransportState.delete(oldest);
   }
 }
-function persistentPreviewBootstrapUrl(html: string): string | null {
+function persistentPreviewBootstrapUrl(html: string, forceBlob = false): string | null {
+  const userAgent = typeof navigator === 'undefined' ? '' : navigator.userAgent;
   if (
     !html
     || typeof navigator === 'undefined'
-    || !/\bElectron\//.test(navigator.userAgent)
+    || /\bjsdom\b/i.test(userAgent)
+    || (!forceBlob && !/\bElectron\//.test(userAgent))
     || typeof URL === 'undefined'
     || typeof URL.createObjectURL !== 'function'
     || typeof Blob === 'undefined'
   ) return null;
   const createObjectURL = URL.createObjectURL;
-  if (
-    sharedPreviewBootstrapUrl?.createObjectURL === createObjectURL
-    && sharedPreviewBootstrapUrl.html === html
-  ) return sharedPreviewBootstrapUrl.url;
+  const urlsByHtml = sharedPreviewBootstrapUrls.get(createObjectURL);
+  const existing = urlsByHtml?.get(html);
+  if (existing) return existing;
 
   // The bootstrap is intentionally tiny and immutable. Electron reliably
   // paints a Blob-backed document after the activation bridge replaces its
@@ -711,7 +713,9 @@ function persistentPreviewBootstrapUrl(html: string): string | null {
   // The full artifact never appears in the Blob; it arrives only through the
   // generation-checked activation bridge after this listener is ready.
   const url = createObjectURL(new Blob([html], { type: 'text/html;charset=utf-8' }));
-  sharedPreviewBootstrapUrl = { createObjectURL, html, url };
+  const nextUrlsByHtml = urlsByHtml ?? new Map<string, string>();
+  nextUrlsByHtml.set(html, url);
+  if (!urlsByHtml) sharedPreviewBootstrapUrls.set(createObjectURL, nextUrlsByHtml);
   return url;
 }
 
@@ -8354,10 +8358,19 @@ function HtmlViewer({
   }, [file.name, manualEditMode, onRetainActivityChange]);
   const [manualEditSrcDocActive, setManualEditSrcDocActive] = useState(false);
   const [manualEditFrozenSource, setManualEditFrozenSource] = useState<string | null>(null);
+  // Manual Edit uses a srcDoc document while ordinary HTML preview uses the
+  // raw URL. Keep both browsing contexts alive and overlap only during the
+  // handoff so neither direction exposes an unpainted document.
+  const [manualEditEntryHandoffPending, setManualEditEntryHandoffPending] = useState(false);
+  const [manualEditExitHandoffPending, setManualEditExitHandoffPending] = useState(false);
+  const [manualEditUrlStandbyRevision, setManualEditUrlStandbyRevision] = useState(0);
+  const manualEditUrlStandbyRequestedRef = useRef(0);
+  const manualEditUrlStandbyReadyRef = useRef(0);
+  const manualEditUrlStandbySourceFingerprintRef = useRef<string | null>(null);
   // A successful Manual Edit save mutates the active iframe through the edit
   // bridge before/while the same result is persisted. Remember that exact
-  // source revision so closing Edit can adopt the already-correct DOM instead
-  // of navigating the iframe to an equivalent freshly-built document.
+  // source revision while the session is open so watcher echoes do not replace
+  // the live editing DOM. The latch is always retired when Edit closes.
   const manualEditPersistedDocumentRef = useRef<{
     sourceFingerprint: string;
     reloadKey: number;
@@ -8499,6 +8512,11 @@ function HtmlViewer({
   }
   const previewRuntimeStateRef = useRef<PreviewRuntimeState | null>(null);
   const previewRuntimeStateRequestSequenceRef = useRef(0);
+  const previewRuntimeStateRestoreIdRef = useRef<string | null>(null);
+  const previewRuntimeStateRestoreReadyRef = useRef<{
+    frame: HTMLIFrameElement;
+    generation: string;
+  } | null>(null);
   const manualEditActivationPendingRef = useRef(false);
   const previewFileIdentityRef = useRef(`${projectId}\u0000${file.name}`);
   previewFileIdentityRef.current = `${projectId}\u0000${file.name}`;
@@ -8575,24 +8593,33 @@ function HtmlViewer({
     });
   }, [workspaceActive]);
   const postAndConsumePreviewRuntimeState = useCallback((target: HTMLIFrameElement | null) => {
-    if (!workspaceActive) return false;
+    if (!workspaceActive || !manualEditMode) return false;
     const runtimeState = previewRuntimeStateRef.current;
     const win = target?.contentWindow;
     if (
       !runtimeState ||
       !win ||
-      target !== srcDocPreviewIframeRef.current ||
-      target !== iframeRef.current
+      target !== srcDocPreviewIframeRef.current
     ) {
       return false;
     }
-    // This snapshot only bridges the first URL -> srcDoc handoff. Consume it
-    // before posting so later srcDoc reloads cannot overwrite newer source
-    // attributes or runtime navigation with stale transition state.
-    previewRuntimeStateRef.current = null;
-    win.postMessage({ type: 'od:preview-runtime-state-restore', state: runtimeState }, '*');
+    // A transport-generation change can replace this frame immediately after
+    // postMessage. Keep the one-shot snapshot until the matching authored
+    // document acknowledges applying it; an older srcDoc generation ignores
+    // the message and leaves it available for the replacement frame.
+    if (previewRuntimeStateRestoreIdRef.current == null) {
+      previewRuntimeStateRequestSequenceRef.current += 1;
+      previewRuntimeStateRestoreIdRef.current =
+        `runtime-restore-${Date.now()}-${previewRuntimeStateRequestSequenceRef.current}`;
+    }
+    win.postMessage({
+      type: 'od:preview-runtime-state-restore',
+      id: previewRuntimeStateRestoreIdRef.current,
+      generation: expectedSrcDocTransportGenerationRef.current,
+      state: runtimeState,
+    }, '*');
     return true;
-  }, [workspaceActive]);
+  }, [manualEditMode, workspaceActive]);
   const setCommentComposerHostRef = useCallback((node: HTMLDivElement | null) => {
     setCommentComposerHost((current) => (current === node ? current : node));
   }, []);
@@ -8755,9 +8782,16 @@ function HtmlViewer({
   useEffect(() => {
     setManualEditSrcDocActive(false);
     setManualEditFrozenSource(null);
+    setManualEditEntryHandoffPending(false);
+    setManualEditExitHandoffPending(false);
+    setManualEditUrlStandbyRevision(0);
+    manualEditUrlStandbyRequestedRef.current = 0;
+    manualEditUrlStandbyReadyRef.current = 0;
+    manualEditUrlStandbySourceFingerprintRef.current = null;
     manualEditPersistedDocumentRef.current = null;
     manualEditLiveStylesRef.current.clear();
     previewRuntimeStateRef.current = null;
+    previewRuntimeStateRestoreIdRef.current = null;
   }, [fileViewportKey, projectId, file.name]);
   useEffect(() => {
     // Restore this file's last measured content width instead of forcing
@@ -10208,7 +10242,22 @@ function HtmlViewer({
     ...urlLoadDecision,
     mode: 'preview',
   }) && !manualEditRequiresSrcDoc;
+  const urlLoadPreviewSupportedWithoutManualEdit = shouldUrlLoadHtmlPreview({
+    ...urlLoadDecision,
+    mode: 'preview',
+    editMode: false,
+  });
   const useUrlLoadPreview = mode === 'preview' && urlLoadPreviewSupported;
+  // The edit bridge still requires srcDoc, but the URL document is the
+  // canonical passive preview. Keep an otherwise eligible ordinary URL warm
+  // behind Edit so closing the tool can be a visibility swap. Powered
+  // previews retain their existing single-runtime ownership for now because
+  // their URL carries a separately resolved origin and sandbox contract.
+  const keepUrlTransportWarmForManualEdit =
+    mode === 'preview'
+    && manualEditRequiresSrcDoc
+    && urlLoadPreviewSupportedWithoutManualEdit
+    && !needsPowered;
   const setSrcDocPreviewIframe = useCallback((frame: HTMLIFrameElement | null) => {
     if (srcDocPreviewIframeRef.current !== frame) {
       srcDocNavigationCommittedRef.current = null;
@@ -10458,11 +10507,29 @@ function HtmlViewer({
   previewContentMeasurementExpectedDocumentEpochRef.current =
     transportPreviewMeasurementDocumentEpoch;
   const frozenPreviewSrcUrlRef = useRef<string | null>(null);
+  const manualEditUrlStandbySourceFingerprint =
+    manualEditUrlStandbySourceFingerprintRef.current;
+  const canAdoptManualEditUrlStandby =
+    !interactivePreviewModeActive
+    && manualEditUrlStandbySourceFingerprint !== null
+    && livePreviewSource !== null
+    && manualEditUrlStandbySourceFingerprint
+      === previewSourceFingerprint(livePreviewSource);
+  if (
+    !interactivePreviewModeActive
+    && manualEditUrlStandbySourceFingerprint !== null
+    && livePreviewSource !== null
+    && !canAdoptManualEditUrlStandby
+  ) {
+    // A genuinely different source revision supersedes the prewarmed edit
+    // result. Release the URL freeze so the external revision can navigate.
+    manualEditUrlStandbySourceFingerprintRef.current = null;
+  }
   if (interactivePreviewModeActive) {
     if (frozenPreviewSrcUrlRef.current === null) {
       frozenPreviewSrcUrlRef.current = basePreviewSrcUrl;
     }
-  } else {
+  } else if (!canAdoptManualEditUrlStandby) {
     frozenPreviewSrcUrlRef.current = null;
   }
   const effectiveBasePreviewSrcUrl = frozenPreviewSrcUrlRef.current ?? basePreviewSrcUrl;
@@ -10914,6 +10981,7 @@ function HtmlViewer({
     // switches; only a real content generation change starts a new document
     // lifecycle. Invalidating on every hide used to manufacture a second
     // activation/recovery race after an otherwise healthy switch.
+    previewRuntimeStateRestoreReadyRef.current = null;
     invalidateSrcDocTransportActivation();
     return cancelPendingSrcDocTransport;
   }, [
@@ -11050,7 +11118,14 @@ function HtmlViewer({
   const handleDeckThumbnailSelect = useCallback((index: number) => {
     goToSlideRef.current(index);
   }, []);
-  const lazySrcDocTransport = useMemo(() => buildLazySrcdocTransport(), []);
+  // document.open/write cannot change an existing browsing context's compat
+  // mode. Match the bootstrap shell to the authored document so a doctype-less
+  // URL preview remains BackCompat after switching into srcDoc Edit.
+  const srcDocUsesQuirksMode = Boolean(srcDoc && !/^\s*<!doctype\b/i.test(srcDoc));
+  const lazySrcDocTransport = useMemo(
+    () => buildLazySrcdocTransport({ quirksMode: srcDocUsesQuirksMode }),
+    [srcDocUsesQuirksMode],
+  );
   // Electron keeps one stable, tiny bootstrap document for the lifetime of
   // this retained file viewer. The fully enhanced artifact (deck/edit/comment
   // bridges included) is written into that browsing context after the shell's
@@ -11058,8 +11133,8 @@ function HtmlViewer({
   // iframe's `src` or React key, which removes Chromium's competing Blob
   // navigations instead of recovering after ERR_ABORTED.
   const persistentSrcDocTransportUrl = useMemo(
-    () => persistentPreviewBootstrapUrl(lazySrcDocTransport),
-    [lazySrcDocTransport],
+    () => persistentPreviewBootstrapUrl(lazySrcDocTransport, srcDocUsesQuirksMode),
+    [lazySrcDocTransport, srcDocUsesQuirksMode],
   );
   const usesPersistentSrcDocTransport = persistentSrcDocTransportUrl !== null;
   const [srcDocTransportResetKey, setSrcDocTransportResetKey] = useState(0);
@@ -11107,15 +11182,13 @@ function HtmlViewer({
     verifiedSrcDocTransportRef.current = null;
     readySrcDocTransportRef.current = null;
     activatedSrcDocTransportHtmlRef.current = null;
+    setSrcDocShellReady(false);
     if (!usesPersistentSrcDocTransport) {
-      setSrcDocShellReady(false);
       setSrcDocRecoveryGeneration(generation);
     }
-    // The enhanced Electron document installs the same activation listener as
-    // the bootstrap shell. Re-send the exact generation in place; the stable
-    // iframe key below deliberately ignores this nonce so recovery never
-    // replaces its browsing context. Non-Electron transports still use the
-    // nonce as their existing remount key.
+    // Recovery always remounts the shell. Rewriting an already-activated
+    // document would reuse its JavaScript realm and can reject authored
+    // top-level let/const declarations before their script executes.
     setSrcDocTransportResetKey((key) => key + 1);
   }, [
     cancelPendingSrcDocTransport,
@@ -11302,8 +11375,8 @@ function HtmlViewer({
   // next shell will post `od:srcdoc-transport-ready` (or fire onLoad) and
   // flip this back to true. See #2253.
   useEffect(() => {
-    if (!usesPersistentSrcDocTransport) setSrcDocShellReady(false);
-  }, [srcDocTransportResetKey, usesPersistentSrcDocTransport]);
+    setSrcDocShellReady(false);
+  }, [srcDocTransportResetKey]);
   // The workspace keeps FileViewer mounted when a user switches between
   // projects that expose the same file tab. The frame name still changes with
   // the project identity, so React replaces the actual iframe. Never let that
@@ -11340,6 +11413,7 @@ function HtmlViewer({
       const data = ev.data as {
         type?: unknown;
         generation?: unknown;
+        id?: unknown;
         probeId?: unknown;
         bodyComplete?: unknown;
         documentReadyState?: unknown;
@@ -11347,6 +11421,44 @@ function HtmlViewer({
         bodyChildCount?: unknown;
         documentElementChildCount?: unknown;
       } | null;
+      if (
+        data?.type === 'od:preview-runtime-state-restore-ready'
+        && typeof data.generation === 'string'
+        && data.generation === expectedSrcDocTransportGenerationRef.current
+      ) {
+        previewRuntimeStateRestoreReadyRef.current = {
+          frame,
+          generation: data.generation,
+        };
+        postAndConsumePreviewRuntimeState(frame);
+        return;
+      }
+      if (
+        data?.type === 'od:preview-runtime-state-restored'
+        && typeof data.id === 'string'
+        && data.id === previewRuntimeStateRestoreIdRef.current
+        && typeof data.generation === 'string'
+        && data.generation === expectedSrcDocTransportGenerationRef.current
+      ) {
+        previewRuntimeStateRef.current = null;
+        previewRuntimeStateRestoreIdRef.current = null;
+        setManualEditEntryHandoffPending(false);
+        return;
+      }
+      if (
+        data?.type === 'od:srcdoc-transport-reset-required'
+        && typeof data.generation === 'string'
+        && data.generation === expectedSrcDocTransportGenerationRef.current
+      ) {
+        clearSrcDocTransportTimeouts();
+        pendingSrcDocTransportProbeRef.current = null;
+        verifiedSrcDocTransportRef.current = null;
+        readySrcDocTransportRef.current = null;
+        activatedSrcDocTransportHtmlRef.current = null;
+        setSrcDocShellReady(false);
+        setSrcDocTransportResetKey((key) => key + 1);
+        return;
+      }
       const pending = pendingSrcDocTransportProbeRef.current;
       if (
         data?.type !== 'od:srcdoc-transport-activated'
@@ -11369,6 +11481,13 @@ function HtmlViewer({
         srcDocParsingGraceRef.current = null;
         verifiedSrcDocTransportRef.current = { frame, generation: data.generation };
         srcDocNavigationCommittedRef.current = { frame, generation: data.generation };
+        // A captured URL runtime state is still being replayed behind the
+        // outgoing URL frame. Keep that frame painted until the body bridge
+        // acknowledges its final restore; otherwise users can watch the
+        // immediate/rAF/timeout scroll restoration happen in three steps.
+        if (previewRuntimeStateRef.current === null) {
+          setManualEditEntryHandoffPending(false);
+        }
       } else if (
         typeof data.probeId === 'string'
         && pending
@@ -11438,16 +11557,45 @@ function HtmlViewer({
         });
         return;
       }
+      const verified = verifiedSrcDocTransportRef.current;
+      if (
+        verified?.frame === frame
+        && verified.generation === expectedSrcDocTransportGenerationRef.current
+      ) {
+        // The challenged srcDoc document is authoritative even when React's
+        // generic active-frame ref has not caught up with the URL -> Edit
+        // visibility swap yet. Runtime state is one-shot and scoped to this
+        // exact srcDoc frame, so deliver it here instead of depending on that
+        // ref-ordering race to trigger another effect.
+        postAndConsumePreviewRuntimeState(frame);
+      }
       if (frame === iframeRef.current) replayPreviewBridgeModes(frame);
     }
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
   }, [
     clearSrcDocTransportTimeouts,
+    postAndConsumePreviewRuntimeState,
     probeSrcDocTransport,
     recoverUnacknowledgedSrcDocTransport,
     replayPreviewBridgeModes,
     scheduleSrcDocTransportTimeout,
+    workspaceActive,
+  ]);
+  useEffect(() => {
+    if (!workspaceActive || !manualEditMode) return;
+    const ready = previewRuntimeStateRestoreReadyRef.current;
+    if (
+      ready?.frame !== srcDocPreviewIframeRef.current
+      || ready.generation !== expectedSrcDocTransportGenerationRef.current
+    ) {
+      return;
+    }
+    postAndConsumePreviewRuntimeState(ready.frame);
+  }, [
+    manualEditMode,
+    postAndConsumePreviewRuntimeState,
+    srcDocTransportGeneration,
     workspaceActive,
   ]);
   // React can commit a fresh `srcdoc` attribute while Chromium aborts the
@@ -11549,9 +11697,10 @@ function HtmlViewer({
   // instead of parking it at about:blank. Draw is a quick "mark → screenshot →
   // close" round-trip; parking forces a full artifact re-fetch the moment the
   // overlay closes, which users see as a jarring black → loading → reload right
-  // after every screenshot. Sticky srcDoc modes (inspect / edit / palette /
-  // tweaks / comment / deck / focus-guard / sandbox-shim) keep parking, so two
-  // live copies never linger beyond the brief annotation pass.
+  // after every screenshot. Manual Edit has its own bounded standby handoff
+  // below; other sticky srcDoc modes (inspect / palette / tweaks / comment /
+  // deck / focus-guard / sandbox-shim) keep parking, so two live copies never
+  // linger beyond an intentional transition.
   const srcDocForcedOnlyByDraw =
     drawOverlayOpen &&
     !manualEditRequiresSrcDoc &&
@@ -11566,7 +11715,10 @@ function HtmlViewer({
   const keepUrlTransportWarmInSourceMode = mode === 'source' && urlLoadPreviewSupported;
   const urlTransportSrc = projectResourceReadBlocked
     ? 'about:blank'
-    : useUrlLoadPreview || srcDocForcedOnlyByDraw || keepUrlTransportWarmInSourceMode
+    : useUrlLoadPreview
+        || srcDocForcedOnlyByDraw
+        || keepUrlTransportWarmInSourceMode
+        || keepUrlTransportWarmForManualEdit
       ? activePreviewSrcUrl
       : 'about:blank';
   const activePoweredPreviewSrcOverride = poweredPreviewSrcOverride
@@ -11591,10 +11743,21 @@ function HtmlViewer({
     ? urlFrameBaseSrc
     : appendResourceQuery(
         urlFrameBaseSrc,
-        `odPreviewEpoch=${encodeURIComponent(transportPreviewMeasurementDocumentEpoch)}`,
+        [
+          `odPreviewEpoch=${encodeURIComponent(transportPreviewMeasurementDocumentEpoch)}`,
+          manualEditUrlStandbyRevision > 0
+            ? `odEditStandby=${manualEditUrlStandbyRevision}`
+            : '',
+        ].filter(Boolean).join('&'),
       );
   const lastRenderedUrlFrameSrcRef = useRef(computedUrlFrameSrc);
-  const urlFrameSrc = filesRefreshPending
+  const lastRenderedStandbyRevision = Number(new URL(
+    lastRenderedUrlFrameSrcRef.current,
+    window.location.href,
+  ).searchParams.get('odEditStandby') || 0);
+  const manualEditStandbyNavigationPending =
+    manualEditUrlStandbyRevision > lastRenderedStandbyRevision;
+  const urlFrameSrc = filesRefreshPending && !manualEditStandbyNavigationPending
     ? lastRenderedUrlFrameSrcRef.current
     : activePoweredPreviewSrcOverride ?? computedUrlFrameSrc;
   lastRenderedUrlFrameSrcRef.current = urlFrameSrc;
@@ -12794,6 +12957,43 @@ function HtmlViewer({
     return manualEditTextFailedSessionIdsRef.current.size === 0;
   }
 
+  function requestManualEditUrlStandbyRefresh(
+    persistedSource: string | null = sourceRef.current,
+  ): number {
+    if (!keepUrlTransportWarmForManualEdit) return 0;
+    manualEditUrlStandbySourceFingerprintRef.current = persistedSource == null
+      ? null
+      : previewSourceFingerprint(persistedSource);
+    const revision = manualEditUrlStandbyRequestedRef.current + 1;
+    manualEditUrlStandbyRequestedRef.current = revision;
+    setManualEditUrlStandbyRevision(revision);
+    return revision;
+  }
+
+  function markManualEditUrlStandbyReady(frame: HTMLIFrameElement | null): void {
+    if (!frame) return;
+    let revision = 0;
+    try {
+      revision = Number(new URL(
+        frame.getAttribute('src') ?? '',
+        window.location.href,
+      ).searchParams.get('odEditStandby') || 0);
+    } catch {
+      return;
+    }
+    if (!Number.isFinite(revision) || revision <= 0) return;
+    manualEditUrlStandbyReadyRef.current = Math.max(
+      manualEditUrlStandbyReadyRef.current,
+      revision,
+    );
+    if (
+      manualEditUrlStandbyReadyRef.current
+      >= manualEditUrlStandbyRequestedRef.current
+    ) {
+      setManualEditExitHandoffPending(false);
+    }
+  }
+
   async function exitManualEditModeAfterFlush(): Promise<boolean> {
     // A failed text commit must keep edit mode open with its error visible,
     // rather than tearing down (which would clear the error) and looking saved.
@@ -12807,6 +13007,18 @@ function HtmlViewer({
     const ok = await flushManualEditStyleSave();
     if (!ok) return false;
     setManualEditPanelPosition(null);
+    // Manual Edit temporarily forces srcDoc so the host can inject its bridge.
+    // Once Edit is closed, always release that transport latch. A persisted
+    // live DOM can avoid watcher-driven churn while the session is open, but
+    // it must not keep an otherwise URL-eligible artifact on srcDoc forever.
+    setManualEditEntryHandoffPending(false);
+    setManualEditExitHandoffPending(
+      keepUrlTransportWarmForManualEdit
+      && manualEditUrlStandbyReadyRef.current
+        < manualEditUrlStandbyRequestedRef.current,
+    );
+    setManualEditSrcDocActive(false);
+    manualEditPersistedDocumentRef.current = null;
     setManualEditMode(false);
     return true;
   }
@@ -12838,6 +13050,16 @@ function HtmlViewer({
     if (workspaceActive || !manualEditMode) return;
     void requestManualEditSafeExitRef.current();
   }, [manualEditMode, workspaceActive]);
+  useEffect(() => {
+    if (!manualEditExitHandoffPending) return;
+    // A failed raw navigation must not leave the inert edit document painted
+    // forever after the tool has logically closed. Normal loads clear the
+    // handoff immediately through markManualEditUrlStandbyReady.
+    const timeout = window.setTimeout(() => {
+      setManualEditExitHandoffPending(false);
+    }, 5000);
+    return () => window.clearTimeout(timeout);
+  }, [manualEditExitHandoffPending]);
 
   // Clears the hover affordance and re-arms the iframe's per-element hover
   // dedupe so re-entering the same element re-announces it. Called from the
@@ -12972,6 +13194,10 @@ function HtmlViewer({
   }
 
   function syncRetainedManualEditDocument(savedSource: string, patch: ManualEditPatch): void {
+    // The write has committed. Refresh the hidden canonical URL exactly once
+    // for this persisted revision; keystrokes and live preview messages do not
+    // navigate it.
+    requestManualEditUrlStandbyRefresh(savedSource);
     let liveDocumentMatchesSavedSource = false;
     if (patch.kind === 'set-text') {
       const savedText = readManualEditFields(savedSource, patch.id).text;
@@ -14341,8 +14567,19 @@ function HtmlViewer({
     openInNewTab();
   }
 
-  function reloadHtmlPreview() {
+  async function reloadHtmlPreview() {
     fireArtifactToolbarClick('reload');
+    // Reload is also an Edit-session boundary. Settle pending text/style work
+    // before replacing the active document, then release Edit's srcDoc latch
+    // so a normal HTML artifact reloads through its canonical URL transport.
+    // Failed persistence keeps Edit open and aborts the destructive reload.
+    const reloadLeavesManualEdit = manualEditMode || manualEditSrcDocActive;
+    if (reloadLeavesManualEdit) requestManualEditUrlStandbyRefresh();
+    if (manualEditMode && !(await requestManualEditSafeExitRef.current())) return;
+    if (reloadLeavesManualEdit) {
+      setManualEditSrcDocActive(false);
+      manualEditPersistedDocumentRef.current = null;
+    }
     if (sourceAuthorizationScopeKey) {
       invalidateHtmlSourceSnapshotFile(
         sourceAuthorizationScopeKey,
@@ -14353,8 +14590,15 @@ function HtmlViewer({
     void capturePreviewScrollPosition();
     imageExportSnapshotDataUrlRef.current = null;
     setInlinedSource(null);
-    setReloadKey((key) => key + 1);
-    if (!useUrlLoadPreview) {
+    // The Edit path already navigated the hidden URL through its standby
+    // revision. Bumping reloadKey after the visual handoff would immediately
+    // navigate the now-visible frame a second time and reintroduce the flash.
+    if (!reloadLeavesManualEdit) {
+      manualEditUrlStandbySourceFingerprintRef.current = null;
+      frozenPreviewSrcUrlRef.current = null;
+      setReloadKey((key) => key + 1);
+    }
+    if (!useUrlLoadPreview && !reloadLeavesManualEdit) {
       // Capture the current source so the fetch effect can restore it if
       // fetchProjectFileText returns null (non-2xx / transient network error).
       // Without this, a failed reload leaves source null and the iframe blank
@@ -14580,6 +14824,12 @@ function HtmlViewer({
     if (!manualEditMode) {
       if (manualEditActivationPendingRef.current) return;
       const enterManualEditMode = () => {
+        const srcDocFrame = srcDocPreviewIframeRef.current;
+        const srcDocGeneration = expectedSrcDocTransportGenerationRef.current;
+        const verifiedSrcDoc = verifiedSrcDocTransportRef.current;
+        const srcDocAlreadyReady =
+          verifiedSrcDoc?.frame === srcDocFrame
+          && verifiedSrcDoc.generation === srcDocGeneration;
         setCommentPanelOpen(false);
         setCommentCreateMode(false);
         setBoardMode(false);
@@ -14588,6 +14838,12 @@ function HtmlViewer({
         setDrawOverlayOpen(false);
         setMode('preview');
         setManualEditViewportWidth(previewBodyRef.current?.clientWidth ?? null);
+        setManualEditExitHandoffPending(false);
+        setManualEditEntryHandoffPending(
+          urlLoadPreviewSupportedWithoutManualEdit
+          && !needsPowered
+          && (!srcDocAlreadyReady || previewRuntimeStateRef.current !== null),
+        );
         setManualEditSrcDocActive(true);
         setManualEditMode(true);
         closeArtifactToolMenus();
@@ -14598,6 +14854,7 @@ function HtmlViewer({
         // newest in-frame navigation state; retaining a missed/late snapshot
         // lets syncBridgeModes replay an older page when Edit is toggled again.
         previewRuntimeStateRef.current = null;
+        previewRuntimeStateRestoreIdRef.current = null;
         enterManualEditMode();
         return;
       }
@@ -14606,7 +14863,10 @@ function HtmlViewer({
       void capturePreviewRuntimeState(urlPreviewIframeRef.current)
         .then((state) => {
           if (previewFileIdentityRef.current !== activationFileIdentity) return;
-          if (state) previewRuntimeStateRef.current = state;
+          if (state) {
+            previewRuntimeStateRef.current = state;
+            previewRuntimeStateRestoreIdRef.current = null;
+          }
           enterManualEditMode();
         })
         .finally(() => {
@@ -15594,6 +15854,17 @@ function HtmlViewer({
   };
   const initialPreviewLoading = source === null && !sourceEverLoadedRef.current;
   const sourceModeLoading = mode === 'source' && source === null;
+  const manualEditUrlHandoffEligible =
+    urlLoadPreviewSupportedWithoutManualEdit && !needsPowered;
+  const keepUrlPaintedDuringManualEditEntry =
+    manualEditMode
+    && manualEditEntryHandoffPending
+    && manualEditUrlHandoffEligible;
+  const keepSrcDocPaintedDuringManualEditExit =
+    !manualEditMode
+    && manualEditExitHandoffPending
+    && useUrlLoadPreview
+    && manualEditUrlHandoffEligible;
   const boardAvailable = mode === 'preview' && source !== null;
   const showPreviewToolbarControls = mode === 'preview';
   // Independent of the rail's lazy per-slide documents so a collapsed rail
@@ -17138,6 +17409,8 @@ function HtmlViewer({
                             : `artifact-preview-frame-retained-${file.name}`}
                           data-od-render-mode="url-load"
                           data-od-active={mode === 'preview' && useUrlLoadPreview ? 'true' : 'false'}
+                          data-od-handoff-visible={keepUrlPaintedDuringManualEditEntry ? 'true' : undefined}
+                          data-od-handoff-pending={keepSrcDocPaintedDuringManualEditExit ? 'true' : undefined}
                           aria-hidden={workspaceActive && mode === 'preview' && useUrlLoadPreview ? undefined : true}
                           tabIndex={workspaceActive && mode === 'preview' && useUrlLoadPreview ? 0 : -1}
                           title={file.name}
@@ -17147,6 +17420,7 @@ function HtmlViewer({
                           src={urlFrameSrc}
                           onLoad={() => {
                             const frame = urlPreviewIframeRef.current;
+                            markManualEditUrlStandbyReady(frame);
                             if (useUrlLoadPreview) iframeRef.current = frame;
                             if (frame) frame.dataset.odLoadedSrc = frame.getAttribute('src') ?? '';
                             if (frame) {
@@ -17181,6 +17455,8 @@ function HtmlViewer({
                             : `artifact-preview-frame-retained-${file.name}`}
                           data-od-render-mode="url-load"
                           data-od-active={mode === 'preview' && useUrlLoadPreview ? 'true' : 'false'}
+                          data-od-handoff-visible={keepUrlPaintedDuringManualEditEntry ? 'true' : undefined}
+                          data-od-handoff-pending={keepSrcDocPaintedDuringManualEditExit ? 'true' : undefined}
                           aria-hidden={workspaceActive && mode === 'preview' && useUrlLoadPreview ? undefined : true}
                           tabIndex={workspaceActive && mode === 'preview' && useUrlLoadPreview ? 0 : -1}
                           title={file.name}
@@ -17190,6 +17466,7 @@ function HtmlViewer({
                           src={urlFrameSrc}
                           onLoad={() => {
                             const frame = urlPreviewIframeRef.current;
+                            markManualEditUrlStandbyReady(frame);
                             if (useUrlLoadPreview) iframeRef.current = frame;
                             if (frame) frame.dataset.odLoadedSrc = frame.getAttribute('src') ?? '';
                             if (frame) {
@@ -17219,7 +17496,7 @@ function HtmlViewer({
                       )}
                       <iframe
                         key={usesPersistentSrcDocTransport
-                          ? `${srcDocPreviewFrameName}:persistent`
+                          ? `${srcDocPreviewFrameName}:persistent:${srcDocTransportResetKey}`
                           : srcDocTransportResetKey}
                         ref={setSrcDocPreviewIframe}
                         name={srcDocPreviewFrameName}
@@ -17228,6 +17505,8 @@ function HtmlViewer({
                           : `artifact-preview-frame-srcdoc-retained-${file.name}`}
                         data-od-render-mode="srcdoc"
                         data-od-active={mode === 'preview' && !useUrlLoadPreview ? 'true' : 'false'}
+                        data-od-handoff-visible={keepSrcDocPaintedDuringManualEditExit ? 'true' : undefined}
+                        data-od-handoff-pending={keepUrlPaintedDuringManualEditEntry ? 'true' : undefined}
                         aria-hidden={workspaceActive && mode === 'preview' && !useUrlLoadPreview ? undefined : true}
                         tabIndex={workspaceActive && mode === 'preview' && !useUrlLoadPreview ? 0 : -1}
                         title={file.name}

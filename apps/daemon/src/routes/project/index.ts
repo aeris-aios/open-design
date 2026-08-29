@@ -1004,8 +1004,8 @@ const URL_PREVIEW_SELECTION_BRIDGE = `<script data-od-url-selection-bridge>
     });
   }
   // The host switches a plain URL preview to a bridge-enabled srcDoc when
-  // Manual Edit opens. Capture only mutable UI state so the second document
-  // can show the same app page without copying or evaluating artifact code.
+  // Manual Edit opens. Capture the rendered body as a frozen DOM handoff so
+  // stateful regions outside conventional #app/#root containers are not lost.
   function runtimeStateAttributeAllowed(name){
     return name === 'class' ||
       name === 'style' ||
@@ -1037,30 +1037,108 @@ const URL_PREVIEW_SELECTION_BRIDGE = `<script data-od-url-selection-bridge>
     }
     return node === document.body ? path : null;
   }
+  function runtimeStateRoots(){
+    if (!document.body) return [];
+    var roots = [];
+    var canonical = document.body.querySelectorAll('#app, #root, [data-reactroot]');
+    for (var c = 0; c < canonical.length && roots.length < 64; c++) {
+      roots.push(canonical[c]);
+    }
+    // Stateful overlays and detail panes are often siblings of #app/#root.
+    // Capture the outermost identified sibling roots as well; otherwise the
+    // attribute pass can restore an open/hidden state while leaving that pane's
+    // dynamic body at its source placeholder. Never select an ancestor or
+    // descendant of a canonical root, so framework-owned trees keep their
+    // existing single snapshot boundary.
+    var identified = document.body.querySelectorAll('[id]');
+    for (var i = 0; i < identified.length && roots.length < 64; i++) {
+      var candidate = identified[i];
+      var overlaps = false;
+      for (var r = 0; r < roots.length; r++) {
+        if (roots[r].contains(candidate) || candidate.contains(roots[r])) {
+          overlaps = true;
+          break;
+        }
+      }
+      if (!overlaps) roots.push(candidate);
+    }
+    return roots;
+  }
+  function captureRuntimeBodyHtml(){
+    if (!document.body || !document.body.cloneNode) return null;
+    try {
+      var clone = document.body.cloneNode(true);
+      var liveControls = document.body.querySelectorAll('input, textarea, option');
+      var clonedControls = clone.querySelectorAll('input, textarea, option');
+      var controlCount = Math.min(liveControls.length, clonedControls.length);
+      for (var controlIndex = 0; controlIndex < controlCount; controlIndex++) {
+        var liveControl = liveControls[controlIndex];
+        var clonedControl = clonedControls[controlIndex];
+        var controlTag = String(liveControl.tagName || '').toLowerCase();
+        if (controlTag === 'textarea') {
+          clonedControl.textContent = String(liveControl.value == null ? '' : liveControl.value);
+        } else if (controlTag === 'option') {
+          if (liveControl.selected) clonedControl.setAttribute('selected', '');
+          else clonedControl.removeAttribute('selected');
+        } else {
+          clonedControl.setAttribute('value', String(liveControl.value == null ? '' : liveControl.value));
+          if (liveControl.type === 'checkbox' || liveControl.type === 'radio') {
+            if (liveControl.checked) clonedControl.setAttribute('checked', '');
+            else clonedControl.removeAttribute('checked');
+          }
+        }
+      }
+      // Host bridges belong to the URL browsing context. Keeping their script
+      // elements in the frozen body is unnecessary (innerHTML scripts are
+      // inert) and leaks transport-only nodes into Manual Edit's DOM paths.
+      var cloneScripts = clone.querySelectorAll('script');
+      for (var scriptIndex = cloneScripts.length - 1; scriptIndex >= 0; scriptIndex--) {
+        var scriptNode = cloneScripts[scriptIndex];
+        var scriptAttrs = scriptNode.attributes || [];
+        var hostScript = false;
+        for (var scriptAttrIndex = 0; scriptAttrIndex < scriptAttrs.length; scriptAttrIndex++) {
+          var scriptAttrName = String(scriptAttrs[scriptAttrIndex].name || '');
+          if (scriptAttrName.indexOf('data-od-url-') === 0 && /-bridge$/.test(scriptAttrName)) {
+            hostScript = true;
+            break;
+          }
+        }
+        if (hostScript) scriptNode.remove();
+      }
+      var html = String(clone.innerHTML || '');
+      return html.length <= 2097152 ? html : null;
+    } catch (_) {
+      return null;
+    }
+  }
   function captureRuntimeState(){
     var entries = [];
     var roots = [];
     var rootHtmlLength = 0;
-    var runtimeRoots = document.body
-      ? document.body.querySelectorAll('#app, #root, [data-reactroot]')
-      : [];
-    for (var rootIndex = 0; rootIndex < runtimeRoots.length && roots.length < 64; rootIndex++) {
-      var root = runtimeRoots[rootIndex];
-      var rootTag = String(root.tagName || '').toLowerCase();
-      var rootPath = runtimeStatePath(root);
-      if (!rootPath) continue;
-      var rootHtml = String(root.innerHTML || '');
-      if (rootHtmlLength + rootHtml.length > 2097152) break;
-      var rootEntry = {
-        path: rootPath,
-        tag: rootTag,
-        html: rootHtml
-      };
-      if (root.id) rootEntry.id = String(root.id);
-      var rootOdId = root.getAttribute && root.getAttribute('data-od-id');
-      if (rootOdId) rootEntry.odId = String(rootOdId);
-      roots.push(rootEntry);
-      rootHtmlLength += rootHtml.length;
+    var bodyHtml = captureRuntimeBodyHtml();
+    // Keep the old bounded root capture only as an oversize/DOM-clone
+    // fallback. Normal Edit entry carries exactly one copy of the rendered
+    // markup instead of duplicating the entire body plus its app roots.
+    if (bodyHtml === null) {
+      var runtimeRoots = runtimeStateRoots();
+      for (var rootIndex = 0; rootIndex < runtimeRoots.length && roots.length < 64; rootIndex++) {
+        var root = runtimeRoots[rootIndex];
+        var rootTag = String(root.tagName || '').toLowerCase();
+        var rootPath = runtimeStatePath(root);
+        if (!rootPath) continue;
+        var rootHtml = String(root.innerHTML || '');
+        if (rootHtmlLength + rootHtml.length > 2097152) break;
+        var rootEntry = {
+          path: rootPath,
+          tag: rootTag,
+          html: rootHtml
+        };
+        if (root.id) rootEntry.id = String(root.id);
+        var rootOdId = root.getAttribute && root.getAttribute('data-od-id');
+        if (rootOdId) rootEntry.odId = String(rootOdId);
+        roots.push(rootEntry);
+        rootHtmlLength += rootHtml.length;
+      }
     }
     var nodes = document.body ? document.body.querySelectorAll('*') : [];
     var count = Math.min(nodes.length, 3500);
@@ -1091,6 +1169,7 @@ const URL_PREVIEW_SELECTION_BRIDGE = `<script data-od-url-selection-bridge>
     return {
       version: 1,
       hash: String(window.location.hash || ''),
+      bodyHtml: bodyHtml,
       roots: roots,
       htmlAttrs: runtimeStateAttributes(document.documentElement),
       bodyAttrs: runtimeStateAttributes(document.body),
