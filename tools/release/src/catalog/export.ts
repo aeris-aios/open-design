@@ -180,7 +180,7 @@ function exportSystems(repoRoot: string): CatalogSystemRecord[] {
 
     const bodiesI18n: Record<string, string> = {};
     for (const file of listFiles(join(root, folder), ".md")) {
-      const localeMatch = /^DESIGN\.([A-Za-z0-9-]+)\.md$/i.exec(file);
+      const localeMatch = /^DESIGN-([A-Za-z0-9-]+)\.md$/i.exec(file);
       if (!localeMatch?.[1]) continue;
       bodiesI18n[localeMatch[1]] = readText(join(root, folder, file));
     }
