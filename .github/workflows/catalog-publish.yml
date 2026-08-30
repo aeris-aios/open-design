@@ -33,6 +33,12 @@ jobs:
     name: export render pack
     if: github.repository == 'nexu-io/open-design' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
+    # Preview bytes are published below a commit-addressed immutable prefix.
+    # Pin the complete browser/font/system environment so rerunning one commit
+    # cannot produce different pixels after a runner-image update.
+    container:
+      image: mcr.microsoft.com/playwright:v1.60.0-noble@sha256:9bd26ad900bb5e0f4dee75839e957a89ae89c2b7ab1e76050e559790e946b948
+      options: --ipc=host
     timeout-minutes: 60
     outputs:
       source_commit: ${{ steps.meta.outputs.source_commit }}
@@ -42,19 +48,11 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: 24
-
       - name: Enable Corepack
         run: corepack enable
 
       - name: Install
         run: pnpm install --frozen-lockfile
-
-      - name: Install zstd
-        run: sudo apt-get update && sudo apt-get install -y zstd
 
       - name: Build tools-release
         run: pnpm --filter @open-design/tools-release build
@@ -69,14 +67,14 @@ jobs:
           CATALOG_STAGING_DIR: .tmp/catalog-snapshot
         run: pnpm exec tools-release export-catalog
 
-      - name: Install Playwright Chromium
-        run: pnpm --filter @open-design/tools-release exec playwright install --with-deps chromium
-
       - name: Render previews
         env:
           CATALOG_SOURCE_COMMIT: ${{ steps.meta.outputs.source_commit }}
           CATALOG_STAGING_DIR: .tmp/catalog-snapshot
         run: pnpm exec tools-release render-catalog-previews
+
+      - name: Install pinned zstd
+        run: apt-get update && apt-get install -y --no-install-recommends zstd=1.5.5+dfsg2-2build1.1
 
       - name: Pack catalog
         env:

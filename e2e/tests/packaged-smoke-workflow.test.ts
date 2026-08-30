@@ -1454,6 +1454,32 @@ process.stdin.on("end", () => {
     expect(guardedJobs).toHaveLength(2);
   });
 
+  it("[P1] renders immutable catalog previews in a digest-pinned environment", async () => {
+    const [workflow, packageJsonText] = await Promise.all([
+      readFile(catalogPublishWorkflowPath, "utf8"),
+      readFile(join(workspaceRoot, "tools", "release", "package.json"), "utf8"),
+    ]);
+    const packageJson = JSON.parse(packageJsonText) as {
+      optionalDependencies?: { playwright?: string };
+    };
+
+    expect(workflow).toContain(
+      "image: mcr.microsoft.com/playwright:v1.60.0-noble@sha256:9bd26ad900bb5e0f4dee75839e957a89ae89c2b7ab1e76050e559790e946b948",
+    );
+    expect(packageJson.optionalDependencies?.playwright).toBe("1.60.0");
+    expect(workflow).toContain(
+      `mcr.microsoft.com/playwright:v${packageJson.optionalDependencies?.playwright}-noble@sha256:`,
+    );
+    expect(workflow).toContain("options: --ipc=host");
+    expect(workflow).toContain(
+      "apt-get install -y --no-install-recommends zstd=1.5.5+dfsg2-2build1.1",
+    );
+    expect(workflow).not.toContain("playwright install --with-deps chromium");
+    expect(workflow.indexOf("Render previews")).toBeLessThan(
+      workflow.indexOf("Install pinned zstd"),
+    );
+  });
+
   it("[P2] closes packaged-leaf coverage without duplicating the broad E2E lane", async () => {
     const workflow = await readFile(ciWorkflowPath, "utf8");
     const workspaceUnit = sectionBetween(workflow, "  workspace_unit_tests:", "  daemon_unit_tests:");
