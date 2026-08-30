@@ -468,6 +468,9 @@ export async function renderCatalogPreviews(options: RenderPreviewsOptions): Pro
           throw new Error(`incomplete preview bundle: missing ${job.relativePath}`);
         }
       }
+      if (failed.length > 0) {
+        throw new Error(`incomplete preview bundle: failed ${failed.join(", ")}`);
+      }
     }
 
     if (failed.length > 0 && failed.length === jobs.length) {

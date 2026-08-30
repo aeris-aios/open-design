@@ -335,6 +335,41 @@ describe("playwright preview fail-closed", () => {
     }
   });
 
+  it("fails a complete production render when only some previews fall back", async () => {
+    const stagingDir = await mkdtemp(join(tmpdir(), "od-catalog-mixed-fallback-"));
+    try {
+      const { catalog } = exportCatalog({
+        repoRoot: FIXTURE_ROOT,
+        sourceCommit: SOURCE_COMMIT,
+        generatedAt: "2026-08-29T00:00:00.000Z",
+      });
+      let renderCount = 0;
+
+      await expect(
+        renderCatalogPreviews({
+          catalog,
+          repoRoot: FIXTURE_ROOT,
+          stagingDir,
+          renderer: async (job) => {
+            renderCount += 1;
+            if (renderCount === 1) {
+              return { bytes: Buffer.from(MINIMAL_WEBP), source: "render" };
+            }
+            return {
+              bytes: Buffer.from(MINIMAL_WEBP),
+              source: "fallback",
+              warning: `capture failed for ${job.label}`,
+            };
+          },
+          requireComplete: true,
+        }),
+      ).rejects.toThrow(/incomplete preview bundle: failed/);
+      expect(renderCount).toBeGreaterThan(1);
+    } finally {
+      await rm(stagingDir, { force: true, recursive: true });
+    }
+  });
+
   it("treats a blocked HTTP dependency as a failed capture", async () => {
     let abortCalls = 0;
     let screenshotCalls = 0;

@@ -38,7 +38,7 @@ export async function renderCatalogPreviewsFromEnv(): Promise<void> {
   console.log(
     `rendered previews written=${result.written.length} failed=${result.failed.length} warnings=${result.warnings.length}`,
   );
-  if (result.failed.length > 0 && result.failed.length === result.written.length + result.failed.length) {
-    throw new Error("systemic preview failure");
+  if (result.failed.length > 0) {
+    throw new Error(`incomplete preview bundle: failed ${result.failed.join(", ")}`);
   }
 }
