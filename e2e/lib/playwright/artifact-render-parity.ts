@@ -95,6 +95,23 @@ export function classifyPixelParity(input: {
   return 'different';
 }
 
+const PARITY_CLASSIFICATION_SEVERITY: Record<ParityClassification, number> = {
+  exact: 0,
+  'perceptually-equivalent': 1,
+  unstable: 2,
+  different: 3,
+};
+
+export function combinePixelParityClassifications(
+  ...classifications: [ParityClassification, ...ParityClassification[]]
+): ParityClassification {
+  return classifications.reduce((worst, classification) => (
+    PARITY_CLASSIFICATION_SEVERITY[classification] > PARITY_CLASSIFICATION_SEVERITY[worst]
+      ? classification
+      : worst
+  ));
+}
+
 function ratio(numerator: number, denominator: number): number {
   return denominator === 0 ? 0 : numerator / denominator;
 }

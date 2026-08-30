@@ -8,6 +8,7 @@ import { chromium, type BrowserContext, type Frame, type Locator, type Page } fr
 
 import {
   classifyPixelParity,
+  combinePixelParityClassifications,
   comparePngBuffers,
   type ParityClassification,
   type PixelComparison,
@@ -71,6 +72,8 @@ type CaseResult = {
   editBootstrapHasDoctype?: boolean;
   editBootstrapLength?: number;
   scrolled?: boolean;
+  entryStatus?: ParityClassification;
+  roundTripStatus?: ParityClassification;
   entry?: ComparisonSummary;
   roundTrip?: ComparisonSummary;
   urlSelfDriftRatio?: number;
@@ -224,7 +227,7 @@ async function runCase(input: {
     const editBootstrap = await editFrame.locator.getAttribute('srcdoc') ?? '';
     const srcDocCapture = await captureStable(page, 'srcdoc', options.timeoutMs, options.settleMs);
     const entry = comparePngBuffers(urlCapture.second, srcDocCapture.second);
-    const status = classifyPixelParity({
+    const entryStatus = classifyPixelParity({
       comparison: entry,
       actualSelfDriftRatio: urlCapture.selfDrift.perceptualDiffRatio,
       expectedSelfDriftRatio: srcDocCapture.selfDrift.perceptualDiffRatio,
@@ -239,6 +242,14 @@ async function runCase(input: {
     await waitForRenderMode(roundTripFrame.locator, 'url-load', options.timeoutMs);
     const roundTripCapture = await captureStable(page, 'url-load', options.timeoutMs, options.settleMs);
     const roundTrip = comparePngBuffers(urlCapture.second, roundTripCapture.second);
+    const roundTripStatus = classifyPixelParity({
+      comparison: roundTrip,
+      actualSelfDriftRatio: urlCapture.selfDrift.perceptualDiffRatio,
+      expectedSelfDriftRatio: roundTripCapture.selfDrift.perceptualDiffRatio,
+      maxPerceptualDiffRatio: options.maxPerceptualDiffRatio,
+      maxSelfDriftRatio: options.maxSelfDriftRatio,
+    });
+    const status = combinePixelParityClassifications(entryStatus, roundTripStatus);
 
     const evidence = status === 'exact' && roundTrip.exactDiffPixels === 0
       ? []
@@ -259,6 +270,8 @@ async function runCase(input: {
       editBootstrapHasDoctype: /^\s*<!doctype\b/i.test(editBootstrap),
       editBootstrapLength: editBootstrap.length,
       scrolled,
+      entryStatus,
+      roundTripStatus,
       entry: summarizeComparison(entry),
       roundTrip: summarizeComparison(roundTrip),
       urlSelfDriftRatio: urlCapture.selfDrift.perceptualDiffRatio,

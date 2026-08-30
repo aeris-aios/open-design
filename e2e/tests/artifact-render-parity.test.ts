@@ -3,6 +3,7 @@ import { PNG } from 'pngjs';
 
 import {
   classifyPixelParity,
+  combinePixelParityClassifications,
   comparePngBuffers,
 } from '../lib/playwright/artifact-render-parity.ts';
 
@@ -57,6 +58,30 @@ describe('artifact render parity', () => {
       maxPerceptualDiffRatio: 0.001,
       maxSelfDriftRatio: 0.001,
     })).toBe('unstable');
+  });
+
+  it('reports a differing Edit-to-URL round trip when srcDoc entry is exact', () => {
+    const beforeEdit = solidPng(2, 2, [255, 255, 255, 255]);
+    const inEdit = beforeEdit;
+    const afterEdit = solidPng(2, 2, [0, 0, 0, 255]);
+    const thresholds = {
+      actualSelfDriftRatio: 0,
+      expectedSelfDriftRatio: 0,
+      maxPerceptualDiffRatio: 0.001,
+      maxSelfDriftRatio: 0.001,
+    };
+    const entryStatus = classifyPixelParity({
+      comparison: comparePngBuffers(beforeEdit, inEdit),
+      ...thresholds,
+    });
+    const roundTripStatus = classifyPixelParity({
+      comparison: comparePngBuffers(beforeEdit, afterEdit),
+      ...thresholds,
+    });
+
+    expect(entryStatus).toBe('exact');
+    expect(roundTripStatus).toBe('different');
+    expect(combinePixelParityClassifications(entryStatus, roundTripStatus)).toBe('different');
   });
 });
 
