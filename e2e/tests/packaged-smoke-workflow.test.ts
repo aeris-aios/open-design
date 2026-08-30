@@ -104,6 +104,7 @@ const landingPageCiWorkflowPath = join(workspaceRoot, ".github", "workflows", "l
 const landingPageStagingWorkflowPath = join(workspaceRoot, ".github", "workflows", "landing-page-staging.yml");
 const landingPageProductionWorkflowPath = join(workspaceRoot, ".github", "workflows", "landing-page-production.yml");
 const dshBootstrapPublishWorkflowPath = join(workspaceRoot, ".github", "workflows", "dsh-bootstrap-publish.yml");
+const catalogPublishWorkflowPath = join(workspaceRoot, ".github", "workflows", "catalog-publish.yml");
 const landingPageDailyFeishuScriptPath = join(workspaceRoot, ".github", "scripts", "landing-page-daily-feishu.ts");
 const releasePublishMetadataScriptPath = join(
   workspaceRoot,
@@ -1430,6 +1431,27 @@ process.stdin.on("end", () => {
 
     expect(buildIndex).toBeGreaterThanOrEqual(0);
     expect(publishIndex).toBeGreaterThan(buildIndex);
+  });
+
+  it("[P1] serializes both DSH latest-pointer publishers", async () => {
+    const [standaloneWorkflow, productionWorkflow] = await Promise.all([
+      readFile(dshBootstrapPublishWorkflowPath, "utf8"),
+      readFile(landingPageProductionWorkflowPath, "utf8"),
+    ]);
+
+    expect(standaloneWorkflow).toContain("group: landing-page-production");
+    expect(productionWorkflow).toContain("group: landing-page-production");
+    expect(standaloneWorkflow).toContain("cancel-in-progress: false");
+    expect(productionWorkflow).toContain("cancel-in-progress: false");
+  });
+
+  it("[P1] publishes catalog snapshots only from main", async () => {
+    const workflow = await readFile(catalogPublishWorkflowPath, "utf8");
+    const guardedJobs = workflow.match(
+      /if: github\.repository == 'nexu-io\/open-design' && github\.ref == 'refs\/heads\/main'/g,
+    );
+
+    expect(guardedJobs).toHaveLength(2);
   });
 
   it("[P2] closes packaged-leaf coverage without duplicating the broad E2E lane", async () => {

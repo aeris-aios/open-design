@@ -3,12 +3,11 @@ import { appendFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { contentType, githubInfo, optional, publicUrl, required, storageConfigFromEnv } from "./common.ts";
-import { getStorageObject, putStorageObject, putStorageObjectWithStatus, type StorageConfig } from "./s3-upload.ts";
+import { updateDshBootstrapLatestPointer } from "./dsh-bootstrap-latest.ts";
+import { getStorageObject, putStorageObjectWithStatus, type StorageConfig } from "./s3-upload.ts";
 
 const BOOTSTRAP_FILES = ["install-dsh.cmd", "install-dsh.ps1", "install-dsh.sh"] as const;
 const IMMUTABLE_CACHE_CONTROL = "public, max-age=31536000, immutable";
-const POINTER_CACHE_CONTROL = "public, max-age=60";
-const POINTER_KEY = "bootstrap/dsh/latest.json";
 // Versions are minted one at a time by production promotions, so a run that has
 // to probe past this many of them is looping on a bug rather than catching up.
 const MAX_VERSION_PROBE = 100;
@@ -118,25 +117,13 @@ for (const object of objects) {
 }
 
 // Mutable pointer so consumers and the deploy workflow can find the current
-// version without hard-coding it.
-await putStorageObject({
-  ...storage,
-  body: Buffer.from(
-    `${JSON.stringify(
-      {
-        files: Object.fromEntries(installers.map(({ body, name }) => [name, sha256(body)])),
-        github: githubInfo(),
-        publishedAt: new Date().toISOString(),
-        version,
-      },
-      null,
-      2,
-    )}\n`,
-    "utf8",
-  ),
-  cacheControl: POINTER_CACHE_CONTROL,
-  contentType: contentType("latest.json"),
-  objectKey: POINTER_KEY,
+// version without hard-coding it. Only move it forward: an older workflow
+// rerun can reuse an earlier immutable version but must never rewind latest.
+await updateDshBootstrapLatestPointer(storage, {
+  files: Object.fromEntries(installers.map(({ body, name }) => [name, sha256(body)])),
+  github: githubInfo(),
+  publishedAt: new Date().toISOString(),
+  version,
 });
 console.log(publicUrl(publicOrigin, "bootstrap/dsh", "latest.json"));
 

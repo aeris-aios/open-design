@@ -22,7 +22,10 @@ permissions:
   contents: read
 
 concurrency:
-  group: dsh-bootstrap-publish
+  # Coordinate with the production workflow, which publishes the same pointer
+  # before deploying Pages. The publisher also uses a monotonic CAS update so
+  # queued reruns cannot rewind latest after a newer version ships.
+  group: landing-page-production
   cancel-in-progress: false
 
 jobs:

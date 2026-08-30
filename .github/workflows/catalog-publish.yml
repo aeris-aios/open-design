@@ -31,7 +31,7 @@ concurrency:
 jobs:
   pack:
     name: export render pack
-    if: github.repository == 'nexu-io/open-design'
+    if: github.repository == 'nexu-io/open-design' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     outputs:
@@ -95,7 +95,7 @@ jobs:
   publish:
     name: publish to R2
     needs: pack
-    if: github.repository == 'nexu-io/open-design'
+    if: github.repository == 'nexu-io/open-design' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     environment: release
