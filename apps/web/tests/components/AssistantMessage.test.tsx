@@ -627,7 +627,7 @@ describe('AssistantMessage status badge updates (Bug A)', () => {
       />,
     );
 
-    expect(screen.getByText('compacting context')).toBeTruthy();
+    expect(screen.getByText('Compacting context')).toBeTruthy();
     expect(screen.getByText('Compacting conversation history after a context-length error')).toBeTruthy();
   });
 });
@@ -652,7 +652,7 @@ describe('AssistantMessage thinking blocks', () => {
   });
 
   it('keeps non-empty thinking content visible after leading whitespace deltas', () => {
-    const { container } = render(
+    render(
       <AssistantMessage
         message={baseMessage({
           content: '',
@@ -666,8 +666,9 @@ describe('AssistantMessage thinking blocks', () => {
       />,
     );
 
-    // 新执行记录接进来之后,thinking 收进壳里(D29),不再是消息里一个独立的 `.thinking-block`。
-    // 这条测的是「空白 delta 不该把后面的内容吃掉」—— 判据改成「那段字还在」,与画在哪无关。
+    // 已结束执行的折叠正文会延迟到首次展开再挂 DOM；展开后仍需保留非空 thinking。
+    fireEvent.click(screen.getByText('Done'));
+    fireEvent.click(screen.getByText('Thoughts'));
     expect(screen.getByText('Reading the directory listing.')).toBeTruthy();
   });
 });
@@ -728,8 +729,15 @@ describe('AssistantMessage question forms', () => {
       target: { value: 'Product evaluators' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+    // The trailing arguments carry the answer's occupancy: the form id (and,
+    // from ChatPane, the asking message's id) is what gives the answer a
+    // stable identity instead of a fresh one per send.
     expect(onSubmitQuestionForm).toHaveBeenCalledWith(
       expect.stringContaining('- Who is this for?: Product evaluators'),
+      undefined,
+      undefined,
+      undefined,
+      'discovery',
     );
     expect(screen.queryByText('Quick brief — 30 seconds')).toBeNull();
     expect(screen.queryByText('What are we making?')).toBeNull();
@@ -913,6 +921,8 @@ describe('AssistantMessage question forms', () => {
             },
           ],
         },
+        undefined,
+        'references',
       );
     });
   });
@@ -1091,6 +1101,8 @@ describe('AssistantMessage question forms', () => {
           expect.objectContaining({ path: 'uploads/brief.png' }),
         ],
         expect.any(Object),
+        undefined,
+        'references',
       );
     });
     expect(deleteProjectFileMock).toHaveBeenCalledTimes(1);
