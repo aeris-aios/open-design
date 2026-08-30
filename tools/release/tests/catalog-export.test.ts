@@ -74,7 +74,7 @@ describe("catalog export", () => {
       // Authored poster wins over baked video poster.
       expect(plugin.preview?.remotePoster).toBe("https://cdn.example.test/demo-poster.webp");
       expect(plugin.preview?.entryPath).toBe(
-        "entries/plugins/example-demo-plugin/example.html",
+        "entries/plugins/examples/demo-plugin/example.html",
       );
       expect(plugin.titleI18n?.["zh-CN"]).toBe("演示插件");
     }

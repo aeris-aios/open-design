@@ -67,8 +67,9 @@ describe("catalog pack", () => {
       expect(checksums).toContain("previews/skills/alpha.webp");
       expect(checksums).toContain("entries/skills/alpha/example.html");
       expect(checksums).toContain("entries/templates/deck-one/example.html");
-      expect(checksums).toContain("entries/plugins/example-demo-plugin/example.html");
-      expect(checksums).toContain("entries/plugins/example-demo-plugin/assets/style.css");
+      expect(checksums).toContain("entries/plugins/examples/demo-plugin/example.html");
+      expect(checksums).toContain("entries/plugins/examples/demo-plugin/assets/style.css");
+      expect(checksums).toContain("entries/plugins/examples/demo-assets/assets/shared.css");
 
       // Preview bytes are the stub webp.
       expect(await readFile(join(stagingDir, "previews/skills/alpha.webp"))).toEqual(MINIMAL_WEBP);
@@ -247,7 +248,13 @@ describe("playwright preview fail-closed", () => {
         chromium: {
           launch: async () => ({
             newContext: async () => ({
+              addInitScript: async () => undefined,
               newPage: async () => ({
+                clock: {
+                  install: async () => undefined,
+                  pauseAt: async () => undefined,
+                  runFor: async () => undefined,
+                },
                 setContent: async () => {
                   throw new Error("bad html");
                 },
@@ -278,21 +285,41 @@ describe("playwright preview fail-closed", () => {
     await renderer.close?.();
   });
 
-  it("converts browser PNG captures to actual WebP bytes", async () => {
+  it("freezes dynamic browser state and converts captures to actual WebP bytes", async () => {
     const png = await sharp({
       create: { width: 2, height: 2, channels: 4, background: "#ff0000" },
     }).png().toBuffer();
+    const initScripts: string[] = [];
+    const clockEvents: string[] = [];
+    let screenshotOptions: Record<string, unknown> | undefined;
     const renderer = createPlaywrightPreviewRenderer({
       importPlaywright: async () => ({
         chromium: {
           launch: async () => ({
             newContext: async () => ({
+              addInitScript: async ({ content }) => {
+                initScripts.push(content);
+              },
               newPage: async () => ({
+                clock: {
+                  install: async ({ time }) => {
+                    clockEvents.push(`install:${time}`);
+                  },
+                  pauseAt: async (time) => {
+                    clockEvents.push(`pause:${time}`);
+                  },
+                  runFor: async (ms) => {
+                    clockEvents.push(`run:${ms}`);
+                  },
+                },
                 setContent: async () => undefined,
                 goto: async () => undefined,
                 evaluate: async () => undefined,
                 waitForTimeout: async () => undefined,
-                screenshot: async () => png,
+                screenshot: async (options) => {
+                  screenshotOptions = options;
+                  return png;
+                },
               }),
               close: async () => undefined,
             }),
@@ -310,6 +337,14 @@ describe("playwright preview fail-closed", () => {
       label: "skill:alpha",
     });
     expect((await sharp(result.bytes).metadata()).format).toBe("webp");
+    expect(initScripts).toHaveLength(1);
+    expect(initScripts[0]).toContain("Math.random =");
+    expect(clockEvents).toEqual([
+      "install:2026-01-01T00:00:00.000Z",
+      "pause:2026-01-01T00:00:00.000Z",
+      "run:800",
+    ]);
+    expect(screenshotOptions).toMatchObject({ animations: "disabled", type: "png" });
     await renderer.close?.();
   });
 
@@ -320,7 +355,13 @@ describe("playwright preview fail-closed", () => {
         chromium: {
           launch: async () => ({
             newContext: async () => ({
+              addInitScript: async () => undefined,
               newPage: async () => ({
+                clock: {
+                  install: async () => undefined,
+                  pauseAt: async () => undefined,
+                  runFor: async () => undefined,
+                },
                 setContent: async () => undefined,
                 goto: async () => undefined,
                 evaluate: async () => undefined,

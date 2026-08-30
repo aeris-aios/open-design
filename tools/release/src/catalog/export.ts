@@ -339,7 +339,7 @@ function loadPlugin(
   const previewType = previewVideo ? "video" : authoredType;
   const authoredEntry = authoredType === "html" ? asString(preview.entry) : undefined;
   const entryPath = authoredEntry && existsSync(join(opts.sourceDir, authoredEntry))
-    ? snapshotEntryPath("plugins", manifestId, authoredEntry)
+    ? snapshotEntryPath("plugins", `${opts.bucket}/${opts.slug}`, authoredEntry)
     : undefined;
 
   return {

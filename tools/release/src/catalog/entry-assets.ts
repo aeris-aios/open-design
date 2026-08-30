@@ -8,7 +8,7 @@ import {
 } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 
-import type { CatalogDocument, CatalogRecord } from "./schema.ts";
+import type { CatalogDocument, CatalogPluginRecord, CatalogRecord } from "./schema.ts";
 
 export type StageCatalogEntryAssetsOptions = {
   catalog: CatalogDocument;
@@ -42,12 +42,24 @@ function rootsForRecord(
         };
   }
   if (record.type === "plugin") {
-    const sourceRoot = record.bucket === "community"
-      ? join(repoRoot, "plugins/community", record.slug)
-      : join(repoRoot, "plugins/_official", record.bucket, record.slug);
-    return { sourceRoot, targetRoot: `entries/plugins/${record.id}` };
+    return null;
   }
   return null;
+}
+
+function pluginBucketRoots(
+  record: CatalogPluginRecord,
+  repoRoot: string,
+): { sourceRoot: string; targetRoot: string } {
+  return record.bucket === "community"
+    ? {
+        sourceRoot: join(repoRoot, "plugins/community"),
+        targetRoot: "entries/plugins/community",
+      }
+    : {
+        sourceRoot: join(repoRoot, "plugins/_official", record.bucket),
+        targetRoot: `entries/plugins/${record.bucket}`,
+      };
 }
 
 function copyRegularTree(sourceRoot: string, targetRoot: string, written: string[], stagingDir: string): void {
@@ -75,11 +87,33 @@ export function stageCatalogEntryAssets(options: StageCatalogEntryAssetsOptions)
   const repoRoot = resolve(options.repoRoot);
   const stagingDir = resolve(options.stagingDir);
   const written: string[] = [];
+  const stagedPluginBuckets = new Set<string>();
 
   for (const record of options.catalog.records) {
     if (record.type === "craft" || record.type === "system") continue;
     const entryPath = record.preview?.entryPath;
     if (!entryPath) continue;
+
+    if (record.type === "plugin") {
+      const roots = pluginBucketRoots(record, repoRoot);
+      const recordRoot = `${roots.targetRoot}/${record.slug}`;
+      if (entryPath !== recordRoot && !entryPath.startsWith(`${recordRoot}/`)) {
+        throw new Error(`preview entry escapes its snapshot root for plugin:${record.id}: ${entryPath}`);
+      }
+      if (!existsSync(roots.sourceRoot)) {
+        throw new Error(`preview entry source root missing for plugin:${record.id}`);
+      }
+      if (!stagedPluginBuckets.has(roots.targetRoot)) {
+        const targetRoot = join(stagingDir, roots.targetRoot);
+        mkdirSync(targetRoot, { recursive: true });
+        copyRegularTree(roots.sourceRoot, targetRoot, written, stagingDir);
+        stagedPluginBuckets.add(roots.targetRoot);
+      }
+      if (!existsSync(join(stagingDir, entryPath))) {
+        throw new Error(`preview entry was not staged for plugin:${record.id}: ${entryPath}`);
+      }
+      continue;
+    }
 
     const roots = rootsForRecord(record, repoRoot);
     if (!roots || !existsSync(roots.sourceRoot)) {

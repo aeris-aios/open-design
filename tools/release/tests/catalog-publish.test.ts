@@ -187,7 +187,7 @@ describe("catalog publish", () => {
       expect(keys).toContain(`catalog/v1/${SOURCE_COMMIT}/checksums.sha256`);
       expect(keys).toContain("catalog/v1/latest.json");
       expect(keys).toContain(
-        `catalog/v1/${SOURCE_COMMIT}/entries/plugins/example-demo-plugin/example.html`,
+        `catalog/v1/${SOURCE_COMMIT}/entries/plugins/examples/demo-plugin/example.html`,
       );
 
       const latest = JSON.parse(server.getObject("catalog/v1/latest.json")?.toString("utf8") ?? "{}") as {

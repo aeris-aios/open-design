@@ -207,7 +207,13 @@ export function createStubPreviewRenderer(): PreviewRenderer {
 
 type PlaywrightBrowser = {
   newContext(options: Record<string, unknown>): Promise<{
+    addInitScript(script: { content: string }): Promise<void>;
     newPage(): Promise<{
+      clock: {
+        install(options: { time: string }): Promise<void>;
+        pauseAt(time: string): Promise<void>;
+        runFor(ms: number): Promise<void>;
+      };
       setContent(html: string, options: Record<string, unknown>): Promise<void>;
       goto(url: string, options: Record<string, unknown>): Promise<unknown>;
       evaluate(fn: string): Promise<unknown>;
@@ -218,6 +224,27 @@ type PlaywrightBrowser = {
   }>;
   close(): Promise<void>;
 };
+
+const PREVIEW_CLOCK_START = "2026-01-01T00:00:00.000Z";
+const PREVIEW_SETTLE_MS = 800;
+
+function deterministicRandomInitScript(stableId: string): string {
+  let seed = 2_166_136_261;
+  for (const char of stableId) {
+    seed ^= char.codePointAt(0) ?? 0;
+    seed = Math.imul(seed, 16_777_619);
+  }
+  return `(() => {
+    let state = ${seed >>> 0};
+    Math.random = () => {
+      state = (state + 0x6D2B79F5) >>> 0;
+      let value = state;
+      value = Math.imul(value ^ (value >>> 15), value | 1);
+      value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
+      return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
+    };
+  })();`;
+}
 
 /**
  * Isolated Playwright renderer. Import/launch failures are systemic and throw.
@@ -304,7 +331,10 @@ export function createPlaywrightPreviewRenderer(
         deviceScaleFactor: 2,
       });
       try {
+        await context.addInitScript({ content: deterministicRandomInitScript(job.stableId) });
         const page = await context.newPage();
+        await page.clock.install({ time: PREVIEW_CLOCK_START });
+        await page.clock.pauseAt(PREVIEW_CLOCK_START);
         if (job.htmlContent) {
           await page.setContent(job.htmlContent, { waitUntil: "load", timeout: 30_000 });
           await page.evaluate("document.fonts.ready");
@@ -316,9 +346,10 @@ export function createPlaywrightPreviewRenderer(
         } else {
           throw new Error("preview job has neither htmlPath nor htmlContent");
         }
-        await page.waitForTimeout(800);
+        await page.clock.runFor(PREVIEW_SETTLE_MS);
         const png = await page.screenshot({
           type: "png",
+          animations: "disabled",
           fullPage: false,
           clip: { x: 0, y: 0, width: 1440, height: 900 },
         });
