@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { randomBytes, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { strategyTaskProvesDelivery, todoSnapshotHasUnfinishedWork } from '@open-design/contracts';
@@ -31,30 +31,11 @@ import {
   finalizeRunTelemetryDelivery,
   recordRunTelemetryDeliveryAttempt,
 } from '../observability/delivery-state.js';
+import { mintRunDoneKey } from './run-done-key.js';
 
 export const TERMINAL_RUN_STATUSES = new Set(['succeeded', 'failed', 'canceled']);
 
 const RUN_STATE_SCHEMA_VERSION = 1;
-
-/**
- * Mint this run's one-time done key.
- *
- * The chat panel splits a turn into "process" (folded into a collapsed
- * execution log) and "conclusion" (left in the open) at a marker the model
- * emits inline. That marker used to be a bare `<done/>` — a string no prompt
- * ever taught, so every match was content that happened to contain it, and any
- * turn quoting or explaining the tag threw the rest of its answer out of the
- * shell. Handing the model a fresh nonce per run and only honouring
- * `<od-done key="…"/>` carrying that exact value closes the hole: a model
- * cannot reproduce a value it was never shown, and neither can any text it is
- * summarising, cloning, or being prompt-injected by.
- *
- * 64 bits of entropy, hex — long enough that guessing is hopeless, short
- * enough that the model reliably copies it back verbatim.
- */
-function mintRunDoneKey() {
-  return randomBytes(8).toString('hex');
-}
 
 const DIAGNOSTIC_SOURCE = 'open-design-daemon';
 

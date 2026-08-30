@@ -2289,8 +2289,8 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
           const detail = firstFailure ? ` (${firstFailure})` : '';
           setUploadError(
             uploadedCount > 0
-              ? `Attached ${uploadedCount} file(s), but ${failedCount} failed${detail}.`
-              : `Attachment upload failed for ${failedCount} file(s)${detail}.`,
+              ? t('questions.uploadPartialFailed', { uploaded: uploadedCount, failed: failedCount }) + detail
+              : t('questions.uploadFailed', { failed: failedCount }) + detail,
           );
           console.warn('Some attachments failed to upload', failures);
         }
@@ -2306,7 +2306,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
         });
       } catch (err) {
         const detail = err instanceof Error ? err.message : String(err);
-        setUploadError(`Attachment upload failed (${detail}).`);
+        setUploadError(`${t('chat.annotationUploadFailed')} (${detail})`);
         trackFileUploadResult(analytics.track, {
           page_name: 'chat_panel',
           area: 'chat_composer',
@@ -2443,7 +2443,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
               }
               if (result.failed.length > 0) {
                 const detailText = result.error ? ` (${result.error})` : '';
-                setUploadError(`Attachment upload failed for ${result.failed.length} file(s)${detailText}.`);
+                setUploadError(t('questions.uploadFailed', { failed: result.failed.length }) + detailText);
                 if (uploaded.length === 0) {
                   ack({ ok: false, message: t('chat.annotationUploadFailed') });
                   return;
@@ -4146,9 +4146,9 @@ function workspaceContextIcon(item: WorkspaceContextItem): IconName {
   return 'file';
 }
 
-function workspaceContextTitle(item: WorkspaceContextItem): string {
+function workspaceContextTitle(item: WorkspaceContextItem, t: TranslateFn): string {
   return [
-    workspaceContextKindLabel(item.kind),
+    workspaceContextKindLabel(item.kind, t),
     item.path ? `path: ${item.path}` : null,
     item.absolutePath ? `absolute: ${item.absolutePath}` : null,
     item.url ? `url: ${item.url}` : null,
@@ -4156,11 +4156,11 @@ function workspaceContextTitle(item: WorkspaceContextItem): string {
   ].filter(Boolean).join(' | ');
 }
 
-function workspaceContextDescription(item: WorkspaceContextItem): string {
-  if (item.kind === 'design-files') return item.path || 'Project files';
+function workspaceContextDescription(item: WorkspaceContextItem, t: TranslateFn): string {
+  if (item.kind === 'design-files') return item.path || t('chat.designToolbox.context.designFiles');
   if (item.kind === 'project') return item.absolutePath || item.path || item.title || item.id;
   if (item.kind === 'local-code') return item.absolutePath || item.path || item.title || item.id;
-  if (item.kind === 'terminal') return item.title || 'Terminal session';
+  if (item.kind === 'terminal') return item.title || t('chat.designToolbox.context.terminal');
   return item.url || item.path || item.absolutePath || item.title || item.tabId || item.id;
 }
 
@@ -4192,29 +4192,29 @@ function workspaceContextSearchText(item: WorkspaceContextItem): string {
   ].join(' ');
 }
 
-function workspaceContextKindLabel(kind: WorkspaceContextItem['kind']): string {
+function workspaceContextKindLabel(kind: WorkspaceContextItem['kind'], t: TranslateFn): string {
   switch (kind) {
     case 'browser':
-      return 'Browser';
+      return t('chat.designToolbox.context.browser');
     case 'design-files':
-      return 'Design files';
+      return t('chat.designToolbox.context.designFiles');
     case 'design-system':
-      return 'Design system';
+      return t('chat.designToolbox.context.designSystem');
     case 'folder':
-      return 'Folder';
+      return t('chat.designToolbox.context.folder');
     case 'project':
-      return 'Project';
+      return t('workspaceTabs.project');
     case 'local-code':
-      return 'Local code';
+      return t('dsCreate.localCodeLabel');
     case 'terminal':
-      return 'Terminal';
+      return t('chat.designToolbox.context.terminal');
     case 'side-chat':
-      return 'Side chat';
+      return t('chat.designToolbox.context.sideChat');
     case 'live-artifact':
-      return 'Live artifact';
+      return t('chat.designToolbox.context.liveArtifact');
     case 'file':
     default:
-      return 'File';
+      return t('chat.designToolbox.context.file');
   }
 }
 
@@ -4295,8 +4295,8 @@ function StagedRunContexts({
       {workspaceItems.map((workspaceItem) => {
         const kindLabel =
           workspaceItem.id === currentWorkspaceContextId
-            ? 'Current'
-            : workspaceContextKindLabel(workspaceItem.kind);
+            ? t('fileViewer.versions.current')
+            : workspaceContextKindLabel(workspaceItem.kind, t);
         return (
           <div
             key={workspaceItem.id}
@@ -4305,7 +4305,7 @@ function StagedRunContexts({
             <span className="staged-icon" aria-hidden>
               <Icon name={workspaceContextIcon(workspaceItem)} size={12} />
             </span>
-            <span className="staged-name" title={workspaceContextTitle(workspaceItem)}>
+            <span className="staged-name" title={workspaceContextTitle(workspaceItem, t)}>
               <span className="staged-context-kind">{kindLabel}</span>
               {workspaceItem.label}
             </span>
@@ -4890,7 +4890,7 @@ function ToolsPluginsPanel({
   onApply: (record: InstalledPluginRecord) => void | Promise<void>;
   onShowDetails: (record: InstalledPluginRecord) => void;
 }) {
-  const { locale } = useI18n();
+  const { locale, t } = useI18n();
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [source, setSource] = useState<'community' | 'mine'>('community');
   const [query, setQuery] = useState('');
@@ -4911,16 +4911,16 @@ function ToolsPluginsPanel({
   return (
     <>
       <div className="composer-tools-filter">
-        <div className="composer-tools-segments" role="tablist" aria-label="Plugin source">
+        <div className="composer-tools-segments" role="tablist" aria-label={t('chat.plus.plugins')}>
           <button
             type="button"
             role="tab"
             aria-selected={source === 'community'}
             className={`composer-tools-segment${source === 'community' ? ' active' : ''}`}
             onClick={() => setSource('community')}
-            title={`${communityPlugins.length} installed official plugins`}
+            title={`${t('pluginsView.scope.official')} · ${communityPlugins.length}`}
           >
-            Official
+            {t('pluginsView.scope.official')}
           </button>
           <button
             type="button"
@@ -4928,30 +4928,31 @@ function ToolsPluginsPanel({
             aria-selected={source === 'mine'}
             className={`composer-tools-segment${source === 'mine' ? ' active' : ''}`}
             onClick={() => setSource('mine')}
-            title={`${userPlugins.length} installed user plugins`}
+            title={`${t('pluginsView.scope.personal')} · ${userPlugins.length}`}
           >
-            My plugins
+            {t('pluginsView.scope.personal')}
           </button>
         </div>
         <input
           className="composer-tools-search"
           value={query}
           onChange={(e) => setQuery(e.currentTarget.value)}
-          placeholder="Search plugins…"
-          aria-label="Search plugins"
+          placeholder={t('pluginsHome.searchPlaceholder')}
+          aria-label={t('pluginsHome.searchAria')}
         />
       </div>
       {visiblePlugins.length === 0 ? (
         <div className="composer-tools-empty">
           {plugins.length === 0 ? (
             <>
-              No plugins installed yet. Browse Official or add your own with{' '}
-              <code>od plugin install &lt;source&gt;</code>.
+              {t('pluginsHome.emptyCatalog')}
             </>
           ) : query ? (
-            <>No {source === 'community' ? 'Official' : 'My plugins'} results for “{query}”.</>
+            <>{t('pluginsView.emptyNoMatchTitle')} · {t('pluginsView.emptyNoMatchHint')}</>
           ) : (
-            <>No {source === 'community' ? 'Official' : 'My plugins'} plugins available.</>
+            <>{source === 'community'
+              ? t('pluginsView.emptyOfficialPluginsTitle')
+              : t('pluginsView.emptyPersonalPluginsTitle')}</>
           )}
         </div>
       ) : (
@@ -4994,7 +4995,7 @@ function ToolsPluginsPanel({
                   )}
                 </span>
                 {pendingId === p.id ? (
-                  <span className="composer-tools-row-pending">Applying…</span>
+                  <span className="composer-tools-row-pending">{t('pluginCard.applying')}</span>
                 ) : null}
               </button>
               <button
@@ -5002,8 +5003,8 @@ function ToolsPluginsPanel({
                 className="composer-tools-row-side"
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => onShowDetails(p)}
-                title={`View details for ${pluginTitle}`}
-                aria-label={`View details for ${pluginTitle}`}
+                title={t('pluginCard.detailsAria', { title: pluginTitle })}
+                aria-label={t('pluginCard.detailsAria', { title: pluginTitle })}
               >
                 <Icon name="eye" size={12} />
               </button>
@@ -5027,6 +5028,7 @@ function ToolsMcpPanel({
   onInsert: (serverId: string) => void;
   onManage: () => void;
 }) {
+  const { t } = useI18n();
   const [query, setQuery] = useState('');
   const visibleServers = useMemo(
     () => servers.filter((s) => mcpServerMatchesQuery(s, query)),
@@ -5044,19 +5046,19 @@ function ToolsMcpPanel({
           className="composer-tools-search"
           value={query}
           onChange={(e) => setQuery(e.currentTarget.value)}
-          placeholder="Search MCP…"
-          aria-label="Search MCP servers and templates"
+          placeholder={t('common.searchEllipsis')}
+          aria-label={t('mcpClient.title')}
         />
       </div>
       {visibleServers.length === 0 ? (
         <div className="composer-tools-empty">
           {servers.length === 0
-            ? 'No enabled MCP servers configured yet.'
-            : `No configured MCP results for “${query}”.`}
+            ? t('mcpClient.emptyTitle')
+            : t('pluginsView.emptyNoMatchTitle')}
         </div>
       ) : (
         <div className="composer-tools-list">
-          <div className="composer-tools-section-label">Configured</div>
+          <div className="composer-tools-section-label">{t('settings.mediaProviderConfigured')}</div>
           {visibleServers.map((s) => (
             <button
               key={s.id}
@@ -5065,7 +5067,7 @@ function ToolsMcpPanel({
               className="composer-tools-row"
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => onInsert(s.id)}
-              title={`Insert a hint that nudges the model to use ${s.label || s.id}`}
+              title={s.label || s.id}
             >
               <Icon name="link" size={12} />
               <span className="composer-tools-row-body">
@@ -5078,7 +5080,7 @@ function ToolsMcpPanel({
       )}
       {visibleTemplates.length > 0 ? (
         <div className="composer-tools-list">
-          <div className="composer-tools-section-label">Templates</div>
+          <div className="composer-tools-section-label">{t('entry.tabTemplates')}</div>
           {visibleTemplates.map((tpl) => (
             <button
               key={tpl.id}
@@ -5087,7 +5089,7 @@ function ToolsMcpPanel({
               className="composer-tools-row"
               onMouseDown={(e) => e.preventDefault()}
               onClick={onManage}
-              title={`Add ${tpl.label} from Settings`}
+              title={tpl.label}
             >
               <Icon name="plus" size={12} />
               <span className="composer-tools-row-body">
@@ -5109,7 +5111,7 @@ function ToolsMcpPanel({
         onClick={onManage}
       >
         <Icon name="settings" size={12} />
-        <span>Manage MCP servers…</span>
+        <span>{t('mcpClient.addServer')}</span>
       </button>
     </>
   );
@@ -5437,7 +5439,7 @@ function ToolsSkillsPanel({
   currentSkillId: string | null;
   onPick: (skill: SkillSummary) => void | Promise<void>;
 }) {
-  const { locale } = useI18n();
+  const { locale, t } = useI18n();
   const [query, setQuery] = useState('');
   const [pendingId, setPendingId] = useState<string | null>(null);
   const visibleSkills = useMemo(
@@ -5451,13 +5453,15 @@ function ToolsSkillsPanel({
           className="composer-tools-search"
           value={query}
           onChange={(e) => setQuery(e.currentTarget.value)}
-          placeholder="Search skills…"
-          aria-label="Search skills"
+          placeholder={t('pluginsView.searchSkills')}
+          aria-label={t('pluginsView.searchSkills')}
         />
       </div>
       {visibleSkills.length === 0 ? (
         <div className="composer-tools-empty">
-          {skills.length === 0 ? 'No skills available yet.' : `No skills found for “${query}”.`}
+          {skills.length === 0
+            ? t('pluginsView.emptyOfficialSkillsTitle')
+            : t('pluginsView.emptyNoMatchTitle')}
         </div>
       ) : (
         <div className="composer-tools-list">
@@ -5490,7 +5494,7 @@ function ToolsSkillsPanel({
                   </span>
                 </span>
                 {pendingId === skill.id ? (
-                  <span className="composer-tools-row-pending">Applying…</span>
+                  <span className="composer-tools-row-pending">{t('pluginCard.applying')}</span>
                 ) : null}
               </button>
             );
@@ -6494,16 +6498,16 @@ function MentionPopover({
                   type="button"
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={() => onPickWorkspaceContext(item)}
-                  title={workspaceContextTitle(item)}
+                  title={workspaceContextTitle(item, t)}
                 >
                   <Icon name={workspaceContextIcon(item)} size={12} />
                   <span className="mention-item-body">
                     <strong data-testid="mention-item-name">{item.label}</strong>
                     <span className="mention-meta mention-meta--desc">
-                      {workspaceContextDescription(item)}
+                      {workspaceContextDescription(item, t)}
                     </span>
                   </span>
-                  <span className="mention-meta mention-item-kind">{workspaceContextKindLabel(item.kind)}</span>
+                  <span className="mention-meta mention-item-kind">{workspaceContextKindLabel(item.kind, t)}</span>
                 </button>
               );
             })}

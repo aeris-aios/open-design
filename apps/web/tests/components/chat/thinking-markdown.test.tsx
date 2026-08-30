@@ -33,9 +33,10 @@ const think = (text: string): ShellItem => ({ kind: 'text', text, thinking: true
 function shell(text: string, live = false): Shell {
   return {
     kind: 'shell',
-    seq: 0,
-    status: live ? 'running' : 'succeeded',
+    id: 'thinking-markdown-shell',
+    status: live ? 'running' : 'done',
     items: [think(text)],
+    segments: [],
     thinking: live,
     stopped: false,
     elapsedMs: null,
@@ -44,7 +45,9 @@ function shell(text: string, live = false): Shell {
 }
 
 const show = (value: Shell): ReactElement => (
-  <I18nProvider initial="zh-CN"><ExecutionShell shell={value} /></I18nProvider>
+  <I18nProvider initial="zh-CN">
+    <ExecutionShell shell={value} deferCollapsedBodies={false} />
+  </I18nProvider>
 );
 
 function openFinishedThinking(root: HTMLElement): void {

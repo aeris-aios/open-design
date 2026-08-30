@@ -66,6 +66,7 @@ import {
   odNextAdvertisedCapabilityGap,
   resolveBundledOdNextRuntimeCapability,
 } from '../runtimes/od-next-capability-gate.js';
+import { mintRunDoneKey } from '../runtimes/run-done-key.js';
 import {
   deriveLangfuseDeliveryState,
   readTelemetrySinkConfig,
@@ -2640,6 +2641,16 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
     delete fingerprintMeta.strategyRolloutDecision;
     delete fingerprintMeta.runtimeCapabilitySnapshot;
     meta.requestFingerprint = runRequestFingerprint(fingerprintMeta, fingerprintSnapshot);
+    if (
+      !clarificationContinuation
+      && !idempotentStrategyRetry
+      && strategyRolloutDecision?.effectiveMode === 'active'
+    ) {
+      // The initial Bundle is frozen before the physical Run exists. Mint the
+      // daemon-owned key now so the exact prompt and the Run parser share the
+      // same nonce without putting it in the idempotency fingerprint.
+      meta.doneKey = mintRunDoneKey();
+    }
     let createdTaskInputSnapshot: OdNextTaskInputSnapshotDescriptor | null = null;
     let preparedPromptBundleText: string | null = null;
     if (

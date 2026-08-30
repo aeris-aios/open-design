@@ -5329,4 +5329,13 @@ export const tr: Dict = {
   'chat.attachments.preview': "{name} önizlemesi",
   'chat.record.canceled': "İptal edildi",
   'chat.record.pending': "Başlatılmadı",
+  'chat.pluginAction.failed': 'Eklenti işlemi başarısız oldu.',
+  'chat.pluginAction.saved': 'Eklenti kaydedildi.',
+  'chat.pluginAction.validationIssues': 'Eklenti taslağı doğrulama sorunlarıyla oluşturuldu.',
+  'chat.pluginAction.contributionStarted': '{path} için OpenDesign katkı görevi başlatıldı.',
+  'chat.pluginAction.aria': 'Sonraki eklenti işlemleri',
+  'chat.pluginAction.title': 'Eklenti hazır',
+  'chat.pluginAction.subtitle': 'od CLI’yi çalıştırabilmesi için sonraki adımı ajana gönderin.',
+  'chat.pluginAction.filesReady': 'Kişisel eklentiler için {count} dosya hazır',
+  'chat.pluginAction.install': 'Kişisel eklentilere ekle',
 };

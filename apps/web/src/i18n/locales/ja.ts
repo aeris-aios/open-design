@@ -5329,4 +5329,13 @@ export const ja: Dict = {
   'chat.attachments.preview': "{name}をプレビュー",
   'chat.record.canceled': "キャンセル済み",
   'chat.record.pending': "未開始",
+  'chat.pluginAction.failed': 'プラグイン操作に失敗しました。',
+  'chat.pluginAction.saved': 'プラグインを保存しました。',
+  'chat.pluginAction.validationIssues': '検証上の問題がある状態でプラグインの下書きを作成しました。',
+  'chat.pluginAction.contributionStarted': '{path} の OpenDesign コントリビューションタスクを開始しました。',
+  'chat.pluginAction.aria': 'プラグインの次の操作',
+  'chat.pluginAction.title': 'プラグインの準備ができました',
+  'chat.pluginAction.subtitle': '次の手順をエージェントに送信し、od CLI を実行させます。',
+  'chat.pluginAction.filesReady': '個人用プラグインに追加できるファイルが {count} 件あります',
+  'chat.pluginAction.install': '個人用プラグインに追加',
 };

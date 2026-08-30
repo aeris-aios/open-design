@@ -43,10 +43,13 @@ function rule(css: string, selector: string): string {
   const declarations = new Map<string, string>();
   let found = false;
   for (const match of css.matchAll(/([^{}]+)\{([^}]*)\}/g)) {
-    const selectors = match[1].split(',').map((one) => one.trim());
+    const selectorSource = match[1];
+    const declarationSource = match[2];
+    if (selectorSource === undefined || declarationSource === undefined) continue;
+    const selectors = selectorSource.split(',').map((one) => one.trim());
     if (!selectors.includes(selector)) continue;
     found = true;
-    for (const declaration of match[2].split(';')) {
+    for (const declaration of declarationSource.split(';')) {
       const colon = declaration.indexOf(':');
       if (colon < 0) continue;
       declarations.set(declaration.slice(0, colon).trim(), declaration.slice(colon + 1).trim());
@@ -86,7 +89,8 @@ describe('产物卡缩略图的渲染视口', () => {
       '.artifact-card-frame 还在用百分比宽度:iframe 视口仍然跟着卡片走,页面照旧按手机排版',
     ).toBe(false);
     expect(frame.width, '.artifact-card-frame 没有固定的 px 宽度').not.toBeNull();
-    expect(frame.width!).toBeGreaterThanOrEqual(DESKTOP_VIEWPORT_FLOOR);
+    if (frame.width === null) throw new Error('.artifact-card-frame 没有固定的 px 宽度');
+    expect(frame.width).toBeGreaterThanOrEqual(DESKTOP_VIEWPORT_FLOOR);
   });
 
   it('缩小走容器查询,除数就是那个固定宽度 —— 两个数不许各写各的', () => {
@@ -104,7 +108,8 @@ describe('产物卡缩略图的渲染视口', () => {
     const frame = desktopScaledFrame(tools, '.artifact-card-frame');
     expect(frame.height, '.artifact-card-frame 没有固定的 px 高度').not.toBeNull();
     // 比例对不上就会露底或裁掉一条:按宽缩放后高度必须正好等于卡面高度。
-    expect(frame.height).toBe(Math.round((frame.width! * h) / w));
+    if (frame.width === null) throw new Error('.artifact-card-frame 没有固定的 px 宽度');
+    expect(frame.height).toBe(Math.round((frame.width * h) / w));
   });
 
   it('cqw 的容器就是卡面本身 —— 少了这行,100cqw 会回落到视口', () => {
@@ -120,6 +125,7 @@ describe('产物卡缩略图的渲染视口', () => {
     const home = desktopScaledFrame(recentProjects, '.recent-projects__thumb-iframe');
     expect(home.width).not.toBeNull();
     expect(home.scaleDivisor).toBe(home.width);
-    expect(home.width!).toBeGreaterThanOrEqual(DESKTOP_VIEWPORT_FLOOR);
+    if (home.width === null) throw new Error('.recent-projects__thumb-iframe 没有固定的 px 宽度');
+    expect(home.width).toBeGreaterThanOrEqual(DESKTOP_VIEWPORT_FLOOR);
   });
 });

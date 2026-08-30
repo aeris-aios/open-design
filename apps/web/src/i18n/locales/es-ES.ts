@@ -5329,4 +5329,13 @@ export const esES: Dict = {
   'chat.attachments.preview': "Vista previa de {name}",
   'chat.record.canceled': "Cancelado",
   'chat.record.pending': "Sin iniciar",
+  'chat.pluginAction.failed': 'La acción del plugin ha fallado.',
+  'chat.pluginAction.saved': 'Plugin guardado.',
+  'chat.pluginAction.validationIssues': 'El borrador del plugin se creó con problemas de validación.',
+  'chat.pluginAction.contributionStarted': 'Se inició la tarea de contribución a OpenDesign para {path}.',
+  'chat.pluginAction.aria': 'Siguientes acciones del plugin',
+  'chat.pluginAction.title': 'Plugin listo',
+  'chat.pluginAction.subtitle': 'Envía el siguiente paso al agente para que pueda ejecutar la CLI de od.',
+  'chat.pluginAction.filesReady': '{count} archivos listos para los plugins personales',
+  'chat.pluginAction.install': 'Añadir a los plugins personales',
 };

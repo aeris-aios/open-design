@@ -10,6 +10,7 @@ import {
   type StrategyInputStageV2,
   type StrategyTaskTypeV2,
 } from '../plugins/strategy-v2.js';
+import { renderChatTurnHostProtocolInstructions } from './chat-turn-host-protocol.js';
 import type { ChatSessionMode } from '../api/chat.js';
 import type { OdNextDeviceFrameContextV2 } from './od-next-device-frame.js';
 import { serializeOdNextRequestTurnV1 } from './od-next-prompt-bundle.js';
@@ -147,6 +148,8 @@ export type OdNextStrategyContinuationV2 =
       taskExecutionId: string;
       taskRunIndex: number;
       planContractHash: string;
+      /** Per-run nonce; omitted for non-completing continuation stages. */
+      hostProtocolKey?: string;
       nativeBuildPackageBindings?: readonly {
         buildPackageId: string;
         nativeAgentHandle: string;
@@ -907,7 +910,11 @@ export function composeOdNextStrategyContinuationV2(
           nativeAgentHandle: requireText(binding.nativeAgentHandle, 'nativeAgentHandle'),
           dependsOn: binding.dependsOn.map((dependency) => requireText(dependency, 'dependsOn')),
         })))}\n\`\`\``;
-    payload = `# OD Next native continuation — production\n\nContinue this native session and execute the frozen Full Plan bound to \`planContractHash=${requireSha256(input.planContractHash, 'planContractHash')}\`. Use the existing in-session Task Profile, Design Spec, Todo plan, and Build Packages. Do not re-seed or restate their full text, do not choose a new route or execution mode, and do not ask another question. Open Design must be able to identify one runnable entry in the delivered files, otherwise the completed task is rejected: it looks for a root \`index.html\`, then a single root-level html file, then a single file matching the project kind. Lay the deliverable out so exactly one of those resolves.${bindingBlock}`;
+    const hostProtocol = renderChatTurnHostProtocolInstructions(
+      input.hostProtocolKey ?? '',
+      'od_next_production',
+    ).text;
+    payload = `# OD Next native continuation — production\n\nContinue this native session and execute the frozen Full Plan bound to \`planContractHash=${requireSha256(input.planContractHash, 'planContractHash')}\`. Use the existing in-session Task Profile, Design Spec, Todo plan, and Build Packages. Do not re-seed or restate their full text, do not choose a new route or execution mode, and do not ask another question. Open Design must be able to identify one runnable entry in the delivered files, otherwise the completed task is rejected: it looks for a root \`index.html\`, then a single root-level html file, then a single file matching the project kind. Lay the deliverable out so exactly one of those resolves.${bindingBlock}${hostProtocol ? `\n\n${hostProtocol}` : ''}`;
   }
   return serializeOdNextRequestTurnV1({
     taskExecutionId: input.taskExecutionId,

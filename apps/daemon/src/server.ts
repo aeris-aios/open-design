@@ -26,6 +26,7 @@ import {
   composeOdNextStrategyStableRequestContextV2,
   executionProfileFromStreamFormat,
   PLUGIN_SHARE_ACTION_PLUGIN_IDS,
+  renderChatTurnHostProtocolInstructions,
 } from '@open-design/contracts';
 import {
   advanceAuthenticatedDoneCapture,
@@ -33,13 +34,11 @@ import {
   stopReasonIsTruncation,
   todoItemsFromTodoWriteInput,
 } from '@open-design/contracts';
-import { renderDoneMarker } from '@open-design/contracts';
 import {
   renderUnfinishedTodoRecall,
   unfinishedTodosFromTodoWriteInput,
   type RecalledTodo,
 } from '@open-design/contracts';
-import { renderArtifactFocusInstruction, renderNextStepMarkerExample } from '@open-design/contracts';
 import type {
   CollabCloudMemberDirectoryEntry,
   TeamProject,
@@ -11520,18 +11519,10 @@ export async function startServer({
      * (emit one inline marker the host parses and strips), same "don't narrate
      * this to the user" clause.
      */
-    const doneMarkerPrompt = typeof run.doneKey === 'string' && run.doneKey
-      ? [
-          'Turn completion marker:',
-          `This turn's key is ${run.doneKey}.`,
-          'When you finish working and are about to write the part the user actually reads — your answer, summary, or delivery note — emit exactly one marker immediately before it:',
-          renderDoneMarker(run.doneKey),
-          'Everything before the marker is filed as working narration into a collapsed execution log; everything after it is shown to the user directly. Emit it at most once, and only when the work is done.',
-          'The key is different every turn: copy the one above verbatim, never reuse an earlier one, and never invent one.',
-          'Skip the marker when you are ending the turn with a <question-form> or an <artifact> block — those already close the working phase on their own.',
-          'The marker is protocol, not prose: do not mention it, do not explain it, and do not wrap it in a code fence (a fenced marker is deliberately ignored).',
-        ].join('\n')
-      : '';
+    const hostProtocol = renderChatTurnHostProtocolInstructions(
+      typeof run.doneKey === 'string' ? run.doneKey : '',
+      'ordinary',
+    );
     /*
      * This turn's follow-up suggestions.
      *
@@ -11547,23 +11538,6 @@ export async function startServer({
      * Per-turn slice for the same cache reason as the done marker: a fresh
      * nonce in the stable prefix would miss the prompt cache on every turn.
      */
-    const nextStepPrompt = typeof run.doneKey === 'string' && run.doneKey
-      ? [
-          'Follow-up suggestions:',
-          'As the very last thing in this turn — after your summary, delivery note, or <artifact> block — emit exactly one block of follow-up suggestions:',
-          renderNextStepMarkerExample(run.doneKey, [
-            'Add an orders list page',
-            'Switch the product cards to a two-column layout',
-            'Add a dark mode',
-          ]),
-          'Rules: exactly three lines, one suggestion per line, no bullets, no numbering, no trailing punctuation.',
-          'Each line is a concrete next action on what THIS turn actually produced, worded so the user could send it verbatim as their next message — not a topic, not a question, not an offer of help.',
-          'Write them in the language the user is speaking, and keep each under 120 characters.',
-          `This turn's key is ${run.doneKey}: copy it verbatim, never reuse an earlier one, and never invent one.`,
-          'Skip the block entirely when the turn produced nothing to iterate on — a greeting, a plain answer, a turn ending in a <question-form> — or when you have no useful suggestion. Omitting it is fine; padding it with filler is not.',
-          'The block is protocol, not prose: do not mention it, do not explain it, and do not wrap it in a code fence.',
-        ].join('\n')
-      : '';
     /*
      * This turn's display intent.
      *
@@ -11579,9 +11553,6 @@ export async function startServer({
      * '' without a key, which is the same guard the two markers above spell out
      * inline.
      */
-    const artifactFocusPrompt = renderArtifactFocusInstruction(
-      typeof run.doneKey === 'string' ? run.doneKey : '',
-    );
     // The connected-external-MCP directive reflects live OAuth token state,
     // which flips mid-conversation as Bearers expire/refresh. Keeping it out of
     // the cached stable prefix (daemonSystemPrompt) and re-sending it here in
@@ -11677,9 +11648,9 @@ export async function startServer({
       // Each is keyed on this run's nonce, so they are unconditional while
       // `systemPrompt` stays gated on the stable-slice decision.
       clientSystemPrompt: [
-        doneMarkerPrompt,
-        nextStepPrompt,
-        artifactFocusPrompt,
+        hostProtocol.doneMarker,
+        hostProtocol.nextSteps,
+        hostProtocol.artifactFocus,
         includeStableForPayload ? systemPrompt : '',
       ]
         .map((part) => (typeof part === 'string' ? part.trim() : ''))

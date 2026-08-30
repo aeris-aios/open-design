@@ -251,7 +251,7 @@ function SkillPluginCandidateCard({
         data?.message ??
         (typeof data?.error === "string" ? data.error : data?.error?.message) ??
         resp.statusText;
-      throw new Error(message || "Plugin candidate action failed.");
+      throw new Error(message || t('chat.pluginAction.failed'));
     }
     return data;
   }
@@ -266,22 +266,22 @@ function SkillPluginCandidateCard({
       );
       const draftPath = String(data?.draftPath ?? "");
       if (data?.validation?.ok === false) {
-        setNotice({ message: "Draft created with validation issues." });
+        setNotice({ message: t('chat.pluginAction.validationIssues') });
       } else if (draftPath) {
         const install = await post(
           `/api/projects/${encodeURIComponent(projectId)}/plugins/install-folder`,
           { path: draftPath },
         );
         if (install?.ok === false) {
-          setNotice({ message: install?.message ?? "Plugin draft created, but install failed." });
+          setNotice({ message: install?.message ?? t('chat.pluginAction.failed') });
         } else {
           if (typeof window !== "undefined") {
             window.dispatchEvent(new CustomEvent("open-design:plugins-changed"));
           }
-          setNotice({ message: install?.message ?? "Plugin draft created and added to My plugins." });
+          setNotice({ message: install?.message ?? t('chat.pluginAction.saved') });
         }
       } else {
-        setNotice({ message: "Plugin draft created." });
+        setNotice({ message: t('chat.pluginAction.saved') });
       }
       if (draftPath && onRequestOpenFile) onRequestOpenFile(`${draftPath}/open-design.json`);
     } catch (err) {
@@ -301,7 +301,9 @@ function SkillPluginCandidateCard({
         { action },
       );
       setNotice({
-        message: `OpenDesign contribution task started for ${data?.path ?? "the draft"}.`,
+        message: t('chat.pluginAction.contributionStarted', {
+          path: data?.path ?? t('chat.designToolbox.kind.plugin'),
+        }),
       });
     } catch (err) {
       setNotice({ message: err instanceof Error ? err.message : String(err) });
@@ -983,7 +985,7 @@ function AssistantMessageImpl({
           message || url
             ? buildActionNotice(message || url, url)
             : action === "install"
-              ? { message: "Added to My plugins." }
+              ? { message: t('chat.pluginAction.saved') }
               : null;
         if (notice) {
           setPluginNoticeByFolder((prev) => ({
@@ -1000,7 +1002,7 @@ function AssistantMessageImpl({
         setPluginBusyKey(null);
       }
     },
-    [pluginBusyKey, onRequestPluginFolderAgentAction],
+    [pluginBusyKey, onRequestPluginFolderAgentAction, t],
   );
   const usage = events.find((e) => e.kind === "usage") as
     | Extract<AgentEvent, { kind: "usage" }>
@@ -2732,17 +2734,18 @@ function PluginActionPanel({
 }) {
   const noticeByFolder = notices;
   const runAction = onRunAction;
+  const t = useT();
 
   return (
-    <div className="plugin-action-panel" aria-label="Plugin next actions">
+    <div className="plugin-action-panel" aria-label={t('chat.pluginAction.aria')}>
       <div className="plugin-action-panel__head">
         <span className="plugin-action-panel__icon" aria-hidden>
           <Icon name="sparkles" size={15} />
         </span>
         <div>
-          <div className="plugin-action-panel__title">Plugin ready</div>
+          <div className="plugin-action-panel__title">{t('chat.pluginAction.title')}</div>
           <div className="plugin-action-panel__subtitle">
-            Send the next step to the agent so it can run the od CLI.
+            {t('chat.pluginAction.subtitle')}
           </div>
         </div>
       </div>
@@ -2761,7 +2764,7 @@ function PluginActionPanel({
               </span>
               <div className="plugin-action-card__copy">
                 <code className="plugin-action-card__path">{folder.path}</code>
-                <span>{folder.fileCount} files ready for My plugins</span>
+                <span>{t('chat.pluginAction.filesReady', { count: folder.fileCount })}</span>
               </div>
             </div>
               <div className="plugin-action-card__actions">
@@ -2777,7 +2780,9 @@ function PluginActionPanel({
                     size={13}
                   />
                   <span>
-                    {actionBusy && busyKey === `install:${folder.path}` ? "Sending..." : "Add to My plugins"}
+                    {actionBusy && busyKey === `install:${folder.path}`
+                      ? t('chat.comments.sending')
+                      : t('chat.pluginAction.install')}
                   </span>
                 </button>
                 <button
@@ -2792,7 +2797,9 @@ function PluginActionPanel({
                     size={13}
                   />
                   <span>
-                    {actionBusy && busyKey === `publish:${folder.path}` ? "Sending..." : "Publish repo"}
+                    {actionBusy && busyKey === `publish:${folder.path}`
+                      ? t('chat.comments.sending')
+                      : t('pluginCard.publish')}
                   </span>
                 </button>
                 <button
@@ -2808,8 +2815,8 @@ function PluginActionPanel({
                   />
                   <span>
                     {actionBusy && busyKey === `contribute:${folder.path}`
-                      ? "Sending..."
-                      : "OpenDesign PR"}
+                      ? t('chat.comments.sending')
+                      : t('pluginCard.contribute')}
                   </span>
                 </button>
                 {onRequestOpenFile ? (
@@ -2820,7 +2827,7 @@ function PluginActionPanel({
                     onClick={() => onRequestOpenFile(folder.manifestPath)}
                   >
                     <Icon name="file-code" size={13} />
-                    <span>Open manifest</span>
+                    <span>{t('ds.openManifest')}</span>
                   </button>
                 ) : null}
               </div>

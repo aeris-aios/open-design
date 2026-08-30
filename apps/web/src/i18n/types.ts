@@ -5521,4 +5521,13 @@ export interface Dict {
   'labs.optOutSkip': string;
   'labs.optOutOtherPlaceholder': string;
   'labs.optOutSubmit': string;
+  'chat.pluginAction.failed': string;
+  'chat.pluginAction.saved': string;
+  'chat.pluginAction.validationIssues': string;
+  'chat.pluginAction.contributionStarted': string;
+  'chat.pluginAction.aria': string;
+  'chat.pluginAction.title': string;
+  'chat.pluginAction.subtitle': string;
+  'chat.pluginAction.filesReady': string;
+  'chat.pluginAction.install': string;
 }

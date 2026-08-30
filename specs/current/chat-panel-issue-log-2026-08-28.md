@@ -19,7 +19,7 @@
 
 ## 2026-08-29 全量复核口径
 
-- **不能宣称本需求全部关闭**。仍未实现的是 #1 / #15 Design Harness 与普通 Chat Panel host protocol 共用；OPEND-2410 仍只是确认“Agent 没有调用 Todo 工具”，没有代码修复；Question Form 组件族仍待设计评审。
+- **不能宣称本需求全部关闭**。#1 / #15 Design Harness 与普通 Chat Panel host protocol 共用已完成代码修复和聚焦验证；OPEND-2410 仍只是确认“Agent 没有调用 Todo 工具”，没有代码修复；Question Form 组件族仍待设计评审。
 - 已推送但主要只有聚焦测试、尚无对应真实操作 E2E 的项目：#2、#3、#4、#6、#7 的真实高速模型性能、#8 最终 media-task 版本、#9 全部文字角色、#11、#12、#14、#16、#17、#18、#19。交接时不得把“测试绿”写成“真机验收完成”。
 - 有明确 post-fix 手工 UI 证据：#5 Question Form packaged 验证、#9 助手正文 computed style、#10 分享 tooltip。
 - #13 DSML 已于 2026-08-29 使用正确的 test-AMR 环境完成真实 live + reload E2E，详见对应条目；这次不是打包安装包验收，当前 Beta 安装包仍未因本补丁重打。
@@ -29,7 +29,10 @@
 
 ### 1. Design Harness 开启后缺少底部三行下一步建议
 
-- 状态：**根因已定位，尚未改代码**。
+- 状态：**已修复，待真实 Harness 开 / 关 live 会话复验**。
+- 修复：新增 contracts 层共享的 keyed Chat turn host protocol renderer，由普通 Chat、OD Next request Bundle 和 OD Next production continuation 共用同一份 `<od-done>` / `<od-next>` / `<od-focus>` 协议。request 路径仅在 Direct Edit request stage 完成时要求输出，production 路径仅在 production completed 时要求输出；clarification、repair、blocked、failed、canceled 均不错误注入完成协议。
+- exact-input / cache 边界：request fingerprint 仍基于稳定输入计算，本轮 nonce 在 fingerprint 之后铸造并写入 run meta；production continuation 的 prompt 与 meta 使用同一 key；repair 保持原始 exact stage input，不混入协议。
+- 聚焦验证：contracts renderer / OD Next recipe、daemon coordinator 与 automatic-simple server 用例覆盖普通、request、production 和省略场景；contracts / daemon typecheck 通过。未改 Todo 规范，OPEND-2410 仍单独处理。
 - 用户现象：任务已经成功生成产物，但最终消息下方没有三行下一步建议。
 - 用户疑问：开启“Open Design 实验室 → Design Harness”后，是否改走 strategy / plan，导致本轮 Chat Panel 新提示词没有被遵守。
 - 证据截图：
@@ -142,7 +145,7 @@
 - P1（本轮应修）：执行状态 aria、余额升级卡 CTA、会话搜索 placeholder / 空态、执行记录文件打开 aria、附件预览 aria 共 5 类系统硬编码。
 - P1 修复结果：上述 5 类已全部接入 typed i18n，新增 5 个 key 均补齐 19 个 locale；法语组件断言和 locale 对齐测试通过。
 - merge-base 归因：相对 `3af55e9f22` 到本分支审计点，本次需求新增的系统文案硬编码为 **0 项**。
-- P2（另批收债）：Composer / ChatPane 上下文 kind 与 tooltip、插件 / MCP / skill 工具面板、旧插件动作面板、上传失败模板和媒体 starter 仍有历史英文硬编码。逐字核对确认均已存在于 merge-base，是 main 既有客户端技术债，不是 Agent 文本，也不通过提示词修复。
+- P2 收债结果：Composer / ChatPane 上下文 kind 与 tooltip、插件 / MCP / skill 工具面板、旧插件动作面板和上传失败模板已接入 typed i18n；旧插件动作新增 9 个 key 并补齐全部 19 locale。媒体 starter 的标题、标签和 prompt 属于可编辑模板内容，不是客户端系统 chrome，按用户确认不随 UI 语言强制翻译，也不修改提示词。
 - 非问题：命令、路径、文件名、工具输出、Question Form Agent 字段、产品 / 插件专名不做强制翻译。
 
 ### 6. ToolRow 的 command 动作识别不足
@@ -248,12 +251,13 @@
 
 ### 15. Design Harness / OD Next 与普通 Chat Panel prompt 协议分叉
 
-- 状态：**已完成只读审计，需单独架构修复与 A/B 覆盖；本轮未改提示词**。
+- 状态：**已完成架构修复和聚焦 A/B 覆盖；待真实 Harness 开 / 关 live 会话复验**。
 - 用户强约束：以后每次修改 Todo、Question Form、`<od-done>`、`<od-next>`、`<od-focus>` 等 Chat prompt / host 协议，都必须同时审计 Design Harness 开 / 关两条路径；不能只验证普通 chat。
 - 已确认调用链：普通 chat 走 `composeChatAgentTextPayload`，由 `server.ts` 每轮注入带本轮 nonce 的 done / next / focus；OD Next 一旦存在 `strategyTaskAtStart`，则直接使用冻结的 `persistedStrategyFinalText`，跳过这组 per-turn contributor。
 - 初始 Bundle 虽存在 `context/client_system_prompt`，但在 Run 创建、`doneKey` 铸造之前冻结，当前无法携带本轮 nonce；后续 clarification / production continuation 又要求 exact stage input，同样不会自动拼普通 per-turn slice。
 - 现场吻合：开启 Design Harness 后最终产物轮缺少三条下一步建议，不是偶发模型不遵守，而是该物理 Run 没收到同一份 `<od-next>` 协议。
 - Todo 差异：普通 discovery prompt 明确要求每步开工前 `in_progress`、做完立刻 `completed`；OD Next core 当前只写“Keep the Todo plan live”，Production continuation 只说复用 frozen Todo plan，约束明显更弱。不能直接复制整份普通 prompt，应把需要共享的 host protocol 与状态契约注册为两条路线共同消费的 contributor，并保留 exact-input / cache 边界。
+- 落地：已按上述边界仅抽取 done / next / focus host protocol，不顺带强化 Todo prompt。普通 route、OD Next request Bundle 和 production continuation 共享 renderer；repair / clarification 不注入。nonce 在 request fingerprint 之后生成，避免破坏 cache / idempotency；聚焦测试验证 prompt 与 run meta 的 key 一致。
 
 ### 16. “基于此项目创建设计系统”自动消息仍使用旧灰卡
 
@@ -308,10 +312,11 @@
 - P1 性能（本地已修）：精确 63,472-event Beta message `ab7ff827…` 中，61,614 条 thinking + 1,771 条 text 在 daemon 归一化后只有 125 events / 2 blocks，parse + normalize + serialize + client parse + build 合计仅十几毫秒；消息 API 热读为 5.6–9.2ms，确认 3 秒以上首开不在 parser / API。补丁把已结束、初始折叠的 ExecutionShell / Thoughts / Plan / Todo / 命令正文改为首次展开再挂 DOM，live / failed / in-progress / default-open 首帧仍挂载，且首次展开后再次折叠不会丢子状态。完全相同的相邻 `TodoWrite` 快照另在 daemon 与 live buffer 两侧窄范围折叠，普通 Bash / 其他工具不做深比较。
 - P1 同机 A/B：同一 Beta 数据副本、同一 63,472-event 会话、同一 Playwright 脚本、均预热排除 Next 冷编译；`c90c1e89` 三次 ready 为 13.35s / 10.75s / 8.02s（中位 10.75s），补丁后为 5.73s / 5.12s / 6.07s（中位 5.73s，约 -46.7%）。目标 assistant 初始后代 DOM 从 2,799 降到 119（约 -95.7%），初始 details 从 29 降到 1。该数据来自 dev runtime，证明方向与量级，不替代 production / Beta 包门槛。
 - Beta 包验收：从 `a57542773e` 构建、DMG 安装并从隔离安装目录启动 `Open Design Beta 0.21.1-beta.999`；packaged app 显示 AMR 余额，`/api/app-config` 确认 `agentId=amr` 且 `OPEN_DESIGN_AMR_PROFILE=test`。长会话 SPA 切换到可见首屏为 307ms，初始仍为 119 个后代节点 / 1 个 details / 0 个折叠 body / DSML 0；完整展开约 377ms，恢复 2,799 个后代节点 / 29 个 details / 203,613 字符 / DSML 0。短会话 SPA 切换为 282ms，说明长会话懒挂载在 production bundle 中生效。
-- 新 P1（packaged 全页 bootstrap，未修）：长会话三次硬刷新到 assistant 可见为 17.91s / 14.95s / 16.62s（中位 16.62s）；只有 7.9KB events 的短会话硬刷新同样为 17.02s，而页面 Navigation Timing 的 `loadEventEnd` 仅约 239ms。隔离 consumer 的 daemon 日志在每次全页启动时反复出现 `authoritative Team resource listing is unavailable`，因此当前证据把 15–18s 延迟定位在 packaged bootstrap / Team resource refresh 路径，而不是长消息 API、parser 或 DOM。本轮只做验收，没有擅自修改这一跨 Chat Panel 边界的问题；上线前应在正常 Team 凭据的真实 Beta namespace 再复现并单独修复。
+- 新 P1（packaged 全页 bootstrap，代码已修）：长会话三次硬刷新到 assistant 可见为 17.91s / 14.95s / 16.62s（中位 16.62s）；只有 7.9KB events 的短会话硬刷新同样为 17.02s，而页面 Navigation Timing 的 `loadEventEnd` 仅约 239ms。根因是 Team authoritative catalog 不可用时被折叠成“共享项目仍在物化”，随后执行 21 次 × 600ms 重试。现在 pull outcome 显式携带 `catalogAvailable`：首次 catalog 不可用立即进入现有 retry UI，不再等待；只有此前已经确认共享的项目才在后续 catalog 短暂不可用时继续保留 materializing 语义。聚焦回归以 21 次配置断言只读本地一次、读 catalog 一次、delay 0 次。真实 Team 权限 Beta namespace 仍需复验实际硬刷新时间。
 - P1 重复快照样本：真实 9,280-event TodoWrite 样本在通用原型中从 9,280 events / 4.19MB 压为 15 events / 2.2KB；最终实现进一步收窄为 TodoWrite-only，测试覆盖 pending→completed 变化、Question Form 文本边界、next_steps 保留以及相同 Bash 不去重，避免普通 same-id/different-state 流的 stringify 退化。
-- P2 语义图标：prerelease 历史里的删除命令已正确显示“删除”，但 ToolRow 仍复用写入的铅笔 icon；数据和动作识别正确，仅视觉语义未闭环。
-- 验证边界：按用户要求未跑全量测试；本轮使用只读历史扫描、producer/consumer 副本、真实 Web UI、隔离 Beta DMG、硬刷新、DOM 结构断言和设计稿截图对照。P0 / 长消息 P1 只跑聚焦测试、单一长会话 A/B 与 packaged 关键路径；隔离 package 没有完整 Team authoritative resource 环境，因此新 bootstrap P1 仍需真实 Beta namespace 复验。web typecheck 仍被 3 个既有无关测试类型错误阻断（`thinking-markdown.test.tsx:37`、`artifact-card-desktop-viewport.test.ts:46/49`）。
+- P2 语义图标（已修）：ToolRow 的 delete 动作使用独立垃圾桶 icon，不再复用写入铅笔；聚焦测试同时断言 delete 与 write SVG 结构不同。
+- 类型债（已修）：`thinking-markdown.test.tsx` 的 ExecutionShell fixture 与 `artifact-card-desktop-viewport.test.ts` 的 nullable regex capture 均已修正，web typecheck 通过。
+- 验证边界：按用户要求未跑全量测试；本轮使用聚焦测试、typecheck 和 packaged 关键路径。当前源码已成功构建 macOS app 与 DMG，并直接启动该构建产物验证 Electron `od://app/` ready、Beta identity / version / channel 正确；`tools-pack mac install` 仍暴露一个既有 harness 名称不匹配（DMG 内为 `Open Design Beta.app`，install 查找 `Open Design.app`），因此本轮不宣称 installer harness 通过。隔离 package 没有完整 Team authoritative resource 环境，bootstrap P1 仍需真实 Beta namespace 复验。
 
 ## 已完成 / 已合入本分支
 
@@ -359,8 +364,8 @@
 
 ## 下一次接手时先做
 
-1. `git status --short --branch`，确认 DSML spaced-pipe 与 queue alignment 补丁是否已经提交推送。
-2. 优先修 #1 / #15：将 Chat turn host protocol 抽成普通 run 与 Design Harness 共用 contributor，并补 Harness 开 / 关 A/B 覆盖；改提示词前先审查 exact-input / cache 边界。
+1. `git status --short --branch`，确认当前修复是否已经提交推送。
+2. 使用有正常 Team authoritative catalog 权限的真实 Beta namespace 复验全页硬刷新，确认不再出现 15–18 秒等待；同时完成 Harness 开 / 关 live 会话，验证 done / next / focus 实际输出。
 3. 为 OPEND-2410 决定产品方案：修 Agent Todo contract，或新增诚实的 `plan_missing` 状态；不要在客户端伪造 Todo。
 4. 按上述全量复核清单补缺失的 post-fix 真机 / E2E，尤其是 OPEND-2195 / #12 顺序生图、#11 会话行下半部、#19 手动停止、#2 Ctrl+Shift+R。
 5. 跟进 Question Form 组件族设计评审；视觉基准仍是 `chat-panel-next.html`。

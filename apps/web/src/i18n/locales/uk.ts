@@ -5329,4 +5329,13 @@ export const uk: Dict = {
   'chat.attachments.preview': "Попередній перегляд: {name}",
   'chat.record.canceled': "Скасовано",
   'chat.record.pending': "Не розпочато",
+  'chat.pluginAction.failed': 'Не вдалося виконати дію з плагіном.',
+  'chat.pluginAction.saved': 'Плагін збережено.',
+  'chat.pluginAction.validationIssues': 'Чернетку плагіна створено з проблемами перевірки.',
+  'chat.pluginAction.contributionStarted': 'Завдання внеску до OpenDesign запущено для {path}.',
+  'chat.pluginAction.aria': 'Наступні дії з плагіном',
+  'chat.pluginAction.title': 'Плагін готовий',
+  'chat.pluginAction.subtitle': 'Надішліть агенту наступний крок, щоб він міг запустити od CLI.',
+  'chat.pluginAction.filesReady': '{count} файлів готові для особистих плагінів',
+  'chat.pluginAction.install': 'Додати до особистих плагінів',
 };

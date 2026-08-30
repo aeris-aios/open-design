@@ -5329,4 +5329,13 @@ export const id: Dict = {
   'chat.attachments.preview': "Pratinjau {name}",
   'chat.record.canceled': "Dibatalkan",
   'chat.record.pending': "Belum dimulai",
+  'chat.pluginAction.failed': 'Tindakan plugin gagal.',
+  'chat.pluginAction.saved': 'Plugin disimpan.',
+  'chat.pluginAction.validationIssues': 'Draf plugin dibuat dengan masalah validasi.',
+  'chat.pluginAction.contributionStarted': 'Tugas kontribusi OpenDesign dimulai untuk {path}.',
+  'chat.pluginAction.aria': 'Tindakan plugin berikutnya',
+  'chat.pluginAction.title': 'Plugin siap',
+  'chat.pluginAction.subtitle': 'Kirim langkah berikutnya ke agen agar dapat menjalankan od CLI.',
+  'chat.pluginAction.filesReady': '{count} file siap untuk plugin pribadi',
+  'chat.pluginAction.install': 'Tambahkan ke plugin pribadi',
 };

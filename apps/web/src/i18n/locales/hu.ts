@@ -5329,4 +5329,13 @@ export const hu: Dict = {
   'chat.attachments.preview': "{name} előnézete",
   'chat.record.canceled': "Megszakítva",
   'chat.record.pending': "Nincs elindítva",
+  'chat.pluginAction.failed': 'A bővítményművelet sikertelen.',
+  'chat.pluginAction.saved': 'Bővítmény mentve.',
+  'chat.pluginAction.validationIssues': 'A bővítmény piszkozata ellenőrzési hibákkal jött létre.',
+  'chat.pluginAction.contributionStarted': 'Az OpenDesign közreműködési feladat elindult ehhez: {path}.',
+  'chat.pluginAction.aria': 'A bővítmény következő műveletei',
+  'chat.pluginAction.title': 'A bővítmény kész',
+  'chat.pluginAction.subtitle': 'Küldd el a következő lépést az ügynöknek, hogy futtathassa az od CLI-t.',
+  'chat.pluginAction.filesReady': '{count} fájl készen áll a személyes bővítményekhez',
+  'chat.pluginAction.install': 'Hozzáadás a személyes bővítményekhez',
 };

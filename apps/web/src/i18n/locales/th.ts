@@ -5329,4 +5329,13 @@ export const th: Dict = {
   'chat.attachments.preview': "ดูตัวอย่าง {name}",
   'chat.record.canceled': "ยกเลิกแล้ว",
   'chat.record.pending': "ยังไม่เริ่ม",
+  'chat.pluginAction.failed': 'การดำเนินการปลั๊กอินล้มเหลว',
+  'chat.pluginAction.saved': 'บันทึกปลั๊กอินแล้ว',
+  'chat.pluginAction.validationIssues': 'สร้างฉบับร่างปลั๊กอินแล้ว แต่ยังมีปัญหาในการตรวจสอบ',
+  'chat.pluginAction.contributionStarted': 'เริ่มงานการมีส่วนร่วมกับ OpenDesign สำหรับ {path} แล้ว',
+  'chat.pluginAction.aria': 'การดำเนินการถัดไปของปลั๊กอิน',
+  'chat.pluginAction.title': 'ปลั๊กอินพร้อมแล้ว',
+  'chat.pluginAction.subtitle': 'ส่งขั้นตอนถัดไปให้เอเจนต์เพื่อให้เรียกใช้ od CLI',
+  'chat.pluginAction.filesReady': 'มีไฟล์ {count} ไฟล์พร้อมสำหรับปลั๊กอินส่วนตัว',
+  'chat.pluginAction.install': 'เพิ่มไปยังปลั๊กอินส่วนตัว',
 };

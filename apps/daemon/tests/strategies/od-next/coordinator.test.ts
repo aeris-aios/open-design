@@ -83,6 +83,16 @@ function beginAutomaticSimpleProduction(
   });
 }
 
+function requireHostProtocolMeta(meta: Record<string, unknown> | null): {
+  instruction: string;
+  doneKey: string;
+} {
+  if (!meta || typeof meta.instruction !== 'string' || typeof meta.doneKey !== 'string') {
+    throw new Error('expected captured host protocol metadata');
+  }
+  return { instruction: meta.instruction, doneKey: meta.doneKey };
+}
+
 function strategyBinding() {
   const assetDigests = [
     { path: './SKILL.md', sha256: 'a'.repeat(64) },
@@ -970,7 +980,11 @@ describe('OD Next planning coordinator', () => {
     expect(capturedMeta).toMatchObject({
       taskRunIndex: 1,
       instruction: expect.stringContaining(`planContractHash=${planned.task.planContractHash}`),
+      doneKey: expect.stringMatching(/^[a-f0-9]{16}$/),
     });
+    const hostProtocolMeta = requireHostProtocolMeta(capturedMeta);
+    expect(hostProtocolMeta.instruction)
+      .toContain(`<od-done key="${hostProtocolMeta.doneKey}"/>`);
     expect(result.task.latestRunId).toBe('run-production');
     expect(result.projection.nextRunId).toBe('run-production');
   });
@@ -1010,7 +1024,11 @@ describe('OD Next planning coordinator', () => {
       stage: 'production',
       taskRunIndex: 1,
       instruction: expect.stringContaining('planContractHash='),
+      doneKey: expect.stringMatching(/^[a-f0-9]{16}$/),
     });
+    const hostProtocolMeta = requireHostProtocolMeta(capturedMeta);
+    expect(hostProtocolMeta.instruction)
+      .toContain(`<od-next key="${hostProtocolMeta.doneKey}">`);
     expect(transition).toMatchObject({
       start: true,
       stage: 'production',

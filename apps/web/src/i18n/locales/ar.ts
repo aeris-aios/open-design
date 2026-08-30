@@ -5329,4 +5329,13 @@ export const ar: Dict = {
   'chat.attachments.preview': "معاينة {name}",
   'chat.record.canceled': "ملغى",
   'chat.record.pending': "لم يبدأ",
+  'chat.pluginAction.failed': 'فشل إجراء المكوّن الإضافي.',
+  'chat.pluginAction.saved': 'تم حفظ المكوّن الإضافي.',
+  'chat.pluginAction.validationIssues': 'تم إنشاء مسودة المكوّن الإضافي، لكنها تحتوي على مشكلات في التحقق.',
+  'chat.pluginAction.contributionStarted': 'تم بدء مهمة مساهمة OpenDesign لـ {path}.',
+  'chat.pluginAction.aria': 'الإجراءات التالية للمكوّن الإضافي',
+  'chat.pluginAction.title': 'المكوّن الإضافي جاهز',
+  'chat.pluginAction.subtitle': 'أرسل الخطوة التالية إلى الوكيل ليتمكن من تشغيل od CLI.',
+  'chat.pluginAction.filesReady': '{count} ملفًا جاهزًا في المكوّنات الإضافية الشخصية',
+  'chat.pluginAction.install': 'إضافة إلى المكوّنات الإضافية الشخصية',
 };

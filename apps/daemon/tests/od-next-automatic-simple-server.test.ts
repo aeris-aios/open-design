@@ -1176,6 +1176,16 @@ describe('OD Next automatic production through the real server', () => {
         selections: [],
       });
     expect(activeTask?.runs[0]?.finalText).toEqual(activeTask?.promptBundle);
+    const promptBundleText = activeTask?.promptBundle.text ?? '';
+    const doneKey = /<od-done key="([a-f0-9]{16})"\/>/.exec(promptBundleText)?.[1];
+    expect(doneKey).toMatch(/^[a-f0-9]{16}$/);
+    expect(promptBundleText).toContain('route=direct_edit');
+    expect(promptBundleText).toContain(`<od-next key="${doneKey}">`);
+    expect(promptBundleText).toContain(`<od-focus key="${doneKey}"`);
+    expect(promptBundleText.slice(
+      promptBundleText.indexOf('<open_design_core_system_prompt>'),
+      promptBundleText.indexOf('</open_design_core_system_prompt>'),
+    )).not.toContain(doneKey);
     expect(activeTask?.promptBundle.utf8Bytes).toBe(
       Buffer.byteLength(activeTask?.promptBundle.text ?? '', 'utf8'),
     );

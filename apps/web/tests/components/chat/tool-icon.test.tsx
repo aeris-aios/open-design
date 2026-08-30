@@ -25,6 +25,13 @@ describe('行首图标', () => {
     }
   });
 
+  it('删除使用垃圾桶语义图标,不再复用写入的铅笔', () => {
+    const { container: deleteContainer } = render(<span>{toolIcon('delete')}</span>);
+    const { container: writeContainer } = render(<span>{toolIcon('write')}</span>);
+    expect(deleteContainer.innerHTML).not.toBe(writeContainer.innerHTML);
+    expect(deleteContainer.querySelectorAll('path')).toHaveLength(4);
+  });
+
   it('PowerShell 认成「跑命令的工具」,再按命令内容分类(D7)', () => {
     // 名单里漏了 PowerShell 时,这两条都会掉进 other、行首只剩一颗点
     expect(toolKind('PowerShell', { command: 'npm run build' })).toBe('exec');

@@ -5584,6 +5584,7 @@ const UserMessage = memo(UserMessageImpl);
               key={`${item.kind}:${item.id}`}
               item={item}
               onOpen={onRequestOpenFile}
+              t={t}
             />
           ))}
           {appliedContextItems.length > 0 ? (
@@ -6090,10 +6091,10 @@ const UserMessage = memo(UserMessageImpl);
           <div className="msg-applied-context__details">
             {items.map((item, index) => {
               const label = item.kind === 'plugin'
-                ? 'Plugin'
+                ? t('chat.designToolbox.kind.plugin')
                 : item.kind === 'skill'
-                  ? 'Skill'
-                  : 'Design System';
+                  ? t('chat.designToolbox.kind.skill')
+                  : t('chat.plus.designSystem');
               const canOpenPlugin = item.kind === 'plugin' && !!onOpenPlugin;
               const canOpenSystem = item.kind === 'design-system' && !!item.system && !!onOpenDesignSystem;
               const content = (
@@ -6163,9 +6164,11 @@ const WORKSPACE_DESIGN_SYSTEM_TAB = '__design_system__';
 function ActiveWorkspaceContextChip({
   item,
   onOpen,
+  t,
 }: {
   item: WorkspaceContextItem;
   onOpen?: (name: string) => void;
+  t: TranslateFn;
 }) {
   const target = workspaceContextOpenTarget(item);
   const content = (
@@ -6174,7 +6177,7 @@ function ActiveWorkspaceContextChip({
         <Icon name={workspaceContextIcon(item)} size={12} />
       </span>
       <span className="msg-plugin-chip__label">
-        <span className="msg-plugin-chip__kind">Current</span>
+        <span className="msg-plugin-chip__kind">{t('fileViewer.versions.current')}</span>
         <span className="msg-plugin-chip__title">{item.label}</span>
       </span>
     </>
@@ -6184,7 +6187,7 @@ function ActiveWorkspaceContextChip({
       <div
         className={`msg-plugin-chip msg-plugin-chip--workspace msg-plugin-chip--workspace-${item.kind}`}
         data-testid="msg-workspace-context-chip"
-        title={workspaceContextTitle(item)}
+        title={workspaceContextTitle(item, t)}
       >
         {content}
       </div>
@@ -6195,7 +6198,7 @@ function ActiveWorkspaceContextChip({
       type="button"
       className={`msg-plugin-chip msg-plugin-chip--workspace msg-plugin-chip--workspace-${item.kind} msg-plugin-chip--action`}
       data-testid="msg-workspace-context-chip"
-      title={workspaceContextTitle(item)}
+      title={workspaceContextTitle(item, t)}
       onClick={() => onOpen(target)}
     >
       {content}
@@ -6224,9 +6227,9 @@ function workspaceContextIcon(item: WorkspaceContextItem): IconName {
   return 'file';
 }
 
-function workspaceContextTitle(item: WorkspaceContextItem): string {
+function workspaceContextTitle(item: WorkspaceContextItem, t: TranslateFn): string {
   return [
-    workspaceContextKindLabel(item.kind),
+    workspaceContextKindLabel(item.kind, t),
     item.path ? `path: ${item.path}` : null,
     item.absolutePath ? `absolute: ${item.absolutePath}` : null,
     item.url ? `url: ${item.url}` : null,
@@ -6234,29 +6237,29 @@ function workspaceContextTitle(item: WorkspaceContextItem): string {
   ].filter(Boolean).join(' | ');
 }
 
-function workspaceContextKindLabel(kind: WorkspaceContextItem['kind']): string {
+function workspaceContextKindLabel(kind: WorkspaceContextItem['kind'], t: TranslateFn): string {
   switch (kind) {
     case 'browser':
-      return 'Browser';
+      return t('chat.designToolbox.context.browser');
     case 'design-files':
-      return 'Design files';
+      return t('chat.designToolbox.context.designFiles');
     case 'design-system':
-      return 'Design system';
+      return t('chat.designToolbox.context.designSystem');
     case 'folder':
-      return 'Folder';
+      return t('chat.designToolbox.context.folder');
     case 'project':
-      return 'Project';
+      return t('workspaceTabs.project');
     case 'local-code':
-      return 'Local code';
+      return t('dsCreate.localCodeLabel');
     case 'terminal':
-      return 'Terminal';
+      return t('chat.designToolbox.context.terminal');
     case 'side-chat':
-      return 'Side chat';
+      return t('chat.designToolbox.context.sideChat');
     case 'live-artifact':
-      return 'Live artifact';
+      return t('chat.designToolbox.context.liveArtifact');
     case 'file':
     default:
-      return 'File';
+      return t('chat.designToolbox.context.file');
   }
 }
 

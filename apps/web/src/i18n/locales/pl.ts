@@ -5329,4 +5329,13 @@ export const pl: Dict = {
   'chat.attachments.preview': "Podgląd: {name}",
   'chat.record.canceled': "Anulowano",
   'chat.record.pending': "Nie rozpoczęto",
+  'chat.pluginAction.failed': 'Działanie wtyczki nie powiodło się.',
+  'chat.pluginAction.saved': 'Wtyczka została zapisana.',
+  'chat.pluginAction.validationIssues': 'Utworzono wersję roboczą wtyczki z problemami walidacji.',
+  'chat.pluginAction.contributionStarted': 'Uruchomiono zadanie wkładu do OpenDesign dla {path}.',
+  'chat.pluginAction.aria': 'Następne działania wtyczki',
+  'chat.pluginAction.title': 'Wtyczka jest gotowa',
+  'chat.pluginAction.subtitle': 'Wyślij następny krok do agenta, aby mógł uruchomić od CLI.',
+  'chat.pluginAction.filesReady': '{count} plików gotowych dla wtyczek osobistych',
+  'chat.pluginAction.install': 'Dodaj do wtyczek osobistych',
 };

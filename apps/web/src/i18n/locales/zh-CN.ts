@@ -5777,4 +5777,13 @@ export const zhCN: Dict = {
   'chat.attachments.preview': "预览 {name}",
   'chat.record.canceled': "已取消",
   'chat.record.pending': "未开始",
+  'chat.pluginAction.failed': '插件操作失败。',
+  'chat.pluginAction.saved': '插件已保存。',
+  'chat.pluginAction.validationIssues': '插件草稿已创建，但仍有校验问题。',
+  'chat.pluginAction.contributionStarted': '已为 {path} 启动 OpenDesign 贡献任务。',
+  'chat.pluginAction.aria': '插件后续操作',
+  'chat.pluginAction.title': '插件已就绪',
+  'chat.pluginAction.subtitle': '将下一步发送给 Agent，由它运行 od CLI。',
+  'chat.pluginAction.filesReady': '个人插件中已有 {count} 个文件就绪',
+  'chat.pluginAction.install': '添加到个人插件',
 };

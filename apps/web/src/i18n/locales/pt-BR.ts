@@ -5329,4 +5329,13 @@ export const ptBR: Dict = {
   'chat.attachments.preview': "Pré-visualizar {name}",
   'chat.record.canceled': "Cancelado",
   'chat.record.pending': "Não iniciado",
+  'chat.pluginAction.failed': 'A ação do plugin falhou.',
+  'chat.pluginAction.saved': 'Plugin salvo.',
+  'chat.pluginAction.validationIssues': 'O rascunho do plugin foi criado com problemas de validação.',
+  'chat.pluginAction.contributionStarted': 'A tarefa de contribuição do OpenDesign foi iniciada para {path}.',
+  'chat.pluginAction.aria': 'Próximas ações do plugin',
+  'chat.pluginAction.title': 'Plugin pronto',
+  'chat.pluginAction.subtitle': 'Envie a próxima etapa ao agente para que ele possa executar a CLI od.',
+  'chat.pluginAction.filesReady': '{count} arquivos prontos para plugins pessoais',
+  'chat.pluginAction.install': 'Adicionar aos plugins pessoais',
 };

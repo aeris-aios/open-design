@@ -526,6 +526,7 @@ describe('OD Next V2 prompt recipe', () => {
       taskExecutionId: 'task-1',
       taskRunIndex: 1,
       planContractHash: A,
+      hostProtocolKey: '0123456789abcdef',
     });
 
     expect(clarification).toContain('Clarification answer');
@@ -538,6 +539,12 @@ describe('OD Next V2 prompt recipe', () => {
     expect(production).not.toContain(recipe.generalOrchestration);
     expect(production).not.toContain(recipe.taskSkill);
     expect(production).not.toContain(B);
+    expect(production).toContain('inputStage=production');
+    expect(production).toContain('<od-done key="0123456789abcdef"/>');
+    expect(production).toContain('<od-next key="0123456789abcdef">');
+    expect(production).toContain('<od-focus key="0123456789abcdef"');
+    expect(clarification).not.toContain('<od-done');
+    expect(contractRepair).not.toContain('<od-done');
     const complexProduction = composeOdNextStrategyContinuationV2({
       stage: 'production',
       nativeSessionResume: true,

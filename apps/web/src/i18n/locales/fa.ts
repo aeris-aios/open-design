@@ -5324,4 +5324,13 @@ export const fa: Dict = {
   'chat.attachments.preview': "پیش‌نمایش {name}",
   'chat.record.canceled': "لغوشده",
   'chat.record.pending': "شروع‌نشده",
+  'chat.pluginAction.failed': 'عملیات افزونه ناموفق بود.',
+  'chat.pluginAction.saved': 'افزونه ذخیره شد.',
+  'chat.pluginAction.validationIssues': 'پیش‌نویس افزونه با مشکلات اعتبارسنجی ایجاد شد.',
+  'chat.pluginAction.contributionStarted': 'وظیفه مشارکت OpenDesign برای {path} آغاز شد.',
+  'chat.pluginAction.aria': 'اقدام‌های بعدی افزونه',
+  'chat.pluginAction.title': 'افزونه آماده است',
+  'chat.pluginAction.subtitle': 'مرحله بعدی را برای عامل بفرستید تا بتواند od CLI را اجرا کند.',
+  'chat.pluginAction.filesReady': '{count} فایل برای افزونه‌های شخصی آماده است',
+  'chat.pluginAction.install': 'افزودن به افزونه‌های شخصی',
 };

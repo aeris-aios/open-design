@@ -610,6 +610,7 @@ function isAbortError(err: unknown): boolean {
  * `pullLatest` resolves a non-null version).
  */
 type TeamSharedProjectPullOutcome = {
+  catalogAvailable: boolean;
   isTeamShared: boolean;
   pulled: boolean;
 };
@@ -642,9 +643,16 @@ async function pullTeamSharedProjectIfAvailable(
   projectId: string,
   workspaceContext: WorkspaceCollabContext | null,
 ): Promise<TeamSharedProjectPullOutcome> {
-  if (!workspaceContext) return { isTeamShared: false, pulled: false };
+  if (!workspaceContext) {
+    return { catalogAvailable: true, isTeamShared: false, pulled: false };
+  }
   const lookup = await fetchTeamProjectCatalogEntry(projectId, workspaceContext);
-  if (!lookup.ok || !lookup.project) return { isTeamShared: false, pulled: false };
+  if (!lookup.ok) {
+    return { catalogAvailable: false, isTeamShared: false, pulled: false };
+  }
+  if (!lookup.project) {
+    return { catalogAvailable: true, isTeamShared: false, pulled: false };
+  }
   try {
     const pullResponse = await fetch(`/api/projects/${encodeURIComponent(projectId)}/collab/pull`, {
       method: 'POST',
@@ -653,9 +661,9 @@ async function pullTeamSharedProjectIfAvailable(
     if (pullResponse.ok) {
       invalidateProjectFilesCache(projectId, workspaceContext);
     }
-    return { isTeamShared: true, pulled: pullResponse.ok };
+    return { catalogAvailable: true, isTeamShared: true, pulled: pullResponse.ok };
   } catch {
-    return { isTeamShared: false, pulled: false };
+    return { catalogAvailable: true, isTeamShared: true, pulled: false };
   }
 }
 
@@ -695,6 +703,10 @@ export type DeepLinkedProjectResolution =
   // the project exists and the caller has access. Local materialization is
   // still catching up — the caller must NOT treat this as "not found".
   | { kind: 'still-materializing' }
+  // The Team catalog could not answer. Retrying the same unavailable request
+  // for the whole first-materialization budget only makes bootstrap look hung;
+  // surface the existing explicit retry state immediately instead.
+  | { kind: 'unavailable' }
   // Never confirmed as team-shared within the retry window (or genuinely not
   // shared at all) — the caller's existing not-found handling applies.
   | { kind: 'not-found' };
@@ -764,8 +776,17 @@ export async function resolveDeepLinkedTeamSharedProject(
     const project = await deps.getProject(projectId).catch(() => null);
     if (isCancelled()) return { kind: 'still-materializing' };
     if (project) return { kind: 'found', project };
-    const { isTeamShared, pulled } = await deps.pullTeamSharedProjectIfAvailable(projectId);
+    const {
+      catalogAvailable,
+      isTeamShared,
+      pulled,
+    } = await deps.pullTeamSharedProjectIfAvailable(projectId);
     if (isCancelled()) return { kind: 'still-materializing' };
+    if (!catalogAvailable) {
+      return everConfirmedTeamShared
+        ? { kind: 'still-materializing' }
+        : { kind: 'unavailable' };
+    }
     if (isTeamShared) everConfirmedTeamShared = true;
     if (pulled) {
       const pulledProject = await deps.getProject(projectId).catch(() => null);
@@ -4616,6 +4637,13 @@ function AppInner() {
       // alone instead of bouncing the member off a project they can see, but
       // stop the spinner and offer an explicit retry after the bounded window.
       if (resolution.kind === 'still-materializing') {
+        setDeepLinkResolutionFailure({
+          projectId,
+          failure: 'materialization-failed',
+        });
+        return;
+      }
+      if (resolution.kind === 'unavailable') {
         setDeepLinkResolutionFailure({
           projectId,
           failure: 'materialization-failed',

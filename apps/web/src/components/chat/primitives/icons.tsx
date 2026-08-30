@@ -70,6 +70,16 @@ export const WriteIcon = (): ReactElement => (
   </svg>
 );
 
+/** 删除 —— 垃圾桶。删除不能继续复用「写入」的铅笔图标。 */
+export const DeleteIcon = (): ReactElement => (
+  <svg {...STROKE_ICON}>
+    <path d="M4 7h16" />
+    <path d="M9 7V4h6v3" />
+    <path d="M6.5 7l.8 13h9.4l.8-13" />
+    <path d="M10 11v5.5M14 11v5.5" />
+  </svg>
+);
+
 /** 搜索 —— 放大镜(D23:搜索是一等类别,有自己的图标) */
 export const SearchIcon = (): ReactElement => (
   <svg {...STROKE_ICON}>
@@ -150,8 +160,8 @@ export function toolIcon(kind: ToolKind): ReactElement {
   switch (kind) {
     case 'read': return <ReadIcon />;
     case 'write':
-    case 'edit':
-    case 'delete': return <WriteIcon />;
+    case 'edit': return <WriteIcon />;
+    case 'delete': return <DeleteIcon />;
     case 'search': return <SearchIcon />;
     case 'exec': return <ExecIcon />;
     case 'image': return <ImageIcon />;

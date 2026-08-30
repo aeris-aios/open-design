@@ -5784,4 +5784,13 @@ export const zhTW: Dict = {
   'chat.attachments.preview': "預覽 {name}",
   'chat.record.canceled': "已取消",
   'chat.record.pending': "尚未開始",
+  'chat.pluginAction.failed': '外掛操作失敗。',
+  'chat.pluginAction.saved': '外掛已儲存。',
+  'chat.pluginAction.validationIssues': '外掛草稿已建立，但仍有驗證問題。',
+  'chat.pluginAction.contributionStarted': '已為 {path} 啟動 OpenDesign 貢獻任務。',
+  'chat.pluginAction.aria': '外掛後續操作',
+  'chat.pluginAction.title': '外掛已就緒',
+  'chat.pluginAction.subtitle': '將下一步傳送給 Agent，由它執行 od CLI。',
+  'chat.pluginAction.filesReady': '個人外掛中已有 {count} 個檔案就緒',
+  'chat.pluginAction.install': '加入個人外掛',
 };

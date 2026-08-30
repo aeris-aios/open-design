@@ -71,6 +71,7 @@ export * from './sse/chat.js';
 export * from './sse/collab.js';
 export * from './sse/proxy.js';
 export * from './prompts/system.js';
+export * from './prompts/chat-turn-host-protocol.js';
 export * from './prompts/od-next-device-frame.js';
 export * from './prompts/od-next-strategy.js';
 export * from './prompts/canonical-xml.js';

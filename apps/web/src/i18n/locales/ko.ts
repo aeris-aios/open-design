@@ -5329,4 +5329,13 @@ export const ko: Dict = {
   'chat.attachments.preview': "{name} 미리보기",
   'chat.record.canceled': "취소됨",
   'chat.record.pending': "시작 전",
+  'chat.pluginAction.failed': '플러그인 작업에 실패했습니다.',
+  'chat.pluginAction.saved': '플러그인을 저장했습니다.',
+  'chat.pluginAction.validationIssues': '검증 문제가 있는 상태로 플러그인 초안을 만들었습니다.',
+  'chat.pluginAction.contributionStarted': '{path}에 대한 OpenDesign 기여 작업을 시작했습니다.',
+  'chat.pluginAction.aria': '플러그인 다음 작업',
+  'chat.pluginAction.title': '플러그인 준비 완료',
+  'chat.pluginAction.subtitle': '에이전트가 od CLI를 실행할 수 있도록 다음 단계를 보냅니다.',
+  'chat.pluginAction.filesReady': '개인 플러그인에 추가할 파일 {count}개가 준비되었습니다',
+  'chat.pluginAction.install': '개인 플러그인에 추가',
 };
