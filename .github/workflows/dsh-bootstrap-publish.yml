@@ -51,6 +51,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Build tools-release
+        run: pnpm --filter @open-design/tools-release build
+
       # Canonical installer bytes. Version is derived from content: unchanged
       # installers reuse the published version; edits mint the next one.
       # `DSH_BOOTSTRAP_VERSION` remains an escape hatch that forces one version

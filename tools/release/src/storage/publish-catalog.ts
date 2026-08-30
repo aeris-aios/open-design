@@ -8,6 +8,8 @@ import {
   type CatalogLatestPointer,
 } from "../catalog/schema.ts";
 import { verifyCatalogChecksums } from "../catalog/pack.ts";
+import { commitGeneration } from "../catalog/git-meta.ts";
+import { resolveRepoRoot } from "../catalog/export-catalog.ts";
 import { contentType, githubInfo, optional, publicUrl, required, storageConfigFromEnv } from "./common.ts";
 import {
   getStorageObject,
@@ -23,6 +25,7 @@ export type PublishCatalogOptions = {
   sourceCommit: string;
   publicOrigin: string;
   storage: StorageConfig;
+  sourceCommitGeneration: number;
   github?: Record<string, unknown>;
 };
 
@@ -60,6 +63,11 @@ function parseLatestPointer(text: string): CatalogLatestPointer {
       "catalog latest pointer has no valid sourceCommittedAt; refusing an unsafe overwrite",
     );
   }
+  if (!Number.isSafeInteger(pointer.sourceCommitGeneration) || pointer.sourceCommitGeneration < 1) {
+    throw new Error(
+      "catalog latest pointer has no valid sourceCommitGeneration; refusing an unsafe overwrite",
+    );
+  }
   return pointer;
 }
 
@@ -68,8 +76,6 @@ async function updateLatestPointer(
   pointer: CatalogLatestPointer,
 ): Promise<boolean> {
   const body = Buffer.from(`${JSON.stringify(pointer, null, 2)}\n`, "utf8");
-  const candidateTime = Date.parse(pointer.sourceCommittedAt);
-
   for (let attempt = 1; attempt <= 5; attempt += 1) {
     const currentObject = await getStorageObject({ ...storage, objectKey: CATALOG_LATEST_KEY });
     const headers: Record<string, string> = {};
@@ -85,7 +91,7 @@ async function updateLatestPointer(
         }
         return false;
       }
-      if (Date.parse(current.sourceCommittedAt) >= candidateTime) {
+      if (current.sourceCommitGeneration >= pointer.sourceCommitGeneration) {
         return false;
       }
       if (!currentObject.etag) {
@@ -168,6 +174,9 @@ export async function publishCatalogSnapshot(options: PublishCatalogOptions): Pr
   const stagingDir = resolve(options.stagingDir);
   const sourceCommit = options.sourceCommit.toLowerCase();
   const prefix = catalogSnapshotPrefix(sourceCommit);
+  if (!Number.isSafeInteger(options.sourceCommitGeneration) || options.sourceCommitGeneration < 1) {
+    throw new Error(`sourceCommitGeneration must be a positive integer; got ${options.sourceCommitGeneration}`);
+  }
 
   verifyCatalogChecksums(stagingDir);
   const catalog = JSON.parse(readFileSync(join(stagingDir, "catalog.json"), "utf8")) as CatalogDocument;
@@ -231,6 +240,7 @@ export async function publishCatalogSnapshot(options: PublishCatalogOptions): Pr
     schemaVersion: 1,
     sourceCommit,
     sourceCommittedAt: catalog.generatedAt,
+    sourceCommitGeneration: options.sourceCommitGeneration,
     bundleUrl,
     sha256: digest,
     publishedAt: new Date().toISOString(),
@@ -260,11 +270,19 @@ export async function publishCatalogFromEnv(): Promise<void> {
   const sourceCommit = required("CATALOG_SOURCE_COMMIT");
   const publicOrigin = required("RELEASE_PUBLIC_ORIGIN");
   const storage = storageConfigFromEnv();
+  const generationOverride = optional("CATALOG_SOURCE_COMMIT_GENERATION");
+  const sourceCommitGeneration = generationOverride.length > 0
+    ? Number(generationOverride)
+    : commitGeneration(resolveRepoRoot(), sourceCommit);
+  if (!Number.isSafeInteger(sourceCommitGeneration) || sourceCommitGeneration < 1) {
+    throw new Error(`CATALOG_SOURCE_COMMIT_GENERATION must be a positive integer; got ${generationOverride}`);
+  }
   const result = await publishCatalogSnapshot({
     stagingDir,
     sourceCommit,
     publicOrigin,
     storage,
+    sourceCommitGeneration,
     github: githubInfo(),
   });
 

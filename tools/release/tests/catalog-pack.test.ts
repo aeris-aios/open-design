@@ -249,6 +249,7 @@ describe("playwright preview fail-closed", () => {
           launch: async () => ({
             newContext: async () => ({
               addInitScript: async () => undefined,
+              route: async () => undefined,
               newPage: async () => ({
                 clock: {
                   install: async () => undefined,
@@ -291,12 +292,22 @@ describe("playwright preview fail-closed", () => {
     }).png().toBuffer();
     const initScripts: string[] = [];
     const clockEvents: string[] = [];
+    const routePatterns: RegExp[] = [];
+    let abortCalls = 0;
     let screenshotOptions: Record<string, unknown> | undefined;
     const renderer = createPlaywrightPreviewRenderer({
       importPlaywright: async () => ({
         chromium: {
           launch: async () => ({
             newContext: async () => ({
+              route: async (pattern, handler) => {
+                routePatterns.push(pattern);
+                await handler({
+                  abort: async () => {
+                    abortCalls += 1;
+                  },
+                });
+              },
               addInitScript: async ({ content }) => {
                 initScripts.push(content);
               },
@@ -339,6 +350,10 @@ describe("playwright preview fail-closed", () => {
     expect((await sharp(result.bytes).metadata()).format).toBe("webp");
     expect(initScripts).toHaveLength(1);
     expect(initScripts[0]).toContain("Math.random =");
+    expect(routePatterns).toHaveLength(1);
+    expect(routePatterns[0]?.test("https://cdn.example.test/script.js")).toBe(true);
+    expect(abortCalls).toBe(1);
+    expect(result.warning).toMatch(/blocked remote resources/);
     expect(clockEvents).toEqual([
       "install:2026-01-01T00:00:00.000Z",
       "pause:2026-01-01T00:00:00.000Z",
@@ -356,6 +371,7 @@ describe("playwright preview fail-closed", () => {
           launch: async () => ({
             newContext: async () => ({
               addInitScript: async () => undefined,
+              route: async () => undefined,
               newPage: async () => ({
                 clock: {
                   install: async () => undefined,

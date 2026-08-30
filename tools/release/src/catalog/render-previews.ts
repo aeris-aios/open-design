@@ -208,6 +208,10 @@ export function createStubPreviewRenderer(): PreviewRenderer {
 type PlaywrightBrowser = {
   newContext(options: Record<string, unknown>): Promise<{
     addInitScript(script: { content: string }): Promise<void>;
+    route(
+      url: RegExp,
+      handler: (route: { abort(errorCode?: string): Promise<void> }) => Promise<void>,
+    ): Promise<void>;
     newPage(): Promise<{
       clock: {
         install(options: { time: string }): Promise<void>;
@@ -331,6 +335,13 @@ export function createPlaywrightPreviewRenderer(
         deviceScaleFactor: 2,
       });
       try {
+        let blockedRemoteResource = false;
+        // Commit-addressed previews may only consume file/data/blob resources.
+        // Mutable CDNs would make a rerun of the same commit produce new bytes.
+        await context.route(/^https?:\/\//iu, async (route) => {
+          blockedRemoteResource = true;
+          await route.abort("blockedbyclient");
+        });
         await context.addInitScript({ content: deterministicRandomInitScript(job.stableId) });
         const page = await context.newPage();
         await page.clock.install({ time: PREVIEW_CLOCK_START });
@@ -354,7 +365,13 @@ export function createPlaywrightPreviewRenderer(
           clip: { x: 0, y: 0, width: 1440, height: 900 },
         });
         const webp = await sharp(png).webp({ quality: 80 }).toBuffer();
-        return { bytes: webp, source: "render" };
+        return {
+          bytes: webp,
+          source: "render",
+          warning: blockedRemoteResource
+            ? `blocked remote resources for deterministic preview ${job.label}`
+            : undefined,
+        };
       } finally {
         await context.close();
       }

@@ -207,8 +207,10 @@ export type CatalogProvenance = {
 export type CatalogLatestPointer = {
   schemaVersion: typeof CATALOG_SCHEMA_VERSION;
   sourceCommit: string;
-  /** Committer timestamp used to prevent an older run replacing this pointer. */
+  /** Source timestamp retained for provenance and operator inspection. */
   sourceCommittedAt: string;
+  /** Monotonic git ancestry count used to order commits sharing a timestamp. */
+  sourceCommitGeneration: number;
   bundleUrl: string;
   sha256: string;
   publishedAt: string;

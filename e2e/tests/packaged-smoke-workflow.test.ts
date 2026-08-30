@@ -103,6 +103,7 @@ const landingPageDailyFeishuWorkflowPath = join(workspaceRoot, ".github", "workf
 const landingPageCiWorkflowPath = join(workspaceRoot, ".github", "workflows", "landing-page-ci.yml");
 const landingPageStagingWorkflowPath = join(workspaceRoot, ".github", "workflows", "landing-page-staging.yml");
 const landingPageProductionWorkflowPath = join(workspaceRoot, ".github", "workflows", "landing-page-production.yml");
+const dshBootstrapPublishWorkflowPath = join(workspaceRoot, ".github", "workflows", "dsh-bootstrap-publish.yml");
 const landingPageDailyFeishuScriptPath = join(workspaceRoot, ".github", "scripts", "landing-page-daily-feishu.ts");
 const releasePublishMetadataScriptPath = join(
   workspaceRoot,
@@ -1420,6 +1421,15 @@ process.stdin.on("end", () => {
         web_tests_required: true,
       });
     }
+  });
+
+  it("[P1] builds tools-release before the standalone DSH publisher invokes its bin", async () => {
+    const workflow = await readFile(dshBootstrapPublishWorkflowPath, "utf8");
+    const buildIndex = workflow.indexOf("pnpm --filter @open-design/tools-release build");
+    const publishIndex = workflow.indexOf("pnpm exec tools-release publish-dsh-bootstrap");
+
+    expect(buildIndex).toBeGreaterThanOrEqual(0);
+    expect(publishIndex).toBeGreaterThan(buildIndex);
   });
 
   it("[P2] closes packaged-leaf coverage without duplicating the broad E2E lane", async () => {
