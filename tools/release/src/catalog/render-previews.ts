@@ -201,7 +201,10 @@ export function createStubPreviewRenderer(): PreviewRenderer {
     if (job.reuseFrom && existsSync(job.reuseFrom)) {
       return { bytes: readFileSync(job.reuseFrom), source: "reuse" };
     }
-    return { bytes: Buffer.from(MINIMAL_WEBP), source: "fallback", warning: `stub preview for ${job.label}` };
+    // The stub simulates a successful render for tests that exercise packing
+    // rather than browser behavior. Runtime capture failures use `fallback`
+    // and are counted as failed jobs below.
+    return { bytes: Buffer.from(MINIMAL_WEBP), source: "render", warning: `stub preview for ${job.label}` };
   };
 }
 
@@ -432,6 +435,10 @@ export async function renderCatalogPreviews(options: RenderPreviewsOptions): Pro
         if (result.warning) warnings.push(result.warning);
         writeFileSync(target, result.bytes);
         if (result.bytes.length === 0) {
+          failed.push(job.label);
+          continue;
+        }
+        if (result.source === "fallback") {
           failed.push(job.label);
           continue;
         }

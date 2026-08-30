@@ -286,6 +286,33 @@ describe("playwright preview fail-closed", () => {
     await renderer.close?.();
   });
 
+  it("fails when every preview result is a fallback", async () => {
+    const stagingDir = await mkdtemp(join(tmpdir(), "od-catalog-all-fallback-"));
+    try {
+      const { catalog } = exportCatalog({
+        repoRoot: FIXTURE_ROOT,
+        sourceCommit: SOURCE_COMMIT,
+        generatedAt: "2026-08-29T00:00:00.000Z",
+      });
+
+      await expect(
+        renderCatalogPreviews({
+          catalog,
+          repoRoot: FIXTURE_ROOT,
+          stagingDir,
+          renderer: async (job) => ({
+            bytes: Buffer.from(MINIMAL_WEBP),
+            source: "fallback",
+            warning: `shared capture failure for ${job.label}`,
+          }),
+          requireComplete: true,
+        }),
+      ).rejects.toThrow(/systemic preview failure: all \d+ preview job\(s\) failed/);
+    } finally {
+      await rm(stagingDir, { force: true, recursive: true });
+    }
+  });
+
   it("freezes dynamic browser state and converts captures to actual WebP bytes", async () => {
     const png = await sharp({
       create: { width: 2, height: 2, channels: 4, background: "#ff0000" },
@@ -365,6 +392,9 @@ describe("playwright preview fail-closed", () => {
 
   it("closes the cached browser after the render loop", async () => {
     let closeCalls = 0;
+    const png = await sharp({
+      create: { width: 2, height: 2, channels: 4, background: "#000000" },
+    }).png().toBuffer();
     const renderer = createPlaywrightPreviewRenderer({
       importPlaywright: async () => ({
         chromium: {
@@ -382,7 +412,7 @@ describe("playwright preview fail-closed", () => {
                 goto: async () => undefined,
                 evaluate: async () => undefined,
                 waitForTimeout: async () => undefined,
-                screenshot: async () => Buffer.from("not-a-png"),
+                screenshot: async () => png,
               }),
               close: async () => undefined,
             }),
