@@ -95,6 +95,10 @@ type BrowserSignals = {
   httpErrorHashes: Set<string>;
 };
 
+export const ARTIFACT_PARITY_ACTIVE_PREVIEW_SELECTOR =
+  '[data-testid="artifact-preview-frame"]:not([data-od-handoff-pending]):visible, '
+  + '[data-testid="live-artifact-preview-frame"]:visible';
+
 const isDirectRun = process.argv[1] != null
   && fileURLToPath(import.meta.url) === path.resolve(process.argv[1]);
 
@@ -332,7 +336,7 @@ async function createProject(
 }
 
 async function activePreview(page: Page, timeoutMs: number): Promise<{ locator: Locator; frame: Frame }> {
-  const locator = page.locator('iframe[data-od-active="true"]:visible').last();
+  const locator = page.locator(ARTIFACT_PARITY_ACTIVE_PREVIEW_SELECTOR).last();
   await locator.waitFor({ state: 'visible', timeout: timeoutMs });
   const handle = await locator.elementHandle();
   const frame = await handle?.contentFrame();
@@ -340,7 +344,7 @@ async function activePreview(page: Page, timeoutMs: number): Promise<{ locator: 
   return { locator, frame };
 }
 
-async function settledActivePreview(
+export async function settledActivePreview(
   page: Page,
   timeoutMs: number,
 ): Promise<{ locator: Locator; frame: Frame }> {

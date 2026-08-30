@@ -1,6 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import type { Page } from '@playwright/test';
+import { describe, expect, it, vi } from 'vitest';
 import { PNG } from 'pngjs';
 
+import {
+  ARTIFACT_PARITY_ACTIVE_PREVIEW_SELECTOR,
+  settledActivePreview,
+} from '../scripts/artifact-render-parity.ts';
 import {
   classifyPixelParity,
   combinePixelParityClassifications,
@@ -82,6 +87,24 @@ describe('artifact render parity', () => {
     expect(entryStatus).toBe('exact');
     expect(roundTripStatus).toBe('different');
     expect(combinePixelParityClassifications(entryStatus, roundTripStatus)).toBe('different');
+  });
+
+  it('times out instead of capturing an iframe whose visual handoff never completes', async () => {
+    const waitFor = vi.fn().mockRejectedValue(
+      new Error('Timed out waiting for data-od-handoff-pending to clear'),
+    );
+    const locator = { waitFor };
+    const page = {
+      locator: vi.fn((selector: string) => {
+        expect(selector).toBe(ARTIFACT_PARITY_ACTIVE_PREVIEW_SELECTOR);
+        return { last: () => locator };
+      }),
+    } as unknown as Page;
+
+    await expect(settledActivePreview(page, 50)).rejects.toThrow(
+      'Timed out waiting for data-od-handoff-pending to clear',
+    );
+    expect(waitFor).toHaveBeenCalledWith({ state: 'visible', timeout: 250 });
   });
 });
 

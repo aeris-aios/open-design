@@ -2571,7 +2571,11 @@ function meaningfulDomFallbackTarget(el) {
     if (active()) setTimeout(postTargets, 0);
   }
   var runtimeStateRestoreSequence = 0;
-  function cancelScheduledRuntimeStateRestore(){
+  function cancelScheduledRuntimeStateRestore(ev){
+    // Artifact frameworks commonly dispatch synthetic input/change events
+    // while booting. Those are not user intent and must not strand the host's
+    // entry handoff by canceling its final restore acknowledgement.
+    if (!ev || ev.isTrusted !== true) return;
     runtimeStateRestoreSequence += 1;
   }
   // Retried restores help state survive an asynchronous artifact boot, but
@@ -2597,7 +2601,10 @@ function meaningfulDomFallbackTarget(el) {
     window.requestAnimationFrame(function(){
       restoreIfCurrent();
       window.setTimeout(function(){
-        if (restoreIfCurrent() && typeof onComplete === 'function') onComplete();
+        var restored = restoreIfCurrent();
+        // Completion is terminal even when a genuine user interaction canceled
+        // the replay. The host must always be able to retire its inert handoff.
+        if (typeof onComplete === 'function') onComplete(restored);
       }, 80);
     });
   }
@@ -2628,13 +2635,14 @@ function meaningfulDomFallbackTarget(el) {
         !data.generation ||
         data.generation !== currentGeneration
       ) return;
-      scheduleRuntimeStateRestore(data.state, function(){
+      scheduleRuntimeStateRestore(data.state, function(restored){
         if (typeof data.id !== 'string' || !data.id) return;
         try {
           window.parent.postMessage({
             type: 'od:preview-runtime-state-restored',
             id: data.id,
-            generation: currentGeneration
+            generation: currentGeneration,
+            outcome: restored ? 'restored' : 'canceled'
           }, '*');
         } catch (_) {}
       });

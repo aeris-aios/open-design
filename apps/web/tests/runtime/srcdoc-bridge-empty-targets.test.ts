@@ -469,8 +469,8 @@ describe('selection bridge — empty annotation surface (#890)', () => {
     expect(win.getComputedStyle(iframe).pointerEvents).toBe('auto');
   });
 
-  it('restores the active page state captured from the URL-loaded preview', async () => {
-    const { win } = setupBridgeDom(
+  it('completes runtime restoration after synthetic input events during the retry window', async () => {
+    const { win, parentPostMessage } = setupBridgeDom(
       '<main id="home" data-page="home"><h1>Home</h1></main>' +
         '<main id="profile" data-page="profile" hidden><h1>Profile</h1></main>',
       'inspect',
@@ -482,6 +482,7 @@ describe('selection bridge — empty annotation surface (#890)', () => {
       new win.MessageEvent('message', {
         data: {
           type: 'od:preview-runtime-state-restore',
+          id: 'restore-after-synthetic-events',
           generation: 'runtime-state-generation',
           state: {
             version: 1,
@@ -513,15 +514,23 @@ describe('selection bridge — empty annotation surface (#890)', () => {
 
     const home = win.document.getElementById('home')!;
     const profile = win.document.getElementById('profile')!;
-    home.dispatchEvent(new win.Event('pointerdown', { bubbles: true }));
     home.removeAttribute('hidden');
     home.setAttribute('data-edit-revision', 'fresh');
     profile.setAttribute('hidden', '');
+    home.dispatchEvent(new win.Event('input', { bubbles: true }));
+    home.dispatchEvent(new win.Event('change', { bubbles: true }));
 
     await new Promise<void>((resolve) => win.setTimeout(resolve, 120));
-    expect(home.hasAttribute('hidden')).toBe(false);
-    expect(home.getAttribute('data-edit-revision')).toBe('fresh');
-    expect(profile.hasAttribute('hidden')).toBe(true);
+    expect(home.hasAttribute('hidden')).toBe(true);
+    expect(home.getAttribute('data-edit-revision')).toBeNull();
+    expect(profile.hasAttribute('hidden')).toBe(false);
+    expect(postedMessages(parentPostMessage, 'od:preview-runtime-state-restored')).toEqual([
+      expect.objectContaining({
+        id: 'restore-after-synthetic-events',
+        generation: 'runtime-state-generation',
+        outcome: 'restored',
+      }),
+    ]);
   });
 
   it('restores the current page content before manual edit activates', async () => {
