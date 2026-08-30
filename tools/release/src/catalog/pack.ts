@@ -6,6 +6,7 @@ import {
   readdirSync,
   readFileSync,
   statSync,
+  utimesSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -22,8 +23,6 @@ export type PackCatalogOptions = {
   stagingDir: string;
   sourceCommit: string;
   exporterVersion: string;
-  workflow?: Record<string, unknown>;
-  generatedAt?: string;
 };
 
 export type PackCatalogResult = {
@@ -54,14 +53,6 @@ function walkFiles(root: string): string[] {
   return out.sort((a, b) => a.localeCompare(b));
 }
 
-function assertNoHtmlInSnapshot(stagingDir: string): void {
-  for (const file of walkFiles(stagingDir)) {
-    if (file.endsWith(".html") || file.endsWith(".htm")) {
-      throw new Error(`snapshot must not contain html files: ${relative(stagingDir, file)}`);
-    }
-  }
-}
-
 function writeChecksums(stagingDir: string, excludeNames: Set<string>): string {
   const lines: string[] = [];
   for (const file of walkFiles(stagingDir)) {
@@ -75,6 +66,25 @@ function writeChecksums(stagingDir: string, excludeNames: Set<string>): string {
   return path;
 }
 
+function normalizeSnapshotTimes(stagingDir: string, generatedAt: string): void {
+  const timestamp = new Date(generatedAt);
+  if (Number.isNaN(timestamp.getTime())) {
+    throw new Error(`catalog generatedAt is not a valid ISO timestamp: ${generatedAt}`);
+  }
+  const directories = new Set<string>([stagingDir]);
+  for (const file of walkFiles(stagingDir)) {
+    utimesSync(file, timestamp, timestamp);
+    let directory = resolve(file, "..");
+    while (directory.startsWith(`${stagingDir}/`) && directory !== stagingDir) {
+      directories.add(directory);
+      directory = resolve(directory, "..");
+    }
+  }
+  for (const directory of [...directories].sort((a, b) => b.length - a.length)) {
+    utimesSync(directory, timestamp, timestamp);
+  }
+}
+
 function createBundleTarZst(stagingDir: string, bundlePath: string, members: string[]): void {
   try {
     execFileSync("zstd", ["--version"], { stdio: "ignore" });
@@ -84,7 +94,23 @@ function createBundleTarZst(stagingDir: string, bundlePath: string, members: str
 
   const tarPath = join(stagingDir, ".bundle.tar");
   try {
-    execFileSync("tar", ["-cf", tarPath, ...members], { cwd: stagingDir, stdio: "pipe" });
+    execFileSync(
+      "tar",
+      [
+        "--format", "ustar",
+        "--uid", "0",
+        "--gid", "0",
+        "--uname", "root",
+        "--gname", "root",
+        "-cf", tarPath,
+        ...members,
+      ],
+      {
+        cwd: stagingDir,
+        env: { ...process.env, COPYFILE_DISABLE: "1" },
+        stdio: "pipe",
+      },
+    );
     execFileSync("zstd", ["-f", "-q", "-o", bundlePath, tarPath], { stdio: "pipe" });
   } finally {
     if (existsSync(tarPath)) {
@@ -116,7 +142,7 @@ export function verifyCatalogChecksums(stagingDir: string): void {
     const rel = m[2]!;
     if (rel === "checksums.sha256" || rel === "bundle.tar.zst" || rel === "provenance.json") {
       // Provenance is sealed after the bundle and is verified separately.
-      // Checksums cover catalog content + previews (+ optionally themselves not listed).
+      // Checksums cover catalog content, previews, and runnable entry assets.
       if (rel === "provenance.json" || rel === "bundle.tar.zst" || rel === "checksums.sha256") {
         continue;
       }
@@ -131,10 +157,10 @@ export function verifyCatalogChecksums(stagingDir: string): void {
 }
 
 /**
- * Finalize staging that already has catalog.json + previews/.
+ * Finalize staging that already has catalog.json, previews/, and optional entries/.
  *
- * - checksums.sha256 hashes catalog.json + previews/**
- * - bundle.tar.zst archives catalog.json + previews/** + checksums.sha256
+ * - checksums.sha256 hashes catalog.json + previews/** + entries/**
+ * - bundle.tar.zst archives catalog.json + previews/** + entries/** + checksums.sha256
  * - provenance.json records exporter identity + bundleSha256 (sibling, not inside bundle)
  */
 export function packCatalogSnapshot(options: PackCatalogOptions): PackCatalogResult {
@@ -153,14 +179,17 @@ export function packCatalogSnapshot(options: PackCatalogOptions): PackCatalogRes
     );
   }
 
-  assertNoHtmlInSnapshot(stagingDir);
-
   for (const record of catalog.records) {
-    const path = record.type !== "craft" && "preview" in record ? record.preview?.path : undefined;
+    const preview = record.type !== "craft" && "preview" in record ? record.preview : undefined;
+    const path = preview?.path;
     if (!path) continue;
     const full = join(stagingDir, path);
     if (!existsSync(full)) {
       throw new Error(`incomplete bundle: missing preview ${path} for ${record.type}:${record.id}`);
+    }
+    const entryPath = preview?.entryPath;
+    if (entryPath && !existsSync(join(stagingDir, entryPath))) {
+      throw new Error(`incomplete bundle: missing preview entry ${entryPath} for ${record.type}:${record.id}`);
     }
   }
 
@@ -174,29 +203,26 @@ export function packCatalogSnapshot(options: PackCatalogOptions): PackCatalogRes
     counts[record.type] = (counts[record.type] ?? 0) + 1;
   }
 
-  // Content checksums only (catalog + previews).
+  // Content checksums cover catalog, previews, and runnable entry assets.
   const checksumsPath = writeChecksums(
     stagingDir,
     new Set(["checksums.sha256", "bundle.tar.zst", "provenance.json", ".bundle.tar"]),
   );
 
+  normalizeSnapshotTimes(stagingDir, catalog.generatedAt);
+
   const bundlePath = join(stagingDir, "bundle.tar.zst");
-  const contentMembers = readdirSync(stagingDir).filter(
-    (name) =>
-      name !== "bundle.tar.zst" &&
-      name !== ".bundle.tar" &&
-      name !== "provenance.json" &&
-      name !== ".DS_Store",
-  );
+  const contentMembers = walkFiles(stagingDir)
+    .map((file) => relative(stagingDir, file).split("\\").join("/"))
+    .filter((name) => name !== "bundle.tar.zst" && name !== ".bundle.tar" && name !== "provenance.json");
   createBundleTarZst(stagingDir, bundlePath, contentMembers);
   const bundleSha256 = sha256(readFileSync(bundlePath));
 
   const provenance: CatalogProvenance = {
     schemaVersion: CATALOG_SCHEMA_VERSION,
     sourceCommit: options.sourceCommit.toLowerCase(),
-    generatedAt: options.generatedAt ?? new Date().toISOString(),
+    generatedAt: catalog.generatedAt,
     exporterVersion: options.exporterVersion,
-    workflow: options.workflow,
     bundleSha256,
     recordCounts: counts,
   };

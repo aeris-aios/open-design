@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 const testDir = dirname(fileURLToPath(import.meta.url));
-const workspaceRoot = resolve(testDir, "..", "..", "..");
+const workspaceRoot = resolve(testDir, "..", "..");
 
 const NAMES = ["install-dsh.sh", "install-dsh.ps1", "install-dsh.cmd"] as const;
 

@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { githubInfo, optional, required } from "../storage/common.ts";
+import { optional, required } from "../storage/common.ts";
 import { packCatalogSnapshot } from "./pack.ts";
 
 function packageVersion(): string {
@@ -44,7 +44,6 @@ export async function packCatalogFromEnv(): Promise<void> {
     stagingDir,
     sourceCommit,
     exporterVersion: exporterVersion(),
-    workflow: githubInfo(),
   });
   console.log(`packed catalog bundle ${result.bundlePath}`);
   console.log(`bundleSha256=${result.bundleSha256}`);

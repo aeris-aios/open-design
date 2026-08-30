@@ -80,12 +80,6 @@ jobs:
         env:
           CATALOG_SOURCE_COMMIT: ${{ steps.meta.outputs.source_commit }}
           CATALOG_STAGING_DIR: .tmp/catalog-snapshot
-          RELEASE_BRANCH: ${{ github.ref_name }}
-          RELEASE_COMMIT: ${{ steps.meta.outputs.source_commit }}
-          RELEASE_REPOSITORY: ${{ github.repository }}
-          RELEASE_RUN_ID: ${{ github.run_id }}
-          RELEASE_RUN_ATTEMPT: ${{ github.run_attempt }}
-          RELEASE_WORKFLOW: ${{ github.workflow }}
         run: pnpm exec tools-release pack-catalog
 
       - name: Upload snapshot artifact

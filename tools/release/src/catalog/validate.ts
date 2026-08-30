@@ -48,6 +48,14 @@ function validateRecord(record: CatalogRecord, index: number, errors: string[]):
       errors.push(`${prefix}.preview.path must not escape or reference html`);
     }
   }
+  if (preview?.entryPath != null) {
+    if (typeof preview.entryPath !== "string" || !preview.entryPath.startsWith("entries/")) {
+      errors.push(`${prefix}.preview.entryPath must start with entries/`);
+    }
+    if (preview.entryPath.includes("..") || !preview.entryPath.endsWith(".html")) {
+      errors.push(`${prefix}.preview.entryPath must be a safe html entry`);
+    }
+  }
 
   if (record.type === "skill") {
     if (record.kind !== "instruction" && record.kind !== "template") {
@@ -129,6 +137,8 @@ export function validateCatalog(catalog: unknown): ValidateCatalogResult {
   }
   if (!isNonEmptyString(doc.generatedAt)) {
     errors.push("generatedAt must be a non-empty ISO timestamp string");
+  } else if (Number.isNaN(Date.parse(doc.generatedAt))) {
+    errors.push("generatedAt must be a valid ISO timestamp string");
   }
   if (!Array.isArray(doc.records)) {
     errors.push("records must be an array");

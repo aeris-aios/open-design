@@ -14,6 +14,7 @@ import type { StorageConfig } from "../src/storage/s3-upload.ts";
 
 const FIXTURE_ROOT = resolve(import.meta.dirname, "fixtures/catalog");
 const SOURCE_COMMIT = "cccccccccccccccccccccccccccccccccccccccc";
+const OLDER_COMMIT = "dddddddddddddddddddddddddddddddddddddddd";
 const BUCKET = "open-design-release-fixture";
 
 type StoredObject = { body: Buffer; etag: string };
@@ -62,6 +63,14 @@ async function startFixtureServer(): Promise<{
       if (request.method === "PUT") {
         const current = objects.get(key);
         if (request.headers["if-none-match"] === "*" && current != null) {
+          response.statusCode = 412;
+          response.end("precondition failed");
+          return;
+        }
+        if (
+          typeof request.headers["if-match"] === "string" &&
+          current?.etag !== request.headers["if-match"]
+        ) {
           response.statusCode = 412;
           response.end("precondition failed");
           return;
@@ -128,12 +137,15 @@ async function startFixtureServer(): Promise<{
   };
 }
 
-async function stagePackedCatalog(sourceCommit: string): Promise<string> {
+async function stagePackedCatalog(
+  sourceCommit: string,
+  generatedAt = "2026-08-29T00:00:00.000Z",
+): Promise<string> {
   const stagingDir = await mkdtemp(join(tmpdir(), "od-catalog-publish-"));
   const { catalog } = exportCatalog({
     repoRoot: FIXTURE_ROOT,
     sourceCommit,
-    generatedAt: "2026-08-29T00:00:00.000Z",
+    generatedAt,
   });
   writeCatalogJson(stagingDir, catalog);
   await renderCatalogPreviews({
@@ -166,6 +178,7 @@ describe("catalog publish", () => {
         `https://releases.example.test/catalog/v1/${SOURCE_COMMIT}/bundle.tar.zst`,
       );
       expect(result.latestUrl).toBe("https://releases.example.test/catalog/v1/latest.json");
+      expect(result.latestUpdated).toBe(true);
 
       const keys = server.listObjectKeys();
       expect(keys).toContain(`catalog/v1/${SOURCE_COMMIT}/catalog.json`);
@@ -173,14 +186,18 @@ describe("catalog publish", () => {
       expect(keys).toContain(`catalog/v1/${SOURCE_COMMIT}/provenance.json`);
       expect(keys).toContain(`catalog/v1/${SOURCE_COMMIT}/checksums.sha256`);
       expect(keys).toContain("catalog/v1/latest.json");
-      expect(keys.some((k) => k.includes(".html"))).toBe(false);
+      expect(keys).toContain(
+        `catalog/v1/${SOURCE_COMMIT}/entries/plugins/example-demo-plugin/example.html`,
+      );
 
       const latest = JSON.parse(server.getObject("catalog/v1/latest.json")?.toString("utf8") ?? "{}") as {
         sourceCommit: string;
+        sourceCommittedAt: string;
         sha256: string;
         bundleUrl: string;
       };
       expect(latest.sourceCommit).toBe(SOURCE_COMMIT);
+      expect(latest.sourceCommittedAt).toBe("2026-08-29T00:00:00.000Z");
       expect(latest.sha256).toBe(result.bundleSha256);
       expect(latest.bundleUrl).toBe(result.bundleUrl);
 
@@ -192,9 +209,41 @@ describe("catalog publish", () => {
         storage: server.storage,
       });
       expect(again.reused.length).toBeGreaterThan(0);
+      expect(again.latestUpdated).toBe(false);
     } finally {
       await server.close();
       await rm(stagingDir, { force: true, recursive: true });
+    }
+  });
+
+  it("does not let an older workflow rerun replace the latest pointer", async () => {
+    const server = await startFixtureServer();
+    const newerDir = await stagePackedCatalog(SOURCE_COMMIT, "2026-08-29T00:00:00.000Z");
+    const olderDir = await stagePackedCatalog(OLDER_COMMIT, "2026-08-28T00:00:00.000Z");
+    try {
+      await publishCatalogSnapshot({
+        stagingDir: newerDir,
+        sourceCommit: SOURCE_COMMIT,
+        publicOrigin: "https://releases.example.test",
+        storage: server.storage,
+      });
+      const latestBefore = server.getObject("catalog/v1/latest.json")?.toString("utf8");
+
+      const older = await publishCatalogSnapshot({
+        stagingDir: olderDir,
+        sourceCommit: OLDER_COMMIT,
+        publicOrigin: "https://releases.example.test",
+        storage: server.storage,
+      });
+
+      expect(older.latestUpdated).toBe(false);
+      expect(server.getObject("catalog/v1/latest.json")?.toString("utf8")).toBe(latestBefore);
+    } finally {
+      await server.close();
+      await Promise.all([
+        rm(newerDir, { force: true, recursive: true }),
+        rm(olderDir, { force: true, recursive: true }),
+      ]);
     }
   });
 

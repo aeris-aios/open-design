@@ -28,6 +28,7 @@ import {
   type CatalogSystemRecord,
   type CatalogTemplateRecord,
 } from "./schema.ts";
+import { loadCatalogSystemTokens } from "./system-tokens.ts";
 
 const REPO_TREE = "https://github.com/nexu-io/open-design/tree/main";
 const REPO_BLOB = "https://github.com/nexu-io/open-design/blob/main";
@@ -45,7 +46,8 @@ const OFFICIAL_BUCKETS = [
 export type ExportCatalogOptions = {
   repoRoot: string;
   sourceCommit: string;
-  generatedAt?: string;
+  /** Deterministic source-commit timestamp. */
+  generatedAt: string;
 };
 
 export type ExportCatalogResult = {
@@ -81,6 +83,18 @@ function readText(path: string): string {
 function pluginDetailSlug(id: string): string {
   const parts = id.split("/").filter(Boolean);
   return parts[parts.length - 1] ?? id;
+}
+
+function snapshotEntryPath(
+  bucket: "skills" | "templates" | "plugins",
+  stableId: string,
+  entry: string,
+): string {
+  const clean = entry.replace(/^\.\//, "").replaceAll("\\", "/");
+  if (clean.startsWith("/") || clean.split("/").includes("..")) {
+    throw new Error(`preview entry must stay inside its source root: ${entry}`);
+  }
+  return `entries/${bucket}/${stableId}/${clean}`;
 }
 
 function loadBakedPreviews(repoRoot: string): Map<string, { video: string; poster: string; holdMs?: number }> {
@@ -140,7 +154,10 @@ function exportSkills(repoRoot: string): CatalogSkillRecord[] {
       featured: asNumber(od.featured),
       upstream: asString(od.upstream),
       examplePrompt: asString(od.example_prompt) ?? asString(od.examplePrompt),
-      preview: { path: previewRelativePath("skills", folder) },
+      preview: {
+        path: previewRelativePath("skills", folder),
+        entryPath: hasExample ? snapshotEntryPath("skills", folder, "example.html") : undefined,
+      },
       i18n: asI18nPayload(data.i18n),
     });
   }
@@ -179,6 +196,7 @@ function exportSystems(repoRoot: string): CatalogSystemRecord[] {
       tagline,
       atmosphere,
       palette,
+      tokens: loadCatalogSystemTokens(join(root, folder, "design-tokens.json")),
       bodiesI18n: Object.keys(bodiesI18n).length > 0 ? bodiesI18n : undefined,
       i18n: asI18nPayload(data.i18n),
     });
@@ -239,7 +257,12 @@ function exportDesignTemplates(repoRoot: string): CatalogTemplateRecord[] {
       scenario: asString(od.scenario),
       featured: asNumber(od.featured),
       detailHref: `/templates/${folder}/`,
-      preview: { path: previewRelativePath("templates", folder) },
+      preview: {
+        path: previewRelativePath("templates", folder),
+        entryPath: existsSync(join(root, folder, "example.html"))
+          ? snapshotEntryPath("templates", folder, "example.html")
+          : undefined,
+      },
       i18n: asI18nPayload(data.i18n),
     });
   }
@@ -270,7 +293,12 @@ function exportLiveArtifacts(repoRoot: string): CatalogTemplateRecord[] {
       mode: "template",
       scenario: "live-artifacts",
       detailHref: `/templates/${liveId}/`,
-      preview: { path: previewRelativePath("templates", liveId) },
+      preview: {
+        path: previewRelativePath("templates", liveId),
+        entryPath: existsSync(join(root, folder, "index.html"))
+          ? snapshotEntryPath("templates", liveId, "index.html")
+          : undefined,
+      },
       i18n: asI18nPayload(data.i18n),
     });
   }
@@ -283,6 +311,7 @@ function loadPlugin(
     slug: string;
     bucket: string;
     sourceUrl: string;
+    sourceDir: string;
     routeId?: string;
     baked: Map<string, { video: string; poster: string; holdMs?: number }>;
   },
@@ -296,7 +325,6 @@ function loadPlugin(
   }
   const od = (raw.od ?? {}) as Record<string, unknown>;
   const kind = asString(od.kind);
-  if (kind === "atom") return null;
 
   const manifestId = asString(raw.name) ?? opts.slug;
   const slugBasis = opts.routeId ?? manifestId;
@@ -309,6 +337,10 @@ function loadPlugin(
   const previewVideo = authoredVideo ?? baked?.video;
   const previewPoster = authoredPoster ?? baked?.poster;
   const previewType = previewVideo ? "video" : authoredType;
+  const authoredEntry = authoredType === "html" ? asString(preview.entry) : undefined;
+  const entryPath = authoredEntry && existsSync(join(opts.sourceDir, authoredEntry))
+    ? snapshotEntryPath("plugins", manifestId, authoredEntry)
+    : undefined;
 
   return {
     id: manifestId,
@@ -328,6 +360,7 @@ function loadPlugin(
     platform: asString(od.platform),
     surface: asString(od.surface),
     kind,
+    discoverable: kind === "atom" ? false : undefined,
     detailSlug,
     detailHref: `/plugins/${detailSlug}/`,
     preview: {
@@ -336,6 +369,7 @@ function loadPlugin(
       remoteVideo: previewVideo,
       holdMs: baked?.holdMs,
       previewType,
+      entryPath,
     },
     titleI18n: asLocaleMap(raw.title_i18n),
     descriptionI18n: asLocaleMap(raw.description_i18n),
@@ -354,6 +388,7 @@ function exportPlugins(repoRoot: string): CatalogPluginRecord[] {
         slug: name,
         bucket,
         sourceUrl: `${REPO_TREE}/plugins/_official/${bucket}/${name}`,
+        sourceDir: join(dir, name),
         baked,
       });
       if (record) out.push(record);
@@ -368,6 +403,7 @@ function exportPlugins(repoRoot: string): CatalogPluginRecord[] {
       bucket: "community",
       routeId: `community/${name}`,
       sourceUrl: `${REPO_TREE}/plugins/community/${name}`,
+      sourceDir: join(communityRoot, name),
       baked,
     });
     if (record) out.push(record);
@@ -378,7 +414,7 @@ function exportPlugins(repoRoot: string): CatalogPluginRecord[] {
 
 /**
  * Walk product content roots and emit a schemaVersion=1 catalog document.
- * Does not copy example.html or other executable upstream assets.
+ * Entry asset copying happens in the render/staging phase.
  */
 export function exportCatalog(options: ExportCatalogOptions): ExportCatalogResult {
   const { repoRoot, sourceCommit } = options;
@@ -398,7 +434,7 @@ export function exportCatalog(options: ExportCatalogOptions): ExportCatalogResul
   const catalog: CatalogDocument = {
     schemaVersion: CATALOG_SCHEMA_VERSION,
     sourceCommit: sourceCommit.toLowerCase(),
-    generatedAt: options.generatedAt ?? new Date().toISOString(),
+    generatedAt: options.generatedAt,
     records,
   };
 

@@ -33,7 +33,7 @@ describe("catalog export", () => {
     expect(byType.system).toEqual(["brand-x"]);
     expect(byType.craft).toEqual(["spacing-rules"]);
     expect(byType.template).toEqual(["deck-one"]);
-    expect(byType.plugin).toEqual(["example-demo-plugin"]);
+    expect(byType.plugin).toEqual(["demo-atom", "example-demo-plugin"]);
 
     const alpha = catalog.records.find((r) => r.id === "alpha");
     expect(alpha).toMatchObject({
@@ -55,6 +55,11 @@ describe("catalog export", () => {
     });
     if (system?.type === "system") {
       expect(system.bodiesI18n?.["zh-CN"]).toContain("中文正文");
+      expect(system.tokens).toMatchObject({
+        total: 4,
+        grade: "excellent",
+        theme: { bg: "#1a1817", accent: "#d44b1e" },
+      });
     }
 
     const plugin = catalog.records.find((r) => r.id === "example-demo-plugin");
@@ -62,8 +67,14 @@ describe("catalog export", () => {
     if (plugin?.type === "plugin") {
       // Authored poster wins over baked video poster.
       expect(plugin.preview?.remotePoster).toBe("https://cdn.example.test/demo-poster.webp");
+      expect(plugin.preview?.entryPath).toBe(
+        "entries/plugins/example-demo-plugin/example.html",
+      );
       expect(plugin.titleI18n?.["zh-CN"]).toBe("演示插件");
     }
+
+    const atom = catalog.records.find((record) => record.id === "demo-atom");
+    expect(atom).toMatchObject({ type: "plugin", kind: "atom", discoverable: false });
 
     // Snapshot records must not embed raw example.html contents as files —
     // only markdown bodies. The export walk never copies html into catalog.json.
@@ -81,7 +92,11 @@ describe("catalog export", () => {
         "utf8",
       );
       expect(() =>
-        exportCatalog({ repoRoot: root, sourceCommit: SOURCE_COMMIT }),
+        exportCatalog({
+          repoRoot: root,
+          sourceCommit: SOURCE_COMMIT,
+          generatedAt: "2026-08-29T00:00:00.000Z",
+        }),
       ).toThrow(/invalid YAML frontmatter/);
     } finally {
       await rm(root, { force: true, recursive: true });
@@ -94,6 +109,7 @@ describe("catalog validate", () => {
     const { catalog } = exportCatalog({
       repoRoot: FIXTURE_ROOT,
       sourceCommit: SOURCE_COMMIT,
+      generatedAt: "2026-08-29T00:00:00.000Z",
     });
     catalog.records.push({ ...catalog.records[0]! });
     const result = validateCatalog(catalog);

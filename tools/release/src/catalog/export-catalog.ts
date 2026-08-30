@@ -5,6 +5,7 @@ import { execFileSync } from "node:child_process";
 
 import { optional, required, writeJson } from "../storage/common.ts";
 import { exportCatalog } from "./export.ts";
+import { committerIsoTimestamp } from "./git-meta.ts";
 import { assertValidCatalog } from "./validate.ts";
 
 function resolveRepoRoot(): string {
@@ -49,10 +50,11 @@ function exporterVersion(): string {
 export async function exportCatalogFromEnv(): Promise<void> {
   const repoRoot = resolveRepoRoot();
   const sourceCommit = resolveSourceCommit();
+  const generatedAt = optional("CATALOG_SOURCE_COMMITTED_AT") || committerIsoTimestamp(repoRoot, sourceCommit);
   const stagingDir = resolve(required("CATALOG_STAGING_DIR"));
   mkdirSync(stagingDir, { recursive: true });
 
-  const { catalog, warnings } = exportCatalog({ repoRoot, sourceCommit });
+  const { catalog, warnings } = exportCatalog({ repoRoot, sourceCommit, generatedAt });
   assertValidCatalog(catalog);
   writeJson(join(stagingDir, "catalog.json"), catalog);
 

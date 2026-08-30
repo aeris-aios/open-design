@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
+import sharp from "sharp";
 
 import { exportCatalog } from "../src/catalog/export.ts";
 import { packCatalogSnapshot, verifyCatalogChecksums, writeCatalogJson } from "../src/catalog/pack.ts";
@@ -38,14 +39,13 @@ async function stageFixtureCatalog(): Promise<string> {
 }
 
 describe("catalog pack", () => {
-  it("writes checksums, provenance, and bundle without html example files", async () => {
+  it("writes checksums, provenance, previews, and runnable entry assets", async () => {
     const stagingDir = await stageFixtureCatalog();
     try {
       const result = packCatalogSnapshot({
         stagingDir,
         sourceCommit: SOURCE_COMMIT,
         exporterVersion: "tools-release@test",
-        workflow: { runId: 1 },
       });
 
       expect(existsSync(join(stagingDir, "checksums.sha256"))).toBe(true);
@@ -65,20 +65,10 @@ describe("catalog pack", () => {
       const checksums = await readFile(join(stagingDir, "checksums.sha256"), "utf8");
       expect(checksums).toContain("catalog.json");
       expect(checksums).toContain("previews/skills/alpha.webp");
-      expect(checksums).not.toMatch(/\.html/);
-
-      // No html files anywhere in the staging snapshot.
-      const { readdirSync, statSync } = await import("node:fs");
-      const walk = (dir: string): string[] => {
-        const out: string[] = [];
-        for (const name of readdirSync(dir)) {
-          const full = join(dir, name);
-          if (statSync(full).isDirectory()) out.push(...walk(full));
-          else out.push(full);
-        }
-        return out;
-      };
-      expect(walk(stagingDir).filter((f) => f.endsWith(".html"))).toEqual([]);
+      expect(checksums).toContain("entries/skills/alpha/example.html");
+      expect(checksums).toContain("entries/templates/deck-one/example.html");
+      expect(checksums).toContain("entries/plugins/example-demo-plugin/example.html");
+      expect(checksums).toContain("entries/plugins/example-demo-plugin/assets/style.css");
 
       // Preview bytes are the stub webp.
       expect(await readFile(join(stagingDir, "previews/skills/alpha.webp"))).toEqual(MINIMAL_WEBP);
@@ -113,6 +103,7 @@ describe("catalog pack", () => {
       const { catalog } = exportCatalog({
         repoRoot: FIXTURE_ROOT,
         sourceCommit: SOURCE_COMMIT,
+        generatedAt: "2026-08-29T00:00:00.000Z",
       });
       writeCatalogJson(stagingDir, catalog);
       // Intentionally skip render — pack must fail closed.
@@ -150,6 +141,36 @@ describe("catalog pack helpers", () => {
       await rm(stagingDir, { force: true, recursive: true });
     }
   });
+
+  it("produces identical immutable bytes for independent packs of one commit", async () => {
+    const first = await stageFixtureCatalog();
+    const second = await stageFixtureCatalog();
+    try {
+      const firstResult = packCatalogSnapshot({
+        stagingDir: first,
+        sourceCommit: SOURCE_COMMIT,
+        exporterVersion: "tools-release@test",
+      });
+      const secondResult = packCatalogSnapshot({
+        stagingDir: second,
+        sourceCommit: SOURCE_COMMIT,
+        exporterVersion: "tools-release@test",
+      });
+
+      expect(await readFile(join(first, "catalog.json"))).toEqual(
+        await readFile(join(second, "catalog.json")),
+      );
+      expect(await readFile(join(first, "provenance.json"))).toEqual(
+        await readFile(join(second, "provenance.json")),
+      );
+      expect(firstResult.bundleSha256).toBe(secondResult.bundleSha256);
+    } finally {
+      await Promise.all([
+        rm(first, { force: true, recursive: true }),
+        rm(second, { force: true, recursive: true }),
+      ]);
+    }
+  });
 });
 
 describe("playwright preview fail-closed", () => {
@@ -168,6 +189,7 @@ describe("playwright preview fail-closed", () => {
         label: "skill:alpha",
       }),
     ).rejects.toThrow(SystemicPreviewError);
+    await renderer.close?.();
   });
 
   it("throws when chromium launch fails", async () => {
@@ -189,6 +211,7 @@ describe("playwright preview fail-closed", () => {
         label: "skill:alpha",
       }),
     ).rejects.toThrow(/systemic preview failure: playwright browser launch failed/);
+    await renderer.close?.();
   });
 
   it("does not count launch failure as a successful stub preview", async () => {
@@ -252,5 +275,83 @@ describe("playwright preview fail-closed", () => {
     expect(result.source).toBe("fallback");
     expect(result.warning).toMatch(/bad html/);
     expect(result.bytes).toEqual(MINIMAL_WEBP);
+    await renderer.close?.();
+  });
+
+  it("converts browser PNG captures to actual WebP bytes", async () => {
+    const png = await sharp({
+      create: { width: 2, height: 2, channels: 4, background: "#ff0000" },
+    }).png().toBuffer();
+    const renderer = createPlaywrightPreviewRenderer({
+      importPlaywright: async () => ({
+        chromium: {
+          launch: async () => ({
+            newContext: async () => ({
+              newPage: async () => ({
+                setContent: async () => undefined,
+                goto: async () => undefined,
+                evaluate: async () => undefined,
+                waitForTimeout: async () => undefined,
+                screenshot: async () => png,
+              }),
+              close: async () => undefined,
+            }),
+            close: async () => undefined,
+          }),
+        },
+      }),
+    });
+
+    const result = await renderer({
+      bucket: "skills",
+      stableId: "alpha",
+      relativePath: "previews/skills/alpha.webp",
+      htmlContent: "<html></html>",
+      label: "skill:alpha",
+    });
+    expect((await sharp(result.bytes).metadata()).format).toBe("webp");
+    await renderer.close?.();
+  });
+
+  it("closes the cached browser after the render loop", async () => {
+    let closeCalls = 0;
+    const renderer = createPlaywrightPreviewRenderer({
+      importPlaywright: async () => ({
+        chromium: {
+          launch: async () => ({
+            newContext: async () => ({
+              newPage: async () => ({
+                setContent: async () => undefined,
+                goto: async () => undefined,
+                evaluate: async () => undefined,
+                waitForTimeout: async () => undefined,
+                screenshot: async () => Buffer.from("not-a-png"),
+              }),
+              close: async () => undefined,
+            }),
+            close: async () => {
+              closeCalls += 1;
+            },
+          }),
+        },
+      }),
+    });
+    const stagingDir = await mkdtemp(join(tmpdir(), "od-catalog-close-browser-"));
+    try {
+      const { catalog } = exportCatalog({
+        repoRoot: FIXTURE_ROOT,
+        sourceCommit: SOURCE_COMMIT,
+        generatedAt: "2026-08-29T00:00:00.000Z",
+      });
+      await renderCatalogPreviews({
+        catalog,
+        repoRoot: FIXTURE_ROOT,
+        stagingDir,
+        renderer,
+      });
+      expect(closeCalls).toBe(1);
+    } finally {
+      await rm(stagingDir, { force: true, recursive: true });
+    }
   });
 });

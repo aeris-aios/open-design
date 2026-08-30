@@ -1,12 +1,16 @@
 import { appendFileSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 
-import { catalogSnapshotPrefix, CATALOG_LATEST_KEY, type CatalogLatestPointer } from "../catalog/schema.ts";
+import {
+  catalogSnapshotPrefix,
+  CATALOG_LATEST_KEY,
+  type CatalogDocument,
+  type CatalogLatestPointer,
+} from "../catalog/schema.ts";
 import { verifyCatalogChecksums } from "../catalog/pack.ts";
 import { contentType, githubInfo, optional, publicUrl, required, storageConfigFromEnv } from "./common.ts";
 import {
   getStorageObject,
-  putStorageObject,
   putStorageObjectWithStatus,
   type StorageConfig,
 } from "./s3-upload.ts";
@@ -29,7 +33,86 @@ export type PublishCatalogResult = {
   bundleSha256: string;
   reused: string[];
   uploaded: string[];
+  latestUpdated: boolean;
 };
+
+function parseLatestPointer(text: string): CatalogLatestPointer {
+  let value: unknown;
+  try {
+    value = JSON.parse(text.replace(/^\uFEFF/u, ""));
+  } catch (error) {
+    throw new Error(
+      `catalog latest pointer is invalid JSON: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  if (value == null || typeof value !== "object") {
+    throw new Error("catalog latest pointer must be an object");
+  }
+  const pointer = value as CatalogLatestPointer;
+  if (!/^[0-9a-f]{40}$/i.test(pointer.sourceCommit ?? "")) {
+    throw new Error("catalog latest pointer has an invalid sourceCommit");
+  }
+  if (
+    typeof pointer.sourceCommittedAt !== "string" ||
+    Number.isNaN(Date.parse(pointer.sourceCommittedAt))
+  ) {
+    throw new Error(
+      "catalog latest pointer has no valid sourceCommittedAt; refusing an unsafe overwrite",
+    );
+  }
+  return pointer;
+}
+
+async function updateLatestPointer(
+  storage: StorageConfig,
+  pointer: CatalogLatestPointer,
+): Promise<boolean> {
+  const body = Buffer.from(`${JSON.stringify(pointer, null, 2)}\n`, "utf8");
+  const candidateTime = Date.parse(pointer.sourceCommittedAt);
+
+  for (let attempt = 1; attempt <= 5; attempt += 1) {
+    const currentObject = await getStorageObject({ ...storage, objectKey: CATALOG_LATEST_KEY });
+    const headers: Record<string, string> = {};
+    if (currentObject == null) {
+      headers["if-none-match"] = "*";
+    } else {
+      const current = parseLatestPointer(currentObject.text);
+      if (current.sourceCommit === pointer.sourceCommit) {
+        if (current.sha256 !== pointer.sha256 || current.bundleUrl !== pointer.bundleUrl) {
+          throw new Error(
+            `catalog latest pointer for ${pointer.sourceCommit} disagrees with immutable snapshot`,
+          );
+        }
+        return false;
+      }
+      if (Date.parse(current.sourceCommittedAt) >= candidateTime) {
+        return false;
+      }
+      if (!currentObject.etag) {
+        throw new Error("catalog latest pointer GET did not return an ETag for CAS update");
+      }
+      headers["if-match"] = currentObject.etag;
+    }
+
+    const result = await putStorageObjectWithStatus({
+      ...storage,
+      body,
+      cacheControl: POINTER_CACHE_CONTROL,
+      contentType: contentType("latest.json"),
+      headers,
+      objectKey: CATALOG_LATEST_KEY,
+    });
+    if (result.ok) return true;
+    if (result.status !== 412) {
+      throw new Error(
+        `catalog latest pointer PUT failed with HTTP ${result.status}${result.body.length > 0 ? `: ${result.body}` : ""}`,
+      );
+    }
+    console.log(`catalog latest pointer CAS conflict on attempt ${attempt}; retrying`);
+  }
+
+  throw new Error("failed to update catalog latest pointer after 5 CAS attempts");
+}
 
 function walkFiles(root: string): string[] {
   const out: string[] = [];
@@ -87,6 +170,15 @@ export async function publishCatalogSnapshot(options: PublishCatalogOptions): Pr
   const prefix = catalogSnapshotPrefix(sourceCommit);
 
   verifyCatalogChecksums(stagingDir);
+  const catalog = JSON.parse(readFileSync(join(stagingDir, "catalog.json"), "utf8")) as CatalogDocument;
+  if (catalog.sourceCommit.toLowerCase() !== sourceCommit) {
+    throw new Error(
+      `catalog sourceCommit ${catalog.sourceCommit} does not match publish sourceCommit ${sourceCommit}`,
+    );
+  }
+  if (Number.isNaN(Date.parse(catalog.generatedAt))) {
+    throw new Error(`catalog generatedAt is not a valid source commit timestamp: ${catalog.generatedAt}`);
+  }
 
   const requiredNames = ["catalog.json", "provenance.json", "checksums.sha256", "bundle.tar.zst"];
   for (const name of requiredNames) {
@@ -138,19 +230,14 @@ export async function publishCatalogSnapshot(options: PublishCatalogOptions): Pr
   const pointer: CatalogLatestPointer = {
     schemaVersion: 1,
     sourceCommit,
+    sourceCommittedAt: catalog.generatedAt,
     bundleUrl,
     sha256: digest,
     publishedAt: new Date().toISOString(),
     github: options.github ?? githubInfo(),
   };
 
-  await putStorageObject({
-    ...options.storage,
-    body: Buffer.from(`${JSON.stringify(pointer, null, 2)}\n`, "utf8"),
-    cacheControl: POINTER_CACHE_CONTROL,
-    contentType: contentType("latest.json"),
-    objectKey: CATALOG_LATEST_KEY,
-  });
+  const latestUpdated = await updateLatestPointer(options.storage, pointer);
 
   const latestUrl = publicUrl(options.publicOrigin, "catalog/v1", "latest.json");
   console.log(bundleUrl);
@@ -163,6 +250,7 @@ export async function publishCatalogSnapshot(options: PublishCatalogOptions): Pr
     bundleSha256: digest,
     reused,
     uploaded,
+    latestUpdated,
   };
 }
 

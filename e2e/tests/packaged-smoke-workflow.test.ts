@@ -1407,6 +1407,21 @@ process.stdin.on("end", () => {
     }
   });
 
+  it("[P2] routes both DSH installer sources to the cross-resource identity test", async () => {
+    for (const file of [
+      "tools/release/resources/dsh-bootstrap/install-dsh.sh",
+      "apps/landing-page/public/install-dsh.sh",
+      "e2e/tests/dsh-bootstrap-source-identity.test.ts",
+    ]) {
+      await expect(
+        runScopesPrint("pull_request", { pull_request: { number: 1 } }, [file]),
+      ).resolves.toMatchObject({
+        run_e2e_vitest: true,
+        web_tests_required: true,
+      });
+    }
+  });
+
   it("[P2] closes packaged-leaf coverage without duplicating the broad E2E lane", async () => {
     const workflow = await readFile(ciWorkflowPath, "utf8");
     const workspaceUnit = sectionBetween(workflow, "  workspace_unit_tests:", "  daemon_unit_tests:");

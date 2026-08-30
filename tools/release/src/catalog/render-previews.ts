@@ -3,6 +3,9 @@ import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
+import sharp from "sharp";
+
+import { stageCatalogEntryAssets } from "./entry-assets.ts";
 import { MINIMAL_WEBP, renderCardFromExternal, renderFallbackCard } from "./fallback-preview-card.ts";
 import type { CatalogDocument, CatalogRecord } from "./schema.ts";
 
@@ -26,7 +29,9 @@ export type PreviewCaptureResult = {
   warning?: string;
 };
 
-export type PreviewRenderer = (job: PreviewJob) => Promise<PreviewCaptureResult>;
+export type PreviewRenderer = ((job: PreviewJob) => Promise<PreviewCaptureResult>) & {
+  close?: () => Promise<void>;
+};
 
 export type RenderPreviewsOptions = {
   catalog: CatalogDocument;
@@ -277,11 +282,12 @@ export function createPlaywrightPreviewRenderer(
     }
   }
 
-  return async (job) => {
+  const renderer: PreviewRenderer = async (job) => {
     if (job.reuseFrom && existsSync(job.reuseFrom)) {
       try {
         const raw = readFileSync(job.reuseFrom);
-        return { bytes: raw, source: "reuse" };
+        const webp = await sharp(raw).webp({ quality: 80 }).toBuffer();
+        return { bytes: webp, source: "reuse" };
       } catch (error) {
         return {
           bytes: Buffer.from(MINIMAL_WEBP),
@@ -316,22 +322,8 @@ export function createPlaywrightPreviewRenderer(
           fullPage: false,
           clip: { x: 0, y: 0, width: 1440, height: 900 },
         });
-        try {
-          const importer = new Function("m", "return import(m)") as (m: string) => Promise<{
-            default: (input: Buffer) => {
-              webp: (o: { quality: number }) => { toBuffer: () => Promise<Buffer> };
-            };
-          }>;
-          const sharpMod = await importer("sharp");
-          const webp = await sharpMod.default(png).webp({ quality: 80 }).toBuffer();
-          return { bytes: webp, source: "render" };
-        } catch {
-          return {
-            bytes: Buffer.from(png),
-            source: "render",
-            warning: `sharp unavailable; stored png bytes as webp for ${job.label}`,
-          };
-        }
+        const webp = await sharp(png).webp({ quality: 80 }).toBuffer();
+        return { bytes: webp, source: "render" };
       } finally {
         await context.close();
       }
@@ -343,6 +335,20 @@ export function createPlaywrightPreviewRenderer(
       };
     }
   };
+
+  renderer.close = async () => {
+    const pending = browserPromise;
+    browserPromise = null;
+    if (!pending) return;
+    try {
+      const browser = await pending;
+      await browser.close();
+    } catch {
+      // Launch errors are surfaced by the render call; cleanup must not mask them.
+    }
+  };
+
+  return renderer;
 }
 
 /**
@@ -356,60 +362,65 @@ export async function renderCatalogPreviews(options: RenderPreviewsOptions): Pro
   const warnings: string[] = [];
   const failed: string[] = [];
 
-  const jobs: PreviewJob[] = [];
-  options.catalog.records.forEach((record, index) => {
-    const job = previewJobsForRecord(record, options.repoRoot, index);
-    if (job) jobs.push(job);
-  });
+  try {
+    stageCatalogEntryAssets({
+      catalog: options.catalog,
+      repoRoot: options.repoRoot,
+      stagingDir: options.stagingDir,
+    });
 
-  let okCount = 0;
-  for (const job of jobs) {
-    const target = join(options.stagingDir, job.relativePath);
-    mkdirSync(dirname(target), { recursive: true });
-    try {
-      const result = await renderer(job);
-      if (result.warning) warnings.push(result.warning);
-      if (result.source === "reuse" && job.reuseFrom) {
-        // Prefer writing renderer bytes so conversion path is uniform.
-        writeFileSync(target, result.bytes);
-      } else {
-        writeFileSync(target, result.bytes);
-      }
-      if (result.bytes.length === 0) {
-        failed.push(job.label);
-        continue;
-      }
-      written.push(job.relativePath);
-      okCount += 1;
-    } catch (error) {
-      if (error instanceof SystemicPreviewError) throw error;
-      failed.push(job.label);
-      warnings.push(
-        `systemic preview error for ${job.label}: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      // Still write fallback so partial inspection is possible, but pack will fail.
-      writeFileSync(target, MINIMAL_WEBP);
-    }
-  }
+    const jobs: PreviewJob[] = [];
+    options.catalog.records.forEach((record, index) => {
+      const job = previewJobsForRecord(record, options.repoRoot, index);
+      if (job) jobs.push(job);
+    });
 
-  if (jobs.length > 0 && okCount === 0) {
-    throw new Error(`systemic preview failure: all ${jobs.length} preview job(s) failed`);
-  }
-
-  if (requireComplete) {
+    let okCount = 0;
     for (const job of jobs) {
       const target = join(options.stagingDir, job.relativePath);
-      if (!existsSync(target)) {
-        throw new Error(`incomplete preview bundle: missing ${job.relativePath}`);
+      mkdirSync(dirname(target), { recursive: true });
+      try {
+        const result = await renderer(job);
+        if (result.warning) warnings.push(result.warning);
+        writeFileSync(target, result.bytes);
+        if (result.bytes.length === 0) {
+          failed.push(job.label);
+          continue;
+        }
+        written.push(job.relativePath);
+        okCount += 1;
+      } catch (error) {
+        if (error instanceof SystemicPreviewError) throw error;
+        failed.push(job.label);
+        warnings.push(
+          `systemic preview error for ${job.label}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        // Still write fallback so partial inspection is possible, but pack will fail.
+        writeFileSync(target, MINIMAL_WEBP);
       }
     }
-  }
 
-  if (failed.length > 0 && failed.length === jobs.length) {
-    throw new Error(`systemic preview failure: ${failed.join(", ")}`);
-  }
+    if (jobs.length > 0 && okCount === 0) {
+      throw new Error(`systemic preview failure: all ${jobs.length} preview job(s) failed`);
+    }
 
-  return { written, warnings, failed };
+    if (requireComplete) {
+      for (const job of jobs) {
+        const target = join(options.stagingDir, job.relativePath);
+        if (!existsSync(target)) {
+          throw new Error(`incomplete preview bundle: missing ${job.relativePath}`);
+        }
+      }
+    }
+
+    if (failed.length > 0 && failed.length === jobs.length) {
+      throw new Error(`systemic preview failure: ${failed.join(", ")}`);
+    }
+
+    return { written, warnings, failed };
+  } finally {
+    await renderer.close?.();
+  }
 }
 
 /** Copy helper kept for callers that already have a png on disk. */

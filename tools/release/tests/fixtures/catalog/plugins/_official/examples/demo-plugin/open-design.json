@@ -17,8 +17,9 @@
     "mode": "prototype",
     "scenario": "demo",
     "preview": {
-      "type": "image",
-      "poster": "https://cdn.example.test/demo-poster.webp"
+      "type": "html",
+      "poster": "https://cdn.example.test/demo-poster.webp",
+      "entry": "./example.html"
     }
   }
 }

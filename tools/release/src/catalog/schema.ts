@@ -14,6 +14,8 @@ export type CatalogI18nPayload = Readonly<Record<string, Readonly<Record<string,
 export type CatalogPreviewRef = {
   /** Relative path inside the snapshot, e.g. `previews/skills/foo.webp`. */
   path?: string;
+  /** Runnable entry point bundled with the immutable snapshot. */
+  entryPath?: string;
   /** Remote CDN poster (plugins with authored/baked poster). */
   remotePoster?: string;
   /** Remote CDN video (plugins with authored/baked video). Not packed into snapshot. */
@@ -198,7 +200,6 @@ export type CatalogProvenance = {
   sourceCommit: string;
   generatedAt: string;
   exporterVersion: string;
-  workflow?: Record<string, unknown>;
   bundleSha256: string;
   recordCounts: Record<string, number>;
 };
@@ -206,6 +207,8 @@ export type CatalogProvenance = {
 export type CatalogLatestPointer = {
   schemaVersion: typeof CATALOG_SCHEMA_VERSION;
   sourceCommit: string;
+  /** Committer timestamp used to prevent an older run replacing this pointer. */
+  sourceCommittedAt: string;
   bundleUrl: string;
   sha256: string;
   publishedAt: string;
