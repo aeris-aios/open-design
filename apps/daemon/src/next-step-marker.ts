@@ -25,6 +25,7 @@ import {
   MAX_NEXT_STEP_SUGGESTIONS,
   OD_NEXT_KEY_ATTR_RE,
   OD_NEXT_OPEN_TAG,
+  parseNextStepMarkerValue,
   parseNextStepSuggestions,
 } from '@open-design/contracts';
 
@@ -68,7 +69,7 @@ const DEFAULT_SCAN_LIMIT = 1024;
  * Bounded by `MAX_OPEN_TAG_HOLD` so a lone `<` in prose that never closes
  * cannot hold the rest of the answer hostage.
  */
-const MAX_OPEN_TAG_HOLD = 96;
+const MAX_OPEN_TAG_HOLD = 256;
 
 function pendingOpenTagTail(text: string): number {
   const open = text.lastIndexOf('<');
@@ -93,8 +94,16 @@ export function createNextStepMarkerStripper(
   /** Opening tag of the marker we are inside, kept so we can spit it back out. */
   let markerHead = '';
   let emitted = false;
+  let suppressWhitespaceAfterSelfClosingMarker = false;
+  const selfClosingSuggestions: string[] = [];
 
-  const accept = (inner: string, openTag: string) => {
+  const emitOnce = (suggestions: string[]) => {
+    if (emitted || suggestions.length === 0) return;
+    emitted = true;
+    options.emit(suggestions.slice(0, MAX_NEXT_STEP_SUGGESTIONS));
+  };
+
+  const acceptBlock = (inner: string, openTag: string) => {
     if (emitted) return;
     const attrKey = OD_NEXT_KEY_ATTR_RE.exec(openTag)?.[1] ?? '';
     // Unforgeable-by-content: a model can only produce this turn's nonce if the
@@ -102,8 +111,36 @@ export function createNextStepMarkerStripper(
     if (!runKey || attrKey !== runKey) return;
     const suggestions = parseNextStepSuggestions(inner).slice(0, MAX_NEXT_STEP_SUGGESTIONS);
     if (suggestions.length === 0) return;
-    emitted = true;
-    options.emit(suggestions);
+    emitOnce(suggestions);
+  };
+
+  const acceptSelfClosing = (tag: string) => {
+    if (emitted) return;
+    const attrKey = OD_NEXT_KEY_ATTR_RE.exec(tag)?.[1] ?? '';
+    if (!runKey || attrKey !== runKey) return;
+    const suggestion = parseNextStepMarkerValue(tag);
+    if (!suggestion) return;
+    if (!selfClosingSuggestions.some((entry) => entry.toLowerCase() === suggestion.toLowerCase())) {
+      selfClosingSuggestions.push(suggestion);
+    }
+    if (selfClosingSuggestions.length >= MAX_NEXT_STEP_SUGGESTIONS) {
+      emitOnce(selfClosingSuggestions);
+    }
+  };
+
+  const tagEnd = (text: string): number => {
+    let quote: '"' | "'" | null = null;
+    for (let index = 0; index < text.length; index += 1) {
+      const char = text[index];
+      if (quote) {
+        if (char === quote) quote = null;
+      } else if (char === '"' || char === "'") {
+        quote = char;
+      } else if (char === '>') {
+        return index;
+      }
+    }
+    return -1;
   };
 
   const strip = (delta: string): string => {
@@ -112,6 +149,12 @@ export function createNextStepMarkerStripper(
     let visible = '';
 
     for (;;) {
+      if (suppressWhitespaceAfterSelfClosingMarker) {
+        buffer = buffer.replace(/^\s+/, '');
+        if (!buffer) break;
+        suppressWhitespaceAfterSelfClosingMarker = false;
+      }
+
       if (inMarker) {
         const close = CLOSE_TAG_RE.exec(buffer);
         if (!close) {
@@ -135,7 +178,7 @@ export function createNextStepMarkerStripper(
           held = buffer;
           break;
         }
-        accept(buffer.slice(0, close.index), markerHead);
+        acceptBlock(buffer.slice(0, close.index), markerHead);
         buffer = buffer.slice(close.index + close[0].length);
         inMarker = false;
         markerHead = '';
@@ -152,7 +195,7 @@ export function createNextStepMarkerStripper(
 
       visible += buffer.slice(0, openIndex);
       buffer = buffer.slice(openIndex);
-      const gt = buffer.indexOf('>');
+      const gt = tagEnd(buffer);
       if (gt === -1) {
         if (buffer.length > MAX_OPEN_TAG_HOLD) {
           // A `<od-next` that never closes its own tag is prose, not protocol.
@@ -165,6 +208,12 @@ export function createNextStepMarkerStripper(
       }
       markerHead = buffer.slice(0, gt + 1);
       buffer = buffer.slice(gt + 1);
+      if (/\/\s*>$/.test(markerHead)) {
+        acceptSelfClosing(markerHead);
+        markerHead = '';
+        suppressWhitespaceAfterSelfClosingMarker = true;
+        continue;
+      }
       inMarker = true;
     }
 
@@ -186,9 +235,13 @@ export function createNextStepMarkerStripper(
      */
     flush() {
       const rest = held;
+      if (!emitted && selfClosingSuggestions.length > 0) {
+        emitOnce(selfClosingSuggestions);
+      }
       held = '';
       inMarker = false;
       markerHead = '';
+      suppressWhitespaceAfterSelfClosingMarker = false;
       return rest;
     },
   };

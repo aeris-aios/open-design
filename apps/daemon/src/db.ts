@@ -3215,7 +3215,7 @@ function materializeMessageAgentEvents(
        * exact failure `<od-title>` already shipped once.
        */
       /*
-       * `<od-next key="…">…</od-next>` and `<od-focus key="…"/>` are stripped from the live stream before
+       * `<od-next key="…" .../>` (or the legacy paired form) and `<od-focus key="…"/>` are stripped from the live stream before
        * anything is persisted, so this is belt-and-braces: the body is the one
        * surface a future path could reach without passing the stream stripper,
        * and the cost of being wrong there is a protocol tag in an export.

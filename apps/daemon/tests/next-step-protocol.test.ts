@@ -24,6 +24,7 @@ import {
 import { daemonAgentPayloadToPersistedAgentEvent } from '../src/runtimes/chat-run-messages.js';
 import {
   parseNextStepSuggestions,
+  parseNextStepMarkerValue,
   renderNextStepMarkerExample,
   stripNextStepMarkers,
 } from '@open-design/contracts';
@@ -34,11 +35,12 @@ const THREE = ['再加一页订单列表', '把商品卡换成两列布局', '�
 describe('next-step marker · 契约形状', () => {
   it('提示词里的例子和解析器读的是同一份格式', () => {
     const rendered = renderNextStepMarkerExample(KEY, THREE);
-    expect(rendered.startsWith(`<od-next key="${KEY}">`)).toBe(true);
-    expect(rendered.endsWith('</od-next>')).toBe(true);
+    const markers = rendered.split('\n');
+    expect(markers).toHaveLength(3);
+    expect(markers[0]).toBe(`<od-next key="${KEY}" value="再加一页订单列表"/>`);
+    expect(markers.every((marker) => marker.endsWith('/>'))).toBe(true);
     // 例子必须能被自己的解析器读回来 —— 两边各写一份迟早会分家
-    const inner = rendered.slice(rendered.indexOf('>') + 1, rendered.lastIndexOf('</od-next>'));
-    expect(parseNextStepSuggestions(inner)).toEqual(THREE);
+    expect(markers.map((marker) => parseNextStepMarkerValue(marker))).toEqual(THREE);
   });
 
   it('剥离整块,连没写 key 的、闭合歪了的也一起吃掉', () => {
@@ -47,6 +49,13 @@ describe('next-step marker · 契约形状', () => {
     // 孤立的开 / 闭标签也是协议噪音
     expect(stripNextStepMarkers('好了。</od-next>')).toBe('好了。');
     expect(stripNextStepMarkers('没有标记的正文')).toBe('没有标记的正文');
+  });
+
+  it('只移除包住整句的引号,保留句子内部成对中文引号', () => {
+    expect(parseNextStepSuggestions('“整句被引住”')).toEqual(['整句被引住']);
+    expect(parseNextStepSuggestions('把副标题改为中文“直接编辑验证完成”')).toEqual([
+      '把副标题改为中文“直接编辑验证完成”',
+    ]);
   });
 });
 

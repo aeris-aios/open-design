@@ -541,7 +541,7 @@ describe('OD Next V2 prompt recipe', () => {
     expect(production).not.toContain(B);
     expect(production).toContain('inputStage=production');
     expect(production).toContain('<od-done key="0123456789abcdef"/>');
-    expect(production).toContain('<od-next key="0123456789abcdef">');
+    expect(production).toContain('<od-next key="0123456789abcdef" value="Add an orders list page"/>');
     expect(production).toContain('<od-focus key="0123456789abcdef"');
     expect(clarification).not.toContain('<od-done');
     expect(contractRepair).not.toContain('<od-done');

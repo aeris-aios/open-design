@@ -57,18 +57,18 @@ export function renderChatTurnHostProtocolInstructions(
   ].join('\n');
   const nextSteps = [
     'Follow-up suggestions:',
-    'As the very last thing in this turn — after your summary, delivery note, or <artifact> block — emit exactly one block of follow-up suggestions:',
+    'As the very last thing in this turn — after your summary, delivery note, or <artifact> block — emit exactly three self-closing follow-up markers:',
     renderNextStepMarkerExample(key, [
       'Add an orders list page',
       'Switch the product cards to a two-column layout',
       'Add a dark mode',
     ]),
-    'Rules: exactly three lines, one suggestion per line, no bullets, no numbering, no trailing punctuation.',
+    'Rules: exactly three markers, one suggestion in each value attribute, no bullets, no numbering, no trailing punctuation, and no paired opening/closing tag.',
     'Each line is a concrete next action on what THIS turn actually produced, worded so the user could send it verbatim as their next message — not a topic, not a question, not an offer of help.',
     'Write them in the language the user is speaking, and keep each under 120 characters.',
     `This turn's key is ${key}: copy it verbatim, never reuse an earlier one, and never invent one.`,
-    'Skip the block entirely when the turn produced nothing to iterate on — a greeting, a plain answer, a turn ending in a <question-form> — or when you have no useful suggestion. Omitting it is fine; padding it with filler is not.',
-    'The block is protocol, not prose: do not mention it, do not explain it, and do not wrap it in a code fence.',
+    'Skip all three markers when the turn produced nothing to iterate on — a greeting, a plain answer, a turn ending in a <question-form> — or when you have no useful suggestion. Omitting them is fine; padding them with filler is not.',
+    'The markers are protocol, not prose: do not mention them, do not explain them, and do not wrap them in a code fence.',
   ].join('\n');
   const artifactFocus = renderArtifactFocusInstruction(key);
   const text = [

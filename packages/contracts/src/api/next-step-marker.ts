@@ -6,13 +6,16 @@
  * can send as-is ("再加一页订单列表", "把商品卡换成两列布局", "补一套深色模式").
  * They are written by the model, in the conversation's own language, about the
  * thing that was just built — not picked from a fixed catalogue. The agent
- * says what they are by emitting one block at the very end of its answer:
+ * says what they are by emitting three self-closing markers at the very end
+ * of its answer:
  *
- *     <od-next key="a7f3c91ed2b40561">
- *     再加一页订单列表
- *     把商品卡换成两列布局
- *     补一套深色模式
- *     </od-next>
+ *     <od-next key="a7f3c91ed2b40561" value="再加一页订单列表"/>
+ *     <od-next key="a7f3c91ed2b40561" value="把商品卡换成两列布局"/>
+ *     <od-next key="a7f3c91ed2b40561" value="补一套深色模式"/>
+ *
+ * The daemon still accepts the original paired block for historical replay.
+ * New prompts use self-closing markers because some ACP runtimes interpret
+ * paired custom tags as a native tool-call envelope and leak its DSML tail.
  *
  * **Why a key.** Clicking a suggestion sends that exact sentence as the user's
  * next message. A bare `<od-next>` would therefore be a way for any text the
@@ -61,6 +64,9 @@ export const OD_NEXT_BLOCK_RE = /<od-next\b[^>]*>[\s\S]*?<\/od-next\s*>|<\/?od-n
  */
 export const OD_NEXT_KEY_ATTR_RE = /\bkey\s*=\s*["']?([A-Za-z0-9_-]{4,64})["']?/i;
 
+/** Quoted suggestion value carried by the self-closing marker. */
+export const OD_NEXT_VALUE_ATTR_RE = /\bvalue\s*=\s*(?:"([^"]*)"|'([^']*)')/i;
+
 /**
  * How many suggestions the UI shows. Three is what the design calls for; a
  * model that writes more is truncated rather than rejected, because four good
@@ -77,6 +83,24 @@ export const NEXT_STEP_SUGGESTION_MAX_LENGTH = 120;
 
 /** Leading list punctuation models add out of habit: `- `, `* `, `1. `, `1) `. */
 const LIST_BULLET_RE = /^\s*(?:[-*+•]|\d{1,2}[.)])\s+/;
+
+const WRAPPING_QUOTE_PAIRS = [
+  ['"', '"'],
+  ["'", "'"],
+  ['“', '”'],
+  ['‘', '’'],
+  ['「', '」'],
+  ['『', '』'],
+] as const;
+
+function stripWrappingQuotes(value: string): string {
+  for (const [open, close] of WRAPPING_QUOTE_PAIRS) {
+    if (value.length >= 2 && value.startsWith(open) && value.endsWith(close)) {
+      return value.slice(open.length, -close.length).trim();
+    }
+  }
+  return value;
+}
 
 /**
  * Turn one marker's inner text into the suggestion list.
@@ -101,9 +125,8 @@ export function parseNextStepSuggestions(inner: string): string[] {
       .replace(/<[^>]*>/g, ' ')
       .replace(/[*_`]+/g, '')
       .replace(/\s+/g, ' ')
-      .trim()
-      .replace(/^["'“”‘’「『]+|["'“”‘’」』]+$/g, '')
       .trim();
+    line = stripWrappingQuotes(line);
     if (!line) continue;
     if (line.length > NEXT_STEP_SUGGESTION_MAX_LENGTH) continue;
     const dedupeKey = line.toLowerCase();
@@ -113,6 +136,23 @@ export function parseNextStepSuggestions(inner: string): string[] {
     if (out.length >= MAX_NEXT_STEP_SUGGESTIONS) break;
   }
   return out;
+}
+
+function decodeXmlAttribute(value: string): string {
+  return value
+    .replace(/&quot;/gi, '"')
+    .replace(/&apos;/gi, "'")
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&amp;/gi, '&');
+}
+
+/** Read and normalise one suggestion from a self-closing marker tag. */
+export function parseNextStepMarkerValue(tag: string): string | null {
+  const match = OD_NEXT_VALUE_ATTR_RE.exec(tag);
+  const raw = match?.[1] ?? match?.[2];
+  if (raw === undefined) return null;
+  return parseNextStepSuggestions(decodeXmlAttribute(raw))[0] ?? null;
 }
 
 /**
@@ -127,14 +167,30 @@ export function parseNextStepSuggestions(inner: string): string[] {
  */
 export function stripNextStepMarkers(text: string): string {
   if (!text || !text.includes('<')) return text;
-  return text.replace(new RegExp(OD_NEXT_BLOCK_RE.source, OD_NEXT_BLOCK_RE.flags), '');
+  const stripped = text.replace(new RegExp(OD_NEXT_BLOCK_RE.source, OD_NEXT_BLOCK_RE.flags), '');
+  // New prompts emit one self-closing marker per line. When the markers close
+  // the answer, their line separators are protocol framing too, not content.
+  return stripped.replace(/[ \t]*(?:\r?\n[ \t]*)+$/, '');
 }
 
 /**
  * Render the marker for a given key. The one place the wire format is written,
  * so the prompt example and the parser can never drift apart.
  */
+function encodeXmlAttribute(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
 export function renderNextStepMarkerExample(key: string, suggestions: string[]): string {
-  const body = suggestions.slice(0, MAX_NEXT_STEP_SUGGESTIONS).join('\n');
-  return `<od-next key="${key}">\n${body}\n${OD_NEXT_CLOSE_TAG}`;
+  const safeKey = encodeXmlAttribute(key);
+  return suggestions
+    .slice(0, MAX_NEXT_STEP_SUGGESTIONS)
+    .map((suggestion) => (
+      `<od-next key="${safeKey}" value="${encodeXmlAttribute(suggestion)}"/>`
+    ))
+    .join('\n');
 }

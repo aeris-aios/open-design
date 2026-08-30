@@ -1028,7 +1028,7 @@ describe('OD Next planning coordinator', () => {
     });
     const hostProtocolMeta = requireHostProtocolMeta(capturedMeta);
     expect(hostProtocolMeta.instruction)
-      .toContain(`<od-next key="${hostProtocolMeta.doneKey}">`);
+      .toContain(`<od-next key="${hostProtocolMeta.doneKey}" value="Add an orders list page"/>`);
     expect(transition).toMatchObject({
       start: true,
       stage: 'production',

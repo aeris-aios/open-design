@@ -240,6 +240,20 @@ describe('FileOpsSummary artifact cards', () => {
     expect(card.querySelectorAll('.artifact-card-act')).toHaveLength(1);
   });
 
+  it('renders one card when a historical run reports the same artifact twice', () => {
+    render(
+      <FileOpsSummary
+        entries={[
+          entry({ path: 'result.html', fullPath: '/first/result.html' }),
+          entry({ path: 'result.html', fullPath: '/second/result.html' }),
+        ]}
+        projectId="proj-1"
+      />,
+    );
+
+    expect(screen.getAllByTestId('artifact-card-result.html')).toHaveLength(1);
+  });
+
   it('gives an HTML artifact both publish and export, in that order', () => {
     const onPublish = vi.fn();
     const onExport = vi.fn();

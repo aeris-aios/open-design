@@ -41,6 +41,11 @@ function everyCut(text: string): string[][] {
 }
 
 const BLOCK = `<od-next key="${KEY}">\n再加一页订单列表\n把商品卡换成两列布局\n补一套深色模式\n</od-next>`;
+const SELF_CLOSING = [
+  `<od-next key="${KEY}" value="再加一页订单列表"/>`,
+  `<od-next key="${KEY}" value="把商品卡换成两列布局"/>`,
+  `<od-next key="${KEY}" value="补一套深色模式"/>`,
+].join('\n');
 
 describe('解析', () => {
   test('一整块解析成三条', () => {
@@ -50,6 +55,32 @@ describe('解析', () => {
     assert.equal(visible.includes('<od-next'), false);
     assert.equal(visible.includes('再加一页订单列表'), false);
     assert.equal(visible.trim(), '交付完成。');
+  });
+
+  test('三枚自闭合标记解析成三条', () => {
+    const { s, seen } = make();
+    const { visible } = feed(s, [`交付完成。\n\n${SELF_CLOSING}`]);
+    assert.deepEqual(seen, [['再加一页订单列表', '把商品卡换成两列布局', '补一套深色模式']]);
+    assert.equal(visible.trim(), '交付完成。');
+  });
+
+  test('自闭合标记不足三枚时在流结束时照常发出已有建议', () => {
+    const { s, seen } = make();
+    feed(s, [
+      `<od-next key="${KEY}" value="加一页订单列表"/>\n`,
+      `<od-next key="${KEY}" value="补深色模式"/>`,
+    ]);
+    assert.deepEqual(seen, [['加一页订单列表', '补深色模式']]);
+  });
+
+  test('自闭合标记解码属性实体并去重', () => {
+    const { s, seen } = make();
+    feed(s, [
+      `<od-next key="${KEY}" value="把 A &amp; B 合并"/>\n`,
+      `<od-next key="${KEY}" value="把 A &amp; B 合并"/>\n`,
+      `<od-next key="${KEY}" value="补一个 &quot;About&quot; 页面"/>`,
+    ]);
+    assert.deepEqual(seen, [['把 A & B 合并', '补一个 "About" 页面']]);
   });
 
   test('模型给多于三条时只取前三条 —— 稿子固定三行', () => {
@@ -135,6 +166,14 @@ describe('流式:半截字符一个都不许上屏', () => {
 
   test('逐字符喂也不闪', () => {
     const text = `交付完成。${BLOCK}收工。`;
+    const { s, seen } = make();
+    const { visible } = feed(s, text.split(''));
+    assert.equal(visible, '交付完成。收工。');
+    assert.deepEqual(seen, [['再加一页订单列表', '把商品卡换成两列布局', '补一套深色模式']]);
+  });
+
+  test('自闭合标记逐字符喂也不闪', () => {
+    const text = `交付完成。${SELF_CLOSING}收工。`;
     const { s, seen } = make();
     const { visible } = feed(s, text.split(''));
     assert.equal(visible, '交付完成。收工。');

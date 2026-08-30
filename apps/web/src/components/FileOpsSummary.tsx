@@ -124,7 +124,7 @@ export function FileOpsSummary({
    * 删除掉的文件仍然不出卡(在这一行之前就被筛掉了):一张带预览的卡说的是
    * 「这份东西在这儿」,对一个已经不在的文件是假话。
    */
-  const cardItems: ArtifactCardItem[] = projectId
+  const rawCardItems: ArtifactCardItem[] = projectId
     ? entries.flatMap((entry) => {
         if (entry.ops.includes('delete')) return [];
         if (artifactKind(entry.path) === 'audio') return [];
@@ -141,6 +141,13 @@ export function FileOpsSummary({
         return [{ name: entry.path, kind, pending: turnIsLive && entry.status === 'running' }];
       })
     : [];
+  // Historical runs can describe the same project-relative file through two
+  // runtime paths (for example a recovered write plus the final produced-file
+  // snapshot). A deliverable is still one card. Besides duplicating the UI,
+  // passing both through gave React two identical `key={item.name}` values.
+  const cardItems = Array.from(
+    new Map(rawCardItems.map((item) => [item.name, item])).values(),
+  );
   const cardNames = new Set(cardItems.map((item) => item.name));
   /*
    * 音频**不套卡壳**,自己就是一条横胶囊(设计稿组件 24)。用户 2026-08-27 当场

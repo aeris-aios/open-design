@@ -17,6 +17,16 @@
 5. 完成 OPEND-2403 thinking Markdown 主审、提交与推送。
 6. 按飞书文档推进 Question Form 组件族上线前再设计。
 
+## 2026-08-30 真实 AMR 与打包验收
+
+- 使用隔离数据目录和 `test` AMR / Vela profile，分别对 Design Harness 开、关各跑一轮真实会话。旧的成对 `<od-next key="…">…</od-next>` 会被 Vela / OpenCode ACP 识别成原生 DSML tool-call envelope，导致三条建议落入普通正文并泄漏 DSML 闭合标签；根因不是 UI 丢事件。
+- host protocol 已改为三个自闭合 UI marker：`<od-next key="…" value="…"/>`。daemon parser 仍兼容历史成对格式，并覆盖 SSE 任意切片、nonce 校验、去重、实体解码和不足三条时的 flush 行为。
+- Harness 开 / 关两轮均约 29 秒完成，各产生 3 个结构化、可点击且 enabled 的 `next-step-suggestion-*` 按钮；消息 API 中没有 `DSML`、`tool_calls` 或 `invoke>` 残留，硬刷新后仍回放为 3 条。
+- 修复 suggestion 外层引号规整误伤内部中文成对引号的问题；实测文案 `把副标题“Direct-edit verification complete”改为中文“直接编辑验证完成”` 可原样保留。
+- 真实历史回放发现同一路径 `index.html` 的 artifact card 会产生 React duplicate-key warning；`FileOpsSummary` 现按项目相对路径去重，硬刷新后警告消失。
+- 当前分支成功构建并启动生产打包客户端 `0.21.1-beta.1002`。Team 项目 `Deep Link Probe` 首次冷启动深链为 15.321 秒；同进程后续三次 Home → Team 深链分别为 1.578 / 1.226 / 1.007 秒。重复导航的固定 15–18 秒等待已消除，但首次 Team catalog / resource 同步仍是明确的剩余性能风险。
+- 本轮遵守用户约束，没有跑全量测试；执行了 next-step contracts / parser / coordinator、artifact 去重聚焦测试，三个 package typecheck，以及生产打包构建。
+
 ## 2026-08-29 全量复核口径
 
 - **不能宣称本需求全部关闭**。#1 / #15 Design Harness 与普通 Chat Panel host protocol 共用已完成代码修复和聚焦验证；OPEND-2410 仍只是确认“Agent 没有调用 Todo 工具”，没有代码修复；Question Form 组件族仍待设计评审。
@@ -29,7 +39,7 @@
 
 ### 1. Design Harness 开启后缺少底部三行下一步建议
 
-- 状态：**已修复，待真实 Harness 开 / 关 live 会话复验**。
+- 状态：**已修复；真实 Harness 开 / 关 test-AMR live、落库与硬刷新回放均已通过**。
 - 修复：新增 contracts 层共享的 keyed Chat turn host protocol renderer，由普通 Chat、OD Next request Bundle 和 OD Next production continuation 共用同一份 `<od-done>` / `<od-next>` / `<od-focus>` 协议。request 路径仅在 Direct Edit request stage 完成时要求输出，production 路径仅在 production completed 时要求输出；clarification、repair、blocked、failed、canceled 均不错误注入完成协议。
 - exact-input / cache 边界：request fingerprint 仍基于稳定输入计算，本轮 nonce 在 fingerprint 之后铸造并写入 run meta；production continuation 的 prompt 与 meta 使用同一 key；repair 保持原始 exact stage input，不混入协议。
 - 聚焦验证：contracts renderer / OD Next recipe、daemon coordinator 与 automatic-simple server 用例覆盖普通、request、production 和省略场景；contracts / daemon typecheck 通过。未改 Todo 规范，OPEND-2410 仍单独处理。
@@ -57,6 +67,7 @@
 - 最小正确方向：抽取共享、类型化的 `renderChatTurnHostProtocol(doneKey, stagePolicy)`，普通 run 与 strategy run 共用；不要在启动时临时 append，以免破坏 strategy exact-final-text 不变量。
 - stage policy：只有 completed 的 Direct Edit / Production 输出下一步建议；plan_ready、clarification、contract repair、blocked、canceled 不输出。
 - 必须补的聚焦测试：request / production exact input 包含与 Run `doneKey` 一致的 host 协议；production 产生、落库并回放 `next_steps`；Harness 完成态 UI 显示三行。
+- 真实复验补充：初版共享 renderer 使用成对 marker，真实 Vela / ACP 会把它解释为 DSML tool-call envelope。最终协议改为每条建议一个带相同 nonce 的自闭合 marker，普通 Chat、OD Next request 与 production 继续共用同一 renderer；Harness 开 / 关均得到 3 条结构化按钮，正文与历史中均无 DSML。
 
 ### 2. Ctrl+Shift+R 后最终结论重复两遍
 
@@ -240,6 +251,7 @@
 - 历史回放：原项目 `3d02a559-745b-44c2-a8e4-2c82c9468a6d` / 原会话 `ed6de411-4f5d-4b33-b977-5d2c72d29404` 在新 daemon 上打开后，协议残留计数为 0，旧的三条建议可见。
 - 新实时回合：会话 `a04e85da-b1b3-4c57-8b3e-9c09ebbe2a5f`，run `0b53f7f8-847f-43d5-b749-7d9d2a1fee51`。发送后立即显示进行中，40s 后为已完成；正文 `DSML E2E 验证完成`，三条 `next_steps` 正常展示。live 协议残留 0，reload 后协议残留仍为 0、建议仍为 3 条；run events 中无 `parameter / invoke / tool_calls` 尾标，存在结构化 `next_steps` 事件。
 - 验收边界：这是最新源码 + test-AMR 的开发桌面 / web / daemon E2E；尚未重打、安装并验证新的 Beta 包。
+- 2026-08-30 补充：真实 A/B 证明成对 `<od-next>` 本身会触发 Vela / ACP 的 DSML 序列化；协议改成自闭合 marker 后，新 live run 和 reload 均无尾标。本轮还完成了生产打包客户端构建与启动验证。
 
 ### 14. 成功轮因最后 Todo 快照陈旧而误显示“已停止”
 
@@ -251,13 +263,14 @@
 
 ### 15. Design Harness / OD Next 与普通 Chat Panel prompt 协议分叉
 
-- 状态：**已完成架构修复和聚焦 A/B 覆盖；待真实 Harness 开 / 关 live 会话复验**。
+- 状态：**已完成架构修复、聚焦覆盖和真实 Harness 开 / 关 test-AMR A/B 复验**。
 - 用户强约束：以后每次修改 Todo、Question Form、`<od-done>`、`<od-next>`、`<od-focus>` 等 Chat prompt / host 协议，都必须同时审计 Design Harness 开 / 关两条路径；不能只验证普通 chat。
 - 已确认调用链：普通 chat 走 `composeChatAgentTextPayload`，由 `server.ts` 每轮注入带本轮 nonce 的 done / next / focus；OD Next 一旦存在 `strategyTaskAtStart`，则直接使用冻结的 `persistedStrategyFinalText`，跳过这组 per-turn contributor。
 - 初始 Bundle 虽存在 `context/client_system_prompt`，但在 Run 创建、`doneKey` 铸造之前冻结，当前无法携带本轮 nonce；后续 clarification / production continuation 又要求 exact stage input，同样不会自动拼普通 per-turn slice。
 - 现场吻合：开启 Design Harness 后最终产物轮缺少三条下一步建议，不是偶发模型不遵守，而是该物理 Run 没收到同一份 `<od-next>` 协议。
 - Todo 差异：普通 discovery prompt 明确要求每步开工前 `in_progress`、做完立刻 `completed`；OD Next core 当前只写“Keep the Todo plan live”，Production continuation 只说复用 frozen Todo plan，约束明显更弱。不能直接复制整份普通 prompt，应把需要共享的 host protocol 与状态契约注册为两条路线共同消费的 contributor，并保留 exact-input / cache 边界。
 - 落地：已按上述边界仅抽取 done / next / focus host protocol，不顺带强化 Todo prompt。普通 route、OD Next request Bundle 和 production continuation 共享 renderer；repair / clarification 不注入。nonce 在 request fingerprint 之后生成，避免破坏 cache / idempotency；聚焦测试验证 prompt 与 run meta 的 key 一致。
+- 真实 A/B：两条路径均约 29 秒完成，均产生 3 条结构化 next-step，硬刷新后保持一致；共享 renderer 已采用 ACP-safe 自闭合 marker，daemon 保留旧成对 marker 的历史兼容。
 
 ### 16. “基于此项目创建设计系统”自动消息仍使用旧灰卡
 

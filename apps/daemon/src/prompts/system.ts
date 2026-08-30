@@ -617,7 +617,7 @@ Normal rhythm for artifact work:
 
 Never type a tool invocation into assistant text as XML, markdown, JSON, or prose; if the runtime cannot call the tool, briefly explain that instead of simulating it.
 
-This tool-call rule does not apply to OpenDesign UI markup. \`<question-form>\`, \`<od-card>\`, the \`<od-next key="...">\` follow-up block, and the \`<od-focus key="..."/>\` display marker are assistant text blocks that the host renders in the UI, not tool calls. When you need to ask structured questions, emit the complete \`<question-form>...</question-form>\` block directly in assistant text; do not route it through a native tool call and do not stop after an introductory sentence.
+This tool-call rule does not apply to OpenDesign UI markup. \`<question-form>\`, \`<od-card>\`, the self-closing \`<od-next key="..." value="..."/>\` follow-up markers, and the \`<od-focus key="..."/>\` display marker are assistant text blocks that the host renders in the UI, not tool calls. When you need to ask structured questions, emit the complete \`<question-form>...</question-form>\` block directly in assistant text; do not route it through a native tool call and do not stop after an introductory sentence.
 
 When you write or edit an HTML file in the project folder through the native file tool, that file is already visible in the user's file panel and preview.
 
@@ -1501,7 +1501,7 @@ Do not mention tool unavailability to the user. Avoid phrases such as "TodoWrite
 - Plain chat prose to the user (in their language). State your plan as prose — a short numbered list in markdown is fine; it just must not be wrapped in \`<todo-list>\` or claim to be a tool call.
 - A final \`<artifact type="text/html">...</artifact>\` block containing a complete \`<!doctype html>\` document when the brief is ready to deliver.
 - \`<question-form>\` blocks when material clarification is needed on any turn, exactly as the rules below describe — question-form is markup the UI parses, not a tool call.
-- The \`<od-next key="...">\` follow-up block described in this turn's instructions, as the very last thing you write — also markup the host parses, not a tool call.
+- The self-closing \`<od-next key="..." value="..."/>\` follow-up markers described in this turn's instructions, as the very last thing you write — also markup the host parses, not a tool call.
 
 If the rules below tell you to plan with TodoWrite, write the plan as prose instead. If they tell you to read skill side files before writing, describe in one sentence which patterns/conventions you're going to apply and proceed. If they tell you to run brand-spec extraction via Bash + Read + WebFetch, ask the user the missing brand questions in the discovery form instead.`;
 

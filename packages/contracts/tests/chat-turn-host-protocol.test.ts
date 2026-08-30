@@ -9,7 +9,8 @@ describe('chat turn host protocol', () => {
     const result = renderChatTurnHostProtocolInstructions(KEY);
 
     expect(result.doneMarker).toContain(`<od-done key="${KEY}"/>`);
-    expect(result.nextSteps).toContain(`<od-next key="${KEY}">`);
+    expect(result.nextSteps).toContain(`<od-next key="${KEY}" value="Add an orders list page"/>`);
+    expect(result.nextSteps).not.toContain('</od-next>');
     expect(result.artifactFocus).toContain(`<od-focus key="${KEY}"`);
     expect(result.text).not.toContain('OD Next host handoff gate');
   });
@@ -29,7 +30,7 @@ describe('chat turn host protocol', () => {
 
     expect(result.text).toContain('inputStage=production');
     expect(result.text).toContain('outcome=completed');
-    expect(result.text).toContain(`<od-next key="${KEY}">`);
+    expect(result.text).toContain(`<od-next key="${KEY}" value="Add an orders list page"/>`);
     expect(renderChatTurnHostProtocolInstructions('', 'od_next_production')).toEqual({
       doneMarker: '',
       nextSteps: '',

@@ -120,7 +120,8 @@ export type DaemonAgentPayload =
   | { type: 'done_key'; key: string }
   /**
    * This turn's follow-up suggestions, already parsed and validated out of the
-   * agent's `<od-next key="…">` marker. Emitted once, after the marker closes.
+   * agent's `<od-next key="…" value="…"/>` markers. Emitted once after the
+   * marker set is complete or the stream ends.
    *
    * The raw marker never reaches the client: the daemon strips it from the
    * visible text stream and checks its key against the turn's nonce, so a
