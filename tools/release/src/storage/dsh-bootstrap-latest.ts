@@ -2,6 +2,7 @@ import { contentType } from "./common.ts";
 import { getStorageObject, putStorageObjectWithStatus, type StorageConfig } from "./s3-upload.ts";
 
 const POINTER_CACHE_CONTROL = "public, max-age=60";
+const MAX_VERSION_PROBE = 100;
 export const DSH_BOOTSTRAP_POINTER_KEY = "bootstrap/dsh/latest.json";
 
 export type DshBootstrapLatestPointer = {
@@ -38,6 +39,66 @@ function parseLatestPointer(text: string): DshBootstrapLatestPointer {
   const pointer = value as DshBootstrapLatestPointer;
   versionNumber(pointer.version);
   return pointer;
+}
+
+/**
+ * Resolve installer bytes to the current version or to a version newer than
+ * latest. Historical bytes must never reuse an older version: latest.json is
+ * monotonic, so an intentional content revert needs a fresh version that can
+ * move the pointer forward.
+ */
+export async function resolveDshBootstrapVersion(
+  storage: StorageConfig,
+  checksums: Buffer,
+): Promise<string> {
+  const latestObject = await getStorageObject({
+    ...storage,
+    objectKey: DSH_BOOTSTRAP_POINTER_KEY,
+  });
+  let firstCandidate = 1;
+
+  if (latestObject != null) {
+    const latest = parseLatestPointer(latestObject.text);
+    const latestNumber = versionNumber(latest.version);
+    const latestChecksums = await getStorageObject({
+      ...storage,
+      objectKey: `bootstrap/dsh/${latest.version}/SHA256SUMS`,
+    });
+    if (latestChecksums == null) {
+      throw new Error(
+        `DeepSeek Harness bootstrap latest pointer references missing ${latest.version}/SHA256SUMS`,
+      );
+    }
+    if (latestChecksums.bytes.equals(checksums)) {
+      console.log(`reusing current immutable bootstrap version ${latest.version}`);
+      return latest.version;
+    }
+    firstCandidate = latestNumber + 1;
+  }
+
+  for (let offset = 0; offset < MAX_VERSION_PROBE; offset += 1) {
+    const candidate = firstCandidate + offset;
+    if (!Number.isSafeInteger(candidate)) {
+      throw new Error("DeepSeek Harness bootstrap version exceeds the safe integer range");
+    }
+    const version = `v${candidate}`;
+    const published = await getStorageObject({
+      ...storage,
+      objectKey: `bootstrap/dsh/${version}/SHA256SUMS`,
+    });
+    if (published == null) {
+      console.log(`minting new immutable bootstrap version ${version}`);
+      return version;
+    }
+    if (published.bytes.equals(checksums)) {
+      console.log(`reusing unpublished immutable bootstrap version ${version}`);
+      return version;
+    }
+  }
+
+  throw new Error(
+    `no free DeepSeek Harness bootstrap version in the ${MAX_VERSION_PROBE} slots starting at v${firstCandidate}`,
+  );
 }
 
 /**

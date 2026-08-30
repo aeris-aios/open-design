@@ -12,6 +12,7 @@ vi.mock("../src/storage/s3-upload.ts", async (importOriginal) => ({
 }));
 
 import {
+  resolveDshBootstrapVersion,
   updateDshBootstrapLatestPointer,
   type DshBootstrapLatestPointer,
 } from "../src/storage/dsh-bootstrap-latest.ts";
@@ -83,5 +84,55 @@ describe("DeepSeek Harness bootstrap latest pointer", () => {
 
     await expect(updateDshBootstrapLatestPointer(storage, pointer("v2"))).resolves.toBe(false);
     expect(storageMocks.putStorageObjectWithStatus).toHaveBeenCalledTimes(1);
+  });
+
+  it("reuses the current version when latest already has these bytes", async () => {
+    const checksums = Buffer.from("current checksums");
+    storageMocks.getStorageObject.mockImplementation(async ({ objectKey }) => {
+      if (objectKey === "bootstrap/dsh/latest.json") return storedPointer("v2");
+      if (objectKey === "bootstrap/dsh/v2/SHA256SUMS") {
+        return { bytes: checksums, etag: "v2-etag", text: checksums.toString("utf8") };
+      }
+      throw new Error(`unexpected object key ${objectKey}`);
+    });
+
+    await expect(resolveDshBootstrapVersion(storage, checksums)).resolves.toBe("v2");
+  });
+
+  it("mints above latest when installer bytes intentionally return to an older version", async () => {
+    const revertedChecksums = Buffer.from("v1 checksums");
+    const requested: string[] = [];
+    storageMocks.getStorageObject.mockImplementation(async ({ objectKey }) => {
+      requested.push(objectKey);
+      if (objectKey === "bootstrap/dsh/latest.json") return storedPointer("v2");
+      if (objectKey === "bootstrap/dsh/v2/SHA256SUMS") {
+        return {
+          bytes: Buffer.from("v2 checksums"),
+          etag: "v2-etag",
+          text: "v2 checksums",
+        };
+      }
+      if (objectKey === "bootstrap/dsh/v3/SHA256SUMS") return null;
+      throw new Error(`unexpected object key ${objectKey}`);
+    });
+
+    await expect(resolveDshBootstrapVersion(storage, revertedChecksums)).resolves.toBe("v3");
+    expect(requested).not.toContain("bootstrap/dsh/v1/SHA256SUMS");
+  });
+
+  it("reuses a matching unpublished version above latest after an interrupted publish", async () => {
+    const checksums = Buffer.from("new checksums");
+    storageMocks.getStorageObject.mockImplementation(async ({ objectKey }) => {
+      if (objectKey === "bootstrap/dsh/latest.json") return storedPointer("v2");
+      if (objectKey === "bootstrap/dsh/v2/SHA256SUMS") {
+        return { bytes: Buffer.from("old checksums"), etag: "v2-etag", text: "old checksums" };
+      }
+      if (objectKey === "bootstrap/dsh/v3/SHA256SUMS") {
+        return { bytes: checksums, etag: "v3-etag", text: checksums.toString("utf8") };
+      }
+      throw new Error(`unexpected object key ${objectKey}`);
+    });
+
+    await expect(resolveDshBootstrapVersion(storage, checksums)).resolves.toBe("v3");
   });
 });

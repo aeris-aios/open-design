@@ -15,7 +15,11 @@ import {
   renderCatalogPreviews,
   SystemicPreviewError,
 } from "../src/catalog/render-previews.ts";
-import { MINIMAL_WEBP } from "../src/catalog/fallback-preview-card.ts";
+import {
+  MINIMAL_WEBP,
+  renderCardFromExternal,
+  renderFallbackCard,
+} from "../src/catalog/fallback-preview-card.ts";
 
 const FIXTURE_ROOT = resolve(import.meta.dirname, "fixtures/catalog");
 const SOURCE_COMMIT = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
@@ -175,6 +179,24 @@ describe("catalog pack helpers", () => {
 });
 
 describe("playwright preview fail-closed", () => {
+  it("keeps generated fallback cards free of remote dependencies", () => {
+    const cards = [
+      renderFallbackCard(
+        { slug: "alpha", displayName: "Alpha", description: "Local skill card" },
+        1,
+      ),
+      renderCardFromExternal(
+        { slug: "plugin-alpha", title: "Plugin Alpha", description: "Local plugin card" },
+        2,
+      ),
+    ];
+
+    for (const card of cards) {
+      expect(card).not.toMatch(/https?:\/\//u);
+      expect(card).not.toContain("fonts.googleapis.com");
+    }
+  });
+
   it("throws when playwright cannot be imported", async () => {
     const renderer = createPlaywrightPreviewRenderer({
       importPlaywright: async () => {

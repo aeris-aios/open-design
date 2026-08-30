@@ -44,9 +44,6 @@ export function renderFallbackCard(meta: SkillCardMeta, indexInCatalog: number):
 <head>
 <meta charset="utf-8" />
 <title>${escapeHtml(meta.slug)} preview card</title>
-<link rel="preconnect" href="https://fonts.googleapis.com" />
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,500;0,700;1,500&family=Inter:wght@400;500;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
 <style>
   :root {
     --paper-warm: #efe7d2;
@@ -60,7 +57,7 @@ export function renderFallbackCard(meta: SkillCardMeta, indexInCatalog: number):
     margin: 0;
     background: var(--paper-warm);
     color: var(--ink);
-    font-family: 'Inter', system-ui, sans-serif;
+    font-family: system-ui, sans-serif;
     width: ${width}px;
     height: ${height}px;
     overflow: hidden;
@@ -76,14 +73,14 @@ export function renderFallbackCard(meta: SkillCardMeta, indexInCatalog: number):
   .top-bar {
     display: flex;
     justify-content: space-between;
-    font-family: 'JetBrains Mono', monospace;
+    font-family: monospace;
     font-size: 14px;
     letter-spacing: 0.16em;
     text-transform: uppercase;
     color: var(--ink-mute);
   }
   .slug {
-    font-family: 'Playfair Display', Georgia, serif;
+    font-family: Georgia, serif;
     font-weight: 700;
     font-size: ${slugFontSize}px;
     line-height: 0.95;
@@ -94,14 +91,14 @@ export function renderFallbackCard(meta: SkillCardMeta, indexInCatalog: number):
   .desc {
     margin-top: 40px;
     max-width: 920px;
-    font-family: 'Playfair Display', serif;
+    font-family: Georgia, serif;
     font-style: italic;
     font-size: 32px;
     line-height: 1.45;
     color: var(--ink-mute);
   }
   .chip {
-    font-family: 'JetBrains Mono', monospace;
+    font-family: monospace;
     font-size: 14px;
     padding: 8px 16px;
     border: 1px solid var(--line);
