@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 import { optional, required } from "../storage/common.ts";
+import { resolveRepoRoot } from "./export-catalog.ts";
 import {
   createPlaywrightPreviewRenderer,
   createStubPreviewRenderer,
@@ -9,12 +10,6 @@ import {
 } from "./render-previews.ts";
 import type { CatalogDocument } from "./schema.ts";
 import { assertValidCatalog } from "./validate.ts";
-
-function resolveRepoRoot(): string {
-  const fromEnv = optional("CATALOG_REPO_ROOT");
-  if (fromEnv.length > 0) return resolve(fromEnv);
-  return resolve(import.meta.dirname, "../../../..");
-}
 
 export async function renderCatalogPreviewsFromEnv(): Promise<void> {
   const stagingDir = resolve(required("CATALOG_STAGING_DIR"));

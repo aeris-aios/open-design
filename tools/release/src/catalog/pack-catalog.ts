@@ -1,4 +1,3 @@
-import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -23,18 +22,8 @@ function packageVersion(): string {
   return "0.0.0";
 }
 
-function exporterVersion(): string {
-  const version = packageVersion();
-  let describe = "";
-  try {
-    describe = execFileSync("git", ["describe", "--always", "--dirty"], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-  } catch {
-    describe = "";
-  }
-  return describe.length > 0 ? `tools-release@${version}+${describe}` : `tools-release@${version}`;
+export function exporterVersion(sourceCommit: string): string {
+  return `tools-release@${packageVersion()}+${sourceCommit.toLowerCase()}`;
 }
 
 export async function packCatalogFromEnv(): Promise<void> {
@@ -43,7 +32,7 @@ export async function packCatalogFromEnv(): Promise<void> {
   const result = packCatalogSnapshot({
     stagingDir,
     sourceCommit,
-    exporterVersion: exporterVersion(),
+    exporterVersion: exporterVersion(sourceCommit),
   });
   console.log(`packed catalog bundle ${result.bundlePath}`);
   console.log(`bundleSha256=${result.bundleSha256}`);
