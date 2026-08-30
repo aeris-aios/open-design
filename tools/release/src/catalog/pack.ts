@@ -97,11 +97,10 @@ function createBundleTarZst(stagingDir: string, bundlePath: string, members: str
     execFileSync(
       "tar",
       [
-        "--format", "ustar",
-        "--uid", "0",
-        "--gid", "0",
-        "--uname", "root",
-        "--gname", "root",
+        "--format=ustar",
+        "--owner=0",
+        "--group=0",
+        "--numeric-owner",
         "-cf", tarPath,
         ...members,
       ],
