@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
@@ -8,11 +8,27 @@ import { exportCatalog } from "./export.ts";
 import { committerIsoTimestamp } from "./git-meta.ts";
 import { assertValidCatalog } from "./validate.ts";
 
-function resolveRepoRoot(): string {
+export function resolveRepoRoot(): string {
   const fromEnv = optional("CATALOG_REPO_ROOT");
   if (fromEnv.length > 0) return resolve(fromEnv);
-  // tools/release/src/catalog → repo root is ../../../..
-  return resolve(import.meta.dirname, "../../../..");
+
+  try {
+    return execFileSync("git", ["rev-parse", "--show-toplevel"], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    // Fall through to layouts used by source execution and the bundled CLI.
+  }
+
+  for (const candidate of [
+    resolve(import.meta.dirname, "../../../.."), // src/catalog
+    resolve(import.meta.dirname, "../../.."), // dist
+  ]) {
+    if (existsSync(join(candidate, "pnpm-workspace.yaml"))) return candidate;
+  }
+  throw new Error("CATALOG_REPO_ROOT is required outside an Open Design checkout");
 }
 
 function resolveSourceCommit(): string {

@@ -4,13 +4,19 @@ import { join, resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { resolveRepoRoot } from "../src/catalog/export-catalog.ts";
 import { exportCatalog } from "../src/catalog/export.ts";
 import { assertValidCatalog, validateCatalog } from "../src/catalog/validate.ts";
 
 const FIXTURE_ROOT = resolve(import.meta.dirname, "fixtures/catalog");
+const WORKSPACE_ROOT = resolve(import.meta.dirname, "../../..");
 const SOURCE_COMMIT = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
 describe("catalog export", () => {
+  it("resolves the repository root from package and bundled CLI layouts", () => {
+    expect(resolveRepoRoot()).toBe(WORKSPACE_ROOT);
+  });
+
   it("exports a tiny fixture tree into a valid catalog.json", () => {
     const { catalog } = exportCatalog({
       repoRoot: FIXTURE_ROOT,
