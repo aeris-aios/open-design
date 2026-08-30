@@ -286,4 +286,33 @@ describe('deck bridge — nested slide markup (#1530)', () => {
 
     expect((win.document.getElementById('deck-progress') as HTMLElement).style.width).toBe('66.66666666666666%');
   });
+
+  it('ignores self-driven slide navigation while manual edit locks the deck', async () => {
+    const { win, parentPostMessage } = setupDeckBridge(`
+      <style>.slide:not(.active) { display: none; }</style>
+      <main class="deck-shell">
+        <section class="slide active">One</section>
+        <section class="slide">Two</section>
+      </main>
+    `);
+    await new Promise<void>((resolve) => win.setTimeout(resolve, 250));
+    win.document.documentElement.setAttribute('data-od-edit-mode', '');
+
+    const selfMessage = new win.MessageEvent('message', {
+      data: { type: 'od:slide', action: 'next' },
+    });
+    Object.defineProperty(selfMessage, 'source', { configurable: true, value: win });
+    win.dispatchEvent(selfMessage);
+    await new Promise<void>((resolve) => win.setTimeout(resolve, 80));
+
+    expect(lastSlideState(parentPostMessage)?.active).toBe(0);
+    expect(win.document.querySelectorAll('.slide')[0]?.classList.contains('active')).toBe(true);
+
+    win.dispatchEvent(new win.MessageEvent('message', {
+      data: { type: 'od:slide', action: 'next' },
+    }));
+    await new Promise<void>((resolve) => win.setTimeout(resolve, 80));
+
+    expect(lastSlideState(parentPostMessage)?.active).toBe(1);
+  });
 });

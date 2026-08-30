@@ -25,14 +25,32 @@ export interface ManualEditComputedSummary {
   fontFamily: string;
   fontSize: string;
   fontWeight: string;
+  fontStyle?: string;
   lineHeight: string;
   letterSpacing: string;
   color: string;
+  textAlign?: string;
+  textDecorationLine?: string;
   backgroundColor: string;
   borderColor: string;
   borderRadius: string;
+  boxShadow?: string;
+  borderTopWidth?: string;
+  borderRightWidth?: string;
+  borderBottomWidth?: string;
+  borderLeftWidth?: string;
+  borderStyle?: string;
   padding: string;
+  paddingTop?: string;
+  paddingRight?: string;
+  paddingBottom?: string;
+  paddingLeft?: string;
   margin: string;
+  marginTop?: string;
+  marginRight?: string;
+  marginBottom?: string;
+  marginLeft?: string;
+  opacity?: string;
 }
 
 export interface ManualEditMeasurement {
@@ -61,8 +79,10 @@ export interface ManualEditStyles {
   fontFamily: string;
   fontSize: string;
   fontWeight: string;
+  fontStyle: string;
   color: string;
   textAlign: string;
+  textDecorationLine: string;
   lineHeight: string;
   letterSpacing: string;
   width: string;
@@ -92,6 +112,7 @@ export interface ManualEditStyles {
   borderStyle: string;
   borderColor: string;
   borderRadius: string;
+  boxShadow: string;
   /* Authored transform/display values remain editable in the inspector.
      Canvas dragging itself uses structural DOM reordering, not these styles. */
   transform: string;
@@ -333,14 +354,14 @@ export type ManualEditBridgeMessage =
   | ManualEditDocumentSizeMessage;
 
 export const MANUAL_EDIT_STYLE_PROPS: readonly (keyof ManualEditStyles)[] = [
-  'fontFamily', 'fontSize', 'fontWeight', 'color', 'textAlign', 'lineHeight', 'letterSpacing',
+  'fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'color', 'textAlign', 'textDecorationLine', 'lineHeight', 'letterSpacing',
   'width', 'height', 'minHeight',
   'gap', 'flexDirection', 'justifyContent', 'alignItems',
   'backgroundColor', 'opacity',
   'padding', 'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft',
   'margin', 'marginTop', 'marginRight', 'marginBottom', 'marginLeft',
   'border', 'borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth',
-  'borderStyle', 'borderColor', 'borderRadius',
+  'borderStyle', 'borderColor', 'borderRadius', 'boxShadow',
   'transform', 'display',
 ];
 

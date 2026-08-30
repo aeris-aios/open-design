@@ -379,6 +379,27 @@ function manualEditTarget(id: string, label: string, x: number) {
   };
 }
 
+function manualEditRowByLabel(label: string): HTMLElement {
+  const row = Array.from(document.querySelectorAll('.cc-row'))
+    .find((candidate) => candidate.querySelector('.cc-label')?.textContent === label) as HTMLElement | undefined;
+  if (!row) throw new Error(`${label} row not found`);
+  return row;
+}
+
+function rowInputByLabel(label: string): HTMLInputElement {
+  const input = manualEditRowByLabel(label).querySelector('input') as HTMLInputElement | null;
+  if (!input) throw new Error(`${label} input not found`);
+  return input;
+}
+
+function axisInputByLabel(label: string, axis: string): HTMLInputElement {
+  const input = Array.from(manualEditRowByLabel(label).querySelectorAll('.cc-axis-input'))
+    .find((candidate) => candidate.querySelector('span')?.textContent === axis)
+    ?.querySelector('input') as HTMLInputElement | undefined;
+  if (!input) throw new Error(`${label} ${axis} input not found`);
+  return input;
+}
+
 function installCanvasSnapshotMocks() {
   class MockImage {
     onload: (() => void) | null = null;
@@ -3356,6 +3377,128 @@ describe('FileViewer SVG artifacts', () => {
 
     expect(screen.getByText('Hero card')).toBeTruthy();
     expect(screen.queryByText('Trend card')).toBeNull();
+  });
+
+  it('resizes the edit structure rail by dragging its edge', async () => {
+    render(
+      <FileViewer
+        projectId="project-1"
+        projectKind="prototype"
+        file={baseFile({
+          name: 'page.html',
+          path: 'page.html',
+          mime: 'text/html',
+          kind: 'html',
+          artifactManifest: {
+            version: 1,
+            kind: 'html',
+            title: 'Page',
+            entry: 'page.html',
+            renderer: 'html',
+            exports: ['html'],
+          },
+        })}
+        liveHtml='<html><body><main data-od-id="hero-card">Hero</main></body></html>'
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId('manual-edit-mode-toggle'));
+    const rail = await screen.findByTestId('viewer-structure-rail');
+    const viewer = rail.closest('.viewer') as HTMLElement | null;
+    expect(viewer).toBeTruthy();
+
+    fireEvent.pointerDown(screen.getByTestId('viewer-structure-rail-resize'), {
+      button: 0,
+      clientX: 500,
+    });
+    fireEvent.pointerMove(document, { clientX: 420 });
+    fireEvent.pointerUp(document);
+
+    await waitFor(() => {
+      expect(viewer?.style.getPropertyValue('--viewer-structure-rail-width')).toBe('380px');
+    });
+  });
+
+  it('fills the manual edit inspector from computed styles when target styles are sparse', async () => {
+    const sparseTarget = {
+      ...manualEditTarget('hero-card', 'Hero card', 20),
+      styles: emptyManualEditStyles(),
+      computedSummary: {
+        display: 'flex',
+        position: 'relative',
+        fontFamily: 'Inter, sans-serif',
+        fontSize: '32px',
+        fontWeight: '600',
+        fontStyle: 'normal',
+        lineHeight: '1.5',
+        letterSpacing: '1px',
+        color: 'rgb(17, 34, 51)',
+        textAlign: 'justify',
+        textDecorationLine: 'none',
+        backgroundColor: 'rgb(240, 240, 240)',
+        borderColor: 'rgb(10, 20, 30)',
+        borderRadius: '4px',
+        borderTopWidth: '5px',
+        borderRightWidth: '5px',
+        borderBottomWidth: '5px',
+        borderLeftWidth: '5px',
+        borderStyle: 'dashed',
+        boxShadow: 'none',
+        padding: '8px 20px',
+        paddingTop: '8px',
+        paddingRight: '20px',
+        paddingBottom: '8px',
+        paddingLeft: '20px',
+        margin: '2px 6px',
+        marginTop: '2px',
+        marginRight: '6px',
+        marginBottom: '2px',
+        marginLeft: '6px',
+        opacity: '0.75',
+      },
+    };
+    render(
+      <FileViewer
+        projectId="project-1"
+        projectKind="prototype"
+        file={baseFile({
+          name: 'page.html',
+          path: 'page.html',
+          mime: 'text/html',
+          kind: 'html',
+          artifactManifest: {
+            version: 1,
+            kind: 'html',
+            title: 'Page',
+            entry: 'page.html',
+            renderer: 'html',
+            exports: ['html'],
+          },
+        })}
+        liveHtml='<html><body><main data-od-id="hero-card">Hero</main></body></html>'
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId('manual-edit-mode-toggle'));
+    const frame = await waitFor(() => {
+      const next = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+      expect(next.getAttribute('data-od-render-mode')).toBe('srcdoc');
+      return next;
+    });
+    window.dispatchEvent(new MessageEvent('message', {
+      source: frame.contentWindow,
+      data: { type: 'od-edit-select', target: sparseTarget },
+    }));
+
+    expect(await screen.findByText('Hero card')).toBeTruthy();
+    expect(rowInputByLabel('Font size').value).toBe('32');
+    expect(rowInputByLabel('Text color').value).toBe('#112233');
+    expect(rowInputByLabel('Border width').value).toBe('5');
+    expect(rowInputByLabel('Opacity').value).toBe('75');
+    expect(axisInputByLabel('Padding', 'Horizontal').value).toBe('20');
+    expect(axisInputByLabel('Padding', 'Vertical').value).toBe('8');
+    expect(axisInputByLabel('Margin', 'Horizontal').value).toBe('6');
+    expect(axisInputByLabel('Margin', 'Vertical').value).toBe('2');
   });
 
   // #3646 / #3647 exit-path regression: leaving edit mode while an inline text
@@ -7943,6 +8086,9 @@ describe('FileViewer tweaks toolbar', () => {
     expect(container.querySelector('iframe[data-od-render-mode="url-load"]')).toBe(urlFrame);
     expect(container.querySelector('iframe[data-od-render-mode="srcdoc"]')).toBe(srcDocFrame);
     expect(container.querySelector('.manual-edit-origin-preview-hidden')).not.toBeNull();
+    fireEvent.click(detailsRow);
+    expect(onOpenFileReplacing).not.toHaveBeenCalled();
+    expect(screen.getByTestId('manual-edit-mode-toggle').getAttribute('aria-pressed')).toBe('true');
 
     fireEvent.mouseLeave(detailsRow);
     await waitFor(() => expect(screen.queryByTestId('manual-edit-page-hover-preview')).toBeNull());

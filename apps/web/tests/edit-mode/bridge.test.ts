@@ -266,6 +266,55 @@ describe('manual edit bridge target normalization', () => {
     dom.window.close();
   });
 
+  it('includes computed four-side style values in manual edit targets', async () => {
+    const posts: Array<{
+      type?: string;
+      targets?: Array<{
+        id: string;
+        styles?: Record<string, string>;
+        computedSummary?: Record<string, string>;
+      }>;
+    }> = [];
+    const dom = new JSDOM(
+      `<main>
+        <section
+          data-od-id="card"
+          style="padding: 8px 12px 16px 20px; margin: 1px 2px 3px 4px; border: 5px dashed rgb(10, 20, 30); opacity: 0.75"
+        >Card</section>
+      </main>${buildManualEditBridge(true)}`,
+      { runScripts: 'dangerously', url: 'http://localhost' },
+    );
+    const card = dom.window.document.querySelector('[data-od-id="card"]') as HTMLElement;
+    card.getBoundingClientRect = () => ({
+      x: 0, y: 0, width: 160, height: 80,
+      top: 0, right: 160, bottom: 80, left: 0,
+      toJSON: () => ({}),
+    } as DOMRect);
+    dom.window.parent.postMessage = ((message: unknown) => {
+      posts.push(message as (typeof posts)[number]);
+    }) as typeof dom.window.parent.postMessage;
+
+    dom.window.dispatchEvent(new dom.window.MessageEvent('message', {
+      data: { type: 'od-edit-mode', enabled: true },
+    }));
+    await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+
+    const target = posts.find((message) => message.type === 'od-edit-targets')
+      ?.targets?.find((item) => item.id === 'card');
+    expect(target?.styles?.paddingTop).toBe('8px');
+    expect(target?.styles?.marginLeft).toBe('4px');
+    expect(target?.styles?.borderTopWidth).toBe('5px');
+    expect(target?.styles?.borderStyle).toBe('dashed');
+    expect(target?.styles?.opacity).toBe('0.75');
+    expect(target?.computedSummary?.paddingTop).toBe('8px');
+    expect(target?.computedSummary?.marginLeft).toBe('4px');
+    expect(target?.computedSummary?.borderTopWidth).toBe('5px');
+    expect(target?.computedSummary?.borderStyle).toBe('dashed');
+    expect(target?.computedSummary?.opacity).toBe('0.75');
+
+    dom.window.close();
+  });
+
   it('does not treat visibility-hidden block containers as layout editable targets', async () => {
     const posts: Array<{ type?: string; targets?: Array<{ id: string; isHidden?: boolean; isLayoutContainer?: boolean }> }> = [];
     const dom = new JSDOM(
@@ -452,6 +501,59 @@ describe('manual edit bridge target normalization', () => {
       type: 'od-edit-select',
       target: expect.objectContaining({ id: 'path-0-0-0', kind: 'text' }),
     }, '*');
+
+    dom.window.close();
+  });
+
+  it('captures edit-mode wheel gestures before artifact deck listeners can navigate slides', () => {
+    const posts: unknown[] = [];
+    const dom = new JSDOM(
+      `${buildManualEditKeyboardGuard()}
+      <script>
+        window.__artifactWheelCount = 0;
+        window.addEventListener('wheel', function(){
+          window.__artifactWheelCount += 1;
+        }, { capture: true });
+      </script>
+      <main data-od-source-path="path-0">Deck slide</main>
+      ${buildManualEditBridge(true)}`,
+      { runScripts: 'dangerously', url: 'http://localhost' },
+    );
+    dom.window.parent.postMessage = ((message: unknown) => {
+      posts.push(message);
+    }) as typeof dom.window.parent.postMessage;
+    dom.window.dispatchEvent(new dom.window.MessageEvent('message', {
+      data: {
+        type: 'od-edit-mode',
+        enabled: true,
+        viewport: 'desktop',
+        viewportWidth: 1440,
+        viewportHeight: 900,
+      },
+    }));
+
+    const event = new dom.window.WheelEvent('wheel', {
+      bubbles: true,
+      cancelable: true,
+      ctrlKey: true,
+      clientX: 64,
+      clientY: 80,
+      deltaY: 120,
+    });
+    dom.window.dispatchEvent(event);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect((dom.window as unknown as { __artifactWheelCount: number }).__artifactWheelCount).toBe(0);
+    expect(posts).toContainEqual({
+      type: 'od-edit-canvas-wheel',
+      clientX: 64,
+      clientY: 80,
+      ctrlKey: true,
+      metaKey: false,
+      deltaMode: 0,
+      deltaX: 0,
+      deltaY: 120,
+    });
 
     dom.window.close();
   });

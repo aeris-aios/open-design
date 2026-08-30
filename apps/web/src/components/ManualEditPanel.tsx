@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import type { ProjectDesignTokenSuggestion, ProjectDesignTokenSuggestionProp } from '../providers/registry';
 import { useT } from '../i18n';
 import {
@@ -654,6 +655,7 @@ const COLOR_STYLE_PROPS = new Set<keyof ManualEditStyles>(['color', 'backgroundC
 const SELECT_STYLE_OPTIONS: Partial<Record<keyof ManualEditStyles, ReadonlyArray<string>>> = {
   fontFamily: FONT_OPTS.map((option) => option.value),
   fontWeight: WEIGHT_OPTS,
+  fontStyle: ['', 'normal', 'italic', 'oblique'],
   textAlign: ALIGN_OPTS,
   flexDirection: DIRECTION_OPTS,
   justifyContent: JUSTIFY_OPTS,
@@ -681,7 +683,7 @@ export function normalizeManualEditStyles(
       continue;
     }
     if (COLOR_STYLE_PROPS.has(rawKey)) {
-      const color = normalizeHexColor(value);
+      const color = normalizeCssColor(value);
       if (!color) return { ok: false, error: `${styleLabel(rawKey)} must be a hex color.` };
       normalized[rawKey] = color;
       continue;
@@ -696,6 +698,12 @@ export function normalizeManualEditStyles(
       const lineHeight = normalizeLineHeightValue(value);
       if (!lineHeight) return { ok: false, error: 'Line height must be a positive number or px value.' };
       normalized.lineHeight = lineHeight;
+      continue;
+    }
+    if (rawKey === 'textDecorationLine') {
+      const decoration = normalizeTextDecorationLine(value);
+      if (decoration == null) return { ok: false, error: 'Text decoration has an unsupported value.' };
+      normalized.textDecorationLine = decoration;
       continue;
     }
     const options = SELECT_STYLE_OPTIONS[rawKey];
@@ -729,13 +737,25 @@ function normalizeLineHeightValue(value: string): string | null {
   return null;
 }
 
-function normalizeHexColor(value: string): string | null {
+function normalizeCssColor(value: string): string | null {
   const trimmed = value.trim();
   if (/^#[0-9a-f]{6}$/i.test(trimmed)) return trimmed.toLowerCase();
   if (/^#[0-9a-f]{3}$/i.test(trimmed)) {
     const r = trimmed[1]!, g = trimmed[2]!, b = trimmed[3]!;
     return `#${r}${r}${g}${g}${b}${b}`.toLowerCase();
   }
+  if (trimmed.toLowerCase() === 'transparent') return 'transparent';
+  const rgba = parseCssColor(trimmed);
+  if (rgba) return colorWithAlpha(rgba.hex, rgba.alpha);
+  return null;
+}
+
+function normalizeTextDecorationLine(value: string): string | null {
+  const trimmed = value.trim().toLowerCase();
+  if (!trimmed || trimmed === 'none') return trimmed;
+  const parts = trimmed.split(/\s+/);
+  const allowed = new Set(['underline', 'line-through', 'overline', 'blink']);
+  if (parts.every((part) => allowed.has(part))) return Array.from(new Set(parts)).join(' ');
   return null;
 }
 
@@ -798,7 +818,7 @@ const COLOR_SUGGESTION_PROPS: ReadonlySet<ProjectDesignTokenSuggestionProp> = ne
 ]);
 
 function StyleInspector({
-  target, styles, responsiveSize, onChange, onApply,
+  target, styles, onChange, onApply,
   tokenSuggestions = [], tokenSuggestionsLoading = false, onApplyTokenSuggestion, onInspectValueSelect,
 }: {
   target: ManualEditTarget;
@@ -814,12 +834,6 @@ function StyleInspector({
   const t = useT();
   const u = (key: keyof ManualEditStyles, value: string) => onChange(key, value);
   const summary = target.computedSummary;
-  const layoutDisabled = !target.isLayoutContainer;
-  const widthPlaceholder = styles.width ? '' : `${Math.round(target.rect.width)}px`;
-  const responsiveHeightKey: keyof ManualEditStyles =
-    target.kind === 'container' && responsiveSize?.minHeight != null ? 'minHeight' : 'height';
-  const responsiveHeightValue = styles[responsiveHeightKey];
-  const heightPlaceholder = responsiveHeightValue ? '' : `${Math.round(target.rect.height)}px`;
 
   // Which field is focused → drives the reference-values strip below the list.
   const [activeField, setActiveField] = useState<{ key: keyof ManualEditStyles; label: string } | null>(null);
@@ -838,71 +852,74 @@ function StyleInspector({
   const activeProp = activeField ? STYLE_TO_SUGGESTION_PROP[activeField.key] : undefined;
   const activeSuggestions = activeProp ? tokenSuggestions.filter((s) => s.prop === activeProp) : [];
   const activeIsColor = activeProp ? COLOR_SUGGESTION_PROPS.has(activeProp) : false;
+  const textDecoration = styles.textDecorationLine || summary?.textDecorationLine || '';
+  const applyBorderWidth = (value: string) => onApply({
+    borderTopWidth: value,
+    borderRightWidth: value,
+    borderBottomWidth: value,
+    borderLeftWidth: value,
+  });
 
   return (
     <div className="cc-inspector" data-manual-edit-history-controls="true">
       <Section title={t('manualEdit.parameters')}>
-        <ColorRow label={t('manualEdit.textColor')} value={styles.color} placeholder={summary?.color} onChange={(v) => u('color', v)} onFocus={() => activate('color', t('manualEdit.textColor'))} />
-        <ColorRow label={t('manualEdit.background')} value={styles.backgroundColor} placeholder={summary?.backgroundColor} onChange={(v) => u('backgroundColor', v)} onFocus={() => activate('backgroundColor', t('manualEdit.background'))} />
-        <UnitRow label={t('manualEdit.opacity')} value={styles.opacity} placeholder="1" onChange={(v) => u('opacity', v)} unit="" onFocus={() => activate('opacity', t('manualEdit.opacity'))} />
-        <FontRow label={t('manualEdit.fontFamily')} value={styles.fontFamily} placeholder={summary?.fontFamily} onChange={(v) => u('fontFamily', v)} onFocus={() => activate('fontFamily', t('manualEdit.fontFamily'))} />
-        <PairRow>
-          <UnitRow label={t('manualEdit.fontSize')} value={styles.fontSize} placeholder={summary?.fontSize} onChange={(v) => u('fontSize', v)} unit="px" autoUnit onFocus={() => activate('fontSize', t('manualEdit.fontSize'))} />
-          <DropdownRow label={t('manualEdit.weight')} value={styles.fontWeight} onChange={(v) => u('fontWeight', v)} options={WEIGHT_OPTS} placeholder={summary?.fontWeight} onFocus={() => activate('fontWeight', t('manualEdit.weight'))} />
-        </PairRow>
-        {/* Line height + tracking stay in the parameters list: text-heavy
-            artifacts need them, and the Style tab's raw JSON is a poor
-            substitute for a typographic nudge. */}
-        <PairRow>
-          <UnitRow label={t('manualEdit.lineHeight')} value={styles.lineHeight} placeholder={summary?.lineHeight} onChange={(v) => u('lineHeight', v)} unit="" onFocus={() => activate('lineHeight', t('manualEdit.lineHeight'))} />
-          <UnitRow label={t('manualEdit.letterSpacing')} value={styles.letterSpacing} placeholder={summary?.letterSpacing} onChange={(v) => u('letterSpacing', v)} unit="px" autoUnit onFocus={() => activate('letterSpacing', t('manualEdit.letterSpacing'))} />
-        </PairRow>
-        <UnitRow label={t('manualEdit.radius')} value={styles.borderRadius} placeholder={summary?.borderRadius} onChange={(v) => u('borderRadius', v)} unit="px" autoUnit onFocus={() => activate('borderRadius', t('manualEdit.radius'))} />
-        <PairRow>
-          <ColorRow label={t('manualEdit.borderColor')} value={styles.borderColor} placeholder={summary?.borderColor} onChange={(v) => u('borderColor', v)} onFocus={() => activate('borderColor', t('manualEdit.borderColor'))} />
-          <UnitRow label={t('manualEdit.borderWidth')} value={styles.borderTopWidth} onChange={(v) => onApply({
-            borderTopWidth: v,
-            borderRightWidth: v,
-            borderBottomWidth: v,
-            borderLeftWidth: v,
-          })} unit="px" autoUnit onFocus={() => activate('borderTopWidth', t('manualEdit.borderWidth'))} />
-        </PairRow>
-        {/* A border width with no style is invisible on most resets, so the
-            style selector rides along with the border pair. */}
-        <DropdownRow label={t('manualEdit.borderStyle')} value={styles.borderStyle} onChange={(v) => u('borderStyle', v)} options={borderStyleOptions(t)} />
-        <PairRow>
-          <UnitRow label={t('manualEdit.width')} value={styles.width} placeholder={widthPlaceholder} onChange={(v) => u('width', v)} unit="px" autoUnit onFocus={() => activate('width', t('manualEdit.width'))} />
-          <UnitRow label={t('manualEdit.height')} value={responsiveHeightValue} placeholder={heightPlaceholder} onChange={(v) => u(responsiveHeightKey, v)} unit="px" autoUnit onFocus={() => activate(responsiveHeightKey, t('manualEdit.height'))} />
-        </PairRow>
+        <div className="cc-style-grid">
+          <ColorRow label={t('manualEdit.textColor')} value={styles.color} placeholder={summary?.color} onChange={(v) => u('color', v)} onFocus={() => activate('color', t('manualEdit.textColor'))} withAlpha />
+          <FontRow label={t('manualEdit.fontFamily')} value={styles.fontFamily} placeholder={summary?.fontFamily} onChange={(v) => u('fontFamily', v)} onFocus={() => activate('fontFamily', t('manualEdit.fontFamily'))} />
+          <DropdownRow label={t('manualEdit.weight')} value={styles.fontWeight} onChange={(v) => u('fontWeight', v)} options={fontWeightOptions(t)} placeholder={summary?.fontWeight} onFocus={() => activate('fontWeight', t('manualEdit.weight'))} />
+          <UnitRow label={t('manualEdit.fontSize')} value={styles.fontSize} placeholder={summary?.fontSize || t('manualEdit.custom')} onChange={(v) => u('fontSize', v)} unit="px" autoUnit onFocus={() => activate('fontSize', t('manualEdit.fontSize'))} />
+          <UnitRow label={t('manualEdit.letterSpacing')} value={styles.letterSpacing} placeholder={summary?.letterSpacing || '0'} onChange={(v) => u('letterSpacing', v)} unit="px" autoUnit onFocus={() => activate('letterSpacing', t('manualEdit.letterSpacing'))} />
+          <UnitRow label={t('manualEdit.lineHeight')} value={styles.lineHeight} placeholder={summary?.lineHeight || '1.5'} onChange={(v) => u('lineHeight', v)} unit="" onFocus={() => activate('lineHeight', t('manualEdit.lineHeight'))} />
+          <AlignControl label={t('manualEdit.align')} value={styles.textAlign || summary?.textAlign || ''} onChange={(v) => u('textAlign', v)} onFocus={() => activate('textAlign', t('manualEdit.align'))} t={t} />
+          <TextStyleControl
+            label={t('manualEdit.textStyle')}
+            fontWeight={styles.fontWeight || summary?.fontWeight || ''}
+            fontStyle={styles.fontStyle || summary?.fontStyle || ''}
+            textDecorationLine={textDecoration}
+            onBold={() => u('fontWeight', isBoldWeight(styles.fontWeight || summary?.fontWeight || '') ? '400' : '600')}
+            onItalic={() => u('fontStyle', (styles.fontStyle || summary?.fontStyle) === 'italic' ? 'normal' : 'italic')}
+            onDecoration={(part) => u('textDecorationLine', toggleDecoration(textDecoration, part))}
+          />
+        </div>
+      </Section>
 
-        <QuadRow label={t('manualEdit.padding')} axes={{
-          t: t('manualEdit.sideTop'), r: t('manualEdit.sideRight'), b: t('manualEdit.sideBottom'), l: t('manualEdit.sideLeft'),
-        }} values={{
-          t: styles.paddingTop, r: styles.paddingRight, b: styles.paddingBottom, l: styles.paddingLeft,
-        }} onChange={(side, value) => u(sideToProp('padding', side), value)} onFocus={() => activate('padding', t('manualEdit.padding'))} />
+      <Section title={t('manualEdit.basic')}>
+        <div className="cc-style-grid">
+          <ColorRow label={t('manualEdit.background')} value={styles.backgroundColor} placeholder={summary?.backgroundColor} onChange={(v) => u('backgroundColor', v)} onFocus={() => activate('backgroundColor', t('manualEdit.background'))} withAlpha />
+        </div>
+      </Section>
 
-        <QuadRow label={t('manualEdit.margin')} axes={{
-          t: t('manualEdit.sideTop'), r: t('manualEdit.sideRight'), b: t('manualEdit.sideBottom'), l: t('manualEdit.sideLeft'),
-        }} values={{
-          t: styles.marginTop, r: styles.marginRight, b: styles.marginBottom, l: styles.marginLeft,
-        }} onChange={(side, value) => u(sideToProp('margin', side), value)} onFocus={() => activate('margin', t('manualEdit.margin'))} />
+      <Section title={t('manualEdit.stroke')}>
+        <div className="cc-style-grid">
+          <ColorRow label={t('manualEdit.borderColor')} value={styles.borderColor} placeholder={summary?.borderColor} onChange={(v) => u('borderColor', v)} onFocus={() => activate('borderColor', t('manualEdit.borderColor'))} withAlpha />
+          <DropdownRow label={t('manualEdit.borderStyle')} value={styles.borderStyle} onChange={(v) => u('borderStyle', v)} options={borderStyleOptions(t)} />
+          <UnitRow label={t('manualEdit.borderWidth')} value={styles.borderTopWidth} onChange={applyBorderWidth} unit="px" autoUnit onFocus={() => activate('borderTopWidth', t('manualEdit.borderWidth'))} />
+        </div>
+      </Section>
 
-        <PairRow>
-          <DropdownRow label={t('manualEdit.layoutDirection')} value={styles.flexDirection} onChange={(v) => u('flexDirection', v)} options={layoutDirectionOptions(t)} disabled={layoutDisabled} />
-          <DropdownRow label={t('manualEdit.distribution')} value={styles.justifyContent} onChange={(v) => u('justifyContent', v)} options={justifyOptions(t)} disabled={layoutDisabled} />
-        </PairRow>
-        <PairRow>
-          <UnitRow label={t('manualEdit.gap')} value={styles.gap} onChange={(v) => u('gap', v)} unit="px" autoUnit disabled={layoutDisabled} onFocus={() => activate('gap', t('manualEdit.gap'))} />
-          {layoutDisabled ? (
-            // Non-flex/grid targets still get a live alignment dropdown — it
-            // drives text-align (left / center / right) instead of the flex
-            // cross-axis, so the control is never a dead grey box.
-            <DropdownRow label={t('manualEdit.align')} value={styles.textAlign} onChange={(v) => u('textAlign', v)} options={textAlignOptions(t)} />
-          ) : (
-            <DropdownRow label={t('manualEdit.align')} value={styles.alignItems} onChange={(v) => u('alignItems', v)} options={itemAlignOptions(t)} />
-          )}
-        </PairRow>
-        {layoutDisabled ? <p className="cc-section-hint">{t('manualEdit.layoutUnavailable')}</p> : null}
+      <Section title={t('manualEdit.spacing')}>
+        <div className="cc-style-grid">
+          <AxisSpacingRow label={t('manualEdit.padding')} xLabel={t('manualEdit.horizontal')} yLabel={t('manualEdit.vertical')} values={{
+            top: styles.paddingTop, right: styles.paddingRight, bottom: styles.paddingBottom, left: styles.paddingLeft,
+          }} onChange={(axis, value) => onApply(axis === 'x'
+            ? { paddingLeft: value, paddingRight: value }
+            : { paddingTop: value, paddingBottom: value })}
+          onFocus={() => activate('padding', t('manualEdit.padding'))} mixedLabel={t('manualEdit.mixed')} />
+          <AxisSpacingRow label={t('manualEdit.margin')} xLabel={t('manualEdit.horizontal')} yLabel={t('manualEdit.vertical')} values={{
+            top: styles.marginTop, right: styles.marginRight, bottom: styles.marginBottom, left: styles.marginLeft,
+          }} onChange={(axis, value) => onApply(axis === 'x'
+            ? { marginLeft: value, marginRight: value }
+            : { marginTop: value, marginBottom: value })}
+          onFocus={() => activate('margin', t('manualEdit.margin'))} mixedLabel={t('manualEdit.mixed')} />
+        </div>
+      </Section>
+
+      <Section title={t('manualEdit.effects')}>
+        <div className="cc-style-grid">
+          <DropdownRow label={t('manualEdit.shadow')} value={styles.boxShadow} onChange={(v) => u('boxShadow', v)} options={shadowOptions(t)} placeholder={summary?.boxShadow} />
+          <OpacityRow label={t('manualEdit.opacity')} value={styles.opacity} onChange={(v) => u('opacity', v)} onFocus={() => activate('opacity', t('manualEdit.opacity'))} />
+          <UnitRow label={t('manualEdit.radius')} value={styles.borderRadius} placeholder={summary?.borderRadius} onChange={(v) => u('borderRadius', v)} unit="px" autoUnit onFocus={() => activate('borderRadius', t('manualEdit.radius'))} />
+        </div>
       </Section>
 
       {activeField && activeProp ? (
@@ -971,6 +988,28 @@ function textAlignOptions(t: ManualEditTranslator): DropdownOption[] {
     { value: 'left', label: t('manualEdit.textAlignLeft') },
     { value: 'center', label: t('manualEdit.textAlignCenter') },
     { value: 'right', label: t('manualEdit.textAlignRight') },
+    { value: 'justify', label: t('manualEdit.textAlignJustify') },
+  ];
+}
+
+function fontWeightOptions(t: ManualEditTranslator): DropdownOption[] {
+  return [
+    { value: '', label: t('manualEdit.custom') },
+    { value: '400', label: 'Regular' },
+    { value: '500', label: 'Medium' },
+    { value: '600', label: 'Semibold' },
+    { value: '700', label: 'Bold' },
+    { value: '800', label: 'Extra Bold' },
+    { value: '900', label: 'Black' },
+  ];
+}
+
+function shadowOptions(t: ManualEditTranslator): DropdownOption[] {
+  return [
+    { value: '', label: t('manualEdit.shadowNone') },
+    { value: 'none', label: t('manualEdit.shadowNone') },
+    { value: '0 8px 24px rgba(15, 23, 42, 0.12)', label: t('manualEdit.shadowSoft') },
+    { value: '0 16px 40px rgba(15, 23, 42, 0.18)', label: t('manualEdit.shadowMedium') },
   ];
 }
 
@@ -1007,6 +1046,148 @@ function Section({ title, children, inactive }: { title: string; children: React
 
 function PairRow({ children }: { children: ReactNode }) {
   return <div className="cc-pair">{children}</div>;
+}
+
+function AlignControl({ label, value, onChange, onFocus, t }: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  onFocus?: () => void;
+  t: ManualEditTranslator;
+}) {
+  const options = [
+    { value: 'left', icon: '☰', label: t('manualEdit.textAlignLeft') },
+    { value: 'center', icon: '☷', label: t('manualEdit.textAlignCenter') },
+    { value: 'right', icon: '☰', label: t('manualEdit.textAlignRight') },
+    { value: 'justify', icon: '▤', label: t('manualEdit.textAlignJustify') },
+  ];
+  return (
+    <div className="cc-row cc-row-stack" onFocus={onFocus}>
+      <span className="cc-label">{label}</span>
+      <div className="cc-segmented" role="group" aria-label={label}>
+        {options.map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            className={`cc-icon-btn cc-align-${option.value}${value === option.value ? ' is-active' : ''}`}
+            aria-label={option.label}
+            aria-pressed={value === option.value}
+            title={option.label}
+            onClick={() => onChange(option.value)}
+          >
+            <span aria-hidden>{option.icon}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function TextStyleControl({ label, fontWeight, fontStyle, textDecorationLine, onBold, onItalic, onDecoration }: {
+  label: string;
+  fontWeight: string;
+  fontStyle: string;
+  textDecorationLine: string;
+  onBold: () => void;
+  onItalic: () => void;
+  onDecoration: (part: 'underline' | 'line-through') => void;
+}) {
+  const underline = hasDecoration(textDecorationLine, 'underline');
+  const strike = hasDecoration(textDecorationLine, 'line-through');
+  return (
+    <div className="cc-row cc-row-stack">
+      <span className="cc-label">{label}</span>
+      <div className="cc-text-style" role="group" aria-label={label}>
+        <button type="button" className={`cc-style-btn${isBoldWeight(fontWeight) ? ' is-active' : ''}`} aria-label="Bold" aria-pressed={isBoldWeight(fontWeight)} onClick={onBold}>B</button>
+        <button type="button" className={`cc-style-btn cc-style-italic${fontStyle === 'italic' ? ' is-active' : ''}`} aria-label="Italic" aria-pressed={fontStyle === 'italic'} onClick={onItalic}>I</button>
+        <button type="button" className={`cc-style-btn cc-style-underline${underline ? ' is-active' : ''}`} aria-label="Underline" aria-pressed={underline} onClick={() => onDecoration('underline')}>U</button>
+        <button type="button" className={`cc-style-btn cc-style-strike${strike ? ' is-active' : ''}`} aria-label="Strikethrough" aria-pressed={strike} onClick={() => onDecoration('line-through')}>S</button>
+      </div>
+    </div>
+  );
+}
+
+function OpacityRow({ label, value, onChange, onFocus }: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  onFocus?: () => void;
+}) {
+  const percent = opacityToPercent(value);
+  const commit = (raw: string) => {
+    const n = Number(raw);
+    if (!Number.isFinite(n)) return onChange(raw);
+    onChange(String(Math.max(0, Math.min(100, n)) / 100));
+  };
+  return (
+    <label className="cc-row cc-opacity-row">
+      <span className="cc-label">{label}</span>
+      <span className="cc-value">
+        <input
+          type="range"
+          min="0"
+          max="100"
+          value={percent}
+          onFocus={onFocus}
+          onChange={(event) => commit(event.currentTarget.value)}
+        />
+        <input
+          className="cc-opacity-number"
+          value={percent}
+          onFocus={onFocus}
+          onChange={(event) => commit(event.currentTarget.value)}
+        />
+        <em className="cc-unit">%</em>
+      </span>
+    </label>
+  );
+}
+
+function AxisSpacingRow({ label, xLabel, yLabel, values, onChange, onFocus, mixedLabel }: {
+  label: string;
+  xLabel: string;
+  yLabel: string;
+  values: { top: string; right: string; bottom: string; left: string };
+  onChange: (axis: 'x' | 'y', value: string) => void;
+  onFocus?: () => void;
+  mixedLabel: string;
+}) {
+  const x = axisValue(values.left, values.right, mixedLabel);
+  const y = axisValue(values.top, values.bottom, mixedLabel);
+  return (
+    <div className="cc-row cc-row-stack cc-axis-row" onFocus={onFocus}>
+      <span className="cc-label">{label}</span>
+      <div className="cc-axis-grid">
+        <AxisInput axis={xLabel} value={x} mixedLabel={mixedLabel} onChange={(v) => onChange('x', v)} />
+        <AxisInput axis={yLabel} value={y} mixedLabel={mixedLabel} onChange={(v) => onChange('y', v)} />
+      </div>
+    </div>
+  );
+}
+
+function AxisInput({ axis, value, mixedLabel, onChange }: {
+  axis: string;
+  value: string;
+  mixedLabel: string;
+  onChange: (value: string) => void;
+}) {
+  const display = value === mixedLabel ? '' : stripPxUnit(value);
+  return (
+    <label className="cc-axis-input">
+      <span>{axis}</span>
+      <input
+        value={display}
+        placeholder={value === mixedLabel ? mixedLabel : '0'}
+        onChange={(event) => {
+          const raw = event.currentTarget.value.trim();
+          if (raw === '') onChange('');
+          else if (isNumericInput(raw)) onChange(`${raw}px`);
+          else if (/^-?\d+(\.\d+)?px$/i.test(raw)) onChange(raw.toLowerCase());
+          else onChange(event.currentTarget.value);
+        }}
+      />
+    </label>
+  );
 }
 
 function UnitRow({ label, value, onChange, unit, autoUnit, disabled, placeholder, onFocus }: {
@@ -1131,43 +1312,223 @@ function parseFontFamilies(value: string): string[] {
     .filter(Boolean);
 }
 
-function ColorRow({ label, value, placeholder, onChange, compact, onFocus }: {
-  label: string; value: string; placeholder?: string; onChange: (v: string) => void; compact?: boolean; onFocus?: () => void;
+function ColorRow({ label, value, placeholder, onChange, compact, onFocus, withAlpha }: {
+  label: string; value: string; placeholder?: string; onChange: (v: string) => void; compact?: boolean; onFocus?: () => void; withAlpha?: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLSpanElement | null>(null);
+  const [popoverStyle, setPopoverStyle] = useState<CSSProperties | null>(null);
+  const ref = useRef<HTMLDivElement | null>(null);
+  const popoverRef = useRef<HTMLDivElement | null>(null);
+  const parsed = parseCssColor(value || placeholder || '');
+  const displayColor = parsed?.hex ?? value;
+  const displayAlpha = parsed ? String(Math.round(parsed.alpha * 100)) : '100';
+  const changeColor = (raw: string) => {
+    onChange(withAlpha ? colorWithAlpha(raw, Number(displayAlpha) / 100) : raw);
+  };
+  const changeAlpha = (raw: string) => {
+    const n = Number(raw);
+    if (!Number.isFinite(n)) return;
+    onChange(colorWithAlpha(displayColor || '#000000', Math.max(0, Math.min(100, n)) / 100));
+  };
   useEffect(() => {
     if (!open) return;
+    const positionPopover = () => {
+      const row = ref.current;
+      if (!row || typeof window === 'undefined') return;
+      const rect = row.getBoundingClientRect();
+      const width = Math.min(260, Math.max(220, window.innerWidth - 16));
+      const height = popoverRef.current?.offsetHeight || 320;
+      const left = clamp(rect.left, 8, Math.max(8, window.innerWidth - width - 8));
+      const below = rect.bottom + 6;
+      const top = below + height <= window.innerHeight - 8
+        ? below
+        : Math.max(8, rect.top - height - 6);
+      setPopoverStyle({ position: 'fixed', left, top, width });
+    };
+    positionPopover();
     const onDocClick = (event: MouseEvent) => {
       if (!ref.current) return;
       if (ref.current.contains(event.target as Node)) return;
+      if (popoverRef.current?.contains(event.target as Node)) return;
       setOpen(false);
     };
     document.addEventListener('mousedown', onDocClick);
-    return () => document.removeEventListener('mousedown', onDocClick);
+    window.addEventListener('resize', positionPopover);
+    window.addEventListener('scroll', positionPopover, true);
+    return () => {
+      document.removeEventListener('mousedown', onDocClick);
+      window.removeEventListener('resize', positionPopover);
+      window.removeEventListener('scroll', positionPopover, true);
+    };
   }, [open]);
   return (
-    <label className="cc-row">
+    <div className="cc-row cc-color-row" ref={ref}>
       {compact ? null : <span className="cc-label">{label}</span>}
-      <span className={`cc-value cc-color ${compact ? 'cc-color-compact' : ''}`} ref={ref}>
-        <button type="button" className="cc-swatch" style={{ background: value || 'transparent' }}
+      <span className={`cc-value cc-color ${compact ? 'cc-color-compact' : ''}`}>
+        <button type="button" className="cc-swatch" style={{ background: value || placeholder || 'transparent' }}
           onClick={() => setOpen((v) => !v)} aria-label={`Pick ${label}`} />
-        <input value={value} placeholder={placeholder || '#000000'}
-          onChange={(e) => onChange(e.currentTarget.value)} onFocus={() => { setOpen(true); onFocus?.(); }} />
-        {open ? (
-          <div className="cc-color-popover">
-            <div className="cc-color-grid">
-              {EDITOR_SWATCH_COLORS.map((hex) => (
-                <button key={hex} type="button" className="cc-color-tile" style={{ background: hex }}
-                  onClick={() => { onChange(hex); setOpen(false); }} aria-label={hex} />
-              ))}
-            </div>
-            <input type="color" className="cc-color-native" value={normalizeColorForPicker(value)}
-              onChange={(e) => onChange(e.currentTarget.value)} />
-          </div>
+        <input value={displayColor} placeholder={normalizeColorForPicker(placeholder || '#000000')}
+          onChange={(e) => changeColor(e.currentTarget.value)} onFocus={() => { setOpen(true); onFocus?.(); }} />
+        {withAlpha ? (
+          <>
+            <span className="cc-color-divider" aria-hidden />
+            <input className="cc-color-alpha" value={displayAlpha} aria-label={`${label} opacity`}
+              onChange={(e) => changeAlpha(e.currentTarget.value)} onFocus={onFocus} />
+            <em className="cc-unit">%</em>
+          </>
         ) : null}
       </span>
-    </label>
+      {open && typeof document !== 'undefined' ? createPortal(
+        <ColorPickerPopover
+          label={label}
+          value={value}
+          placeholder={placeholder}
+          withAlpha={withAlpha}
+          onChange={onChange}
+          setPopoverNode={(node) => {
+            popoverRef.current = node;
+          }}
+          style={popoverStyle ?? undefined}
+        />
+      , document.body) : null}
+    </div>
+  );
+}
+
+function ColorPickerPopover({ label, value, placeholder, withAlpha, onChange, setPopoverNode, style }: {
+  label: string;
+  value: string;
+  placeholder?: string;
+  withAlpha?: boolean;
+  onChange: (v: string) => void;
+  setPopoverNode?: (node: HTMLDivElement | null) => void;
+  style?: CSSProperties;
+}) {
+  const state = colorPickerState(value || placeholder || '#000000');
+  const commit = (next: Partial<ColorPickerState>) => {
+    const hue = next.hue ?? state.hue;
+    const saturation = next.saturation ?? state.saturation;
+    const brightness = next.brightness ?? state.brightness;
+    const alpha = withAlpha ? next.alpha ?? state.alpha : 1;
+    const hex = rgbToHex(hsvToRgb({ h: hue, s: saturation, v: brightness }));
+    onChange(withAlpha ? colorWithAlpha(hex, alpha) : hex);
+  };
+  const commitSelection = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const saturation = clamp((event.clientX - rect.left) / rect.width, 0, 1);
+    const brightness = clamp(1 - ((event.clientY - rect.top) / rect.height), 0, 1);
+    event.currentTarget.setPointerCapture(event.pointerId);
+    commit({ saturation, brightness });
+  };
+  const pickWithEyeDropper = async () => {
+    const EyeDropperCtor = (window as typeof window & {
+      EyeDropper?: new () => { open: () => Promise<{ sRGBHex: string }> };
+    }).EyeDropper;
+    if (!EyeDropperCtor) return;
+    const result = await new EyeDropperCtor().open();
+    onChange(withAlpha ? colorWithAlpha(result.sRGBHex, state.alpha) : result.sRGBHex);
+  };
+  const supportsEyeDropper = typeof window !== 'undefined' && 'EyeDropper' in window;
+  return (
+    <div
+      ref={setPopoverNode}
+      className="cc-color-popover"
+      style={style}
+      role="dialog"
+      aria-label={`Pick ${label} color`}
+    >
+      <div
+        className="cc-color-selection"
+        role="slider"
+        aria-label={`${label} saturation and brightness`}
+        aria-valuetext={`${Math.round(state.saturation * 100)}%, ${Math.round(state.brightness * 100)}%`}
+        style={{ '--cc-hue-color': `hsl(${state.hue} 100% 50%)` } as CSSProperties}
+        onPointerDown={commitSelection}
+        onPointerMove={(event) => {
+          if (event.buttons !== 1) return;
+          commitSelection(event);
+        }}
+      >
+        <span
+          className="cc-color-handle"
+          style={{
+            left: `${state.saturation * 100}%`,
+            top: `${(1 - state.brightness) * 100}%`,
+            background: state.hex,
+          }}
+        />
+      </div>
+      <div className="cc-color-controls">
+        <span className="cc-color-preview" style={{ '--cc-preview-color': colorWithAlpha(state.hex, state.alpha) } as CSSProperties} />
+        <div className="cc-color-sliders">
+          <input
+            className="cc-color-slider cc-color-hue"
+            type="range"
+            min="0"
+            max="360"
+            value={Math.round(state.hue)}
+            aria-label={`${label} hue`}
+            style={{ '--cc-slider-thumb-color': `hsl(${state.hue} 100% 50%)` } as CSSProperties}
+            onChange={(event) => commit({ hue: Number(event.currentTarget.value) })}
+          />
+          {withAlpha ? (
+            <input
+              className="cc-color-slider cc-color-alpha-slider"
+              type="range"
+              min="0"
+              max="100"
+              value={Math.round(state.alpha * 100)}
+              aria-label={`${label} alpha`}
+              style={{ '--cc-alpha-color': state.hex, '--cc-slider-thumb-color': state.hex } as CSSProperties}
+              onChange={(event) => commit({ alpha: Number(event.currentTarget.value) / 100 })}
+            />
+          ) : null}
+        </div>
+      </div>
+      <div className={`cc-color-output-row${withAlpha ? '' : ' cc-color-output-row-no-alpha'}`}>
+        <input
+          className="cc-color-output"
+          value={state.hex}
+          aria-label={`${label} hex`}
+          onChange={(event) => onChange(withAlpha ? colorWithAlpha(event.currentTarget.value, state.alpha) : event.currentTarget.value)}
+        />
+        {withAlpha ? (
+          <label className="cc-color-output-alpha">
+            <input
+              value={Math.round(state.alpha * 100)}
+              aria-label={`${label} picker opacity`}
+              onChange={(event) => {
+                const next = Number(event.currentTarget.value);
+                if (Number.isFinite(next)) commit({ alpha: clamp(next, 0, 100) / 100 });
+              }}
+            />
+            <span>%</span>
+          </label>
+        ) : null}
+        <button
+          type="button"
+          className="cc-color-eyedropper"
+          disabled={!supportsEyeDropper}
+          aria-label={`${label} eyedropper`}
+          title="EyeDropper"
+          onClick={() => void pickWithEyeDropper()}
+        >
+          ⊕
+        </button>
+      </div>
+      <div className="cc-color-presets" aria-label={`${label} presets`}>
+        {EDITOR_SWATCH_COLORS.map((hex) => (
+          <button
+            key={hex}
+            type="button"
+            className="cc-color-tile"
+            style={{ background: hex }}
+            onClick={() => onChange(withAlpha ? colorWithAlpha(hex, state.alpha) : hex)}
+            aria-label={hex}
+          />
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -1237,6 +1598,148 @@ function stripPxUnit(value: string): string {
 
 function isNumericInput(value: string): boolean {
   return /^-?\d+(\.\d+)?$/.test(value.trim());
+}
+
+function axisValue(a: string, b: string, mixedLabel: string): string {
+  if (a && b && a !== b) return mixedLabel;
+  return a || b || '';
+}
+
+function opacityToPercent(value: string): string {
+  const n = Number(value || '1');
+  if (!Number.isFinite(n)) return '100';
+  return String(Math.round(Math.max(0, Math.min(1, n)) * 100));
+}
+
+function isBoldWeight(value: string): boolean {
+  const n = Number(value);
+  return Number.isFinite(n) ? n >= 600 : ['bold', 'bolder', 'semibold'].includes(value.toLowerCase());
+}
+
+function hasDecoration(value: string, part: 'underline' | 'line-through'): boolean {
+  return value.toLowerCase().split(/\s+/).includes(part);
+}
+
+function toggleDecoration(value: string, part: 'underline' | 'line-through'): string {
+  const parts = new Set(value.toLowerCase().split(/\s+/).filter(Boolean).filter((item) => item !== 'none'));
+  if (parts.has(part)) parts.delete(part);
+  else parts.add(part);
+  return Array.from(parts).join(' ');
+}
+
+function parseCssColor(value: string): { hex: string; alpha: number } | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (trimmed.toLowerCase() === 'transparent') return { hex: '#000000', alpha: 0 };
+  if (/^#[0-9a-f]{6}$/i.test(trimmed)) return { hex: trimmed.toLowerCase(), alpha: 1 };
+  if (/^#[0-9a-f]{3}$/i.test(trimmed)) {
+    const r = trimmed[1]!, g = trimmed[2]!, b = trimmed[3]!;
+    return { hex: `#${r}${r}${g}${g}${b}${b}`.toLowerCase(), alpha: 1 };
+  }
+  const match = trimmed.match(/^rgba?\(\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)(?:\s*,\s*(\d?(?:\.\d+)?|1(?:\.0+)?|0(?:\.0+)?))?\s*\)$/i);
+  if (!match) return null;
+  const toHex = (raw: string) => Math.max(0, Math.min(255, Math.round(Number(raw)))).toString(16).padStart(2, '0');
+  const alpha = match[4] == null ? 1 : Math.max(0, Math.min(1, Number(match[4])));
+  return { hex: `#${toHex(match[1]!)}${toHex(match[2]!)}${toHex(match[3]!)}`, alpha };
+}
+
+interface RgbColor {
+  r: number;
+  g: number;
+  b: number;
+}
+
+interface HsvColor {
+  h: number;
+  s: number;
+  v: number;
+}
+
+interface ColorPickerState {
+  hex: string;
+  alpha: number;
+  hue: number;
+  saturation: number;
+  brightness: number;
+}
+
+function colorPickerState(value: string): ColorPickerState {
+  const parsed = parseCssColor(value) ?? { hex: normalizeColorForPicker(value), alpha: 1 };
+  const hsv = rgbToHsv(hexToRgb(parsed.hex) ?? { r: 0, g: 0, b: 0 });
+  return {
+    hex: parsed.hex,
+    alpha: parsed.alpha,
+    hue: hsv.h,
+    saturation: hsv.s,
+    brightness: hsv.v,
+  };
+}
+
+function hexToRgb(hex: string): RgbColor | null {
+  const parsed = parseCssColor(hex);
+  if (!parsed) return null;
+  return {
+    r: parseInt(parsed.hex.slice(1, 3), 16),
+    g: parseInt(parsed.hex.slice(3, 5), 16),
+    b: parseInt(parsed.hex.slice(5, 7), 16),
+  };
+}
+
+function rgbToHex({ r, g, b }: RgbColor): string {
+  const part = (n: number) => Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, '0');
+  return `#${part(r)}${part(g)}${part(b)}`;
+}
+
+function rgbToHsv({ r, g, b }: RgbColor): HsvColor {
+  const rn = r / 255;
+  const gn = g / 255;
+  const bn = b / 255;
+  const max = Math.max(rn, gn, bn);
+  const min = Math.min(rn, gn, bn);
+  const delta = max - min;
+  let h = 0;
+  if (delta !== 0) {
+    if (max === rn) h = 60 * (((gn - bn) / delta) % 6);
+    else if (max === gn) h = 60 * ((bn - rn) / delta + 2);
+    else h = 60 * ((rn - gn) / delta + 4);
+  }
+  if (h < 0) h += 360;
+  return { h, s: max === 0 ? 0 : delta / max, v: max };
+}
+
+function hsvToRgb({ h, s, v }: HsvColor): RgbColor {
+  const hue = ((h % 360) + 360) % 360;
+  const c = v * s;
+  const x = c * (1 - Math.abs(((hue / 60) % 2) - 1));
+  const m = v - c;
+  let rn = 0, gn = 0, bn = 0;
+  if (hue < 60) [rn, gn, bn] = [c, x, 0];
+  else if (hue < 120) [rn, gn, bn] = [x, c, 0];
+  else if (hue < 180) [rn, gn, bn] = [0, c, x];
+  else if (hue < 240) [rn, gn, bn] = [0, x, c];
+  else if (hue < 300) [rn, gn, bn] = [x, 0, c];
+  else [rn, gn, bn] = [c, 0, x];
+  return {
+    r: (rn + m) * 255,
+    g: (gn + m) * 255,
+    b: (bn + m) * 255,
+  };
+}
+
+function colorWithAlpha(color: string, alpha: number): string {
+  const parsed = parseCssColor(color);
+  if (!parsed) return color;
+  const normalized = parsed.hex;
+  const clampedAlpha = Math.max(0, Math.min(1, alpha));
+  if (clampedAlpha >= 1) return normalized;
+  const r = parseInt(normalized.slice(1, 3), 16);
+  const g = parseInt(normalized.slice(3, 5), 16);
+  const b = parseInt(normalized.slice(5, 7), 16);
+  return `rgba(${r}, ${g}, ${b}, ${formatAlpha(clampedAlpha)})`;
+}
+
+function formatAlpha(alpha: number): string {
+  return alpha.toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
 }
 
 function formatSteppedNumber(value: number, current: string, step: number): string {

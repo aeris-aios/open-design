@@ -3189,6 +3189,13 @@ function injectDeckBridge(
     if (action === 'last') return list.length - 1;
     return i;
   }
+  function manualEditDeckLocked(){
+    try {
+      return !!(document.documentElement && document.documentElement.hasAttribute('data-od-edit-mode'));
+    } catch (_) {
+      return false;
+    }
+  }
   function keyForAction(action){
     if (action === 'next') return 'ArrowRight';
     if (action === 'prev') return 'ArrowLeft';
@@ -3299,7 +3306,8 @@ function injectDeckBridge(
     }
     step();
   }
-  function go(action){
+  function go(action, allowManualEditLocked){
+    if (manualEditDeckLocked() && !allowManualEditLocked) return;
     var list = slides();
     if (!list.length) return;
     if (isScrollDeck()) {
@@ -3318,7 +3326,8 @@ function injectDeckBridge(
       setTimeout(report, 280);
     });
   }
-  function gotoIndex(i){
+  function gotoIndex(i, allowManualEditLocked){
+    if (manualEditDeckLocked() && !allowManualEditLocked) return;
     var list = slides();
     if (!list.length) return;
     var target = Math.max(0, Math.min(list.length - 1, i));
@@ -3367,6 +3376,12 @@ function injectDeckBridge(
       if (ev.button !== undefined && ev.button !== 0) return;
       if (ev.metaKey || ev.ctrlKey || ev.altKey || ev.shiftKey) return;
       if (isInteractiveClickTarget(ev.target)) return;
+      if (manualEditDeckLocked()) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        if (typeof ev.stopImmediatePropagation === 'function') ev.stopImmediatePropagation();
+        return;
+      }
       var list = slides();
       if (!list.length) return;
       ev.preventDefault();
@@ -3464,6 +3479,7 @@ function injectDeckBridge(
   addOdSlideMessageListener(function(ev){
     var data = ev && ev.data;
     if (!data || data.type !== 'od:slide') return;
+    if (manualEditDeckLocked() && ev.source === window) return;
     var before = activeIndex(slides());
     odSlideMessageBeforeIndex = before;
     setTimeout(function(){
@@ -3473,6 +3489,7 @@ function injectDeckBridge(
   addOdSlideMessageListener(function(ev){
     var data = ev && ev.data;
     if (!data || data.type !== 'od:slide') return;
+    if (manualEditDeckLocked() && ev.source === window) return;
     var before = odSlideMessageBeforeIndex;
     odSlideMessageBeforeIndex = -1;
     function applyBridgeFallback() {
@@ -3482,7 +3499,7 @@ function injectDeckBridge(
           report();
           return;
         }
-        gotoIndex(data.index);
+        gotoIndex(data.index, ev.source !== window);
         return;
       }
       // Some generated decks ship their own od:slide listener. Let every
@@ -3493,7 +3510,7 @@ function injectDeckBridge(
         report();
         return;
       }
-      go(data.action);
+      go(data.action, ev.source !== window);
     }
     if (before >= 0 && activeIndex(slides()) !== before) {
       report();
@@ -3512,6 +3529,7 @@ function injectDeckBridge(
     btn.addEventListener('click', function(e){
       e.preventDefault();
       e.stopImmediatePropagation();
+      if (manualEditDeckLocked()) return;
       go(action);
     }, true);
   }

@@ -109,6 +109,7 @@ export function manualEditKindForElement(el: Element): ManualEditKind {
 export function buildManualEditKeyboardGuard(): string {
   return `<script data-od-edit-keyboard-guard>(function(){
   window.__odEditGuard = window.__odEditGuard || { editingEl: null };
+  window.__odEditWheelBridge = window.__odEditWheelBridge || null;
   function shouldBlock(){
     var el = window.__odEditGuard && window.__odEditGuard.editingEl;
     return el && el.isConnected;
@@ -186,6 +187,13 @@ export function buildManualEditKeyboardGuard(): string {
   }
   patchTarget(document);
   patchTarget(window);
+  window.addEventListener('wheel', function(ev){
+    if (!document.documentElement || !document.documentElement.hasAttribute('data-od-edit-mode')) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    if (typeof ev.stopImmediatePropagation === 'function') ev.stopImmediatePropagation();
+    if (typeof window.__odEditWheelBridge === 'function') window.__odEditWheelBridge(ev);
+  }, { capture: true, passive: false });
 })();</script>`;
 }
 
@@ -205,7 +213,7 @@ export function buildManualEditBridge(enabled: boolean, generation = ''): string
   var discoverySelector = ${JSON.stringify(MANUAL_EDIT_DISCOVERY_SELECTOR)};
   var hostNodeSelector = ${JSON.stringify(MANUAL_EDIT_HOST_NODE_SELECTOR)};
   var sourcePathAttr = ${JSON.stringify(MANUAL_EDIT_SOURCE_PATH_ATTR)};
-  var styleProps = ['fontFamily','fontSize','fontWeight','color','textAlign','lineHeight','letterSpacing','width','height','minHeight','gap','flexDirection','justifyContent','alignItems','backgroundColor','opacity','padding','paddingTop','paddingRight','paddingBottom','paddingLeft','margin','marginTop','marginRight','marginBottom','marginLeft','border','borderTopWidth','borderRightWidth','borderBottomWidth','borderLeftWidth','borderStyle','borderColor','borderRadius','transform','display'];
+  var styleProps = ['fontFamily','fontSize','fontWeight','fontStyle','color','textAlign','textDecorationLine','lineHeight','letterSpacing','width','height','minHeight','gap','flexDirection','justifyContent','alignItems','backgroundColor','opacity','padding','paddingTop','paddingRight','paddingBottom','paddingLeft','margin','marginTop','marginRight','marginBottom','marginLeft','border','borderTopWidth','borderRightWidth','borderBottomWidth','borderLeftWidth','borderStyle','borderColor','borderRadius','boxShadow','transform','display'];
   function isHostNode(el){
     return !!(el && el.matches && el.matches(hostNodeSelector));
   }
@@ -470,14 +478,32 @@ export function buildManualEditBridge(enabled: boolean, generation = ''): string
       fontFamily: computed.fontFamily || '',
       fontSize: computed.fontSize || '',
       fontWeight: computed.fontWeight || '',
+      fontStyle: computed.fontStyle || '',
       lineHeight: computed.lineHeight || '',
       letterSpacing: computed.letterSpacing || '',
       color: computed.color || '',
+      textAlign: computed.textAlign || '',
+      textDecorationLine: computed.textDecorationLine || '',
       backgroundColor: computed.backgroundColor || '',
       borderColor: computed.borderColor || '',
       borderRadius: computed.borderRadius || '',
+      borderTopWidth: computed.borderTopWidth || '',
+      borderRightWidth: computed.borderRightWidth || '',
+      borderBottomWidth: computed.borderBottomWidth || '',
+      borderLeftWidth: computed.borderLeftWidth || '',
+      borderStyle: computed.borderStyle || '',
+      boxShadow: computed.boxShadow || '',
       padding: computed.padding || '',
-      margin: computed.margin || ''
+      paddingTop: computed.paddingTop || '',
+      paddingRight: computed.paddingRight || '',
+      paddingBottom: computed.paddingBottom || '',
+      paddingLeft: computed.paddingLeft || '',
+      margin: computed.margin || '',
+      marginTop: computed.marginTop || '',
+      marginRight: computed.marginRight || '',
+      marginBottom: computed.marginBottom || '',
+      marginLeft: computed.marginLeft || '',
+      opacity: computed.opacity || ''
     };
   }
   function siblingRectsFor(el){
@@ -1955,12 +1981,7 @@ export function buildManualEditBridge(enabled: boolean, generation = ''): string
       return;
     }
   });
-  // Capture wheel/trackpad navigation at the iframe window boundary. This remains
-  // active when a selected text element becomes contenteditable and focused;
-  // document/target listeners in the artifact cannot swallow the gesture first.
-  window.addEventListener('wheel', function(ev){
-    if (!enabled) return;
-    ev.preventDefault();
+  function postCanvasWheel(ev){
     postEditMessage({
       type: 'od-edit-canvas-wheel',
       clientX: Number(ev.clientX) || 0,
@@ -1971,6 +1992,18 @@ export function buildManualEditBridge(enabled: boolean, generation = ''): string
       deltaX: Number(ev.deltaX) || 0,
       deltaY: Number(ev.deltaY) || 0
     });
+  }
+  window.__odEditWheelBridge = postCanvasWheel;
+  // Capture wheel/trackpad navigation at the iframe window boundary. The
+  // head guard above normally sees the event first and stops artifact deck
+  // runtimes from treating a pinch/trackpad sample as slide navigation. Keep
+  // this listener as a fallback for older srcdoc documents without that guard.
+  window.addEventListener('wheel', function(ev){
+    if (!enabled) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    if (typeof ev.stopImmediatePropagation === 'function') ev.stopImmediatePropagation();
+    postCanvasWheel(ev);
   }, { capture: true, passive: false });
   // pointerdown records a candidate drag; the actual move/commit happens in
   // pointermove/pointerup. We don't preventDefault here so a plain press that
@@ -2132,6 +2165,7 @@ export function buildManualEditBridge(enabled: boolean, generation = ''): string
     if (ev.target && ev.target.closest && ev.target.closest('[data-od-editing="true"]')) return;
     ev.preventDefault();
     ev.stopPropagation();
+    if (typeof ev.stopImmediatePropagation === 'function') ev.stopImmediatePropagation();
     var el = closestTarget(ev);
     if (!el) {
       // Clicking empty canvas (no source-mapped ancestor) is the gesture for

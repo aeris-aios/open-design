@@ -8,9 +8,8 @@ import { ManualEditPanel, emptyManualEditDraft, manualEditPatchSummary, normaliz
 import type { ProjectDesignTokenSuggestion, ProjectDesignTokenSuggestionProp } from '../../src/providers/registry';
 import { emptyManualEditStyles, type ManualEditPatch, type ManualEditStyles, type ManualEditTarget } from '../../src/edit-mode/types';
 
-// The rewritten panel renders ONE localized "Parameters" list instead of the
-// old hardcoded CONTENT / TYPOGRAPHY / SIZE / LAYOUT / BOX group headers, so
-// tests address controls by their translated row label rather than by group.
+// The rewritten panel keeps the selected HTML editor above a compact grouped
+// style form, so tests address controls by their translated row label.
 const PARAMETERS = 'Parameters';
 
 const target: ManualEditTarget = {
@@ -65,14 +64,15 @@ describe('ManualEditPanel', () => {
   it('renders the style inspector without the advanced editor entry', () => {
     renderPanel();
 
-    // One localized parameters list carries what the old hardcoded English
-    // TYPOGRAPHY / SIZE / LAYOUT / BOX headers used to split apart.
     const parameters = sectionByTitle(PARAMETERS);
     expect(parameters.closest('[data-manual-edit-history-controls="true"]')).not.toBeNull();
-    for (const label of ['Text color', 'Background', 'Font', 'Font size', 'Weight', 'Line height', 'Letter spacing', 'Radius', 'Width', 'Height', 'Padding', 'Margin']) {
-      expect(parameters.textContent).toContain(label);
+    for (const label of ['Text color', 'Font', 'Weight', 'Font size', 'Letter spacing', 'Line height', 'Align', 'Text style']) {
+      expect(host.textContent).toContain(label);
     }
-    for (const legacyHead of ['TYPOGRAPHY', 'SIZE', 'LAYOUT', 'BOX']) {
+    for (const head of ['Basic', 'Stroke', 'Spacing', 'Effects']) {
+      expect(sectionHeads()).toContain(head);
+    }
+    for (const legacyHead of ['TYPOGRAPHY', 'SIZE', 'LAYOUT', 'BOX', 'Direction', 'Distribution', 'Gap', 'Width', 'Height']) {
       expect(sectionHeads()).not.toContain(legacyHead);
     }
     expect(host.textContent).not.toContain('Advanced');
@@ -183,6 +183,27 @@ describe('ManualEditPanel', () => {
     });
 
     expect(onDraftChange).toHaveBeenCalledWith(expect.objectContaining({ text: 'Panel edited copy' }));
+  });
+
+  it('keeps the selected HTML editor above the grouped style controls', () => {
+    renderPanel({
+      selectedTarget: {
+        ...target,
+        kind: 'container',
+        tagName: 'div',
+        fields: {},
+        outerHtml: '<div data-od-id="hero-title"><h1>Original</h1></div>',
+      },
+    });
+
+    const htmlSection = sectionByTitle('CONTENT');
+    const htmlEditor = htmlSection.querySelector('textarea.manual-edit-code') as HTMLTextAreaElement | null;
+    if (!htmlEditor) throw new Error('Selected HTML editor not found');
+
+    expect(htmlSection.textContent).toContain('Selected element HTML');
+    expect(htmlEditor.value).toBe('<h1 data-od-id="hero-title">Original</h1>');
+    expect(htmlSection.compareDocumentPosition(sectionByTitle(PARAMETERS)) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING)
+      .toBeTruthy();
   });
 
   it('edits button text, navigation href, and new-tab behavior from the action inspector', () => {
@@ -298,12 +319,9 @@ describe('ManualEditPanel', () => {
     expect(onStyleChange).toHaveBeenCalledWith('hero-title', { fontSize: '33px' }, 'Style: Hero Title');
     expect(onStyleChange).toHaveBeenCalledWith('hero-title', { lineHeight: '1.5' }, 'Style: Hero Title');
     expect(onStyleChange).toHaveBeenCalledWith('hero-title', { letterSpacing: '0px' }, 'Style: Hero Title');
-    // Box/spacing controls used to live in their own English-headed groups.
-    // They now ride in the same localized list, so the port's contract is
-    // "exactly one parameters group", not "typography-only".
     expect(sectionHeads().filter((head) => head === PARAMETERS)).toHaveLength(1);
-    expect(sectionByTitle(PARAMETERS).textContent).toContain('Opacity');
-    expect(sectionByTitle(PARAMETERS).textContent).toContain('Padding');
+    expect(sectionByTitle('Effects').textContent).toContain('Opacity');
+    expect(sectionByTitle('Spacing').textContent).toContain('Padding');
   });
 
   it('does not persist an unchanged target style when the inspector opens', () => {
@@ -432,7 +450,7 @@ describe('ManualEditPanel', () => {
     act(() => {
       bgSwatch.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
     });
-    const colorTile = host.querySelector('button[aria-label="#3b82f6"]') as HTMLButtonElement | null;
+    const colorTile = document.querySelector('button[aria-label="#3b82f6"]') as HTMLButtonElement | null;
     if (!colorTile) throw new Error('Background color tile not found');
     act(() => {
       colorTile.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
@@ -449,6 +467,48 @@ describe('ManualEditPanel', () => {
       expect.objectContaining({ fontSize: expect.any(String) }),
       'Page styles',
     );
+  });
+
+  it('opens the full picker UI for manual edit colors', () => {
+    renderPanel({ styles: { ...emptyManualEditStyles(), color: '#336699' } });
+
+    const textSwatch = host.querySelector('button[aria-label="Pick Text color"]') as HTMLButtonElement | null;
+    if (!textSwatch) throw new Error('Text color swatch not found');
+    act(() => {
+      textSwatch.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(document.querySelector('.cc-color-selection')).not.toBeNull();
+    expect(document.querySelector('input[aria-label="Text color hue"]')).not.toBeNull();
+    expect(document.querySelector('input[aria-label="Text color alpha"]')).not.toBeNull();
+    expect(document.querySelector('input[aria-label="Text color hex"]')).not.toBeNull();
+  });
+
+  it('updates color alpha and hex through the picker controls', () => {
+    const onStyleChange = vi.fn<OnStyleChange>();
+    renderPanel({ onStyleChange, styles: { ...emptyManualEditStyles(), color: '#336699' } });
+
+    const textSwatch = host.querySelector('button[aria-label="Pick Text color"]') as HTMLButtonElement | null;
+    if (!textSwatch) throw new Error('Text color swatch not found');
+    act(() => {
+      textSwatch.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+    });
+
+    const alpha = document.querySelector('input[aria-label="Text color alpha"]') as HTMLInputElement | null;
+    if (!alpha) throw new Error('Text color alpha slider not found');
+    act(() => {
+      alpha.value = '50';
+      Simulate.change(alpha);
+    });
+    expect(onStyleChange).toHaveBeenCalledWith('hero-title', { color: 'rgba(51, 102, 153, 0.5)' }, 'Style: Hero Title');
+
+    const output = document.querySelector('input[aria-label="Text color hex"]') as HTMLInputElement | null;
+    if (!output) throw new Error('Text color hex output not found');
+    act(() => {
+      output.value = '#112233';
+      Simulate.change(output);
+    });
+    expect(onStyleChange).toHaveBeenCalledWith('hero-title', { color: '#112233' }, 'Style: Hero Title');
   });
 
   it('does not emit untouched page fields when changing the page font', () => {
@@ -521,75 +581,37 @@ describe('ManualEditPanel', () => {
     expect((host.querySelector('.cc-row select') as HTMLSelectElement | null)?.value).toBe('');
   });
 
-  it('disables layout controls for non-layout single targets', () => {
+  it('edits text alignment with compact icon controls', () => {
     const onStyleChange = vi.fn();
-    renderPanel({
-      onStyleChange,
-      styles: {
-        ...emptyManualEditStyles(),
-        gap: 'normal',
-        flexDirection: 'row',
-      },
-    });
-
-    // Layout rows now live in the shared parameters list rather than their own
-    // group, so "not editable" has to be asserted as disabled controls plus the
-    // explanatory hint — not as a missing section.
-    const parameters = sectionByTitle(PARAMETERS);
-    expect(rowSelect('Direction').disabled).toBe(true);
-    expect(rowSelect('Distribution').disabled).toBe(true);
-    expect(rowInput('Gap').disabled).toBe(true);
-    expect(parameters.textContent).toContain('Layout controls are available for flex or grid containers.');
-    // The alignment slot degrades to text-align so it is never a dead control.
-    const align = rowSelect('Align');
-    expect(align.disabled).toBe(false);
+    renderPanel({ onStyleChange });
+    const justify = host.querySelector('button[aria-label="Justify"]') as HTMLButtonElement | null;
+    if (!justify) throw new Error('Justify button not found');
     act(() => {
-      align.value = 'center';
-      align.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+      justify.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
     });
-    expect(onStyleChange).toHaveBeenCalledWith('hero-title', { textAlign: 'center' }, 'Style: Hero Title');
 
-    expect(normalizeManualEditStyles({ gap: '12', flexDirection: 'column' }, { layoutEnabled: false })).toEqual({
-      ok: true,
-      styles: {},
-    });
+    expect(onStyleChange).toHaveBeenCalledWith('hero-title', { textAlign: 'justify' }, 'Style: Hero Title');
   });
 
-  it('enables layout controls for flex or grid containers', () => {
+  it('edits text style through B/I/U/S buttons', () => {
     const onStyleChange = vi.fn();
-    renderPanel({
-      onStyleChange,
-      selectedTarget: { ...target, isLayoutContainer: true },
-      styles: {
-        ...emptyManualEditStyles(),
-        gap: '8px',
-        flexDirection: 'row',
-      },
-    });
+    renderPanel({ onStyleChange, styles: { ...emptyManualEditStyles(), fontWeight: '400' } });
 
-    const parameters = sectionByTitle(PARAMETERS);
-    expect(parameters.classList.contains('cc-section-inactive')).toBe(false);
-    expect(parameters.textContent).not.toContain('Layout controls are available for flex or grid containers.');
-    const gapInput = rowInput('Gap');
-    const directionSelect = rowSelect('Direction');
-    const gapIncrease = stepper('Gap', 'increase');
-    expect(gapInput.disabled).toBe(false);
-    expect(directionSelect.disabled).toBe(false);
-    // A flex/grid container gets the real cross-axis alignment control.
-    expect(rowSelect('Align').disabled).toBe(false);
-    expect(Array.from(rowSelect('Align').options).map((option) => option.value)).toContain('baseline');
+    for (const label of ['Bold', 'Italic', 'Underline', 'Strikethrough']) {
+      const button = host.querySelector(`button[aria-label="${label}"]`) as HTMLButtonElement | null;
+      if (!button) throw new Error(`${label} button not found`);
+      act(() => {
+        button.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+      });
+    }
 
-    act(() => {
-      gapIncrease.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
-      directionSelect.value = 'column';
-      directionSelect.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
-    });
-
-    expect(onStyleChange).toHaveBeenCalledWith('hero-title', { gap: '9px' }, 'Style: Hero Title');
-    expect(onStyleChange).toHaveBeenCalledWith('hero-title', { flexDirection: 'column' }, 'Style: Hero Title');
+    expect(onStyleChange).toHaveBeenCalledWith('hero-title', { fontWeight: '600' }, 'Style: Hero Title');
+    expect(onStyleChange).toHaveBeenCalledWith('hero-title', { fontStyle: 'italic' }, 'Style: Hero Title');
+    expect(onStyleChange).toHaveBeenCalledWith('hero-title', { textDecorationLine: 'underline' }, 'Style: Hero Title');
+    expect(onStyleChange).toHaveBeenCalledWith('hero-title', { textDecorationLine: 'line-through' }, 'Style: Hero Title');
   });
 
-  it('edits each padding side independently through the quad row', () => {
+  it('edits padding as horizontal and vertical pairs', () => {
     const onStyleChange = vi.fn<OnStyleChange>();
     renderPanel({
       onStyleChange,
@@ -602,56 +624,56 @@ describe('ManualEditPanel', () => {
       },
     });
 
-    // px is implied: the cell shows the bare number and writes back a px value.
-    expect(quadCellInput('Padding', 'Top').value).toBe('8');
+    expect(axisInput('Padding', 'Horizontal').value).toBe('8');
 
-    const topInput = quadCellInput('Padding', 'Top');
+    const horizontal = axisInput('Padding', 'Horizontal');
     act(() => {
-      topInput.value = '24';
-      Simulate.change(topInput);
+      horizontal.value = '24';
+      Simulate.change(horizontal);
     });
-    expect(onStyleChange).toHaveBeenCalledWith('hero-title', { paddingTop: '24px' }, 'Style: Hero Title');
-
-    // Each side is its own longhand — nudging Right must not touch the others.
-    act(() => {
-      stepper('Right', 'increase').dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
-    });
-    expect(onStyleChange).toHaveBeenCalledWith('hero-title', { paddingRight: '9px' }, 'Style: Hero Title');
-    expect(onStyleChange).not.toHaveBeenCalledWith(
+    expect(onStyleChange).toHaveBeenCalledWith(
       'hero-title',
-      expect.objectContaining({ paddingLeft: expect.any(String) }),
+      { paddingLeft: '24px', paddingRight: '24px' },
+      'Style: Hero Title',
+    );
+
+    const vertical = axisInput('Padding', 'Vertical');
+    act(() => {
+      vertical.value = '12';
+      Simulate.change(vertical);
+    });
+    expect(onStyleChange).toHaveBeenCalledWith(
+      'hero-title',
+      { paddingTop: '12px', paddingBottom: '12px' },
       'Style: Hero Title',
     );
   });
 
-  it('edits each margin side independently and collapses to a shared value', () => {
+  it('shows mixed spacing values until a pair is overwritten', () => {
     const onStyleChange = vi.fn<OnStyleChange>();
     renderPanel({
       onStyleChange,
       styles: {
         ...emptyManualEditStyles(),
         marginTop: '12px',
-        marginRight: '12px',
-        marginBottom: '12px',
+        marginRight: '20px',
+        marginBottom: '16px',
         marginLeft: '12px',
       },
     });
 
-    const bottomInput = quadCellInput('Margin', 'Bottom');
-    act(() => {
-      bottomInput.value = '4';
-      Simulate.change(bottomInput);
-    });
-    expect(onStyleChange).toHaveBeenCalledWith('hero-title', { marginBottom: '4px' }, 'Style: Hero Title');
+    const horizontal = axisInput('Margin', 'Horizontal');
+    expect(horizontal.placeholder).toBe('Mixed');
 
-    // Collapsed, an all-equal quad summarizes as the single shared number so
-    // the row stays readable without expanding it.
-    const head = quadRow('Margin').querySelector('.cc-quad-head') as HTMLButtonElement;
     act(() => {
-      head.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+      horizontal.value = '4';
+      Simulate.change(horizontal);
     });
-    expect(quadRow('Margin').querySelector('.cc-quad-grid')).toBeNull();
-    expect(quadRow('Margin').querySelector('em')?.textContent).toBe('12');
+    expect(onStyleChange).toHaveBeenCalledWith(
+      'hero-title',
+      { marginLeft: '4px', marginRight: '4px' },
+      'Style: Hero Title',
+    );
   });
 
   it('fans a single border width out to all four sides', () => {
@@ -858,6 +880,15 @@ describe('ManualEditPanel', () => {
     const select = rowByLabel(label).querySelector('select') as HTMLSelectElement | null;
     if (!select) throw new Error(`${label} select not found`);
     return select;
+  }
+
+  function axisInput(label: string, axis: string): HTMLInputElement {
+    const row = rowByLabel(label);
+    const input = Array.from(row.querySelectorAll('.cc-axis-input'))
+      .find((candidate) => candidate.querySelector('span')?.textContent === axis)
+      ?.querySelector('input') as HTMLInputElement | undefined;
+    if (!input) throw new Error(`${label} ${axis} input not found`);
+    return input;
   }
 
   function stepper(label: string, direction: 'increase' | 'decrease'): HTMLButtonElement {

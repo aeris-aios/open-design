@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type CSSProperties, type DragEvent as ReactDragEvent, type IframeHTMLAttributes, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type CSSProperties, type DragEvent as ReactDragEvent, type IframeHTMLAttributes, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { createPortal, flushSync } from 'react-dom';
 import { Button, Input, Select } from '@open-design/components';
 import { CenteredLoader } from './Loading';
@@ -309,6 +309,9 @@ import {
 
 /** The edit rail navigates; it does not select, rename, or batch. */
 const STRUCTURE_RAIL_NO_SELECTION: ReadonlySet<string> = new Set();
+const VIEWER_STRUCTURE_RAIL_DEFAULT_WIDTH = 300;
+const VIEWER_STRUCTURE_RAIL_MIN_WIDTH = 300;
+const VIEWER_STRUCTURE_RAIL_MAX_WIDTH = 560;
 /* The viewer's rail only exists while Edit is on, and it stands beside the live
    canvas. Layers is dropped there: hovering and selecting on the artboard
    already answers what the page is made of, and answers it warmer than a tree
@@ -775,14 +778,28 @@ const DEPLOY_PROVIDER_OPTIONS: DeployProviderOption[] = [
 function mergeManualEditInspectorStyles(
   sourceStyles: ManualEditStyles,
   previewStyles: ManualEditStyles,
+  computedSummary?: ManualEditTarget['computedSummary'],
 ): ManualEditStyles {
   return MANUAL_EDIT_STYLE_PROPS.reduce<ManualEditStyles>((acc, key) => {
     const sourceValue = sourceStyles[key]?.trim();
     const previewValue = previewStyles[key]?.trim();
-    const value = sourceValue || previewValue || '';
+    const summaryValue = manualEditComputedSummaryStyleValue(computedSummary, key).trim();
+    const value = sourceValue || previewValue || summaryValue || '';
     acc[key] = manualEditInspectorStyleValue(key, value);
     return acc;
   }, {} as ManualEditStyles);
+}
+
+function manualEditComputedSummaryStyleValue(
+  computedSummary: ManualEditTarget['computedSummary'] | undefined,
+  key: keyof ManualEditStyles,
+): string {
+  if (!computedSummary) return '';
+  const direct = (computedSummary as Partial<Record<keyof ManualEditStyles, string>>)[key];
+  if (typeof direct === 'string' && direct) return direct;
+  if (key.startsWith('padding') && key !== 'padding') return computedSummary.padding ?? '';
+  if (key.startsWith('margin') && key !== 'margin') return computedSummary.margin ?? '';
+  return '';
 }
 
 function manualEditInspectorStyleValue(key: keyof ManualEditStyles, value: string): string {
@@ -8916,6 +8933,7 @@ function HtmlViewer({
   // for hint managing hint box state
   const [openHintBox, setOpenHintBox] = useState(true);
   const [manualEditMode, setManualEditModeRaw] = useState(false);
+  const [structureRailWidth, setStructureRailWidth] = useState(VIEWER_STRUCTURE_RAIL_DEFAULT_WIDTH);
   useEffect(() => {
     onRetainActivityChange?.(file.name, manualEditMode);
     return () => onRetainActivityChange?.(file.name, false);
@@ -12641,7 +12659,7 @@ function HtmlViewer({
 
   function inspectorManualEditStyles(target: ManualEditTarget, baseSource: string): ManualEditStyles {
     const inlineStyles = readManualEditStyles(baseSource, target.id);
-    const merged = mergeManualEditInspectorStyles(inlineStyles, target.styles);
+    const merged = mergeManualEditInspectorStyles(inlineStyles, target.styles, target.computedSummary);
     const responsiveSize = readManualEditResponsiveSize(baseSource, target.id, previewViewport);
     if (responsiveSize?.widthPercent != null) {
       merged.width = `${responsiveSize.widthPercent.toFixed(2)}%`;
@@ -16124,12 +16142,65 @@ function HtmlViewer({
       }}
     />
   ) : null;
+  const handleStructureRailResizePointerDown = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const ownerDocument = event.currentTarget.ownerDocument;
+    const startX = event.clientX;
+    const startWidth = structureRailWidth;
+    const rtl = ownerDocument.documentElement.dir === 'rtl';
+    const previousCursor = ownerDocument.body.style.cursor;
+    const previousUserSelect = ownerDocument.body.style.userSelect;
+    ownerDocument.body.style.cursor = 'col-resize';
+    ownerDocument.body.style.userSelect = 'none';
+
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      const delta = moveEvent.clientX - startX;
+      const nextWidth = startWidth + (rtl ? delta : -delta);
+      setStructureRailWidth(clamp(
+        nextWidth,
+        VIEWER_STRUCTURE_RAIL_MIN_WIDTH,
+        VIEWER_STRUCTURE_RAIL_MAX_WIDTH,
+      ));
+    };
+    const stopResize = () => {
+      ownerDocument.body.style.cursor = previousCursor;
+      ownerDocument.body.style.userSelect = previousUserSelect;
+      ownerDocument.removeEventListener('pointermove', handlePointerMove);
+      ownerDocument.removeEventListener('pointerup', stopResize);
+      ownerDocument.removeEventListener('pointercancel', stopResize);
+    };
+
+    ownerDocument.addEventListener('pointermove', handlePointerMove);
+    ownerDocument.addEventListener('pointerup', stopResize);
+    ownerDocument.addEventListener('pointercancel', stopResize);
+  }, [structureRailWidth]);
+  const handleStructureRailResizeKeyDown = useCallback((event: ReactKeyboardEvent<HTMLButtonElement>) => {
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+    event.preventDefault();
+    const rtl = event.currentTarget.ownerDocument.documentElement.dir === 'rtl';
+    const direction = event.key === 'ArrowLeft' ? 1 : -1;
+    setStructureRailWidth((width) => clamp(
+      width + (rtl ? -direction : direction) * 24,
+      VIEWER_STRUCTURE_RAIL_MIN_WIDTH,
+      VIEWER_STRUCTURE_RAIL_MAX_WIDTH,
+    ));
+  }, []);
 
   const structureRail = manualEditMode || commentRailActive ? (
     <aside
       className={`viewer-structure-rail${commentRailActive ? ' viewer-structure-rail-comments' : ''}`}
       data-testid="viewer-structure-rail"
     >
+      <button
+        type="button"
+        className="viewer-structure-rail-resize"
+        data-testid="viewer-structure-rail-resize"
+        aria-label="Resize edit panel"
+        onPointerDown={handleStructureRailResizePointerDown}
+        onKeyDown={handleStructureRailResizeKeyDown}
+      />
       {commentRailActive ? (
         /* Comments take over the rail's column rather than floating a card over
            the canvas. The tool was armed from this rail, so the artboard beside
@@ -16157,12 +16228,7 @@ function HtmlViewer({
         onEnterDir={structureRailNoop}
         onOpenFile={(name) => {
           if (name === file.name) return;
-          // This rail only exists inside Edit, so picking a sibling page here is
-          // "show me that page", not "leave what I am doing". The tab still
-          // follows the file (versions / share / export / comments are all
-          // file-scoped and must not desync), but the next viewer comes up in
-          // Edit so the switch reads as a change of content, not of place.
-          onOpenFileReplacing?.(name, file.name, { keepManualEdit: true });
+          clearManualEditHover();
         }}
         onPreviewPageChange={handleStructurePagePreviewChange}
         onPreviewAsset={(asset) => {
@@ -16241,6 +16307,9 @@ function HtmlViewer({
         <Icon name="sliders" size={15} />
       </button>
     ) : null;
+  const viewerStyle = manualEditMode || commentRailActive
+    ? ({ '--viewer-structure-rail-width': `${structureRailWidth}px` } as CSSProperties)
+    : undefined;
   const activeComposerComment = activePreviewCommentId
     ? visibleSideComments.find((comment) => comment.id === activePreviewCommentId) ?? null
     : null;
@@ -16893,7 +16962,10 @@ function HtmlViewer({
   ) : null;
 
   return (
-    <div className={`viewer html-viewer${inTabPresent ? ' is-tab-present' : ''}${viewerOnly ? ' html-viewer--viewer-only' : ''}`}>
+    <div
+      className={`viewer html-viewer${inTabPresent ? ' is-tab-present' : ''}${viewerOnly ? ' html-viewer--viewer-only' : ''}`}
+      style={viewerStyle}
+    >
       {/* Rides the workspace action row when there is one, so the canvas gets
           a single chrome strip (canvas controls left, file actions right)
           instead of two stacked bars. The element itself is unchanged either
