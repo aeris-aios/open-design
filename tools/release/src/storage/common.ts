@@ -66,6 +66,8 @@ export function contentType(name: string): string {
   if (name.endsWith(".md")) return "text/markdown; charset=utf-8";
   if (name.endsWith(".log") || name.endsWith(".txt")) return "text/plain; charset=utf-8";
   if (name.endsWith(".png")) return "image/png";
+  if (name.endsWith(".webp")) return "image/webp";
+  if (name.endsWith(".tar.zst") || name.endsWith(".zst")) return "application/zstd";
   if (name.endsWith(".xml")) return "application/xml; charset=utf-8";
   return "application/octet-stream";
 }

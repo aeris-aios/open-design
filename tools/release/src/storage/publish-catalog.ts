@@ -1,0 +1,196 @@
+import { appendFileSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { join, relative, resolve } from "node:path";
+
+import { catalogSnapshotPrefix, CATALOG_LATEST_KEY, type CatalogLatestPointer } from "../catalog/schema.ts";
+import { verifyCatalogChecksums } from "../catalog/pack.ts";
+import { contentType, githubInfo, optional, publicUrl, required, storageConfigFromEnv } from "./common.ts";
+import {
+  getStorageObject,
+  putStorageObject,
+  putStorageObjectWithStatus,
+  type StorageConfig,
+} from "./s3-upload.ts";
+
+const IMMUTABLE_CACHE_CONTROL = "public, max-age=31536000, immutable";
+const POINTER_CACHE_CONTROL = "public, max-age=60";
+
+export type PublishCatalogOptions = {
+  stagingDir: string;
+  sourceCommit: string;
+  publicOrigin: string;
+  storage: StorageConfig;
+  github?: Record<string, unknown>;
+};
+
+export type PublishCatalogResult = {
+  prefix: string;
+  bundleUrl: string;
+  latestUrl: string;
+  bundleSha256: string;
+  reused: string[];
+  uploaded: string[];
+};
+
+function walkFiles(root: string): string[] {
+  const out: string[] = [];
+  function walk(dir: string): void {
+    for (const name of readdirSync(dir)) {
+      if (name === ".DS_Store") continue;
+      const full = join(dir, name);
+      const st = statSync(full);
+      if (st.isDirectory()) walk(full);
+      else if (st.isFile()) out.push(full);
+    }
+  }
+  walk(root);
+  return out.sort((a, b) => a.localeCompare(b));
+}
+
+async function publishImmutableObject(
+  storage: StorageConfig,
+  objectKey: string,
+  body: Buffer,
+  fileName: string,
+): Promise<"uploaded" | "reused"> {
+  const result = await putStorageObjectWithStatus({
+    ...storage,
+    body,
+    cacheControl: IMMUTABLE_CACHE_CONTROL,
+    contentType: contentType(fileName),
+    headers: { "if-none-match": "*" },
+    objectKey,
+  });
+  if (result.ok) return "uploaded";
+  if (result.status !== 412) {
+    throw new Error(
+      `PUT ${result.url} failed with HTTP ${result.status}${result.body.length > 0 ? `: ${result.body}` : ""}`,
+    );
+  }
+  const existing = await getStorageObject({ ...storage, objectKey });
+  if (existing == null) {
+    throw new Error(`catalog object disappeared after immutable PUT conflict: ${objectKey}`);
+  }
+  if (!existing.bytes.equals(body)) {
+    throw new Error(`immutable catalog object already exists with different content: ${objectKey}`);
+  }
+  return "reused";
+}
+
+/**
+ * Publish a packed catalog snapshot under catalog/v1/<full-commit>/.
+ * Updates catalog/v1/latest.json ONLY after every immutable object verifies.
+ * Failures leave the previous latest.json untouched.
+ */
+export async function publishCatalogSnapshot(options: PublishCatalogOptions): Promise<PublishCatalogResult> {
+  const stagingDir = resolve(options.stagingDir);
+  const sourceCommit = options.sourceCommit.toLowerCase();
+  const prefix = catalogSnapshotPrefix(sourceCommit);
+
+  verifyCatalogChecksums(stagingDir);
+
+  const requiredNames = ["catalog.json", "provenance.json", "checksums.sha256", "bundle.tar.zst"];
+  for (const name of requiredNames) {
+    const full = join(stagingDir, name);
+    if (!statSync(full).isFile()) {
+      throw new Error(`cannot publish incomplete catalog snapshot: missing ${name}`);
+    }
+  }
+
+  const files = walkFiles(stagingDir);
+  const uploaded: string[] = [];
+  const reused: string[] = [];
+
+  // Publish every file under the immutable prefix first; never touch latest yet.
+  for (const full of files) {
+    const rel = relative(stagingDir, full).split("\\").join("/");
+    const body = readFileSync(full);
+    const objectKey = `${prefix}/${rel}`;
+    const outcome = await publishImmutableObject(options.storage, objectKey, body, rel);
+    if (outcome === "uploaded") uploaded.push(rel);
+    else reused.push(rel);
+  }
+
+  // Byte-verify required objects before moving the pointer.
+  for (const name of requiredNames) {
+    const objectKey = `${prefix}/${name}`;
+    const local = readFileSync(join(stagingDir, name));
+    const published = await getStorageObject({ ...options.storage, objectKey });
+    if (published == null || !published.bytes.equals(local)) {
+      throw new Error(`published catalog object failed byte-for-byte verification: ${objectKey}`);
+    }
+  }
+
+  const bundleSha256 = (
+    await getStorageObject({ ...options.storage, objectKey: `${prefix}/bundle.tar.zst` })
+  )!.bytes;
+  const digest = (await import("node:crypto")).createHash("sha256").update(bundleSha256).digest("hex");
+
+  const provenance = JSON.parse(readFileSync(join(stagingDir, "provenance.json"), "utf8")) as {
+    bundleSha256?: string;
+  };
+  if (provenance.bundleSha256 && provenance.bundleSha256 !== digest) {
+    throw new Error(
+      `provenance bundleSha256 ${provenance.bundleSha256} does not match published bundle ${digest}`,
+    );
+  }
+
+  const bundleUrl = publicUrl(options.publicOrigin, prefix, "bundle.tar.zst");
+  const pointer: CatalogLatestPointer = {
+    schemaVersion: 1,
+    sourceCommit,
+    bundleUrl,
+    sha256: digest,
+    publishedAt: new Date().toISOString(),
+    github: options.github ?? githubInfo(),
+  };
+
+  await putStorageObject({
+    ...options.storage,
+    body: Buffer.from(`${JSON.stringify(pointer, null, 2)}\n`, "utf8"),
+    cacheControl: POINTER_CACHE_CONTROL,
+    contentType: contentType("latest.json"),
+    objectKey: CATALOG_LATEST_KEY,
+  });
+
+  const latestUrl = publicUrl(options.publicOrigin, "catalog/v1", "latest.json");
+  console.log(bundleUrl);
+  console.log(latestUrl);
+
+  return {
+    prefix,
+    bundleUrl,
+    latestUrl,
+    bundleSha256: digest,
+    reused,
+    uploaded,
+  };
+}
+
+/** Env-driven entrypoint for `tools-release publish-catalog`. */
+export async function publishCatalogFromEnv(): Promise<void> {
+  const stagingDir = required("CATALOG_STAGING_DIR");
+  const sourceCommit = required("CATALOG_SOURCE_COMMIT");
+  const publicOrigin = required("RELEASE_PUBLIC_ORIGIN");
+  const storage = storageConfigFromEnv();
+  const result = await publishCatalogSnapshot({
+    stagingDir,
+    sourceCommit,
+    publicOrigin,
+    storage,
+    github: githubInfo(),
+  });
+
+  const githubOutput = optional("GITHUB_OUTPUT");
+  if (githubOutput.length > 0) {
+    appendFileSync(
+      githubOutput,
+      [
+        `source_commit=${result.prefix.split("/").pop()}`,
+        `bundle_url=${result.bundleUrl}`,
+        `bundle_sha256=${result.bundleSha256}`,
+        `latest_url=${result.latestUrl}`,
+      ].join("\n") + "\n",
+      "utf8",
+    );
+  }
+}

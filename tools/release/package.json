@@ -25,6 +25,9 @@
     "typescript": "6.0.3",
     "vitest": "4.1.6"
   },
+  "optionalDependencies": {
+    "playwright": "1.60.0"
+  },
   "engines": {
     "node": "~24"
   }
