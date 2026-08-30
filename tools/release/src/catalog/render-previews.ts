@@ -361,6 +361,11 @@ export function createPlaywrightPreviewRenderer(
           throw new Error("preview job has neither htmlPath nor htmlContent");
         }
         await page.clock.runFor(PREVIEW_SETTLE_MS);
+        if (blockedRemoteResource) {
+          throw new Error(
+            `blocked HTTP(S) dependency while rendering deterministic preview ${job.label}`,
+          );
+        }
         const png = await page.screenshot({
           type: "png",
           animations: "disabled",
@@ -371,9 +376,6 @@ export function createPlaywrightPreviewRenderer(
         return {
           bytes: webp,
           source: "render",
-          warning: blockedRemoteResource
-            ? `blocked remote resources for deterministic preview ${job.label}`
-            : undefined,
         };
       } finally {
         await context.close();

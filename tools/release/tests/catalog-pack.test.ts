@@ -313,6 +313,60 @@ describe("playwright preview fail-closed", () => {
     }
   });
 
+  it("treats a blocked HTTP dependency as a failed capture", async () => {
+    let abortCalls = 0;
+    let screenshotCalls = 0;
+    const renderer = createPlaywrightPreviewRenderer({
+      importPlaywright: async () => ({
+        chromium: {
+          launch: async () => ({
+            newContext: async () => ({
+              route: async (_pattern, handler) => {
+                await handler({
+                  abort: async () => {
+                    abortCalls += 1;
+                  },
+                });
+              },
+              addInitScript: async () => undefined,
+              newPage: async () => ({
+                clock: {
+                  install: async () => undefined,
+                  pauseAt: async () => undefined,
+                  runFor: async () => undefined,
+                },
+                setContent: async () => undefined,
+                goto: async () => undefined,
+                evaluate: async () => undefined,
+                waitForTimeout: async () => undefined,
+                screenshot: async () => {
+                  screenshotCalls += 1;
+                  return Buffer.from("unreachable");
+                },
+              }),
+              close: async () => undefined,
+            }),
+            close: async () => undefined,
+          }),
+        },
+      }),
+    });
+
+    const result = await renderer({
+      bucket: "skills",
+      stableId: "alpha",
+      relativePath: "previews/skills/alpha.webp",
+      htmlContent: '<script src="https://cdn.example.test/runtime.js"></script>',
+      label: "skill:alpha",
+    });
+    expect(result.source).toBe("fallback");
+    expect(result.warning).toMatch(/blocked HTTP\(S\) dependency/);
+    expect(result.bytes).toEqual(MINIMAL_WEBP);
+    expect(abortCalls).toBe(1);
+    expect(screenshotCalls).toBe(0);
+    await renderer.close?.();
+  });
+
   it("freezes dynamic browser state and converts captures to actual WebP bytes", async () => {
     const png = await sharp({
       create: { width: 2, height: 2, channels: 4, background: "#ff0000" },
@@ -320,20 +374,14 @@ describe("playwright preview fail-closed", () => {
     const initScripts: string[] = [];
     const clockEvents: string[] = [];
     const routePatterns: RegExp[] = [];
-    let abortCalls = 0;
     let screenshotOptions: Record<string, unknown> | undefined;
     const renderer = createPlaywrightPreviewRenderer({
       importPlaywright: async () => ({
         chromium: {
           launch: async () => ({
             newContext: async () => ({
-              route: async (pattern, handler) => {
+              route: async (pattern, _handler) => {
                 routePatterns.push(pattern);
-                await handler({
-                  abort: async () => {
-                    abortCalls += 1;
-                  },
-                });
               },
               addInitScript: async ({ content }) => {
                 initScripts.push(content);
@@ -379,8 +427,7 @@ describe("playwright preview fail-closed", () => {
     expect(initScripts[0]).toContain("Math.random =");
     expect(routePatterns).toHaveLength(1);
     expect(routePatterns[0]?.test("https://cdn.example.test/script.js")).toBe(true);
-    expect(abortCalls).toBe(1);
-    expect(result.warning).toMatch(/blocked remote resources/);
+    expect(result.warning).toBeUndefined();
     expect(clockEvents).toEqual([
       "install:2026-01-01T00:00:00.000Z",
       "pause:2026-01-01T00:00:00.000Z",
