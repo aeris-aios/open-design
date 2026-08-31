@@ -35,6 +35,7 @@ import {
 } from '@open-design/contracts';
 import type { OpenDesignHostProjectImportSuccess } from '@open-design/host';
 import { useAnalytics } from '../analytics/provider';
+import { CLOUD_DISABLED } from '../cf-deployment';
 import {
   trackHomeNavClick,
   trackOnboardingClick,
@@ -3353,11 +3354,27 @@ function OnboardingView({
     step,
   ]);
 
+  // CF self-hosted deployment - upstream cloud account UI hidden. Skip the
+  // cloud sign-in step entirely and land on local agent setup, mirroring the
+  // step-0 "local coding agent" alternative path so the rest of onboarding
+  // (agent scan/selection) behaves exactly as before.
+  useEffect(() => {
+    if (!CLOUD_DISABLED || step !== 0) return;
+    setRuntime('local');
+    setRuntimeSetupEntry('cloud');
+    void scanCliAgents({ preferExisting: true });
+    setStep(2);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step]);
+
   const primaryActionLabel = t('settings.onboardingContinue');
 
   // Cloud remains the primary identity path. Local CLI and BYOK are independent
   // direct setup paths; authenticated users keep the full source chooser.
   if (step === 0) {
+    // CF self-hosted deployment - never render the "Sign in to OpenDesign"
+    // landing; the effect above forwards to the runtime setup step.
+    if (CLOUD_DISABLED) return null;
     const cloudBusy = amrLoginBusy;
     const amrStatusResolving = !amrStatusResolved;
     return (

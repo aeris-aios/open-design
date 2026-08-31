@@ -1,4 +1,5 @@
 import type { AppConfigPrefs } from '@open-design/contracts';
+import { CLOUD_DISABLED } from '../cf-deployment';
 import { MEDIA_PROVIDERS } from '../media/models';
 import { isOpenAICompatible } from '../providers/openai-compatible';
 import type {
@@ -112,7 +113,11 @@ export const DEFAULT_CONFIG: AppConfig = {
   // existed yet — observed live on the prerelease.10 QA run, which left
   // zero `page_view pn=onboarding` rows on PostHog despite the user
   // completing the flow.
-  telemetry: { metrics: true, content: true },
+  // CF self-hosted deployment - telemetry defaults OFF (the consent prompt is
+  // suppressed, so nothing may default to sharing).
+  telemetry: CLOUD_DISABLED
+    ? { metrics: false, content: false }
+    : { metrics: true, content: true },
 };
 
 /** Well-known providers with pre-filled base URLs. */
@@ -1139,13 +1144,20 @@ export function mergeDaemonConfig(
   // circuits the whole block, and any channel the user already turned off
   // is preserved via the nullish-coalesce.
   const explicitlyOptedOut = next.telemetry?.metrics === false;
-  if (!explicitlyOptedOut && !next.installationId) {
+  if (!CLOUD_DISABLED && !explicitlyOptedOut && !next.installationId) {
     next.installationId = randomUUID();
     next.telemetry = {
       metrics: true,
       content: next.telemetry?.content ?? true,
       artifactManifest: next.telemetry?.artifactManifest ?? false,
     };
+  }
+  if (CLOUD_DISABLED) {
+    // CF self-hosted deployment - the share-usage prompt is suppressed, so the
+    // stored preference is pinned to declined regardless of daemon-shipped
+    // default-on telemetry, and the first-run banner never re-arms.
+    next.telemetry = { ...(next.telemetry ?? {}), metrics: false, content: false };
+    if (next.privacyDecisionAt == null) next.privacyDecisionAt = Date.now();
   }
   if (daemonConfig.allowSilentUpdates !== undefined) {
     next.allowSilentUpdates = daemonConfig.allowSilentUpdates;

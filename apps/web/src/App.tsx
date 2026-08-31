@@ -87,6 +87,7 @@ import {
   type SettingsHighlight,
 } from './components/SettingsDialog';
 import { PrivacyConsentModal } from './components/PrivacyConsentModal';
+import { CLOUD_DISABLED } from './cf-deployment';
 import {
   daemonIsLive,
   fetchAppVersionInfo,
@@ -1856,7 +1857,10 @@ function AppInner() {
   // is running. Settings is irrelevant to visibility; the banner sits above
   // the modal-backdrop layer in index.css so opening Settings does not hide
   // it.
+  // CF self-hosted deployment - the share-usage-data prompt never shows;
+  // telemetry defaults to declined (see state/config.ts).
   const showPrivacyConsent =
+    !CLOUD_DISABLED &&
     daemonConfigLoaded &&
     config.privacyDecisionAt == null &&
     config.onboardingCompleted === true;

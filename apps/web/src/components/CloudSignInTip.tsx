@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { VisuallyHidden } from '@open-design/components';
 import { Icon } from './Icon';
+import { CLOUD_DISABLED } from '../cf-deployment';
 import { useI18n } from '../i18n';
 import {
   cancelVelaLogin,
@@ -112,6 +113,9 @@ export function RailAccountRecoveryTip() {
  * re-read, which swaps the rail to the signed-in form (unmounting the card).
  */
 export function CloudSignInTip() {
+  // CF self-hosted deployment - upstream cloud account UI hidden. The rail's
+  // "Sign in to use OpenDesign Cloud" callout has no working target here.
+  if (CLOUD_DISABLED) return null;
   const { t } = useI18n();
   const [state, setState] = useState<TipState>('idle');
   const [status, setStatus] = useState<VelaLoginStatus | null>(null);
