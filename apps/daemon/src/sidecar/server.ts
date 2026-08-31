@@ -1,6 +1,8 @@
 import { randomBytes } from "node:crypto";
 
 import {
+  APP_KEYS,
+  OPEN_DESIGN_SIDECAR_CONTRACT,
   SIDECAR_ENV,
   SIDECAR_MESSAGES,
   normalizeDaemonSidecarMessage,
@@ -12,7 +14,15 @@ import {
   type DesktopRenderSlidesInput,
   type DesktopRenderSlidesResult,
   type MintImportTokenResult,
+  type SidecarStamp,
 } from "@open-design/sidecar-proto";
+import {
+  createJsonIpcServer,
+  requestJsonIpc,
+  resolveAppIpcPath,
+  type JsonIpcServerHandle,
+  type SidecarRuntimeContext,
+} from "@open-design/sidecar";
 
 import { startDaemonRuntime, type StartedDaemonRuntime } from "../daemon-startup.js";
 import {
@@ -22,6 +32,7 @@ import {
   setDesktopAuthSecret,
   signDesktopImportToken,
 } from "../desktop-auth.js";
+import { attachParentMonitor, scheduleHeldDaemonExit } from "./parent-monitor-gate.js";
 
 /**
  * PR #974 round 6 (mrcfps): pure wrapper that overlays the live
@@ -41,18 +52,9 @@ const WEB_PORT_ENV = SIDECAR_ENV.WEB_PORT;
 const DESKTOP_IMPORT_TOKEN_TTL_MS = 60_000;
 
 export type DaemonSidecarHandle = {
-  invoke(action: string, input: unknown): Promise<unknown>;
   status(): Promise<DaemonStatusSnapshot>;
   stop(): Promise<void>;
   waitUntilStopped(): Promise<void>;
-};
-
-export type DaemonSidecarRuntime = {
-  base: string;
-  mode?: string;
-  namespace: string;
-  source?: string;
-  [field: string]: unknown;
 };
 
 function parsePort(value: string | undefined): number {
@@ -97,26 +99,47 @@ export function mintImportTokenForCli(baseDir: string): MintImportTokenResult {
 }
 
 export async function startDaemonSidecar(
-  runtime: DaemonSidecarRuntime,
-  options: {
-    invokeDesktop?: <TResult>(action: string, input: unknown, timeoutMs: number) => Promise<TResult>;
-    port?: number;
-  } = {},
+  runtime: SidecarRuntimeContext<SidecarStamp>,
+  options: { exit?: (code?: number) => void } = {},
 ): Promise<DaemonSidecarHandle> {
-  const invokeDesktop = options.invokeDesktop ?? (async () => {
-    throw new Error("desktop sidecar is unavailable");
-  });
   const serverHandle: StartedDaemonRuntime = await startDaemonRuntime({
     desktopPdfExporter: async (input: DesktopExportPdfInput): Promise<DesktopExportPdfResult> => {
-      return await invokeDesktop<DesktopExportPdfResult>(SIDECAR_MESSAGES.EXPORT_PDF, input, 600_000);
+      const desktopIpc = resolveAppIpcPath({
+        app: APP_KEYS.DESKTOP,
+        contract: OPEN_DESIGN_SIDECAR_CONTRACT,
+        namespace: runtime.namespace,
+      });
+      return await requestJsonIpc<DesktopExportPdfResult>(
+        desktopIpc,
+        { input, type: SIDECAR_MESSAGES.EXPORT_PDF },
+        { timeoutMs: 600_000 },
+      );
     },
     desktopSlideRenderer: async (input: DesktopRenderSlidesInput): Promise<DesktopRenderSlidesResult> => {
-      return await invokeDesktop<DesktopRenderSlidesResult>(SIDECAR_MESSAGES.RENDER_SLIDES, input, 600_000);
+      const desktopIpc = resolveAppIpcPath({
+        app: APP_KEYS.DESKTOP,
+        contract: OPEN_DESIGN_SIDECAR_CONTRACT,
+        namespace: runtime.namespace,
+      });
+      return await requestJsonIpc<DesktopRenderSlidesResult>(
+        desktopIpc,
+        { input, type: SIDECAR_MESSAGES.RENDER_SLIDES },
+        { timeoutMs: 600_000 },
+      );
     },
     desktopArtifactExporter: async (input: DesktopExportArtifactInput): Promise<DesktopExportArtifactResult> => {
-      return await invokeDesktop<DesktopExportArtifactResult>(SIDECAR_MESSAGES.EXPORT_ARTIFACT, input, 600_000);
+      const desktopIpc = resolveAppIpcPath({
+        app: APP_KEYS.DESKTOP,
+        contract: OPEN_DESIGN_SIDECAR_CONTRACT,
+        namespace: runtime.namespace,
+      });
+      return await requestJsonIpc<DesktopExportArtifactResult>(
+        desktopIpc,
+        { input, type: SIDECAR_MESSAGES.EXPORT_ARTIFACT },
+        { timeoutMs: 600_000 },
+      );
     },
-    port: options.port ?? parsePort(process.env[DAEMON_PORT_ENV]),
+    port: parsePort(process.env[DAEMON_PORT_ENV]),
     runtime,
   });
 
@@ -134,6 +157,7 @@ export async function startDaemonSidecar(
     updatedAt: new Date().toISOString(),
     url: serverHandle.url,
   };
+  let ipcServer: JsonIpcServerHandle | null = null;
   let stopped = false;
   let resolveStopped!: () => void;
   const stoppedPromise = new Promise<void>((resolveStop) => {
@@ -145,20 +169,27 @@ export async function startDaemonSidecar(
     stopped = true;
     state.state = "stopped";
     state.updatedAt = new Date().toISOString();
+    await ipcServer?.close().catch(() => undefined);
     await serverHandle.stop().catch(() => undefined);
     resolveStopped();
   }
 
-  async function invoke(action: string, input: unknown): Promise<unknown> {
-      const request = normalizeDaemonSidecarMessage({ input, type: action });
+  attachParentMonitor(stop);
+
+  ipcServer = await createJsonIpcServer({
+    socketPath: runtime.ipc,
+    handler: async (message: unknown) => {
+      const request = normalizeDaemonSidecarMessage(message);
       switch (request.type) {
         case SIDECAR_MESSAGES.STATUS:
           // PR #974 round 6 (mrcfps): recompute the gate flag per
           // request so `tools-dev start desktop` sees the live value
           // (the flag flips after REGISTER_DESKTOP_AUTH and stays sticky).
           return withCurrentDesktopAuthGate(state);
-        case SIDECAR_MESSAGES.SHUTDOWN:
-          throw new Error("sidecar lifecycle messages are private");
+        case SIDECAR_MESSAGES.SHUTDOWN: {
+          const deferred = scheduleHeldDaemonExit(stop, options.exit);
+          return deferred ? { accepted: true, deferred: true } : { accepted: true };
+        }
         case SIDECAR_MESSAGES.REGISTER_DESKTOP_AUTH:
           // PR #974: the desktop main process registers its per-process
           // auth secret here at startup. From this point on the HTTP
@@ -183,10 +214,20 @@ export async function startDaemonSidecar(
           return { accepted: true };
         }
       }
+    },
+  });
+
+  for (const signal of ["SIGINT", "SIGTERM"] as const) {
+    process.on(signal, () => {
+      // Packaged beforeShutdown sends SHUTDOWN. When the handoff hold is
+      // active the SHUTDOWN ack includes deferred:true so closeManagedChild
+      // waits a longer bounded grace before stopProcesses(). SIGTERM from
+      // that escalation still uses this hold; SIGKILL remains the ceiling.
+      scheduleHeldDaemonExit(stop, options.exit);
+    });
   }
 
   return {
-    invoke,
     async status() {
       return withCurrentDesktopAuthGate(state);
     },

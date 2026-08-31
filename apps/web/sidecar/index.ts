@@ -1,26 +1,21 @@
-import { APP_KEYS } from "@open-design/sidecar-proto";
-import { SidecarFactory, type SidecarClient } from "@open-design/sidecar";
+import { APP_KEYS, OPEN_DESIGN_SIDECAR_CONTRACT } from "@open-design/sidecar-proto";
+import { bootstrapSidecarRuntime } from "@open-design/sidecar";
+import { readProcessStamp } from "@open-design/platform";
 
-import { startWebSidecar, type WebSidecarHandle } from "./server.js";
+import { startWebSidecar } from "./server.js";
 
 async function main(): Promise<void> {
-  let client!: SidecarClient<WebSidecarHandle>;
-  client = SidecarFactory.create<WebSidecarHandle>({
-    lifecycle: {
-      async start(resources) {
-        if (client.stamp.app !== APP_KEYS.WEB) throw new Error(`web sidecar cannot run stamp app ${client.stamp.app}`);
-        return await startWebSidecar({ mode: client.stamp.mode }, resources.port);
-      },
-      async status(runtime) {
-        return await runtime.status();
-      },
-      async stop(runtime) {
-        await runtime.stop();
-      },
-    },
+  const stamp = readProcessStamp(process.argv.slice(2), OPEN_DESIGN_SIDECAR_CONTRACT);
+  if (stamp == null) throw new Error("sidecar stamp is required");
+
+  const runtime = bootstrapSidecarRuntime(stamp, process.env, {
+    app: APP_KEYS.WEB,
+    contract: OPEN_DESIGN_SIDECAR_CONTRACT,
   });
-  await client.start();
-  await client.waitUntilStopped();
+  const server = await startWebSidecar(runtime);
+
+  process.stdout.write(`${JSON.stringify(await server.status(), null, 2)}\n`);
+  await server.waitUntilStopped();
 }
 
 void main().catch((error: unknown) => {

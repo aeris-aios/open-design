@@ -29,6 +29,8 @@ describe("planMcpDaemonBootstrap", () => {
         ELECTRON_RUN_AS_NODE: "1",
         OD_DAEMON_URL: "http://127.0.0.1:1",
         OD_DATA_DIR: "/tmp/open-design-data",
+        OD_SIDECAR_IPC_PATH:
+          "/tmp/open-design/ipc/stable/daemon.sock",
         OD_MCP_BOOTSTRAP_COMMAND: "/usr/bin/open",
         OD_MCP_BOOTSTRAP_ARGS:
           '["-g","-j","/Applications/Open Design.app","--args","--headless"]',
@@ -49,6 +51,7 @@ describe("planMcpDaemonBootstrap", () => {
     if (plan.action !== "spawn") throw new Error("expected spawn plan");
     expect(plan.env.ELECTRON_RUN_AS_NODE).toBeUndefined();
     expect(plan.env.OD_DAEMON_URL).toBeUndefined();
+    expect(plan.env.OD_SIDECAR_IPC_PATH).toBeUndefined();
     expect(plan.env.OD_DATA_DIR).toBe("/tmp/open-design-data");
   });
 
@@ -92,11 +95,12 @@ describe("ensureMcpDaemonUrl", () => {
 
     await expect(ensureMcpDaemonUrl({
       env: {
+        OD_SIDECAR_IPC_PATH:
+          "/tmp/open-design/ipc/stable/daemon.sock",
         OD_MCP_BOOTSTRAP_COMMAND: "/usr/bin/open",
         OD_MCP_BOOTSTRAP_ARGS:
           '["-g","-j","/Applications/Open Design.app","--args","--headless"]',
       },
-      connectInherited: (() => ({ invoke: vi.fn(), status: vi.fn() })) as never,
       discoverTargetDaemonUrl,
       probeDaemon,
       resolveDaemonUrl,

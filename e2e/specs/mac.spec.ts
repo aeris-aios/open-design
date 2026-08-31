@@ -218,7 +218,6 @@ const packagedOnboardingExpression = `
 `;
 
 type DesktopStatus = {
-  executablePath?: string;
   pid?: number;
   state?: string;
   title?: string | null;
@@ -2686,14 +2685,18 @@ async function waitForUpdaterPopupMatching(
 }
 
 async function readDesktopIdentityMarker(): Promise<DesktopIdentityMarker> {
-  const status = (await runToolsPackJson<MacInspectResult>('inspect')).status;
-  if (typeof status?.executablePath !== 'string' || typeof status.pid !== 'number') {
-    throw new Error(`invalid packaged desktop sidecar status: ${formatUnknown(status)}`);
+  const markerPath = join(runtimeNamespaceRoot, 'runtime', 'desktop-root.json');
+  const value = JSON.parse(await readFile(markerPath, 'utf8')) as unknown;
+  if (
+    !isRecord(value) ||
+    typeof value.appPath !== 'string' ||
+    typeof value.executablePath !== 'string' ||
+    typeof value.pid !== 'number' ||
+    value.version !== 1
+  ) {
+    throw new Error(`invalid packaged desktop identity at ${markerPath}: ${formatUnknown(value)}`);
   }
-  const marker = '/Contents/MacOS/';
-  const markerIndex = status.executablePath.indexOf(marker);
-  const appPath = markerIndex < 0 ? status.executablePath : status.executablePath.slice(0, markerIndex);
-  return { appPath, executablePath: status.executablePath, pid: status.pid, version: 1 };
+  return value as DesktopIdentityMarker;
 }
 
 function assertPayloadDesktopIdentity(

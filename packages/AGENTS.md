@@ -31,7 +31,7 @@ Follow the root `AGENTS.md` first. This file only records module-level boundarie
 - Keep cross-runtime DTO and plugin wire-shape validation schemas in `contracts` when callers need the same runtime parser, while keeping app-specific parsing, I/O, and enforcement in the owning app or package.
 - Do not let app packages depend directly on sidecar control-plane details.
 - Do not hard-code OpenDesign app/source/mode constants in `sidecar` or `platform`.
-- Keep stamp fields limited to five: `channel`, `namespace`, `source`, `mode`, and `app`. IPC is private implementation detail and is never a stamp field.
+- Keep stamp fields limited to five: `app`, `mode`, `namespace`, `ipc`, and `source`.
 
 ## Common package commands
 

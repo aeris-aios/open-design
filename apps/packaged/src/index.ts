@@ -1,5 +1,6 @@
 import {
   APP_KEYS,
+  OPEN_DESIGN_SIDECAR_CONTRACT,
   SIDECAR_MODES,
   SIDECAR_SOURCES,
   type SidecarStamp,
@@ -10,24 +11,17 @@ import {
   parseLauncherHandoffResumeArgs,
 } from "@open-design/launcher-proto";
 import {
-  bootstrapSidecarProcess,
-  isCurrentSidecarLauncher,
-  readCurrentSidecarStamp,
-  registerSidecarProcess,
-  resolveSidecarLauncherExitCode,
-  SidecarFactory,
-  type SidecarClient,
-  type SidecarRuntimeContext,
-  type SidecarStamp as ConvergedSidecarStamp,
+  bootstrapSidecarRuntime,
+  createSidecarLaunchEnv,
+  resolveAppIpcPath,
 } from "@open-design/sidecar";
 import {
   applyLoopbackConnectionLimitSwitch,
   applyOsLocaleSwitch,
   createSplashWindow,
   setSplashStage,
-  type DesktopMainHandle,
 } from "@open-design/desktop/main";
-import { releaseChannelFromNamespace, releaseChannelFromVersion } from "@open-design/release";
+import { readProcessStamp } from "@open-design/platform";
 import { join } from "node:path";
 import { app, dialog } from "electron";
 
@@ -36,15 +30,14 @@ import {
   claimPackagedDownloadAttribution,
   discoverPackagedDownloadAttribution,
 } from "./download-attribution.js";
+import { writePackagedDesktopIdentity } from "./identity.js";
 import {
   parsePackagedHeadlessRequest,
   resolvePackagedMcpBootstrapLaunch,
-  runPackagedMcpActionAgainstExistingDaemon,
 } from "./headless-runtime.js";
 import { PackagedPathAccessError } from "./errors.js";
 import {
   exitPackagedLauncherForExistingDesktop,
-  findExistingPackagedDesktopOwner,
   inspectExistingDesktopForLauncher,
   waitForLauncherAfterQuit,
 } from "./launcher-after-quit.js";
@@ -90,6 +83,32 @@ let startupTelemetryContext:
     }
   | null = null;
 
+function createPackagedDesktopStamp(namespace: string): SidecarStamp {
+  return {
+    app: APP_KEYS.DESKTOP,
+    ipc: resolveAppIpcPath({
+      app: APP_KEYS.DESKTOP,
+      contract: OPEN_DESIGN_SIDECAR_CONTRACT,
+      namespace,
+    }),
+    mode: SIDECAR_MODES.RUNTIME,
+    namespace,
+    source: SIDECAR_SOURCES.PACKAGED,
+  };
+}
+
+function applyLaunchEnv(base: string, stamp: SidecarStamp): void {
+  const env = createSidecarLaunchEnv({
+    base,
+    contract: OPEN_DESIGN_SIDECAR_CONTRACT,
+    stamp,
+  });
+
+  for (const [key, value] of Object.entries(env)) {
+    if (value != null) process.env[key] = value;
+  }
+}
+
 function applyPackagedUpdaterEnv(updateMetadataUrl: string | null): void {
   if (updateMetadataUrl == null) return;
   if (process.env.OD_UPDATE_METADATA_URL != null && process.env.OD_UPDATE_METADATA_URL.length > 0) return;
@@ -99,6 +118,11 @@ function applyPackagedUpdaterEnv(updateMetadataUrl: string | null): void {
 async function main(): Promise<void> {
   const config = await readPackagedConfig();
   const headlessRequest = parsePackagedHeadlessRequest(process.argv.slice(1));
+  if (headlessRequest.headless) {
+    const { runPackagedHeadless } = await import("./headless-runtime.js");
+    await runPackagedHeadless(config, headlessRequest);
+    return;
+  }
 
   // Must run BEFORE `app.whenReady()` below, because Chromium consumes
   // `--lang` at session bootstrap. Doing it here lets the packaged
@@ -118,66 +142,15 @@ async function main(): Promise<void> {
   const afterQuit = parseLauncherAfterQuitArgs(process.argv.slice(1));
   const handoffResume = parseLauncherHandoffResumeArgs(process.argv.slice(1));
   const delegated = parseLauncherDelegatedArgs(process.argv.slice(1));
-  const convergedArgvStamp = (() => {
-    try { return readCurrentSidecarStamp(); } catch { return null; }
-  })();
-  const namespace = convergedArgvStamp?.namespace ?? config.namespace;
+  const argvStamp = readProcessStamp(process.argv.slice(1), OPEN_DESIGN_SIDECAR_CONTRACT);
+  const namespace = argvStamp?.namespace ?? config.namespace;
   const namespaceConfig = namespace === config.namespace ? config : { ...config, namespace };
   const initialPaths = resolvePackagedNamespacePaths(namespaceConfig, namespace, process.env);
-  const launchStamp: ConvergedSidecarStamp = {
-    app: APP_KEYS.DESKTOP,
-    channel: convergedArgvStamp?.channel
-      ?? releaseChannelFromVersion(namespaceConfig.appVersion)
-      ?? releaseChannelFromNamespace(namespace, "default")
-      ?? "stable",
-    mode: headlessRequest.headless ? "headless" : SIDECAR_MODES.RUNTIME,
-    namespace,
-    source: convergedArgvStamp?.source ?? SIDECAR_SOURCES.PACKAGED,
-  };
-  if (await runPackagedMcpActionAgainstExistingDaemon(headlessRequest, launchStamp)) {
-    app.exit(0);
-    return;
-  }
-  if (headlessRequest.mcpInstallAgent != null) {
-    const existingOwner = await findExistingPackagedDesktopOwner(launchStamp, {
-      modes: [SIDECAR_MODES.RUNTIME, "headless"],
-    });
-    if (existingOwner != null) {
-      throw new Error(
-        `Cannot install MCP while the existing ${existingOwner.stamp.mode} desktop runtime has no healthy daemon. Quit Open Design and retry.`,
-      );
-    }
-  }
-  const oppositeDesktop = await inspectExistingDesktopForLauncher(launchStamp, {
-    deeplinkUrl: findPackagedDeeplinkArg(process.argv),
-    logger: console,
-    modes: [
-      headlessRequest.headless ? SIDECAR_MODES.RUNTIME : "headless",
-      ...(
-        convergedArgvStamp == null || isCurrentSidecarLauncher()
-          ? [launchStamp.mode]
-          : []
-      ),
-    ],
-    paths: initialPaths,
-  });
-  if (exitPackagedLauncherForExistingDesktop(oppositeDesktop, (code) => app.exit(code))) {
-    return;
-  }
-  if (await bootstrapSidecarProcess(launchStamp, {
-    dataRoot: initialPaths.dataRoot,
-    ownerPid: null,
-    port: 0,
-    runtimeRoot: initialPaths.runtimeRoot,
-  })) {
-    app.exit(0);
-    return;
-  }
-  if (!headlessRequest.headless && !await waitForLauncherAfterQuit(afterQuit, initialPaths)) {
+  if (!await waitForLauncherAfterQuit(afterQuit, initialPaths)) {
     app.exit(1);
     return;
   }
-  const existingDesktop = await inspectExistingDesktopForLauncher(launchStamp, {
+  const existingDesktop = await inspectExistingDesktopForLauncher(namespace, {
     deeplinkUrl: findPackagedDeeplinkArg(process.argv),
     incomingVersion: namespaceConfig.appVersion,
     logger: console,
@@ -186,16 +159,12 @@ async function main(): Promise<void> {
   if (exitPackagedLauncherForExistingDesktop(existingDesktop, (code) => app.exit(code))) {
     return;
   }
-  if (headlessRequest.headless) {
-    const { runPackagedHeadless } = await import("./headless-runtime.js");
-    await runPackagedHeadless(config, headlessRequest);
-    return;
-  }
+  const stamp = argvStamp ?? createPackagedDesktopStamp(namespace);
   const launcherRuntime = await resolvePackagedLauncherRuntime(namespaceConfig, initialPaths, {
     delegated,
     resume: handoffResume,
   });
-  if (await launchPackagedPayloadDesktop(launcherRuntime, launchStamp)) {
+  if (await launchPackagedPayloadDesktop(launcherRuntime, stamp)) {
     app.exit(0);
     return;
   }
@@ -213,7 +182,7 @@ async function main(): Promise<void> {
     posthogHost: activeConfig.posthogHost,
     appVersion: activeConfig.appVersion,
     namespace,
-    source: convergedArgvStamp?.source ?? SIDECAR_SOURCES.PACKAGED,
+    source: SIDECAR_SOURCES.PACKAGED,
     // Pass installationRoot explicitly: OD_INSTALLATION_DIR is only set in the
     // daemon child env, not this parent process (see startup-telemetry.ts).
     installationRoot: paths.installationRoot,
@@ -232,20 +201,13 @@ async function main(): Promise<void> {
   };
 
   await ensurePackagedNamespacePaths(paths);
-  const convergedStamp = launchStamp;
-  registerSidecarProcess(convergedStamp, {
-    dataRoot: paths.dataRoot,
-    ownerPid: null,
-    port: 0,
-    runtimeRoot: paths.runtimeRoot,
-  });
   stabilizePackagedWorkingDirectory(paths);
   const downloadAttribution = await discoverPackagedDownloadAttribution(paths, console).catch((error: unknown) => {
     console.warn("[attribution] failed to discover packaged download attribution", error);
     return null;
   });
   packagedLogger = createPackagedDesktopLogger(paths);
-  attachPackagedDesktopProcessLogging({ logger: packagedLogger, paths, stamp: convergedStamp });
+  attachPackagedDesktopProcessLogging({ logger: packagedLogger, paths, stamp });
   const retireObsoleteInstalledOuter = createObsoleteInstalledOuterRetirement({
     currentExecutablePath: process.execPath,
     currentPid: process.pid,
@@ -262,6 +224,7 @@ async function main(): Promise<void> {
   })) {
     return;
   }
+  const identity = await writePackagedDesktopIdentity({ paths, stamp });
   await app.whenReady();
 
   // Show the brand splash IMMEDIATELY, before we await the daemon/web sidecars
@@ -273,13 +236,13 @@ async function main(): Promise<void> {
   // BEFORE the sidecar boot below — rather than re-adding the delay afterwards.
   const splash = createSplashWindow();
 
-  const runtime = {
+  applyLaunchEnv(paths.runtimeRoot, stamp);
+
+  const runtime = bootstrapSidecarRuntime(stamp, process.env, {
     app: APP_KEYS.DESKTOP,
     base: paths.runtimeRoot,
-    mode: SIDECAR_MODES.RUNTIME,
-    namespace,
-    source: convergedStamp.source as SidecarStamp["source"],
-  } satisfies SidecarRuntimeContext<SidecarStamp>;
+    contract: OPEN_DESIGN_SIDECAR_CONTRACT,
+  });
 
   const sidecars = await startPackagedSidecars(runtime, paths, {
     appVersion: activeConfig.appVersion,
@@ -337,34 +300,18 @@ async function main(): Promise<void> {
   registerOdProtocol(() => sidecars.currentWebUrl());
 
   const { runDesktopMain } = await import("@open-design/desktop/main");
-  let desktopHandle: DesktopMainHandle | null = null;
-  const invokeDesktop = async (action: string, input: unknown) => {
-    if (desktopHandle == null) throw new Error("packaged desktop sidecar is not running");
-    return await desktopHandle.invoke(action, input);
-  };
-  let client!: SidecarClient<DesktopMainHandle>;
-  client = SidecarFactory.create<DesktopMainHandle>({
-    handlers: Object.fromEntries([
-      "click",
-      "console",
-      "eval",
-      "export-artifact",
-      "export-pdf",
-      "render-slides",
-      "screenshot",
-      "show",
-      "update",
-    ].map((action) => [action, (input: unknown) => invokeDesktop(action, input)])),
-    lifecycle: {
-      async start() {
-        const started = await runDesktopMain(runtime, {
+  await runDesktopMain(runtime, {
     splashWindow: splash.window,
     splashStartedAt: splash.startedAt,
     async beforeShutdown() {
       try {
         await retireObsoleteInstalledOuter();
       } finally {
-        await sidecars.close();
+        try {
+          await sidecars.close();
+        } finally {
+          await identity.close();
+        }
       }
     },
     async discoverWebUrl() {
@@ -376,19 +323,6 @@ async function main(): Promise<void> {
     // Electron's protocol handler.
     async discoverDaemonUrl() {
       return sidecars.daemon.url;
-    },
-    registerDesktopAuth: async (secret) => {
-      try {
-        const result = await client.invoke<{ accepted: true }>(
-          APP_KEYS.DAEMON,
-          "register-desktop-auth",
-          { secret: secret.toString("base64") },
-          { timeoutMs: 800 },
-        );
-        return result.accepted === true;
-      } catch {
-        return false;
-      }
     },
     windowTitle: resolvePackagedWindowTitle(activeConfig),
     inviteProtocolClientPath:
@@ -421,18 +355,7 @@ async function main(): Promise<void> {
       launcherPayloadExtractorPath: activeConfig.resourceRoot == null ? null : join(activeConfig.resourceRoot, "bin", "7z.exe"),
       launcherRuntimePath: launcherRuntime.launcherPaths.runtimePath,
     },
-        });
-        desktopHandle = started;
-        return started;
-      },
-      status: (started) => started.status(),
-      async stop(started) {
-        await started.stop();
-        desktopHandle = null;
-      },
-    },
   });
-  await client.start();
 }
 
 void main().catch(async (error: unknown) => {
@@ -467,5 +390,5 @@ void main().catch(async (error: unknown) => {
       nativeModulePath: startupTelemetryContext.nativeModulePath,
     });
   }
-  process.exit(resolveSidecarLauncherExitCode(error));
+  process.exit(1);
 });

@@ -48,6 +48,7 @@ describe("mac standalone prebundle policy", () => {
       "@open-design/daemon",
       "@open-design/desktop",
       "@open-design/packaged",
+      "@open-design/sidecar",
       "@open-design/sidecar-proto",
       "@open-design/web",
     ]) {
@@ -58,22 +59,24 @@ describe("mac standalone prebundle policy", () => {
         }),
       ).toBe(false);
     }
-    for (const packageName of [
-      "@open-design/contracts",
-      "@open-design/platform",
-      "@open-design/sidecar",
-    ]) {
-      expect(
-        shouldInstallInternalPackageForMacPrebundle({ packageName, webOutputMode: "standalone" }),
-      ).toBe(true);
-    }
+    expect(
+      shouldInstallInternalPackageForMacPrebundle({
+      packageName: "@open-design/contracts",
+      webOutputMode: "standalone",
+    }),
+  ).toBe(true);
+  expect(
+    shouldInstallInternalPackageForMacPrebundle({
+      packageName: "@open-design/platform",
+      webOutputMode: "standalone",
+    }),
+  ).toBe(true);
   });
 
   it("documents the explicit code-level bundle boundaries", () => {
     expect(MAC_PREBUNDLE_ESBUILD_TARGET).toBe("node24");
-    expect(MAC_PREBUNDLE_POLICIES.packagedMain.externals).toEqual(["@open-design/sidecar", "electron"]);
+    expect(MAC_PREBUNDLE_POLICIES.packagedMain.externals).toEqual(["electron"]);
     expect(MAC_PREBUNDLE_POLICIES.daemonCli.externals).toEqual([
-      "@open-design/sidecar",
       "better-sqlite3",
       "blake3-wasm",
       "fsevents",
@@ -81,14 +84,13 @@ describe("mac standalone prebundle policy", () => {
       "node-pty",
     ]);
     expect(MAC_PREBUNDLE_POLICIES.daemonSidecar.externals).toEqual([
-      "@open-design/sidecar",
       "better-sqlite3",
       "blake3-wasm",
       "fsevents",
       "hyperframes",
       "node-pty",
     ]);
-    expect(MAC_PREBUNDLE_POLICIES.webSidecar.externals).toEqual(["@open-design/sidecar"]);
+    expect(MAC_PREBUNDLE_POLICIES.webSidecar.externals).toEqual([]);
     expect(MAC_DAEMON_PREBUNDLE_ESM_REQUIRE_BANNER).toContain("createRequire");
     // Must match apps/daemon/package.json / the pnpm lockfile, or
     // electron-builder's collector drops the module from the shipped app and
