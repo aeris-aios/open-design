@@ -31,6 +31,7 @@ const SLOW_RELOAD_FILE = 'slow-reload-daemon-smoke.html';
 const SLOW_RELOAD_HEADING = 'Slow Reload Daemon Smoke';
 const FOLLOW_UP_FILE = 'follow-up-daemon-smoke.html';
 const OD_NEXT_CANARY_FILE = 'od-next-active-canary.html';
+const DECK_DIRECT_NAVIGATION_BUDGET_MS = 2_500;
 const MEDIA_ONLY_FILE = 'media-only.png';
 const SERVER_DERIVED_WORKSPACE_HEADERS = {
   'x-od-workspace-id': 'e2e-server-derived-workspace',
@@ -193,7 +194,7 @@ test('[P0] OD Next active + Blank prototype generates a directly navigable Deck 
 
   const response = await sendPrompt(
     page,
-    'Create an OD Next PPT protocol canary from this prototype project',
+    'Create an OD Next PowerPoint protocol canary from this prototype project',
     T.xlong,
   );
   const created = await response.json() as { strategyTask?: { inputStage: string } };
@@ -217,7 +218,7 @@ test('[P0] OD Next off + Blank prototype keeps explicit PPT turns on Deck Protoc
 
   const response = await sendPrompt(
     page,
-    'Create an OD Next PPT protocol canary from this prototype project',
+    'Create an OD Next PowerPoint protocol canary from this prototype project',
     T.xlong,
   );
   const created = await response.json() as { strategyTask?: unknown };
@@ -1310,13 +1311,7 @@ async function prepareLocalOdNextCanary(
   await expectWorkspaceReady(page);
   await configureFakeAgent(page, 'opencode');
   await setOdNextStrategyMode(page, strategyMode);
-  const response = await page.request.get('/api/agents');
-  expect(response.ok(), await response.text()).toBeTruthy();
-  const body = await response.json() as {
-    agents?: Array<{ id: string; available: boolean }>;
-  };
-  expect(body.agents?.find((agent) => agent.id === 'opencode'))
-    .toMatchObject({ available: true });
+  await expectFakeAgentRuntime(page, 'opencode', 'opencode-e2e 0.0.0');
 }
 
 async function prepareSelectedDeckTemplateCanary(
@@ -1367,6 +1362,22 @@ function isDeckMatrixStrategyModeEnabled(mode: 'active' | 'off'): boolean {
   return mode === 'off' || process.env.OD_NEXT_STRATEGY_LOCAL_SYNTHETIC_CANARY === '1';
 }
 
+async function expectFakeAgentRuntime(
+  page: Page,
+  agentId: string,
+  version: string,
+): Promise<void> {
+  const response = await page.request.get('/api/agents');
+  expect(response.ok(), await response.text()).toBeTruthy();
+  const body = await response.json() as {
+    agents?: Array<{ id: string; available: boolean; version?: string }>;
+  };
+  expect(body.agents?.find((agent) => agent.id === agentId)).toMatchObject({
+    available: true,
+    version,
+  });
+}
+
 async function expectDeckThumbnailNavigationUnderBudget(page: Page): Promise<void> {
   const thumbnails = page.locator('.deck-thumbnail-button');
   await expect(thumbnails).toHaveCount(3, { timeout: T.medium });
@@ -1374,11 +1385,13 @@ async function expectDeckThumbnailNavigationUnderBudget(page: Page): Promise<voi
 
   const startedAt = Date.now();
   await thumbnails.nth(2).click();
-  await expect(thumbnails.nth(2)).toHaveAttribute('aria-current', 'true', { timeout: T.short });
+  await expect(thumbnails.nth(2)).toHaveAttribute('aria-current', 'true', {
+    timeout: DECK_DIRECT_NAVIGATION_BUDGET_MS,
+  });
   expect(
     Date.now() - startedAt,
     'thumbnail navigation must complete before the old ~3 second fallback delay',
-  ).toBeLessThan(T.short);
+  ).toBeLessThan(DECK_DIRECT_NAVIGATION_BUDGET_MS);
   await expect(artifactPreviewFrame(page).getByText('Matrix Slide Three')).toBeVisible();
 }
 

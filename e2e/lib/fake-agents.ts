@@ -296,7 +296,7 @@ async function emitRun(promptText) {
     emitOdNextClarificationRequest(promptText);
     return;
   }
-  if (promptText.includes('Create an OD Next PPT protocol canary from this prototype project')) {
+  if (promptText.includes('Create an OD Next PowerPoint protocol canary from this prototype project')) {
     const requiredDeckProtocolMarkers = [
       'OD Deck Protocol v1',
       'data-od-deck-protocol="1"',
