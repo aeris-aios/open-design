@@ -15094,7 +15094,12 @@ function HtmlViewer({
         setInspectMode(false);
         setDrawOverlayOpen(false);
         setMode('preview');
-        setManualEditViewportWidth(previewBodyRef.current?.clientWidth ?? null);
+        // The retained runtime already owns the correct visible width. Freezing
+        // the whole viewer-body width here would make a Deck jump across the
+        // thumbnail rail when Edit changes the surrounding host chrome.
+        setManualEditViewportWidth(
+          previewRuntimeConvergence ? null : (previewBodyRef.current?.clientWidth ?? null),
+        );
         setManualEditExitHandoffPending(false);
         setManualEditEntryHandoffPending(
           urlLoadPreviewSupportedWithoutManualEdit
@@ -16149,7 +16154,11 @@ function HtmlViewer({
   const showPreviewToolbarControls = mode === 'preview';
   // Independent of the rail's lazy per-slide documents so a collapsed rail
   // (which unmounts DeckThumbnailRail entirely) still renders its toggle.
-  const showDeckThumbnailRail = effectiveDeck && source !== null && deckSlideTotal > 0 && !manualEditMode;
+  const showDeckThumbnailRail =
+    effectiveDeck
+    && source !== null
+    && deckSlideTotal > 0
+    && (!manualEditMode || previewRuntimeConvergence);
   const showDeckFloatingNav = effectiveDeck && deckSlideTotal > 0 && !manualEditMode && !inTabPresent;
   const deckNavTotal = Math.max(deckSlideTotal, activeDeckSlideIndex + 1, 1);
   const versioningAvailable = isHtmlVersionableFile(file);
@@ -16158,6 +16167,11 @@ function HtmlViewer({
     localCommentSideDockActive ? 'comment-preview-layer-with-side-dock' : '',
     localCommentSideDockActive && commentSidePanelCollapsed ? 'comment-preview-layer-dock-collapsed' : '',
     boardSideDockStacked ? 'comment-preview-layer-side-dock-stacked' : '',
+    showDeckThumbnailRail ? 'comment-preview-layer-with-deck-rail' : '',
+    showDeckThumbnailRail && deckThumbnailsCollapsed ? 'comment-preview-layer-deck-rail-collapsed' : '',
+  ].filter(Boolean).join(' ');
+  const manualEditWorkspaceClass = [
+    'manual-edit-workspace',
     showDeckThumbnailRail ? 'comment-preview-layer-with-deck-rail' : '',
     showDeckThumbnailRail && deckThumbnailsCollapsed ? 'comment-preview-layer-deck-rail-collapsed' : '',
   ].filter(Boolean).join(' ');
@@ -17621,7 +17635,7 @@ function HtmlViewer({
             <div
             hidden={mode !== 'preview'}
             aria-hidden={mode !== 'preview' ? true : undefined}
-            className={`${manualEditMode ? 'manual-edit-workspace' : commentPreviewLayoutClass} preview-viewport preview-viewport-${previewViewport}${drawOverlayOpen ? ' preview-draw-active' : ''}`}
+            className={`${manualEditMode ? manualEditWorkspaceClass : commentPreviewLayoutClass} preview-viewport preview-viewport-${previewViewport}${drawOverlayOpen ? ' preview-draw-active' : ''}`}
             data-testid={manualEditMode ? undefined : 'comment-preview-layout'}
             ref={manualEditMode ? undefined : setCommentComposerHostRef}
             style={{

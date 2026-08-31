@@ -5599,6 +5599,51 @@ describe('FileViewer SVG artifacts', () => {
     expect(screen.getByTestId('artifact-preview-frame')).toBeTruthy();
   });
 
+  it('keeps the Deck thumbnail rail and stage width while terminal-runtime Edit is active', async () => {
+    const file = baseFile({
+      name: 'deck.html',
+      path: 'deck.html',
+      mime: 'text/html',
+      kind: 'html',
+      artifactManifest: {
+        version: 1,
+        kind: 'deck',
+        title: 'Deck',
+        entry: 'deck.html',
+        renderer: 'deck-html',
+        exports: ['html'],
+      },
+    });
+
+    const { container } = render(
+      <FileViewer
+        projectId="project-1"
+        projectKind="prototype"
+        file={file}
+        isDeck
+        liveHtml={'<html><body><section class="slide">one</section><section class="slide">two</section></body></html>'}
+        previewRuntimeConvergence
+      />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector('.deck-thumbnail-rail')).toBeTruthy();
+    });
+    Object.defineProperty(container.querySelector('.viewer-body')!, 'clientWidth', {
+      configurable: true,
+      value: 964,
+    });
+    fireEvent.click(screen.getByTestId('manual-edit-mode-toggle'));
+    await waitFor(() => {
+      expect(screen.getByTestId('manual-edit-mode-toggle')).toHaveAttribute('aria-pressed', 'true');
+    });
+    expect(container.querySelector('.deck-thumbnail-rail')).toBeTruthy();
+    expect(container.querySelector('.manual-edit-workspace')).toHaveClass(
+      'comment-preview-layer-with-deck-rail',
+    );
+    expect(container.querySelector('.manual-edit-canvas > div > div')).toHaveStyle({ width: '100%' });
+  });
+
   it('does not show deck notes for a report whose print bridge only mentions deck-stage', () => {
     const file = baseFile({
       name: 'annual-report.dc.html',
