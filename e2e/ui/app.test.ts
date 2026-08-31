@@ -1,5 +1,8 @@
 import { expect, test } from '@/playwright/suite';
-import { ACTIVE_ARTIFACT_PREVIEW_SELECTOR } from '@/playwright/artifact-preview';
+import {
+  ACTIVE_ARTIFACT_PREVIEW_SELECTOR,
+  settledActiveArtifactPreview,
+} from '@/playwright/artifact-preview';
 import { openNewProjectModal as openNewProjectModalFromProjects } from '@/playwright/rail';
 import {
   applyStandardMocks,
@@ -1059,13 +1062,20 @@ async function runGenerationDoesNotCreateExtraFileFlow(
 }
 
 async function clickCommentTargetInPreview(page: Page, selector: string) {
-  const target = artifactPreviewFrame(page).locator(selector);
+  const { frame } = await settledActiveArtifactPreview(page, T.medium);
+  // Comment mode swaps the visible transport from the URL iframe to the
+  // retained srcDoc iframe. Visibility/load alone is not enough: the bridge
+  // marks the document only after it has consumed the Host mode replay. A
+  // click before that witness is a valid DOM click but cannot publish an
+  // `od:comment-target`, so it is silently lost.
+  await expect(frame.locator('html[data-od-comment-mode]')).toHaveCount(1, {
+    timeout: T.medium,
+  });
+  const target = frame.locator(selector);
   await expect(target).toBeVisible();
-  // Activating comments can swap the URL iframe for the retained srcDoc
-  // iframe. The DOM target becomes visible before the comment bridge has
-  // replayed its mode and published targets, so use the hover overlay as the
-  // bridge-ready witness before clicking. Auto-fit zoom can still keep the
-  // target moving, hence the forced pointer actions after that witness.
+  // Wait for the bridge's target broadcast to reach the Host as the final
+  // cross-frame readiness witness. Auto-fit zoom can still keep the target
+  // moving, hence the forced pointer actions after that witness.
   await target.hover({ force: true });
   await expect(page.getByTestId('comment-target-overlay').first()).toBeVisible();
   await target.click({ force: true });
