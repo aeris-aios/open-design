@@ -479,10 +479,7 @@ function renderDesignFilesPanel(overrides: Partial<React.ComponentProps<typeof D
     onRenameFile: vi.fn(),
     onDeleteFile: vi.fn(),
     onDeleteFiles: vi.fn(),
-    onUpload: vi.fn(),
     onUploadFiles: vi.fn(),
-    onPaste: vi.fn(),
-    onNewSketch: vi.fn(),
     ...overrides,
   };
   return render(<DesignFilesPanel {...props} />);
@@ -744,7 +741,9 @@ describe('FileWorkspace upload input', () => {
       />,
     );
 
-    fireEvent.click(screen.getByTestId('design-files-empty-new-sketch'));
+    // Creation now lives in the tab strip's "+" launcher, not the empty state.
+    fireEvent.click(screen.getByTestId('workspace-add-tab'));
+    fireEvent.click(screen.getByTestId('tab-launcher-action-new-sketch'));
 
     await waitFor(() => expect(mockedWriteProjectTextFile).toHaveBeenCalledTimes(1));
     const [projectId, name, content] = mockedWriteProjectTextFile.mock.calls[0]!;
@@ -3142,10 +3141,7 @@ describe('DesignFilesPanel plugin folders', () => {
         onDeleteFile={vi.fn()}
         onDeleteFiles={vi.fn()}
         onRenameFile={vi.fn()}
-        onUpload={vi.fn()}
         onUploadFiles={vi.fn()}
-        onPaste={vi.fn()}
-        onNewSketch={vi.fn()}
         onPluginFolderAgentAction={onPluginFolderAgentAction}
       />,
     );

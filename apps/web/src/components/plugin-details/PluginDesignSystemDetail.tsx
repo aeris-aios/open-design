@@ -176,6 +176,7 @@ export function PluginDesignSystemDetail({
                 omit={{ description: true }}
                 compact
                 heading={pluginInfoLabel}
+                variant="identity"
               />
             </div>
             <section className="plugin-design-sidebar__spec">

@@ -5,7 +5,9 @@
   display: grid;
   place-items: center;
   padding: 24px;
-  background: rgba(15, 15, 15, 0.38);
+  background: var(--scrim-tint);
+  -webkit-backdrop-filter: var(--scrim-backdrop);
+  backdrop-filter: var(--scrim-backdrop);
 }
 
 .modal {
@@ -14,7 +16,12 @@
   display: flex;
   flex-direction: column;
   border: 1px solid var(--border-strong, var(--border));
-  border-radius: var(--radius-lg);
+  /* 16 (per product), which is --radius-xl on the shared scale — one step up
+     from the 12 this used to take, so the dialog stays on the token ladder
+     rather than carrying a one-off literal. Nothing inside reaches the
+     corners (the head and foot are full-bleed rows but the card is not
+     `overflow: hidden`), so this is the only radius the shape needs. */
+  border-radius: var(--radius-xl);
   background: var(--bg-panel);
   box-shadow:
     0 1px 2px rgba(0, 0, 0, 0.05),
@@ -35,7 +42,7 @@
   margin: 0;
   color: var(--text-strong);
   font-size: 16px;
-  font-weight: 650;
+  font-weight: 600;
 }
 
 .close {

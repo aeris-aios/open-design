@@ -193,9 +193,13 @@ export function PluginMediaDetail({
   ];
 
   // Sidebar — prompt body sits at the top so users see the example
-  // prompt as soon as the panel opens; the manifest inspector
-  // (PluginMetaSections) stacks underneath so workflow / capabilities
-  // / source provenance are part of the same scroll column.
+  // prompt as soon as the panel opens, then the plugin's identity:
+  // version / trust / source kind, and who made it. It stops there
+  // (per product: 从作者下边的内容全部去掉). The manifest inspector that
+  // used to stack underneath — inputs, context bundles, workflow,
+  // GenUI, connectors, capabilities, provenance — is authoring-time
+  // detail, and this panel is what someone browsing the gallery opens
+  // to decide whether to USE the template.
   const sidebar = (
     <div className="plugin-info-pane plugin-media-sidebar">
       {query ? (
@@ -223,6 +227,7 @@ export function PluginMediaDetail({
         omit={{ description: true, query: true }}
         compact
         heading={pluginInfoLabel}
+        variant="identity"
       />
     </div>
   );

@@ -65,4 +65,16 @@ describe('HomeHero compact composer controls', () => {
     expect(ruleValue(switcher, 'flex-basis')).toBe('auto');
   });
 
+  it('reveals the creation-type clear icon from the whole pill hover target', () => {
+    const hideTypeIcon = cssDeclarations(
+      '.home-hero__template-option:hover .home-hero__template-icon--clearable .home-hero__template-icon-glyph',
+    );
+    const revealClearIcon = cssDeclarations(
+      '.home-hero__template-option:hover .home-hero__template-icon--clearable .home-hero__template-icon-clear',
+    );
+
+    expect(ruleValue(hideTypeIcon, 'opacity')).toBe('0');
+    expect(ruleValue(revealClearIcon, 'opacity')).toBe('1');
+  });
+
 });

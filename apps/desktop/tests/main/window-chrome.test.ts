@@ -38,6 +38,12 @@ describe("desktop BrowserWindow chrome options", () => {
     expect(runtimeSource).toContain("--app-chrome-traffic-space: 10px !important;");
     expect(runtimeSource).toContain("flex: 0 0 var(--app-chrome-traffic-space) !important;");
     expect(runtimeSource).toContain("width: var(--app-chrome-traffic-space) !important;");
+    // ...and the tab strip's own 10px inset is the alignment, so the strip's
+    // header takes NO spacer in fullscreen: with one, the Home pill lands 10px
+    // right of the nav rail's 首页 icon instead of on its axis.
+    expect(runtimeSource).toContain(
+      "html.is-window-fullscreen .workspace-tabs-chrome.app-chrome-header {\n    --app-chrome-traffic-space: 0px !important;\n  }",
+    );
   });
 
   test("mirrors macOS fullscreen state onto the renderer for chrome CSS", () => {

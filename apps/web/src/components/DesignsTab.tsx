@@ -95,19 +95,12 @@ export const STATUS_ORDER = [
 	"canceled",
 ] as const satisfies readonly ProjectDisplayStatus[];
 
-export const STATUS_LABEL_KEYS = {
-	not_started: "designs.status.notStarted",
-	queued: "designs.status.queued",
-	running: "designs.status.running",
-	awaiting_input: "designs.status.awaitingInput",
-	incomplete: "designs.status.incomplete",
-	succeeded: "designs.status.succeeded",
-	failed: "designs.status.failed",
-	canceled: "designs.status.canceled",
-} as const satisfies Record<
-	ProjectDisplayStatus,
-	Parameters<ReturnType<typeof useT>>[0]
->;
+// Moved to state/projectRunStatus.ts so the app shell can label a status
+// without pulling this whole page module in. Re-exported here because several
+// callers (and DesignsTab.test.ts) already import it from this path.
+import { STATUS_LABEL_KEYS } from "../state/projectRunStatus";
+
+export { STATUS_LABEL_KEYS };
 
 interface Props {
 	projects: Project[];
@@ -890,7 +883,6 @@ export function DesignsTab({
 						}
 
 						const liveCount = liveArtifactsByProject[p.id]?.length ?? 0;
-						const status = p.status?.value ?? "not_started";
 						const cover = projectCover(
 							p,
 							coverByProject[p.id] ?? null,
@@ -1088,12 +1080,21 @@ export function DesignsTab({
 												<span>{t("designs.cardFreeform")}</span>
 											)}
 											{skill ? ` · ${skill}` : ""}
-											{" · "}
-											<span
-												className={`design-card-status design-card-status-${publishedDesignSystem ? "published" : status}`}
-											>
-												{publishedDesignSystem ? t("designs.status.published") : statusLabel(status, t)}
-											</span>
+											{/* Run status is deliberately NOT shown here. `Project.status` is
+											    only attached by the unscoped `GET /api/projects`; the
+											    workspace-scoped list this view actually reads never carries it,
+											    so every card fell back to `not_started` and the line read
+											    「未开始」 for projects that had plainly run. A label that is
+											    always wrong is worse than no label. The published-design-system
+											    badge below stays: it comes from local data and is accurate. */}
+											{publishedDesignSystem ? (
+												<>
+													{" · "}
+													<span className="design-card-status design-card-status-published">
+														{t("designs.status.published")}
+													</span>
+												</>
+											) : null}
 										</span>
 										{sub === "recent" || sub === "yours" ? (
 											<span className="design-card-meta-time">

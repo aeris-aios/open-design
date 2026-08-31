@@ -158,7 +158,10 @@ describe('ExtensionsMarketplace installed plugin detail entry', () => {
     expect(screen.getByRole('heading', { name: 'Build test' })).toBeTruthy();
     expect(container.querySelector('.plugin-details-modal')).toBeNull();
     expect(container.querySelectorAll('.plugin-suite-detail__empty-row')).toHaveLength(3);
-    expect(screen.getByTestId('plugin-meta-advanced')).toBeTruthy();
+    // No 开发者详情 disclosure anywhere any more (per product: 所有的开发者
+    // 详情的信息都去掉) — the manifest inspector it folded away is gone from
+    // this page as well as from the modals.
+    expect(screen.queryByTestId('plugin-meta-advanced')).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: /back to list/i }));
 

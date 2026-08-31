@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
-// Six independent visual/interaction acceptance fixes. Each `it` is scoped to
+// Seven independent visual/interaction acceptance fixes. Each `it` is scoped to
 // one Feishu acceptance-sheet row and only asserts the rule(s) that row's fix
 // touched, so a regression in one area fails only its own test.
 
@@ -107,6 +107,35 @@ describe('recvpYEHCwtxXX — selected recent-project checkbox degrades to outlin
     expect(ruleValue(selectedHover, 'background')).toBe('var(--accent)');
     expect(ruleValue(selectedHover, 'border-color')).toBe('var(--accent)');
     expect(ruleValue(selectedHover, 'color')).toBe('var(--accent-contrast, #fff)');
+  });
+});
+
+describe('recent project card overflow action is a borderless circle', () => {
+  it('uses the circular radius token without a border or shadow', () => {
+    const moreButton = cssDeclarations(recentProjectsCss, '.recent-projects__card-more');
+
+    expect(ruleValue(moreButton, 'border')).toBe('0');
+    expect(ruleValue(moreButton, 'border-radius')).toBe('var(--radius-circular, 50%)');
+    expect(ruleValue(moreButton, 'box-shadow')).toBe('none');
+  });
+});
+
+describe('drafts display menu stays inside the right edge', () => {
+  it('positions menus by trigger type instead of the filter wraps sibling order', () => {
+    // Menus default to right-aligned so icon-only controls such as Display expand
+    // inward. Owner/type text filters opt into left alignment explicitly.
+    // Using :nth-of-type here breaks on /drafts, where Owner is absent and the
+    // Sort wrap becomes the second sibling.
+    const defaultMenu = cssDeclarations(recentProjectsCss, '.recent-projects__filter-menu');
+    expect(ruleValue(defaultMenu, 'right')).toBe('0');
+
+    const textFilterMenu = cssDeclarations(
+      recentProjectsCss,
+      '.recent-projects__filter-wrap:has(> .recent-projects__filter) .recent-projects__filter-menu',
+    );
+    expect(ruleValue(textFilterMenu, 'left')).toBe('0');
+    expect(ruleValue(textFilterMenu, 'right')).toBe('auto');
+    expect(recentProjectsCss).not.toContain('.recent-projects__filter-wrap:nth-of-type(2)');
   });
 });
 

@@ -166,7 +166,7 @@ html.od-radial-open .workspace-shell {
 .workspace-radial-sector-path:hover,
 .workspace-radial-sector-path.is-hover {
   /* Whisper brand tint — same as the composer picker's hovered wedge. */
-  fill: #f9fff4;
+  fill: var(--brand-surface);
 }
 /* Template icons ride each wedge's mid-radius/mid-angle as HTML spans (the Icon
    component renders a Remix font glyph, which SVG <text> can't host). Inert, so
@@ -184,7 +184,7 @@ html.od-radial-open .workspace-shell {
 }
 .workspace-radial-icon-btn.is-hover {
   /* Deep brand green — mirrors the composer picker's hovered icon. */
-  color: #2f781d;
+  color: var(--brand-ink);
 }
 /* The "+" re-appears over the fan's anchor rotated 45° (reads as ×);
    clicking it closes the menu. */
@@ -208,7 +208,7 @@ html.od-radial-open .workspace-shell {
 .workspace-radial-close:hover:not(:disabled) {
   background: transparent;
   border-color: transparent;
-  color: #2f781d;
+  color: var(--brand-ink);
   box-shadow: none;
 }
 /* Keep the centering transform under the global button:active translateY —
@@ -466,7 +466,7 @@ html.od-radial-open .workspace-shell {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 600;
   letter-spacing: 0;
 }
 /* Hairline between the home icon and the sidebar toggle in the pinned pill. */
@@ -860,7 +860,7 @@ html.od-radial-open .workspace-shell {
   padding: 0 12px;
   border-radius: var(--radius);
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 600;
   line-height: 1;
   white-space: nowrap;
   cursor: pointer;
@@ -2000,7 +2000,7 @@ body:has(.artifact-version-panel) .ws-tabs-file-actions-before {
   overflow: hidden;
   color: var(--text-strong);
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 600;
   line-height: 1.15;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2023,7 +2023,7 @@ body:has(.artifact-version-panel) .ws-tabs-file-actions-before {
 .avatar-amr-row__stat-label {
   flex: 0 0 auto;
   font-size: 11px;
-  font-weight: 500;
+  font-weight: 600;
   color: var(--text-muted);
 }
 .avatar-amr-row__stat-value {
@@ -2049,7 +2049,7 @@ body:has(.artifact-version-panel) .ws-tabs-file-actions-before {
   background: var(--accent);
   color: #fff;
   font-size: 11px;
-  font-weight: 650;
+  font-weight: 600;
   letter-spacing: 0.02em;
   line-height: 1;
   /* The actual fix for the vertically-stacked label. */
@@ -2281,7 +2281,7 @@ a.avatar-item:visited {
 .env-pill-dot[data-mode="api"] {
   background: linear-gradient(135deg, #1c1b1a 0%, #4b4948 100%);
 }
-.env-pill-label { font-weight: 500; font-size: 12px; }
+.env-pill-label { font-weight: 600; font-size: 12px; }
 .env-pill-meta {
   font-size: 12px; color: var(--text-muted);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;

@@ -7,6 +7,9 @@ import type { RefObject } from 'react';
 // use 1280) and then shrinks proportionally instead of overflowing the thumbnail.
 export const DECK_PREVIEW_DESIGN_WIDTH = 1280;
 
+// The matching logical height (16:9). Only the `cover` fit needs it.
+export const DECK_PREVIEW_DESIGN_HEIGHT = 720;
+
 // Deck template previews render their real HTML inside a small iframe. Letting
 // the iframe fill the frame natively (width/height:100%, transform:none) only
 // looks right for decks that self-scale to their viewport; a template authored
@@ -22,9 +25,15 @@ export const DECK_PREVIEW_DESIGN_WIDTH = 1280;
 // the frame; the frame's own CSS default covers the gap before the observer's
 // first callback. A no-op when `enabled` is false (non-deck previews keep their
 // own treatment) or when ResizeObserver is unavailable (SSR / jsdom).
+// `fit: 'width'` (default) fits the stage to the frame's width and letterboxes
+// whatever height is left over. `fit: 'cover'` scales to the LARGER of the two
+// ratios so the stage reaches all four edges and the overflow clips — used by
+// the Home example-preset tiles, whose cells are wider than 16:9 and must show
+// a full-bleed thumbnail.
 export function useDeckPreviewScale(
   frameRef: RefObject<HTMLElement | null>,
   enabled: boolean,
+  fit: 'width' | 'cover' = 'width',
 ): void {
   useEffect(() => {
     if (!enabled) return;
@@ -33,12 +42,18 @@ export function useDeckPreviewScale(
     const apply = () => {
       const width = el.clientWidth;
       if (width > 0) {
-        el.style.setProperty('--deck-preview-scale', String(width / DECK_PREVIEW_DESIGN_WIDTH));
+        const widthScale = width / DECK_PREVIEW_DESIGN_WIDTH;
+        const height = el.clientHeight;
+        const scale =
+          fit === 'cover' && height > 0
+            ? Math.max(widthScale, height / DECK_PREVIEW_DESIGN_HEIGHT)
+            : widthScale;
+        el.style.setProperty('--deck-preview-scale', String(scale));
       }
     };
     apply();
     const observer = new ResizeObserver(apply);
     observer.observe(el);
     return () => observer.disconnect();
-  }, [frameRef, enabled]);
+  }, [frameRef, enabled, fit]);
 }

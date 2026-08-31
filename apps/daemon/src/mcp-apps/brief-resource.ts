@@ -13,14 +13,14 @@ export const OPEN_DESIGN_BRIEF_APP_HTML = String.raw`<!doctype html>
     <meta name="color-scheme" content="light dark">
     <title>Choose the artifact direction</title>
     <style>
-      :root { font: 14px/1.45 ui-sans-serif, system-ui, sans-serif; color-scheme: light dark; }
+      :root { font: 500 14px/1.45 ui-sans-serif, system-ui, sans-serif; color-scheme: light dark; }
       * { box-sizing: border-box; }
       body { margin: 0; background: transparent; color: CanvasText; }
       main { padding: 16px; }
       h1 { margin: 0 0 4px; font-size: 18px; }
       #description { margin: 0 0 16px; color: color-mix(in srgb, CanvasText 68%, transparent); }
       fieldset { margin: 0 0 16px; padding: 0; border: 0; }
-      legend { margin-bottom: 8px; font-weight: 650; }
+      legend { margin-bottom: 8px; font-weight: 600; }
       .choices { display: grid; grid-template-columns: repeat(auto-fit, minmax(168px, 1fr)); gap: 8px; }
       label { display: block; min-height: 72px; padding: 10px 12px; border: 1px solid color-mix(in srgb, CanvasText 18%, transparent); border-radius: 10px; cursor: pointer; }
       label:has(input:checked) { color: Canvas; background: CanvasText; border-color: CanvasText; }
@@ -28,7 +28,7 @@ export const OPEN_DESIGN_BRIEF_APP_HTML = String.raw`<!doctype html>
       input { position: absolute; opacity: 0; pointer-events: none; }
       strong, small { display: block; }
       small { margin-top: 3px; opacity: .72; }
-      button { min-height: 40px; padding: 0 18px; border: 0; border-radius: 999px; color: Canvas; background: CanvasText; font: inherit; font-weight: 650; cursor: pointer; }
+      button { min-height: 40px; padding: 0 18px; border: 0; border-radius: 999px; color: Canvas; background: CanvasText; font: inherit; font-weight: 600; cursor: pointer; }
       button:disabled { opacity: .45; cursor: wait; }
       #status { min-height: 20px; margin-top: 10px; }
       [hidden] { display: none !important; }

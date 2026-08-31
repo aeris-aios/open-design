@@ -155,11 +155,16 @@ afterEach(() => {
 
 // #5517 removed the inline template rail from Home; scenario templates are
 // picked from the composer footer's radial Template picker instead.
+// Home starts with no creation type: the type row under the composer is the
+// empty state's only control, and it retires once something is picked.
 async function pickHomeTemplate(id: string) {
-  const trigger = await screen.findByTestId('home-hero-template-trigger');
-  await waitFor(() => expect((trigger as HTMLButtonElement).disabled).toBe(false));
-  fireEvent.click(trigger);
-  fireEvent.click(await screen.findByTestId(`home-hero-template-wedge-${id}`));
+  // A type already picked retires the row, and the pill has no menu — so
+  // switching means clearing back to the empty state first.
+  const clear = screen.queryByTestId('home-hero-template-clear');
+  if (clear) fireEvent.click(clear);
+  const rowPill = await screen.findByTestId(`home-hero-type-pill-${id}`);
+  await waitFor(() => expect((rowPill as HTMLButtonElement).disabled).toBe(false));
+  fireEvent.click(rowPill);
 }
 
 describe('HomeView context picker', () => {
@@ -471,10 +476,11 @@ describe('HomeView context picker', () => {
 
     await waitFor(() => {
       expect(screen.getByTestId('home-hero-active-skill')).toBeTruthy();
-      // Round-4 skin: the cleared template pill shows the gray creation-type
-      // kicker instead of a "None" placeholder label.
-      expect(screen.getByTestId('home-hero-template-trigger').textContent).toContain('Creation type');
-      expect(screen.getByTestId('home-hero-template-trigger').textContent).not.toContain('Slide deck');
+      // Clearing the template takes the pill away entirely; the accessory row's
+      // entry point is what stays behind, naming the field.
+      expect(screen.queryByTestId('home-hero-template-trigger')).toBeNull();
+      // Clearing the type brings the type row back as the empty state.
+      expect(screen.getByTestId('home-hero-type-pills')).toBeTruthy();
     });
 
     fireEvent.click(screen.getByTestId('home-hero-submit'));
@@ -627,7 +633,7 @@ describe('HomeView context picker', () => {
     }));
   });
 
-  it('blocks submit when referenced project context folder is missing', async () => {
+  it('hands referenced directories to project creation without a Home preflight', async () => {
     const referenceProject = {
       id: 'reference-a',
       name: 'Reference A',
@@ -690,27 +696,33 @@ describe('HomeView context picker', () => {
     );
 
     await screen.findByTestId('home-hero-input');
-    fireEvent.click(screen.getByTestId('home-hero-plus-trigger'));
-    fireEvent.click(await screen.findByTestId('composer-plus-reference-project'));
+    // 引用其它项目 moved from the "+" menu into the working-dir chip's menu.
+    fireEvent.click(screen.getByTestId('working-dir-trigger'));
+    fireEvent.click(await screen.findByTestId('working-dir-reference-project'));
     await screen.findByText('Reference A');
     fireEvent.click(screen.getByRole('button', { name: 'Reference project' }));
 
+    // The TRIGGER takes the reference's name and the prompt is left alone (per
+    // product: 工作目录会换成后边的文件名，不要在上边的输入框展示).
     await waitFor(() => {
-      expect(homeHeroPromptText().trim()).toBe('@Reference A');
+      expect(screen.getByTestId('working-dir-trigger').textContent).toContain('Reference A');
     });
+    expect(homeHeroPromptText().trim()).toBe('');
+    // A reference on its own is not a request: with the mention gone, the
+    // composer is still empty and Send stays disabled until the user writes
+    // something. Type first, then submit.
+    setHomeHeroPrompt('Describe this');
+    await settle();
     fireEvent.click(screen.getByTestId('home-hero-submit'));
 
-    await waitFor(() => {
-      expect(screen.getByRole('alert').textContent).toContain('selected reference folder');
-    });
-    expect(onSubmit).not.toHaveBeenCalled();
-    expect(homeHeroPromptText().trim()).toBe('@Reference A');
-    expect(screen.getByTestId('home-hero-context-workspace-project:reference-a').textContent).toContain(
-      'Reference A',
-    );
+    expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
+      linkedDirs: ['/tmp/open-design/missing-reference-a'],
+    }));
+    expect(fetchMock.mock.calls.some(([url]) => url === '/api/dir-exists')).toBe(false);
+    expect(screen.getByTestId('working-dir-trigger').textContent).toContain('Reference A');
   });
 
-  it('keeps referenced project context visible after its inline mention is deleted', async () => {
+  it('keeps referenced project context out of the prompt and still sends it', async () => {
     const referenceProject = {
       id: 'reference-a',
       name: 'Reference A',
@@ -773,20 +785,50 @@ describe('HomeView context picker', () => {
     );
 
     await screen.findByTestId('home-hero-input');
-    fireEvent.click(screen.getByTestId('home-hero-plus-trigger'));
-    fireEvent.click(await screen.findByTestId('composer-plus-reference-project'));
+    // 引用其它项目 moved from the "+" menu into the working-dir chip's menu.
+    fireEvent.click(screen.getByTestId('working-dir-trigger'));
+    fireEvent.click(await screen.findByTestId('working-dir-reference-project'));
     await screen.findByText('Reference A');
     fireEvent.click(screen.getByRole('button', { name: 'Reference project' }));
 
+    // Nothing lands in the prompt — the working-directory trigger is the only
+    // place the reference shows, exactly like a picked folder.
     await waitFor(() => {
-      expect(homeHeroPromptText().trim()).toBe('@Reference A');
+      expect(screen.getByTestId('working-dir-trigger').textContent).toContain('Reference A');
     });
+    expect(homeHeroPromptText().trim()).toBe('');
     setHomeHeroPrompt('Describe this');
     await settle();
 
-    expect(screen.getByTestId('home-hero-context-workspace-project:reference-a').textContent).toContain(
-      'Reference A',
-    );
+    expect(screen.getByTestId('working-dir-trigger').textContent).toContain('Reference A');
+
+    // The slot still holds ONE thing, but picking is never blocked any more
+    // (per product: 还是用户选择，但是只保留最新的一个) — the rows stay live and
+    // the newest pick evicts the previous occupant.
+    fireEvent.click(screen.getByTestId('working-dir-trigger'));
+    expect(screen.queryByTestId('working-dir-lock-hint')).toBeNull();
+    for (const row of ['working-dir-pick', 'working-dir-recent', 'working-dir-reference-project']) {
+      expect((screen.getByTestId(row) as HTMLButtonElement).disabled).toBe(false);
+    }
+    fireEvent.click(screen.getByTestId('working-dir-trigger'));
+
+    // The × on the trigger is the way out — the same one a folder gets — and it
+    // frees the slot.
+    fireEvent.click(screen.getByTestId('working-dir-clear'));
+    await waitFor(() => {
+      expect(screen.getByTestId('working-dir-trigger').textContent).not.toContain('Reference A');
+    });
+    expect(screen.queryByTestId('working-dir-clear')).toBeNull();
+
+    // Re-attach, so the run below carries a real reference.
+    fireEvent.click(screen.getByTestId('working-dir-trigger'));
+    fireEvent.click(await screen.findByTestId('working-dir-reference-project'));
+    await screen.findByText('Reference A');
+    fireEvent.click(screen.getByRole('button', { name: 'Reference project' }));
+    await waitFor(() => {
+      expect(screen.getByTestId('working-dir-trigger').textContent).toContain('Reference A');
+    });
+
     fireEvent.click(screen.getByTestId('home-hero-submit'));
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));

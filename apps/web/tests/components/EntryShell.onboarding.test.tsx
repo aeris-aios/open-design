@@ -14,6 +14,7 @@ import { I18nProvider } from '../../src/i18n';
 import { fetchProjectFiles } from '../../src/providers/registry';
 import type { AgentInfo, AppConfig } from '../../src/types';
 import { setHomeHeroPrompt } from '../helpers/home-hero-lexical';
+import { workspaceContextFixture, workspaceDirectoryFixture } from '../helpers/workspace-context';
 
 const analyticsMocks = vi.hoisted(() => ({
   track: vi.fn(),
@@ -341,7 +342,11 @@ describe('EntryShell navigation shortcuts', () => {
     window.localStorage.removeItem('od.entry.railOpen');
   });
 
-  it('leaves the rail unchanged when the composer owns Cmd/Ctrl+B', async () => {
+  it('toggles the rail on Cmd/Ctrl+B while the composer has focus', async () => {
+    // Home autofocuses the composer, so a shortcut that yields to it is dead in
+    // the state people press it from — which is what made ⌘B look unbound. The
+    // composer is a Lexical PlainTextPlugin editor, so ⌘B carries no bold /
+    // formatting meaning there for this handler to swallow.
     window.localStorage.setItem('od.entry.railOpen', 'false');
     renderHome();
 
@@ -350,12 +355,36 @@ describe('EntryShell navigation shortcuts', () => {
     expect(entry?.classList.contains('entry--rail-open')).toBe(false);
 
     const editor = await screen.findByTestId('home-hero-input');
-    fireEvent.keyDown(editor, {
-      key: 'b',
-      ...(/Mac|iPod|iPhone|iPad/.test(navigator.platform)
-        ? { metaKey: true }
-        : { ctrlKey: true }),
-    });
+    const press = () =>
+      fireEvent.keyDown(editor, {
+        key: 'b',
+        ...(/Mac|iPod|iPhone|iPad/.test(navigator.platform)
+          ? { metaKey: true }
+          : { ctrlKey: true }),
+      });
+
+    press();
+    expect(entry?.classList.contains('entry--rail-open')).toBe(true);
+
+    // …and it is a toggle, not a one-way open.
+    press();
+    expect(entry?.classList.contains('entry--rail-open')).toBe(false);
+  });
+
+  it('ignores Cmd/Ctrl+B chords that carry another modifier', async () => {
+    // ⌥⌘B / ⇧⌘B belong to whatever else claims them (browser, OS, future
+    // bindings); only the bare primary chord is ours.
+    window.localStorage.setItem('od.entry.railOpen', 'false');
+    renderHome();
+
+    const entry = document.querySelector('.entry');
+    const editor = await screen.findByTestId('home-hero-input');
+    const primary = /Mac|iPod|iPhone|iPad/.test(navigator.platform)
+      ? { metaKey: true }
+      : { ctrlKey: true };
+
+    fireEvent.keyDown(editor, { key: 'b', ...primary, shiftKey: true });
+    fireEvent.keyDown(editor, { key: 'b', ...primary, altKey: true });
 
     expect(entry?.classList.contains('entry--rail-open')).toBe(false);
   });
@@ -427,8 +456,13 @@ describe('EntryShell route scroll isolation', () => {
   });
 });
 
+const DRAFTS_WORKSPACE_CONTEXT = workspaceContextFixture({
+  workspaceId: 'ws-drafts',
+  workspaceMemberId: 'wm-drafts',
+});
+
 describe('EntryShell project reopen request priority', () => {
-  it('aborts Home cover work, keeps hidden Projects idle, and lets the foreground files read finish', async () => {
+  it('aborts 个人项目 cover work, keeps hidden Projects idle, and lets the foreground files read finish', async () => {
     const files = [{
       name: 'index.html',
       path: 'index.html',
@@ -450,7 +484,7 @@ describe('EntryShell project reopen request priority', () => {
           // reader — cancellable or not — one shared request carrying the
           // shared AbortSignal, so "is this the background scan?" is the
           // request ordinal, not the presence of a signal. Request #1 is
-          // Home's cover scan and must hang until it is aborted; the
+          // the strip's cover scan and must hang until it is aborted; the
           // foreground read that follows it must be answered.
           const isBackgroundCoverScan = fileRequests.length === 0;
           fileRequests.push(init);
@@ -467,6 +501,17 @@ describe('EntryShell project reopen request priority', () => {
         }
         if (url.includes('/api/live-artifacts?projectId=project-reopen')) {
           return jsonResponse({ liveArtifacts: [] });
+        }
+        // 个人项目 is a workspace-only view: without a resolved context the shell
+        // redirects it straight back to Home (see `isWorkspaceOnlyView`).
+        if (url.includes('/api/workspace/context')) {
+          return jsonResponse({ context: DRAFTS_WORKSPACE_CONTEXT });
+        }
+        if (url.includes('/api/workspace/directory')) {
+          return jsonResponse(workspaceDirectoryFixture([DRAFTS_WORKSPACE_CONTEXT]));
+        }
+        if (url.includes('/api/workspace/projects/team')) {
+          return jsonResponse({ projects: [] });
         }
         if (url.endsWith('/api/community/discord')) {
           return jsonResponse({
@@ -493,10 +538,12 @@ describe('EntryShell project reopen request priority', () => {
     const onOpenProject = vi.fn((projectId: string) => {
       expect(projectId).toBe('project-reopen');
       // App leaves EntryShell when it opens ProjectView. Model that boundary
-      // directly so the mounted Home strip must cancel its background probe.
+      // directly so the mounted strip must cancel its background probe.
       cleanup();
     });
 
+    // The project grid moved off Home to the rail's 个人项目 view, so that is
+    // where the strip — and its background cover scan — now mounts.
     renderHome({
       projects: [{
         id: 'project-reopen',
@@ -508,7 +555,7 @@ describe('EntryShell project reopen request priority', () => {
         status: { value: 'not_started' },
       }],
       onOpenProject,
-    });
+    }, '/drafts');
 
     await waitFor(() => expect(fileRequests).toHaveLength(1));
     const homeSignal = fileRequests[0]?.signal;
@@ -630,7 +677,7 @@ describe('EntryShell new project rail', () => {
 });
 
 describe('EntryShell Home submit handoff', () => {
-  it('keeps the Home run button in sending state until project creation resolves', async () => {
+  it('keeps the Home run button visually stable until project creation resolves', async () => {
     globalThis.fetch = vi.fn(async (input: Parameters<typeof fetch>[0]) => {
       const url = typeof input === 'string' ? input : input instanceof Request ? input.url : String(input);
       if (url.endsWith('/api/plugins')) return jsonResponse({ plugins: [] });
@@ -652,9 +699,9 @@ describe('EntryShell Home submit handoff', () => {
 
     await waitFor(() => expect(onCreateProject).toHaveBeenCalledTimes(1));
     expect(submit.disabled).toBe(true);
-    // #5517: the submit is icon-only (spinner while sending) — assert the
-    // busy state through aria instead of the removed label text.
-    expect(submit.getAttribute('aria-busy')).toBe('true');
+    expect(submit.getAttribute('aria-busy')).toBe('false');
+    expect(submit.getAttribute('aria-label')).toBe('Run');
+    expect(submit.className).not.toContain('is-sending');
 
     resolveCreate(true);
     await waitFor(() => expect(submit.disabled).toBe(false));

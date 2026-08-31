@@ -18,6 +18,7 @@ import {
   type CSSProperties,
   type Dispatch,
   type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
   type ReactNode,
   type SetStateAction,
 } from 'react';
@@ -144,6 +145,7 @@ import { Button } from '@open-design/components';
 import { defaultAgentModelId, effectiveAgentModelChoice } from './agentModelSelection';
 import { AgentIcon } from './AgentIcon';
 import { CommunityView } from './CommunityView';
+import { requestHomeChip } from '../runtime/home-intent';
 import { TeamSlotPlaceholder } from './TeamSlotPlaceholder';
 import {
   notifyTeamProjectsChanged,
@@ -240,6 +242,7 @@ import {
 import {
   ENTRY_RAIL_STATE_EVENT,
   ENTRY_RAIL_TOGGLE_EVENT,
+  ENTRY_SEARCH_OPEN_EVENT,
   RAIL_OPEN_STORAGE_KEY,
   readStoredRailOpen,
 } from './entryRailBridge';
@@ -548,6 +551,31 @@ function inactiveViewProps(active: boolean) {
     inert: !active,
     'aria-hidden': !active,
   };
+}
+
+/** Persisted width of the docked rail — the drag from the seam writes it, the
+ *  next launch reads it. Sits beside `od.entry.railOpen`, which persists whether
+ *  the rail is docked at all. */
+const RAIL_WIDTH_STORAGE_KEY = 'od.entry.railWidth';
+const RAIL_WIDTH_DEFAULT = 236;
+/** Under 200 the labels ellipsize to nothing; past 420 the rail stops framing
+ *  the content and starts competing with it. */
+const RAIL_WIDTH_MIN = 200;
+const RAIL_WIDTH_MAX = 420;
+
+function clampRailWidth(width: number): number {
+  if (!Number.isFinite(width)) return RAIL_WIDTH_DEFAULT;
+  return Math.min(RAIL_WIDTH_MAX, Math.max(RAIL_WIDTH_MIN, Math.round(width)));
+}
+
+function readStoredRailWidth(): number {
+  if (typeof window === 'undefined') return RAIL_WIDTH_DEFAULT;
+  try {
+    const raw = window.localStorage.getItem(RAIL_WIDTH_STORAGE_KEY);
+    return raw ? clampRailWidth(Number(raw)) : RAIL_WIDTH_DEFAULT;
+  } catch {
+    return RAIL_WIDTH_DEFAULT;
+  }
 }
 
 export function EntryShell({
@@ -1080,6 +1108,25 @@ export function EntryShell({
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const target = event.target;
+      const primary = isMacPlatform()
+        ? event.metaKey && !event.ctrlKey
+        : event.ctrlKey && !event.metaKey;
+      // ⌘B is checked BEFORE the text-field guard below: the composer holds
+      // focus for most of a Home session (it autofocuses), so a guarded
+      // shortcut would be dead exactly when someone reaches for it. Safe to
+      // claim — the composer is a Lexical PlainTextPlugin editor, so ⌘B
+      // carries no bold/formatting meaning there for us to swallow.
+      if (
+        !event.isComposing &&
+        primary &&
+        !event.altKey &&
+        !event.shiftKey &&
+        (event.key === 'b' || event.key === 'B')
+      ) {
+        event.preventDefault();
+        setRailOpen((v) => !v);
+        return;
+      }
       if (
         event.isComposing
         || (
@@ -1094,19 +1141,6 @@ export function EntryShell({
       if ((event.metaKey || event.ctrlKey) && (event.key === 'k' || event.key === 'K')) {
         event.preventDefault();
         setProjectSearchOpen(true);
-        return;
-      }
-      const primary = isMacPlatform()
-        ? event.metaKey && !event.ctrlKey
-        : event.ctrlKey && !event.metaKey;
-      if (
-        primary &&
-        !event.altKey &&
-        !event.shiftKey &&
-        (event.key === 'b' || event.key === 'B')
-      ) {
-        event.preventDefault();
-        setRailOpen((v) => !v);
       }
     };
     document.addEventListener('keydown', onKey);
@@ -1127,6 +1161,14 @@ export function EntryShell({
     const onToggle = () => setRailOpen((v) => !v);
     window.addEventListener(ENTRY_RAIL_TOGGLE_EVENT, onToggle);
     return () => window.removeEventListener(ENTRY_RAIL_TOGGLE_EVENT, onToggle);
+  }, []);
+  // Same story for the search button, which sits in that chrome row beside the
+  // Home logo (per product: 搜索和收起跟 home icon 一起放在顶部) while the
+  // palette it opens is owned here.
+  useEffect(() => {
+    const onOpen = () => setProjectSearchOpen(true);
+    window.addEventListener(ENTRY_SEARCH_OPEN_EVENT, onOpen);
+    return () => window.removeEventListener(ENTRY_SEARCH_OPEN_EVENT, onOpen);
   }, []);
   const [localProviderModelsCache, setLocalProviderModelsCache] =
     useState<ProviderModelsCache>({});
@@ -1150,6 +1192,77 @@ export function EntryShell({
   const [homePromptHandoff, setHomePromptHandoff] = useState<HomePromptHandoff | null>(
     () => takeHomePromptHandoff(),
   );
+  // The same one-shot binding, addressed at the community view's docked
+  // composer instead. Kept separate rather than shared: `promptHandoff` is
+  // consumed by id, so one piece of state fed to both instances would have
+  // whichever consumed it first mark it spent for the other.
+  const [dockPromptHandoff, setDockPromptHandoff] = useState<HomePromptHandoff | null>(
+    null,
+  );
+  // Stable identity: CommunityView reports the picked type from an effect keyed
+  // on this callback, so a new function every render would re-fire it on every
+  // render of the shell.
+  const bindDockComposerType = useCallback((target: { chipId: string }) => {
+    requestHomeChip(target.chipId, 'dock');
+  }, []);
+  /* Rail width, dragged from the seam between the rail and the white content
+     panel (per product: hover 到白色的框的左侧边缘的时候可以左右拖拽调整白色的
+     面板的宽度). One number drives both columns — the grid's first track IS the
+     rail — so widening the panel is narrowing the rail and there is nothing to
+     keep in sync.
+     Clamped rather than free: under ~200 the labels ellipsize into nothing and
+     past ~420 the rail starts competing with the content it frames. */
+  const [railWidth, setRailWidth] = useState(() => readStoredRailWidth());
+  const [railResizing, setRailResizing] = useState(false);
+  const railDragRef = useRef<{ pointerId: number; startX: number; startWidth: number } | null>(null);
+  /* The width the drag actually ended on. `railWidth` cannot serve: the
+     pointerup handler closes over the value from the render that created it,
+     which is the width BEFORE the drag — persisting that wrote the old number
+     back every time. */
+  const railWidthRef = useRef(railWidth);
+
+  function beginRailResize(event: ReactPointerEvent<HTMLDivElement>) {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    railDragRef.current = { pointerId: event.pointerId, startX: event.clientX, startWidth: railWidth };
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setRailResizing(true);
+  }
+
+  function moveRailResize(event: ReactPointerEvent<HTMLDivElement>) {
+    const drag = railDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const next = clampRailWidth(drag.startWidth + (event.clientX - drag.startX));
+    railWidthRef.current = next;
+    setRailWidth(next);
+  }
+
+  function endRailResize(event: ReactPointerEvent<HTMLDivElement>) {
+    const drag = railDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    railDragRef.current = null;
+    setRailResizing(false);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    try {
+      window.localStorage.setItem(RAIL_WIDTH_STORAGE_KEY, String(railWidthRef.current));
+    } catch {
+      // Private mode / storage disabled: the drag still applies, it just does
+      // not survive a reload.
+    }
+  }
+
+  /* Switching a community tab folds the docked composer back to its collapsed
+     default (per product: tab 之间的切换的时候这个输入框默认是收起来的). A
+     counter, not a boolean: consecutive tab changes are separate folds, and the
+     bar may well have been re-opened in between. Stable callback for the same
+     reason `bindDockComposerType` is one — CommunityView fires it from an
+     effect keyed on the callback. */
+  const [dockCollapseSignal, setDockCollapseSignal] = useState(0);
+  const foldDockComposer = useCallback(() => {
+    setDockCollapseSignal((signal) => signal + 1);
+  }, []);
   const entryMainScrollRef = useRef<HTMLElement | null>(null);
   // Entry views share this element, so route changes must not inherit the previous view's offset.
   useLayoutEffect(() => {
@@ -1349,11 +1462,10 @@ export function EntryShell({
   }
 
   // Plan §3.F5 — the home prompt-loop submit path. The user picks a
-  // plugin (which calls /api/plugins/:id/apply and binds a snapshot),
-  // edits the rendered example query if any, then presses Enter. We
+  // plugin, edits the rendered example query if any, then presses Enter. We
   // derive a project name from the active plugin (or prompt head),
-  // forward the pluginId so POST /api/projects pins the snapshot to
-  // project + conversation, and request auto-send of the first
+  // forward its identity + inputs so POST /api/projects resolves and pins the
+  // snapshot to project + conversation, and request auto-send of the first
   // message so the user lands inside a running pipeline.
   //
   // Stage B of plugin-driven-flow-plan: the rail can stamp a
@@ -1627,13 +1739,62 @@ export function EntryShell({
     />
   );
 
+  // Everything a HomeView needs except which surface it is on. Home renders
+  // one as the page; the community view docks a second at its bottom, and both
+  // must submit through the SAME handlers — a docked composer that created
+  // projects down a second path would drift from Home's the first time either
+  // changed.
+  const homeViewProps = {
+    projects: homeProjectsList,
+    projectsLoading,
+    designSystems,
+    designSystemsLoading,
+    defaultDesignSystemId,
+    onSubmit: handlePluginLoopSubmit,
+    onOpenProject,
+    onViewAllProjects: () => changeView('projects'),
+    onDeleteProject,
+    onDuplicateProject,
+    onRenameProject,
+    onOpenIntegrations: () => openIntegrationTab('connectors'),
+    onOpenMcp: () => openIntegrationTab('mcp'),
+    onOpenNewProject: (tab: 'template') => {
+      openNewProject(tab);
+    },
+    onStartBlankProject: startBlankProjectFromRail,
+    isSharedProject,
+    onProjectShared: markProjectShared,
+    onProjectShareFailed: markProjectShareFailed,
+    onProjectUnshared: markProjectUnshared,
+    projectOwnerMemberIds: teamProjectOwnerMemberIds,
+    skills,
+    skillsLoading,
+    connectors,
+    promptTemplates,
+    artifactUpgradeSlot,
+    deepSeekV4FlashCampaignAudience,
+    onDeepSeekV4FlashCampaignUseNow: applyDeepSeekCampaignModel,
+    deepSeekV4FlashCampaignMetricsConsent: config.telemetry?.metrics === true,
+    deepSeekV4FlashCampaignInstallationId: config.installationId ?? null,
+  };
+
   return (
     <div className="entry-shell entry-shell--no-header">
       <div
-        className={`entry${railOpen ? ' entry--rail-open' : ''}`}
-        // The team/local shell is a labeled Manus-style rail, so widen the rail
-        // track (the base 56px icon-rail clips the labels + team affordances).
-        style={{ ['--entry-rail-width' as string]: '236px' }}
+        className={`entry${railOpen ? ' entry--rail-open' : ''}${railResizing ? ' entry--rail-resizing' : ''}`}
+        // The team/local shell is a labeled Manus-style rail, so the track is
+        // wider than the base 56px icon-rail (which clips the labels + team
+        // affordances) — and draggable from the seam below.
+        style={{
+          ['--entry-rail-width' as string]: `${railWidth}px`,
+          /* Inline, not a class: the grid track carries a 200ms transition for
+             the collapse/expand toggle, and while the pointer is dragging that
+             easing trails it — the column lands a fifth of a second behind the
+             hand. An inline `none` beats the rule outright; a class had to win
+             an `!important` fight with it and did not, which left the track
+             animating from a stale width and looking frozen. */
+          ...(railResizing ? { transition: 'none' } : null),
+        }}
       >
         <EntryNavRail
           view={view}
@@ -1648,6 +1809,9 @@ export function EntryShell({
           }}
           onOpenSearch={() => setProjectSearchOpen(true)}
           open={railOpen}
+          // Leading slot = the cluster's left end, so the badge sits just left
+          // of the GitHub chip (per product). It briefly lived above the hero
+          // headline instead; the cluster is where it belongs.
           topRightSlot={
             view === 'home' && deepSeekV4FlashCampaignAudience !== 'unknown' ? (
               <button
@@ -1675,6 +1839,15 @@ export function EntryShell({
           // only a successful null context (or known local sign-out) may show
           // the sign-in card.
           footerNotice={accountFooterNotice}
+          /* Same catalog and same opener the 全部项目 grid uses below, so the
+             rail's 最近浏览过 list and that view's 最近浏览过 tab are two views of
+             ONE list rather than two sorts of two lists. */
+          recentProjects={projectSearchProjects}
+          onOpenRecentProject={handleOpenAllProjects}
+          /* Same handlers the projects grid drives its own row menu with, so a
+             rename or a delete from the rail lands in exactly one place. */
+          onRenameRecentProject={onRenameProject}
+          onDeleteRecentProject={onDeleteProject}
         />
         {projectSearchOpen ? (
           <ProjectSearchModal
@@ -1684,6 +1857,23 @@ export function EntryShell({
             workspaceContext={workspaceContext}
             onOpenProject={handleOpenAllProjects}
             onClose={() => setProjectSearchOpen(false)}
+          />
+        ) : null}
+        {/* The seam. Absolutely positioned ON the boundary rather than placed in
+            the grid: a third child would claim a third track and push the
+            content column over. Only while the rail is docked open — there is
+            no seam to grab when the rail is a 0-width track. */}
+        {railOpen ? (
+          <div
+            className="entry-rail-resizer"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label={t('entry.navCollapse')}
+            data-testid="entry-rail-resizer"
+            onPointerDown={beginRailResize}
+            onPointerMove={moveRailResize}
+            onPointerUp={endRailResize}
+            onPointerCancel={endRailResize}
           />
         ) : null}
         <main className="entry-main entry-main--scroll" ref={entryMainScrollRef}>
@@ -1725,41 +1915,13 @@ export function EntryShell({
           >
             <div className="entry-main__view-home" data-testid="entry-view-home" data-active={view === 'home' ? 'true' : 'false'} {...inactiveViewProps(view === 'home')}>
               <HomeView
+                {...homeViewProps}
                 isActive={view === 'home'}
-                projects={homeProjectsList}
-                projectsLoading={projectsLoading}
-                designSystems={designSystems}
-                designSystemsLoading={designSystemsLoading}
-                defaultDesignSystemId={defaultDesignSystemId}
-                onSubmit={handlePluginLoopSubmit}
-                onOpenProject={onOpenProject}
-                onViewAllProjects={() => changeView('projects')}
-                onDeleteProject={onDeleteProject}
-                onDuplicateProject={onDuplicateProject}
-                onRenameProject={onRenameProject}
-                onBrowseRegistry={() => changeView('plugins')}
-                onOpenIntegrations={() => openIntegrationTab('connectors')}
-                onOpenMcp={() => openIntegrationTab('mcp')}
-                onOpenNewProject={(tab) => {
-                  openNewProject(tab);
-                }}
-                onStartBlankProject={startBlankProjectFromRail}
+                /* Home alone consumes the handoff. A docked instance also
+                   holding it would race Home for the same one-shot prompt and
+                   whichever mounted last would eat it. */
                 promptHandoff={homePromptHandoff}
-                isSharedProject={isSharedProject}
-                onProjectShared={markProjectShared}
-                onProjectShareFailed={markProjectShareFailed}
-                onProjectUnshared={markProjectUnshared}
-                projectOwnerMemberIds={teamProjectOwnerMemberIds}
-                skills={skills}
-                skillsLoading={skillsLoading}
-                connectors={connectors}
-                promptTemplates={promptTemplates}
                 executionSwitcher={view === 'home' ? homeExecutionSwitcher : undefined}
-                artifactUpgradeSlot={artifactUpgradeSlot}
-                deepSeekV4FlashCampaignAudience={deepSeekV4FlashCampaignAudience}
-                onDeepSeekV4FlashCampaignUseNow={applyDeepSeekCampaignModel}
-                deepSeekV4FlashCampaignMetricsConsent={config.telemetry?.metrics === true}
-                deepSeekV4FlashCampaignInstallationId={config.installationId ?? null}
               />
             </div>
             <div data-testid="entry-view-projects" data-active={view === 'projects' ? 'true' : 'false'} {...inactiveViewProps(view === 'projects')}>
@@ -1917,16 +2079,19 @@ export function EntryShell({
                   })();
                 }}
                 onUsePrompt={(target) => {
-                  // Seed the Home composer with the template's starting prompt,
-                  // then switch to Home to review + send it (keep in sync with
-                  // the standalone /community branch in App.tsx).
-                  seedHomeComposerPrompt(target.prompt);
-                  setHomePromptHandoff(createPluginUseHandoff(Date.now(), target.templateId, {
+                  // Stays put (per product): the prompt lands in the docked
+                  // composer at the foot of THIS page and unfolds it, instead
+                  // of throwing the user back to 首页 and making them find
+                  // their place in the gallery again. Same seed + binding pair
+                  // Home used, only addressed at the dock.
+                  // (App.tsx's standalone /community route has no dock and
+                  // still hands off to Home — see the branch there.)
+                  seedHomeComposerPrompt(target.prompt, 'dock');
+                  setDockPromptHandoff(createPluginUseHandoff(Date.now(), target.templateId, {
                     action: 'use',
                     chipId: target.chipId,
                     projectKind: target.projectKind,
                   }));
-                  changeView('home');
                 }}
                 // The gallery card's full details modal routes Use through the
                 // same Home hand-off the plugin library uses, so the plugin
@@ -1938,7 +2103,41 @@ export function EntryShell({
                     projectKind: target.projectKind,
                   });
                 }}
+                /* The gallery's type tabs drive the docked composer's create
+                   type (per product: 选择的类型也默认带到输入框中), so picking
+                   原型 above leaves 原型 bound below — the same binding Home's
+                   own type row produces. Create-group chips are a mode switch
+                   and carry `suppressPromptUpdate`, so switching tabs never
+                   overwrites a prompt the user is part-way through. */
+                onActiveTypeChange={bindDockComposerType}
+                onTabsChange={foldDockComposer}
               />
+            ) : null}
+            {/* Home's composer, docked to the bottom of the community view: you
+                can browse templates and still start from your own sentence
+                without going back to 首页. Collapsed it is the input line and
+                the send button; typing unfolds the rest (HomeHero's `dock`
+                variant owns both states). Mounted only while the view is up so
+                it does not hold a second composer's worth of pickers alive
+                behind every other destination. */}
+            {view === 'community' ? (
+              <div
+                className="community-composer-dock"
+                data-testid="community-composer-dock"
+              >
+                <HomeView
+                  {...homeViewProps}
+                  variant="dock"
+                  isActive
+                  /* The agent/model chip too, so the docked row is the same
+                     control set as Home's. Only ever one of the two instances
+                     renders it — each is gated on a different view — so the
+                     switcher is never mounted twice. */
+                  executionSwitcher={homeExecutionSwitcher}
+                  promptHandoff={dockPromptHandoff}
+                  collapseSignal={dockCollapseSignal}
+                />
+              </div>
             ) : null}
             {/* Team destinations — the entry shell owns the nav frame only; each
                 view is provided by another lane (B = members/board, D = team
@@ -1949,7 +2148,7 @@ export function EntryShell({
                 <div className="entry-section">
                   <CenteredLoader label={t('common.loading')} />
                 </div>
-              ) : draftProjectsList.length === 0 ? (
+              ) : projectSearchProjects.length === 0 && !teamProjects.loading ? (
                 <EntryBlankState
                   heading={t('entry.navDrafts')}
                   description={t('entry.blankDraftsDescription')}
@@ -1959,7 +2158,7 @@ export function EntryShell({
               ) : (
                 <div className="entry-section">
                   <RecentProjectsStrip
-                    projects={draftProjectsList}
+                    projects={projectSearchProjects}
                     designSystems={designSystems}
                     limit={1000}
                     heading={t('entry.navDrafts')}
@@ -1969,7 +2168,8 @@ export function EntryShell({
                     onProjectShareFailed={markProjectShareFailed}
                     onProjectUnshared={markProjectUnshared}
                     projectOwnerMemberIds={teamProjectOwnerMemberIds}
-                    onOpen={(id) => onOpenProject(id)}
+                    openingProjectId={pullingProjectId}
+                    onOpen={handleOpenAllProjects}
                     onViewAll={() => {}}
                     onDelete={onDeleteProject}
                     onRename={onRenameProject}

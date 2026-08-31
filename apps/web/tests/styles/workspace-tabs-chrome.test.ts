@@ -334,7 +334,8 @@ describe('workspace tabs chrome styles', () => {
     // Home never shrinks (flex-shrink 0) in either chrome…
     expect(ruleValue(pinnedShared, 'flex')).toBe('0 0 52px');
     // Round-4 skin: the pinned tab is a single-icon pill (~half a project tab).
-    expect(ruleValue(pinnedProject, 'flex')).toBe('0 0 78px');
+    // The exact width is load-bearing — see the icon-axis test below.
+    expect(ruleValue(pinnedProject, 'flex')).toBe('0 0 64px');
     // …and stays stuck to the left edge with an opaque background so scrolled
     // project tabs pass behind it instead of squeezing it.
     expect(ruleValue(pinnedShared, 'position')).toBe('sticky');
@@ -342,6 +343,33 @@ describe('workspace tabs chrome styles', () => {
     expect(ruleValue(pinnedProject, 'position')).toBe('sticky');
     expect(ruleValue(pinnedProject, 'left')).toBe('0');
     expect(ruleValue(pinnedProject, 'background')).toBe('var(--workspace-tab-bar-bg)');
+  });
+
+  it('lands the Home glyph on the same axis as the rail 首页 icon', () => {
+    // Nothing centers these two on each other at runtime — the column is pure
+    // arithmetic, so every number below is load-bearing. A 78px pill (the
+    // previous value) put the glyph on x≈49, a visible 7px right of the rail
+    // icon; the desktop app's fullscreen traffic spacer did the same for 10px
+    // (see apps/desktop MAC_WINDOW_CHROME_CSS).
+    const strip = cssDeclarations(shellCss, '.workspace-tabs-strip');
+    const pinnedProject = cssDeclarations(routinesCss, '.workspace-shell .workspace-tab.is-pinned');
+    const panel = cssDeclarations(entryLayoutCss, '.entry-nav-rail__panel');
+    const group = cssDeclarations(entryLayoutCss, '.entry-nav-rail__group');
+    const btn = cssDeclarations(entryLayoutCss, '.entry-nav-rail__btn');
+    const icon = cssDeclarations(entryLayoutCss, '.entry-nav-rail__btn-icon');
+
+    // Chrome row: strip inset 10 + half the pill = 42.
+    expect(ruleValue(strip, '--workspace-tabs-edge-inset')).toBe('10px');
+    expect(ruleValue(strip, 'padding-left')).toBe('var(--workspace-tabs-edge-inset)');
+    expect(ruleValue(pinnedProject, 'width')).toBe('64px');
+
+    // Rail card: 10 margin + 1 stroke + 10 group + 1 button border + 10 button
+    // + half the 18px icon box = 41, and the glyph's own ~0.8px lead inside
+    // that box closes the rest. Measured live: 42.0 vs 41.8.
+    expect(ruleValue(panel, 'margin')).toBe('0 10px 10px');
+    expect(ruleValue(group, 'padding')).toBe('0 10px');
+    expect(ruleValue(btn, 'padding')).toBe('0 10px');
+    expect(ruleValue(icon, 'flex')).toBe('0 0 18px');
   });
 
   it('uses a rounded highlight for inactive workspace tab hover', () => {
@@ -401,6 +429,24 @@ describe('workspace tabs chrome styles', () => {
     expect(ruleValue(projectDragging, 'box-shadow')).toContain('0 14px 30px');
     expect(shellCss).not.toContain('.workspace-tab.is-drag-over-before::after');
     expect(shellCss).not.toContain('.workspace-tab.is-drag-over-after::after');
+  });
+
+  it('reserves a fixed leading slot on every dropdown row', () => {
+    // The slot is what aligns project names once some rows carry a run-status
+    // glyph and others are deliberately blank, so its size is load-bearing.
+    const lead = cssDeclarations(routinesCss, '.workspace-tabs-dropdown__row-lead');
+    expect(ruleValue(lead, 'width')).toBe('14px');
+    expect(ruleValue(lead, 'flex')).toBe('0 0 14px');
+
+    // Those glyphs made position stop identifying which svg is which, so the
+    // old positional rules must not come back.
+    expect(routinesCss).not.toContain('.workspace-tabs-dropdown__row-main > svg:first-child');
+    expect(routinesCss).not.toContain(
+      '.workspace-tabs-dropdown__row-main > svg:last-child:not(:first-child)',
+    );
+    expect(
+      ruleValue(cssDeclarations(routinesCss, '.workspace-tabs-dropdown__row-check'), 'color'),
+    ).toBe('var(--accent)');
   });
 
   it('caps the docked tab dropdown at six rows and scrolls the rest', () => {

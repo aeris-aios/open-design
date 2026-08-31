@@ -88,7 +88,7 @@ function renderRail(props: {
 
 /** Open the account menu and scope queries to its billing card. */
 function billingCard() {
-  fireEvent.click(screen.getByTestId('entry-nav-account'));
+  fireEvent.pointerEnter(screen.getByTestId('entry-top-right-credits'));
   const el = document.querySelector('.entry-nav-rail__menu-credits');
   if (!el) throw new Error('billing card is not rendered');
   return within(el as HTMLElement);

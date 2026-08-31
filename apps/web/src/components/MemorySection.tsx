@@ -2588,7 +2588,9 @@ export function MemorySection({
                       indexDraft !== null
                         ? 'var(--text-warning, #b06a00)'
                         : 'var(--text-muted, #888)',
-                    fontWeight: indexDraft !== null ? 600 : 400,
+                    // One UI weight now; the warning colour above carries
+                    // the draft/idle distinction on its own.
+                    fontWeight: 600,
                   }}
                 >
                   {indexDraft !== null

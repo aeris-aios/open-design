@@ -261,6 +261,10 @@ const APP_CONFIG_CHANGED_EVENT = 'open-design:app-config-changed';
 const AMR_AGENT_ID = 'amr';
 const AMR_PROFILE_ENV_KEY = 'OPEN_DESIGN_AMR_PROFILE';
 const AGENT_FOCUS_REFRESH_THROTTLE_MS = 10_000;
+// The daemon bounds all pre-insert preparation at 15s. Keep the browser's
+// deadline later so a server timeout reaches us first, while still guaranteeing
+// that the optimistic Chat handoff can never remain pending forever.
+const OPTIMISTIC_PROJECT_CREATE_REQUEST_TIMEOUT_MS = 20_000;
 
 /**
  * Whether this launch should hand the user to the first-run onboarding flow.
@@ -2958,7 +2962,7 @@ function AppInner() {
           openWorkspaceTab(optimisticRoute);
           navigate(optimisticRoute);
         }
-        result = await createProject({
+        const projectCreateInput = {
           ...(optimisticProjectId ? { id: optimisticProjectId } : {}),
           name: input.name,
           skillId: input.skillId,
@@ -2979,7 +2983,12 @@ function AppInner() {
             : {}),
           ...(input.pluginInputs ? { pluginInputs: input.pluginInputs } : {}),
           workspaceContext: createWorkspaceContext,
-        });
+        };
+        result = optimisticProjectId
+          ? await createProject(projectCreateInput, {
+              requestTimeoutMs: OPTIMISTIC_PROJECT_CREATE_REQUEST_TIMEOUT_MS,
+            })
+          : await createProject(projectCreateInput);
       } catch (err) {
         const errorCode =
           err instanceof Error && err.message.trim()
@@ -5278,6 +5287,7 @@ function AppInner() {
           }
           onboardingCompleted={config.onboardingCompleted === true}
           identityScopeKey={workspaceTabsIdentityScopeKey}
+          workspaceContext={workspaceContext}
         />
         {/* Avatar + credits keep their home-view spot (the fixed top-right
             corner over the tabs chrome) while a project tab is open, even

@@ -1,0 +1,71 @@
+/* Neutral ink read by SpaceBackground; the app is pinned to the light theme,
+   and the component's own luminance fallback covers a dark surface. */
+.field {
+  --space-particle: rgba(20, 20, 20, 0.45);
+}
+
+.center {
+  position: relative;
+  /* Above the particle canvas, which paints at z-index 0 in the same box. */
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 48px 24px;
+  max-width: min(460px, 92%);
+  text-align: center;
+  /* The field orbits the pane's center; the text sits inside that ring and
+     must not swallow clicks meant for the drop target underneath. */
+  pointer-events: none;
+}
+
+.prompt {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.35;
+  letter-spacing: -0.005em;
+  color: var(--text-strong);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+}
+
+.status {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--text-muted);
+}
+
+/* The steps behind the current one. Newest first and clipped to a few lines:
+   this is peripheral context under the status line, not a log to read. The
+   mask does the fading — the block is click-through (see `.center`), so it
+   cannot scroll and must never look like it has more below a hard edge. */
+.trail {
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 100%;
+  /* Five lines at this size; the last two are already inside the fade. */
+  max-height: 82px;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(to bottom, #000 30%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 30%, transparent 100%);
+}
+
+.trailItem {
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--text-soft);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

@@ -1,14 +1,12 @@
 // @vitest-environment jsdom
 
-// Home composer send must show an in-flight state (#4082).
+// Home composer send hands off to the Chat frame immediately.
 //
-// Submitting from Home kicks off an async project-creation /
-// conversation-creation roundtrip before navigation unmounts the screen.
-// Without a sending state the button stays idle through that window, so
-// the app "looks frozen" and accepts duplicate sends. These tests pin the
-// contract: while the submit promise is pending the button is disabled and
-// labelled Sending…, repeat clicks are swallowed, and a failed creation
-// re-enables the composer with a visible error so the user can retry.
+// Project / conversation creation can still be in flight for a brief window,
+// but the Home send affordance must not flash a loading treatment before the
+// optimistic route unmounts it. These tests pin both halves of the contract:
+// the arrow and accessible action remain stable, repeat clicks are swallowed,
+// and a failed creation re-enables the composer with a visible retry path.
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
@@ -53,22 +51,22 @@ function stubPluginsFetch(plugins: unknown[] = []) {
   }));
 }
 
-const WEB_PROTOTYPE_PLUGIN = {
-  id: 'example-web-prototype',
-  title: 'Web Prototype',
+const SIMPLE_DECK_PLUGIN = {
+  id: 'example-simple-deck',
+  title: 'Simple Deck',
   version: '0.1.0',
   trust: 'bundled' as const,
   sourceKind: 'bundled' as const,
-  source: '/tmp/web-prototype',
+  source: '/tmp/simple-deck',
   capabilitiesGranted: ['prompt:inject'],
-  fsPath: '/tmp/web-prototype',
+  fsPath: '/tmp/simple-deck',
   installedAt: 0,
   updatedAt: 0,
   manifest: {
-    name: 'example-web-prototype',
-    title: 'Web Prototype',
+    name: 'example-simple-deck',
+    title: 'Simple Deck',
     version: '0.1.0',
-    description: 'General-purpose desktop web prototype.',
+    description: 'Single-file horizontal-swipe HTML deck.',
     od: { kind: 'scenario', taskKind: 'new-generation' },
   },
 };
@@ -90,8 +88,8 @@ function renderHome(onSubmit: (payload: unknown) => Promise<boolean> | void) {
   );
 }
 
-describe('home composer sending state', () => {
-  it('shows Sending… and swallows repeat clicks while creation is in flight', async () => {
+describe('home composer immediate handoff', () => {
+  it('keeps the send arrow stable and swallows repeat clicks while creation is in flight', async () => {
     let resolveSubmit: (accepted: boolean) => void = () => undefined;
     const onSubmit = vi.fn(
       () => new Promise<boolean>((resolve) => { resolveSubmit = resolve; }),
@@ -107,11 +105,12 @@ describe('home composer sending state', () => {
     await waitFor(() => {
       expect(submit.disabled).toBe(true);
     });
-    // #5517 made the submit button icon-only (spinner while sending); the
-    // Sending… state now lives on the accessible name instead of a label span.
-    expect(submit.getAttribute('aria-label')).toBe('Sending…');
-    expect(submit.getAttribute('aria-busy')).toBe('true');
-    expect(submit.className).toContain('is-sending');
+    // Navigation owns the progress handoff. Home must never flash a spinner,
+    // loading label, or busy state in the frame before it unmounts.
+    expect(submit.getAttribute('aria-label')).toBe('Run');
+    expect(submit.getAttribute('aria-busy')).toBe('false');
+    expect(submit.className).not.toContain('is-sending');
+    expect(submit.querySelector('svg')?.getAttribute('width')).toBe('32');
 
     // A second click during the in-flight window must not start a second run.
     fireEvent.click(submit);
@@ -122,6 +121,65 @@ describe('home composer sending state', () => {
     await waitFor(() => {
       expect(submit.disabled).toBe(false);
     });
+  });
+
+  it('hands a deferred creation type to project creation without waiting for plugin apply', async () => {
+    writeHomeGuideStage('done');
+    let applyRequested = false;
+    let resolveApply: (response: Response) => void = () => undefined;
+    const applyResponse = new Promise<Response>((resolve) => {
+      resolveApply = resolve;
+    });
+    vi.stubGlobal('fetch', vi.fn(async (url: RequestInfo | URL) => {
+      if (typeof url === 'string' && url === '/api/plugins') {
+        return new Response(JSON.stringify({ plugins: [SIMPLE_DECK_PLUGIN] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      if (typeof url === 'string' && url.includes('/apply')) {
+        applyRequested = true;
+        return applyResponse;
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    }));
+    const onSubmit = vi.fn();
+    render(
+      <I18nProvider initial="en">
+        <HomeView
+          projects={[]}
+          onSubmit={onSubmit}
+          onOpenProject={() => undefined}
+          onViewAllProjects={() => undefined}
+        />
+      </I18nProvider>,
+    );
+
+    fireEvent.click(await screen.findByTestId('home-hero-type-pill-deck'));
+    setHomeHeroPrompt('Build a pitch deck without a preflight pause');
+    const submit = (await screen.findByTestId('home-hero-submit')) as HTMLButtonElement;
+    await waitFor(() => expect(submit.disabled).toBe(false));
+    try {
+      fireEvent.click(submit);
+
+      // The handoff is synchronous: the create route owns plugin resolution,
+      // so a still-pending /apply request cannot keep Home on screen.
+      expect(onSubmit).toHaveBeenCalledTimes(1);
+      expect(applyRequested).toBe(false);
+      expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
+        pluginId: 'example-simple-deck',
+        appliedPluginSnapshotId: null,
+        prompt: 'Build a pitch deck without a preflight pause',
+      }));
+    } finally {
+      resolveApply(new Response(JSON.stringify({
+        ok: true,
+        appliedPlugin: { snapshotId: 'late-snapshot' },
+      }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }));
+    }
   });
 
   it('re-enables the composer and surfaces an error when creation fails', async () => {
@@ -205,11 +263,11 @@ describe('home composer sending state', () => {
       .mockResolvedValueOnce(true);
 
     writeHomeGuideStage('done');
-    // The prototype rail binds the example plugin, so its apply roundtrip
-    // must succeed for submit() to reach onSubmit.
+    // The type stays deferred: picking it only binds the plugin and submit()
+    // hands the identity + inputs to project creation without an apply pause.
     vi.stubGlobal('fetch', vi.fn(async (url: RequestInfo | URL) => {
       if (typeof url === 'string' && url === '/api/plugins') {
-        return new Response(JSON.stringify({ plugins: [WEB_PROTOTYPE_PLUGIN] }), {
+        return new Response(JSON.stringify({ plugins: [SIMPLE_DECK_PLUGIN] }), {
           status: 200,
           headers: { 'content-type': 'application/json' },
         });
@@ -233,12 +291,9 @@ describe('home composer sending state', () => {
       </I18nProvider>,
     );
 
-    // #5517 removed the inline template rail; templates are picked from the
-    // composer footer's radial Template picker.
-    fireEvent.click(await screen.findByTestId('home-hero-template-trigger'));
     // Seeding through a fallback prompt-example card is what arms the
     // examplePromptContext marker.
-    fireEvent.click(await screen.findByTestId('home-hero-template-wedge-prototype'));
+    fireEvent.click(await screen.findByTestId('home-hero-type-pill-deck'));
     const exampleCards = await screen.findAllByTestId('home-hero-prompt-example');
     fireEvent.click(exampleCards[0]!);
 

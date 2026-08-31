@@ -170,9 +170,9 @@ function config(): AppConfig {
 }
 
 /**
- * Scope queries to the open account menu's billing card. A pure read — the
- * menu is opened once, by hand, and `useDismissOnOutsideInteraction` only
- * closes it on a pointerdown outside or Escape, so it survives the switch.
+ * Scope queries to the billing card hanging under the top-right credits pill.
+ * A pure read — the panel is opened once, by hand (hover), and nothing in the
+ * workspace switch below moves the pointer, so it survives the switch.
  */
 function billingCard() {
   const el = document.querySelector('.entry-nav-rail__menu-credits');
@@ -310,7 +310,7 @@ async function mountHomeShell(initial: WorkspaceCollabContext): Promise<Harness>
 
   await waitFor(() => expect(contextReads).toBeGreaterThan(0));
   await waitFor(() => expect(billingReads).toContain(initial.workspaceId));
-  fireEvent.click(await screen.findByTestId('entry-nav-account'));
+  fireEvent.pointerEnter(await screen.findByTestId('entry-top-right-credits'));
   await waitFor(() => expect(billingCard()).toBeTruthy());
 
   return {

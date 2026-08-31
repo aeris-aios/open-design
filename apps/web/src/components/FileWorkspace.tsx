@@ -168,6 +168,8 @@ import {
 } from './sketch-model';
 import { AnimatePresence } from 'motion/react';
 import type { ChatMessage } from '../types';
+import { latestUserPromptText } from '../runtime/latest-user-prompt';
+import { runProgressSteps } from '../runtime/run-progress';
 import type { CommentSendResult } from './comment-send-result';
 
 type TranslateFn = (key: keyof Dict, vars?: Record<string, string | number>) => string;
@@ -1612,6 +1614,15 @@ export function FileWorkspace({
     [files],
   );
 
+  // Echoed by the Design Files empty state while a run is in flight, so the
+  // right pane names the request it is working on. Memoized to a plain string
+  // so streamed tokens do not push a new object through the panel every frame.
+  const latestUserPrompt = useMemo(() => latestUserPromptText(messages), [messages]);
+  // The other half of that empty state: what the run is doing right now, and
+  // the steps behind it. Recomputed per streamed event by design — a tool call
+  // landing IS the update the pane is there to show.
+  const runSteps = useMemo(() => runProgressSteps(messages), [messages]);
+
   // Known-file set for the side chat's file-link routing — same shape
   // ProjectView feeds its primary ChatPane.
   const sideChatFileNames = useMemo(() => new Set(files.map((file) => file.name)), [files]);
@@ -2612,6 +2623,14 @@ export function FileWorkspace({
   }
 
   async function startNewSketch() {
+    // Tracked here rather than at the call site: sketches are created from the
+    // tab launcher now, and the funnel step must not depend on which entry
+    // point the user reached for.
+    trackFileManagerClick(analytics.track, {
+      page_name: 'file_manager',
+      area: 'file_manager',
+      element: 'new_sketch',
+    });
     const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
     const base = `sketch-${stamp}.sketch.json`;
     // Create under the folder currently being viewed, if any. The slash-joined
@@ -4236,6 +4255,8 @@ export function FileWorkspace({
             rootDirName={rootDirName}
             reloading={reloading}
             running={Boolean(streaming)}
+            latestUserPrompt={latestUserPrompt}
+            runSteps={runSteps}
             files={visibleFiles}
             folders={projectFolders}
             liveArtifacts={liveArtifactEntries}
@@ -4273,48 +4294,7 @@ export function FileWorkspace({
               });
               return handleDeleteMany(names);
             }}
-            onUpload={() => {
-              trackFileManagerClick(analytics.track, {
-                page_name: 'file_manager',
-                area: 'file_manager',
-                element: 'upload',
-              });
-              fileInputRef.current?.click();
-            }}
             onUploadFiles={(picked) => void uploadFiles(picked)}
-            onPaste={() => {
-              trackFileManagerClick(analytics.track, {
-                page_name: 'file_manager',
-                area: 'file_manager',
-                element: 'paste',
-              });
-              void createMarkdownDocument();
-            }}
-            onNewSketch={() => {
-              trackFileManagerClick(analytics.track, {
-                page_name: 'file_manager',
-                area: 'file_manager',
-                element: 'new_sketch',
-              });
-              void startNewSketch();
-            }}
-            onOpenBrowser={() => {
-              trackFileManagerClick(analytics.track, {
-                page_name: 'file_manager',
-                area: 'file_manager',
-                element: 'new_browser',
-              });
-              openBrowserTab();
-            }}
-            onCreateDesignSystem={() => {
-              trackFileManagerClick(analytics.track, {
-                page_name: 'file_manager',
-                area: 'file_manager',
-                element: 'create_design_system',
-              });
-              setPendingDesignSystemCreateEntry('project_canvas');
-              navigate({ kind: 'design-system-create' });
-            }}
             onCreateDesignSystemFromProject={onCreateDesignSystemFromProject}
             createDesignSystemFromProjectBusy={createDesignSystemFromProjectBusy}
             onDuplicateProject={onDuplicateProject}

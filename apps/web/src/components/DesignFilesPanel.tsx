@@ -34,6 +34,8 @@ import {
   getHtmlThumbnailSource,
   loadHtmlThumbnailSource,
 } from './html-thumbnail-source-cache';
+import { DesignFilesEmptyState } from './design-files/DesignFilesEmptyState';
+import type { RunProgressStep } from '../runtime/run-progress';
 
 type TranslateFn = (key: keyof Dict, vars?: Record<string, string | number>) => string;
 
@@ -63,9 +65,14 @@ interface Props {
   // True while the host is reindexing a freshly replaced working dir. Drives
   // a loading overlay so the panel doesn't sit silently on the stale tree.
   reloading?: boolean;
-  // True while the chat agent is generating. The footer swaps its idle
-  // drop/upload hint for the typewriter "tip" line while a run is in flight.
+  // True while the chat agent is generating. Drives the empty state's status
+  // line, so an empty project reads as "working on it" rather than blank.
   running?: boolean;
+  /** The chat's most recent user prompt, echoed by the empty state. */
+  latestUserPrompt?: string | null;
+  /** The running turn's tool calls, newest first. The empty state names the
+   *  first one as the current step and stacks the rest beneath it. */
+  runSteps?: RunProgressStep[];
   files: ProjectFile[];
   // Persisted folders from `/api/projects/:id/folders`, including empty ones
   // that no file lives under. Without these, a folder only appears once a file
@@ -79,12 +86,7 @@ interface Props {
   onRenameFile: (from: string, to: string) => Promise<ProjectFile | null> | ProjectFile | null;
   onDeleteFile: (name: string) => void;
   onDeleteFiles: (names: string[]) => Promise<void> | void;
-  onUpload: () => void;
   onUploadFiles: (files: File[]) => void;
-  onPaste: () => void;
-  onNewSketch: () => void;
-  onOpenBrowser?: () => void;
-  onCreateDesignSystem?: () => void;
   onCreateDesignSystemFromProject?: () => void;
   createDesignSystemFromProjectBusy?: boolean;
   onDuplicateProject?: () => void;
@@ -449,6 +451,8 @@ export function DesignFilesPanel({
   rootDirName,
   reloading,
   running = false,
+  latestUserPrompt = null,
+  runSteps,
   files,
   folders,
   liveArtifacts,
@@ -457,12 +461,7 @@ export function DesignFilesPanel({
   onRenameFile,
   onDeleteFile,
   onDeleteFiles,
-  onUpload,
   onUploadFiles,
-  onPaste,
-  onNewSketch,
-  onOpenBrowser,
-  onCreateDesignSystem,
   onCreateDesignSystemFromProject,
   createDesignSystemFromProjectBusy = false,
   onDuplicateProject,
@@ -1533,9 +1532,9 @@ export function DesignFilesPanel({
               // reads as EXACTLY the same zero-files result as a genuinely
               // empty project (this list is a plain local-disk read — see
               // `downloadPending`'s doc comment). Without this branch the two
-              // are indistinguishable and the CTAs below (which create NEW
-              // content) actively mislead a viewer whose project is about to
-              // have real files. Swap them for a syncing notice instead.
+              // are indistinguishable, and the idle empty state below reads
+              // as "nothing here yet" to a viewer whose project is about to
+              // have real files. Swap it for a syncing notice instead.
               <div className="df-empty df-empty-syncing" data-testid="design-files-syncing">
                 <div className="df-empty-pill">
                   <FileSyncBadge state="downloading" size={20} />
@@ -1546,84 +1545,11 @@ export function DesignFilesPanel({
               </div>
             ) : (
               <div className="df-empty" data-testid="design-files-empty">
-                <div className="df-empty-pill">
-                  <span className="df-empty-title">
-                    {t('designFiles.empty')}
-                  </span>
-                  {/* Keep starter actions discoverable in shared read-only
-                      projects, but disable every project mutation in place. */}
-                  <div className="df-empty-actions">
-                    <button
-                      type="button"
-                      className="df-empty-cta df-empty-cta-primary"
-                      data-testid="design-files-empty-new-sketch"
-                      disabled={viewerOnly}
-                      onClick={onNewSketch}
-                      title={viewerOnly
-                        ? t('fileViewer.readonlySharedNoExport')
-                        : t('designFiles.newSketch')}
-                    >
-                      <Icon name="pencil" size={13} />
-                      <span>{t('designFiles.newSketch')}</span>
-                    </button>
-                    {/* `onPaste` is a historical prop name — the action creates
-                        a new blank Markdown document. */}
-                    <button
-                      type="button"
-                      className="df-empty-cta df-empty-cta-doc"
-                      data-testid="design-files-empty-new-document"
-                      disabled={viewerOnly}
-                      onClick={onPaste}
-                      title={viewerOnly
-                        ? t('fileViewer.readonlySharedNoExport')
-                        : t('designFiles.newDocumentTitle')}
-                    >
-                      <Icon name="file" size={13} />
-                      <span>{t('designFiles.newDocument')}</span>
-                    </button>
-                    <button
-                      type="button"
-                      className="df-empty-cta df-empty-cta-upload"
-                      data-testid="design-files-upload-trigger"
-                      disabled={viewerOnly}
-                      onClick={onUpload}
-                      title={viewerOnly
-                        ? t('fileViewer.readonlySharedNoExport')
-                        : t('designFiles.upload.title')}
-                    >
-                      <Icon name="upload" size={13} />
-                      <span>{t('designFiles.upload.label')}</span>
-                    </button>
-                    {onOpenBrowser ? (
-                      <button
-                        type="button"
-                        className="df-empty-cta df-empty-cta-secondary"
-                        data-testid="design-files-empty-open-browser"
-                        onClick={onOpenBrowser}
-                        aria-label={t('workspace.newBrowserDescription')}
-                        title={t('workspace.newBrowserDescription')}
-                      >
-                        <Icon name="globe" size={13} />
-                        <span>{t('workspace.newBrowser')}</span>
-                      </button>
-                    ) : null}
-                    {onCreateDesignSystem ? (
-                      <button
-                        type="button"
-                        className="df-empty-cta df-empty-cta-tertiary"
-                        data-testid="design-files-empty-create-design-system"
-                        disabled={viewerOnly}
-                        onClick={onCreateDesignSystem}
-                        title={viewerOnly
-                          ? t('fileViewer.readonlySharedNoExport')
-                          : t('dsManager.createTitle')}
-                      >
-                        <Icon name="blocks" size={14} />
-                        <span>{t('dsManager.createTitle')}</span>
-                      </button>
-                    ) : null}
-                  </div>
-                </div>
+                <DesignFilesEmptyState
+                  latestUserPrompt={latestUserPrompt}
+                  running={running}
+                  steps={runSteps}
+                />
               </div>
             )
           ) : (

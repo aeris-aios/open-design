@@ -19,6 +19,8 @@ import {
 } from '../providers/registry';
 import type { DesignSystemSummary, Project, ProjectDisplayStatus, ProjectFile } from '../types';
 import { Icon } from './Icon';
+import type { IconName } from './Icon';
+import { RemixIcon } from './RemixIcon';
 import { InviteDialog } from './InviteDialog';
 import { STATUS_LABEL_KEYS } from './DesignsTab';
 import { isDesignSystemProject, isPublishedDesignSystemProject } from './design-system-project';
@@ -157,6 +159,7 @@ type OwnerFilter = 'all' | 'mine' | 'others';
  *  shows and no 实时看板 / Design System filter for chips every card does. */
 type ProjectKindFilter = 'all' | ProjectCardCategory;
 type ProjectSort = 'updatedDesc' | 'updatedAsc' | 'nameAsc';
+type PersonalCollectionScope = 'recent' | 'personalProjects' | 'teamProjects';
 
 const OWNER_FILTER_OPTIONS: Array<{ id: OwnerFilter; labelKey: DictKey }> = [
   { id: 'all', labelKey: 'recentProjects.ownerAll' },
@@ -191,6 +194,12 @@ const SORT_OPTIONS: Array<{ id: ProjectSort; labelKey: Parameters<ReturnType<typ
   { id: 'updatedDesc', labelKey: 'recentProjects.sortNewest' },
   { id: 'updatedAsc', labelKey: 'recentProjects.sortOldest' },
   { id: 'nameAsc', labelKey: 'recentProjects.sortName' },
+];
+
+const PERSONAL_COLLECTION_OPTIONS: Array<{ id: PersonalCollectionScope; labelKey: DictKey }> = [
+  { id: 'recent', labelKey: 'recentProjects.collectionRecent' },
+  { id: 'personalProjects', labelKey: 'recentProjects.collectionPersonalProjects' },
+  { id: 'teamProjects', labelKey: 'recentProjects.collectionTeamProjects' },
 ];
 
 
@@ -414,16 +423,18 @@ export function RecentProjectsStrip({
   const [ownerFilter, setOwnerFilter] = useState<OwnerFilter>('all');
   const [kindFilter, setKindFilter] = useState<ProjectKindFilter>('all');
   const [sort, setSort] = useState<ProjectSort>('updatedDesc');
+  const [personalCollection, setPersonalCollection] = useState<PersonalCollectionScope>('recent');
   // recvqbipG9QDTt: this component mounts once per host view (Home, Drafts,
   // All projects) and stays alive across EntryShell tab switches — Home's
   // instance in particular is only ever hidden via `content-visibility`, not
-  // unmounted (see EntryShell's `inactiveViewProps`) — so a filter picked
-  // here keeps silently narrowing the grid on every later visit with no cue
-  // that anything is filtered. Surfacing `hasActiveFilter` drives the visible
-  // "clear filters" chip below instead of switching tabs quietly resetting
-  // it, per the reporter's own preferred fix.
-  const hasActiveFilter = ownerFilter !== 'all' || kindFilter !== 'all';
-  const [openHeaderMenu, setOpenHeaderMenu] = useState<'owner' | 'kind' | 'sort' | null>(null);
+  // unmounted (see EntryShell's `inactiveViewProps`) — so a filter picked here
+  // keeps narrowing the grid on every later visit. The "clear filters" chip
+  // that used to answer this is gone (per product); the cue is now the filter
+  // triggers themselves, which print the picked value (实时看板 rather than
+  // 全部), and resetting goes back through those menus.
+  const [openHeaderMenu, setOpenHeaderMenu] = useState<
+    'owner' | 'kind' | 'display' | null
+  >(null);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedProjectIds, setSelectedProjectIds] = useState<Set<string>>(() => new Set());
@@ -519,22 +530,31 @@ export function RecentProjectsStrip({
     () => sortedProjects
       .map((project) => ({ project, creator: resolveCreator(project.id) }))
       .filter(({ project, creator }) => {
+        const collectionMatches =
+          space !== 'drafts' ||
+          personalCollection === 'recent' ||
+          (personalCollection === 'personalProjects'
+            ? !isShared(project.id)
+            : isShared(project.id));
         const ownerMatches =
           !showOwnerFilter ||
           ownerFilter === 'all' ||
           (ownerFilter === 'mine' && creator.ownedBySelf) ||
           (ownerFilter === 'others' && !creator.ownedBySelf);
         const kindMatches = kindFilter === 'all' || projectCardCategory(project) === kindFilter;
-        return ownerMatches && kindMatches;
+        return collectionMatches && ownerMatches && kindMatches;
       })
       .slice(0, resolvedLimit),
     [
       kindFilter,
+      isShared,
       ownerFilter,
+      personalCollection,
       projectOwnerMemberIds,
       resolvedLimit,
       selfMemberId,
       showOwnerFilter,
+      space,
       sortedProjects,
     ],
   );
@@ -595,8 +615,17 @@ export function RecentProjectsStrip({
   const bulkMutationTitle = selectionHasForeignProject
     ? t('recentProjects.ownOnlyMutation')
     : selectedProjects.map(({ project }) => project.name).join('、') || undefined;
-  const canBulkMoveToTeam = collaborationAvailable && space !== 'team';
-  const canBulkMoveToPersonal = collaborationAvailable && space !== 'drafts';
+  const selectionHasSharedProject = selectedProjects.some(({ project }) => isShared(project.id));
+  const selectionHasPersonalProject = selectedProjects.some(({ project }) => !isShared(project.id));
+  const canBulkMoveToTeam =
+    collaborationAvailable &&
+    space !== 'team' &&
+    !(space === 'drafts' && personalCollection === 'teamProjects');
+  const canBulkMoveToPersonal =
+    collaborationAvailable &&
+    (space !== 'drafts' || personalCollection !== 'personalProjects');
+  const bulkMoveToTeamDisabled = bulkMutationDisabled || selectionHasSharedProject;
+  const bulkMoveToPersonalDisabled = bulkMutationDisabled || selectionHasPersonalProject;
 
   useEffect(() => {
     setSelectedProjectIds((current) => {
@@ -1322,13 +1351,35 @@ export function RecentProjectsStrip({
   return (
     <section className="recent-projects" data-testid="recent-projects-strip">
       {fullPageGrid ? (
-        <header className="recent-projects__head">
+        <header
+          className={`recent-projects__head${space === 'drafts' ? ' recent-projects__head--personal' : ''}`}
+        >
           <div className="recent-projects__title-block">
             <h2 className="recent-projects__heading">{heading ?? t('recentProjects.title')}</h2>
             {description ? (
               <p className="recent-projects__description">{description}</p>
             ) : null}
           </div>
+          {space === 'drafts' ? (
+            <div
+              className="recent-projects__collection-switch"
+              role="radiogroup"
+              aria-label={heading ?? t('entry.navDrafts')}
+            >
+              {PERSONAL_COLLECTION_OPTIONS.map((option) => (
+                <button
+                  key={option.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={personalCollection === option.id}
+                  className="recent-projects__collection-option"
+                  onClick={() => setPersonalCollection(option.id)}
+                >
+                  {t(option.labelKey)}
+                </button>
+              ))}
+            </div>
+          ) : null}
           <div className="recent-projects__controls">
             {space === 'team' &&
             canAccessInviteFlow &&
@@ -1370,6 +1421,7 @@ export function RecentProjectsStrip({
                 <button
                   type="button"
                   className="recent-projects__filter"
+                  aria-haspopup="menu"
                   aria-expanded={openHeaderMenu === 'owner'}
                   onClick={() => setOpenHeaderMenu((current) => current === 'owner' ? null : 'owner')}
                 >
@@ -1403,6 +1455,7 @@ export function RecentProjectsStrip({
               <button
                 type="button"
                 className="recent-projects__filter"
+                aria-haspopup="menu"
                 aria-expanded={openHeaderMenu === 'kind'}
                 onClick={() => setOpenHeaderMenu((current) => current === 'kind' ? null : 'kind')}
               >
@@ -1434,101 +1487,106 @@ export function RecentProjectsStrip({
                 </div>
               ) : null}
             </div>
-            {hasActiveFilter ? (
-              // Only rendered once a filter narrows the grid, so it never
-              // competes for attention with the plain owner/kind/sort chips
-              // above — see recvqbipG9QDTt.
-              <button
-                type="button"
-                className="recent-projects__filter-clear"
-                data-testid="recent-projects-clear-filters"
-                onClick={() => {
-                  trackCollection('filter', {
-                    filter_type: 'owner',
-                    filter_value: 'all',
-                  });
-                  trackCollection('filter', {
-                    filter_type: 'project_type',
-                    filter_value: 'all',
-                  });
-                  setOwnerFilter('all');
-                  setKindFilter('all');
-                  setOpenHeaderMenu(null);
-                }}
-              >
-                <Icon name="close" size={12} />
-                {t('recentProjects.clearFilters')}
-              </button>
-            ) : null}
             <div className="recent-projects__filter-wrap">
               <button
                 type="button"
                 className="recent-projects__view-btn"
-                aria-label={t('recentProjects.sortAria')}
-                aria-expanded={openHeaderMenu === 'sort'}
-                onClick={() => setOpenHeaderMenu((current) => current === 'sort' ? null : 'sort')}
+                aria-label={`${t('recentProjects.sortAria')} · ${t('designs.viewToggleAria')}`}
+                aria-haspopup="menu"
+                aria-expanded={openHeaderMenu === 'display'}
+                onClick={() =>
+                  setOpenHeaderMenu((current) => current === 'display' ? null : 'display')
+                }
               >
-                <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M3 7h6M3 12h10M3 17h14M17 4v8m0 0 3-3m-3 3-3-3" />
-                </svg>
+                <RemixIcon name="more-2-line" size={16} />
               </button>
-              {openHeaderMenu === 'sort' ? (
-                <div className="recent-projects__filter-menu" role="menu">
-                  {SORT_OPTIONS.map((option) => (
+              {openHeaderMenu === 'display' ? (
+                <div
+                  className="recent-projects__filter-menu recent-projects__filter-menu--display"
+                  role="menu"
+                >
+                  <div
+                    className="recent-projects__filter-menu-group"
+                    role="group"
+                    aria-label={t('recentProjects.sortAria')}
+                  >
+                    <span className="recent-projects__filter-menu-label" aria-hidden="true">
+                      {t('recentProjects.sortAria')}
+                    </span>
+                    {SORT_OPTIONS.map((option) => (
+                      <button
+                        key={option.id}
+                        type="button"
+                        role="menuitemradio"
+                        aria-checked={sort === option.id}
+                        className={sort === option.id ? 'is-active' : undefined}
+                        onClick={() => {
+                          trackCollection('sort', {
+                            sort_value:
+                              option.id === 'updatedAsc'
+                                ? 'updated_asc'
+                                : option.id === 'nameAsc'
+                                  ? 'name_asc'
+                                  : 'updated_desc',
+                          });
+                          setSort(option.id);
+                          setOpenHeaderMenu(null);
+                        }}
+                      >
+                        <span>{t(option.labelKey)}</span>
+                        <span className="recent-projects__filter-menu-check" aria-hidden="true">
+                          {sort === option.id ? <Icon name="check" size={13} /> : null}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                  <div
+                    className="recent-projects__filter-menu-group"
+                    role="group"
+                    aria-label={t('designs.viewToggleAria')}
+                  >
+                    <span className="recent-projects__filter-menu-label" aria-hidden="true">
+                      {t('designs.viewToggleAria')}
+                    </span>
                     <button
-                      key={option.id}
                       type="button"
-                      className={sort === option.id ? 'is-active' : undefined}
+                      role="menuitemradio"
+                      aria-checked={view === 'grid'}
+                      className={view === 'grid' ? 'is-active' : undefined}
                       onClick={() => {
-                        trackCollection('sort', {
-                          sort_value:
-                            option.id === 'updatedAsc'
-                              ? 'updated_asc'
-                              : option.id === 'nameAsc'
-                                ? 'name_asc'
-                                : 'updated_desc',
-                        });
-                        setSort(option.id);
+                        if (view !== 'grid') {
+                          trackCollection('view_toggle', { view_value: 'grid' });
+                          setView('grid');
+                        }
                         setOpenHeaderMenu(null);
                       }}
                     >
-                      {t(option.labelKey)}
+                      <span>{t('designs.viewGrid')}</span>
+                      <span className="recent-projects__filter-menu-check" aria-hidden="true">
+                        {view === 'grid' ? <Icon name="check" size={13} /> : null}
+                      </span>
                     </button>
-                  ))}
+                    <button
+                      type="button"
+                      role="menuitemradio"
+                      aria-checked={view === 'list'}
+                      className={view === 'list' ? 'is-active' : undefined}
+                      onClick={() => {
+                        if (view !== 'list') {
+                          trackCollection('view_toggle', { view_value: 'list' });
+                          setView('list');
+                        }
+                        setOpenHeaderMenu(null);
+                      }}
+                    >
+                      <span>{t('recentProjects.viewList')}</span>
+                      <span className="recent-projects__filter-menu-check" aria-hidden="true">
+                        {view === 'list' ? <Icon name="check" size={13} /> : null}
+                      </span>
+                    </button>
+                  </div>
                 </div>
               ) : null}
-            </div>
-            <div className="recent-projects__view" role="group" aria-label={t('designs.viewToggleAria')}>
-              <button
-                type="button"
-                className={`recent-projects__view-btn${view === 'grid' ? ' is-active' : ''}`}
-                aria-pressed={view === 'grid'}
-                aria-label={t('designs.viewGrid')}
-                onClick={() => {
-                  if (view !== 'grid') {
-                    trackCollection('view_toggle', { view_value: 'grid' });
-                    setView('grid');
-                  }
-                }}
-              >
-                <Icon name="grid" size={15} />
-              </button>
-              <button
-                type="button"
-                className={`recent-projects__view-btn${view === 'list' ? ' is-active' : ''}`}
-                aria-pressed={view === 'list'}
-                aria-label={t('recentProjects.viewList')}
-                onClick={() => {
-                  if (view !== 'list') {
-                    trackCollection('view_toggle', { view_value: 'list' });
-                    setView('list');
-                  }
-                }}
-              >
-                <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round">
-                  <path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01" />
-                </svg>
-              </button>
             </div>
           </div>
         </header>
@@ -1561,7 +1619,7 @@ export function RecentProjectsStrip({
             {canBulkMoveToTeam ? (
               <button
                 type="button"
-                disabled={bulkMutationDisabled}
+                disabled={bulkMoveToTeamDisabled}
                 title={bulkMutationTitle}
                 onClick={() => requestBulkMove('to-team')}
               >
@@ -1571,7 +1629,7 @@ export function RecentProjectsStrip({
             {canBulkMoveToPersonal ? (
               <button
                 type="button"
-                disabled={bulkMutationDisabled}
+                disabled={bulkMoveToPersonalDisabled}
                 title={bulkMutationTitle}
                 onClick={() => requestBulkMove('to-personal')}
               >
@@ -1625,6 +1683,17 @@ export function RecentProjectsStrip({
           const shared = isShared(project.id);
           const selected = selectedProjectIds.has(project.id);
           const readonlyShared = shared && !creator.ownedBySelf;
+          const creatorLine = t('recentProjects.creatorLine', { name: creator.name });
+          // List rows only — the grid card wears the icon-only tile instead.
+          const tagRow = (
+            <div className="design-card-tag-row">
+              {designSystemProject ? (
+                <DesignSystemProjectTag />
+              ) : (
+                <ProjectTag category={projectCategory(project)} />
+              )}
+            </div>
+          );
           const opening = openingProjectId === project.id;
           return (
             <div
@@ -1740,32 +1809,11 @@ export function RecentProjectsStrip({
                     projectId={project.id}
                     onVisible={handleCoverCardVisible}
                   />
-                  {(cover.kind === 'image' || cover.kind === 'logo') && cover.src ? (
-                    <img
-                      className="recent-projects__thumb-media"
-                      src={cover.src}
-                      alt=""
-                      loading="lazy"
-                    />
-                  ) : cover.kind === 'video' && cover.src ? (
-                    <video
-                      className="recent-projects__thumb-media"
-                      src={cover.src}
-                      muted
-                      preload="metadata"
-                      playsInline
-                    />
-                  ) : cover.kind === 'html' && cover.src ? (
-                    <RecentProjectHtmlThumb
-                      src={cover.src}
-                      initial={cover.initial}
-                      diagnostic={`${project.id}:${cover.name ?? 'unknown'}`}
-                      deckCoverOnly={project.metadata?.kind === 'deck'}
-                      workspaceContext={workspaceContext}
-                    />
-                  ) : (
-                    <span className="recent-projects__card-glyph">{cover.initial}</span>
-                  )}
+                  <ProjectCoverMedia
+                    cover={cover}
+                    project={project}
+                    workspaceContext={workspaceContext}
+                  />
                   {sharingId === project.id ? (
                     <span
                       aria-hidden
@@ -1796,6 +1844,11 @@ export function RecentProjectsStrip({
                   ) : null}
                 </div>
                 <div className="recent-projects__card-meta">
+                  {/* Grid cards drop the name line (per product): the thumbnail
+                      already identifies the project, and the row below carries
+                      who / when / what. List rows keep it — a list of nameless
+                      rows would have nothing to read. */}
+                  {view === 'list' ? (
                   <div className="recent-projects__card-name-row">
                     <span className="recent-projects__card-name">{project.name}</span>
                     {shared && view === 'list' ? (
@@ -1808,22 +1861,68 @@ export function RecentProjectsStrip({
                       </span>
                     ) : null}
                   </div>
+                  ) : null}
+                  {/* Grid: a square kind tile, the name over the time beside
+                      it, and the avatar alone at the right edge. List keeps the
+                      fuller owner·time run on the left and the labelled chip on
+                      the right — its rows are wide enough to read as a
+                      sentence, a grid card is not. */}
                   <div className="recent-projects__card-footer">
-                    <div className="recent-projects__card-time">
-                      <span className="recent-projects__card-owner" aria-hidden>
-                        {creator.initial}
-                      </span>
-                      <span>{t('recentProjects.creatorLine', { name: creator.name })}</span>
-                      <span className="recent-projects__card-sep" aria-hidden>·</span>
-                      {relativeTime(project.updatedAt, t)}
-                    </div>
-                    <div className="design-card-tag-row">
-                      {designSystemProject ? (
-                        <DesignSystemProjectTag />
-                      ) : (
-                        <ProjectTag category={projectCategory(project)} />
-                      )}
-                    </div>
+                    {view === 'list' ? (
+                      <>
+                        <div className="recent-projects__card-time">
+                          <span className="recent-projects__card-owner" aria-hidden>
+                            {creator.initial}
+                          </span>
+                          <span>{creatorLine}</span>
+                          <span className="recent-projects__card-sep" aria-hidden>·</span>
+                          {relativeTime(project.updatedAt, t)}
+                        </div>
+                        {tagRow}
+                      </>
+                    ) : (
+                      <>
+                        <ProjectTagIcon
+                          category={
+                            designSystemProject ? 'design-system' : projectCategory(project)
+                          }
+                        />
+                        <div className="recent-projects__card-lines">
+                          <span className="recent-projects__card-name">{project.name}</span>
+                          <div className="recent-projects__card-time">
+                            {relativeTime(project.updatedAt, t)}
+                          </div>
+                        </div>
+                        {/* The avatar answers "who else is in here", so it only
+                            appears once somebody else IS (per product: 有用户在
+                            这个文件夹里的时候才显示，默认没有头像). A project
+                            that is only mine carried a 我 disc on every card,
+                            which said nothing — every card in 个人项目 wore it.
+
+                            The person shown is the one `projectOwnerMemberIds`
+                            names: the member who shared the project in. That is
+                            the only per-project identity this strip is given —
+                            there is no roster and no visit recency here — so
+                            "the latest person" resolves to that member until a
+                            richer signal reaches this component.
+
+                            When there is nobody to show, the disc still holds
+                            its slot (per product: 位置空出来) — it is hidden,
+                            not dropped, so a row of solo cards ends its name
+                            column on the same line as a row that has avatars
+                            instead of running 24px further right. */}
+                        <span
+                          className={
+                            'recent-projects__card-owner' +
+                            (creator.ownedBySelf ? ' is-empty' : '')
+                          }
+                          aria-label={creator.ownedBySelf ? undefined : creatorLine}
+                          title={creator.ownedBySelf ? undefined : creatorLine}
+                        >
+                          {creator.ownedBySelf ? null : creator.initial}
+                        </span>
+                      </>
+                    )}
                   </div>
                 </div>
               </button>
@@ -2164,6 +2263,76 @@ export function RecentProjectsStrip({
   );
 }
 
+/**
+ * What goes INSIDE a project's cover box, given the cover `projectCover`
+ * resolved: the real artifact where there is one — a still, a video, or the
+ * page itself in a lazy sandboxed frame — and the gradient's initial letter
+ * where there is not.
+ *
+ * Exported because the card is no longer the only place a project shows its
+ * face: the chat project switcher previews the hovered row with this same
+ * component, so the two can never drift into showing different pictures for
+ * the same project. The caller owns the box (size, radius, `cover.style` for
+ * the gradient); this owns only what fills it.
+ */
+export function ProjectCoverMedia({
+  cover,
+  project,
+  workspaceContext,
+  ungated = false,
+}: {
+  cover: ReturnType<typeof projectCover>;
+  project: Project;
+  workspaceContext?: WorkspaceCollabContext | null;
+  /**
+   * Skip the shared thumbnail-load gate for an HTML cover.
+   *
+   * The gate budgets the sandboxed document loads a GRID starts on its own —
+   * and the app suspends it entirely while a project route is open, so nothing
+   * in the background competes with the project being opened. A cover mounted
+   * on that route by an explicit, one-at-a-time user action (the chat project
+   * switcher's hover preview) is not that traffic: gated, it would sit on the
+   * fallback letter forever, because the gate it is waiting on is suspended
+   * for as long as the surface showing it exists. Grids must leave this off.
+   */
+  ungated?: boolean;
+}) {
+  if ((cover.kind === 'image' || cover.kind === 'logo') && cover.src) {
+    return (
+      <img
+        className="recent-projects__thumb-media"
+        src={cover.src}
+        alt=""
+        loading="lazy"
+      />
+    );
+  }
+  if (cover.kind === 'video' && cover.src) {
+    return (
+      <video
+        className="recent-projects__thumb-media"
+        src={cover.src}
+        muted
+        preload="metadata"
+        playsInline
+      />
+    );
+  }
+  if (cover.kind === 'html' && cover.src) {
+    return (
+      <RecentProjectHtmlThumb
+        src={cover.src}
+        initial={cover.initial}
+        diagnostic={`${project.id}:${cover.name ?? 'unknown'}`}
+        deckCoverOnly={project.metadata?.kind === 'deck'}
+        workspaceContext={workspaceContext}
+        ungated={ungated}
+      />
+    );
+  }
+  return <span className="recent-projects__card-glyph">{cover.initial}</span>;
+}
+
 // Card thumbnails for HTML projects render the real artifact, not a
 // placeholder: a plain prototype page loads straight into a lazy sandboxed
 // iframe, while a deck collapses to its first slide (`DeckCoverThumb`) so the
@@ -2175,12 +2344,14 @@ function RecentProjectHtmlThumb({
   diagnostic,
   deckCoverOnly,
   workspaceContext,
+  ungated = false,
 }: {
   src: string;
   initial: string;
   diagnostic: string;
   deckCoverOnly: boolean;
   workspaceContext?: WorkspaceCollabContext | null;
+  ungated?: boolean;
 }) {
   // Plain HTML goes through the shared cover frame (#5762): it HEAD-probes the
   // cover URL in the parent cover queue first and falls back to the initial
@@ -2193,6 +2364,7 @@ function RecentProjectHtmlThumb({
         src={src}
         initial={initial}
         diagnostic={diagnostic}
+        ungated={ungated}
       />
     );
   }
@@ -2204,10 +2376,12 @@ function VerifiedHtmlCoverFrame({
   src,
   initial,
   diagnostic,
+  ungated = false,
 }: {
   src: string;
   initial: string;
   diagnostic: string;
+  ungated?: boolean;
 }) {
   const [failed, setFailed] = useState(false);
   useEffect(() => setFailed(false), [src]);
@@ -2217,11 +2391,14 @@ function VerifiedHtmlCoverFrame({
   const { ref: inViewRef, inView } = useInView<HTMLSpanElement>({
     rootMargin: THUMBNAIL_OVERSCAN_MARGIN,
   });
-  const { canLoad, settle } = useThumbnailLoadSlot(inView && !failed);
+  // The hook still runs for an ungated cover (hooks are unconditional) but its
+  // answer is ignored: `wanted: false` also keeps it from taking a slot the
+  // grids need.
+  const { canLoad, settle } = useThumbnailLoadSlot(!ungated && inView && !failed);
   if (failed) {
     return <span className="recent-projects__card-glyph">{initial}</span>;
   }
-  if (!canLoad) {
+  if (!ungated && !canLoad) {
     return (
       <span ref={inViewRef} className="recent-projects__card-glyph">
         {initial}
@@ -2582,25 +2759,68 @@ export function projectCategory(project: Project): ProjectCategory {
   return 'prototype';
 }
 
-export function ProjectTag({ category }: { category: ProjectCategory }) {
+/** The glyph each kind chip leads with — the same icon that kind wears in the
+ *  Home type rail, so a card and the rail name the same thing the same way. */
+const PROJECT_TAG_ICON: Record<ProjectCardCategory, IconName> = {
+  prototype: 'artboard',
+  'live-artifact': 'bar-chart-box',
+  'web-clone': 'globe',
+  slide: 'present',
+  media: 'image',
+  brand: 'swatchbook',
+  'design-system': 'sliders',
+};
+
+function projectTagLabel(category: ProjectCategory, t: ReturnType<typeof useT>): string {
+  return category === 'live-artifact'
+    ? t('designs.tagLiveArtifact')
+    : category === 'web-clone'
+      ? t('designs.tagWebClone')
+      : category === 'slide'
+        ? t('designs.tagSlide')
+        : category === 'brand'
+          ? 'Brand'
+        : category === 'media'
+          ? t('designs.tagMedia')
+          : t('designs.tagPrototype');
+}
+
+/**
+ * Grid-card kind mark: the chip reduced to its glyph on a square tile. The
+ * card footer only has room for one line of name over one of time, and the
+ * spelled-out kind was the least load-bearing thing on it — the name says what
+ * the project is. The dropped word survives as the tile's accessible name and
+ * hover title, so nothing is actually lost.
+ */
+function ProjectTagIcon({ category }: { category: ProjectCardCategory }) {
   const t = useT();
   const label =
-    category === 'live-artifact'
-      ? t('designs.tagLiveArtifact')
-      : category === 'web-clone'
-        ? t('designs.tagWebClone')
-        : category === 'slide'
-          ? t('designs.tagSlide')
-          : category === 'brand'
-            ? 'Brand'
-          : category === 'media'
-            ? t('designs.tagMedia')
-            : t('designs.tagPrototype');
-  return <span className={`design-card-tag tag-${category}`}>{label}</span>;
+    category === 'design-system' ? DESIGN_SYSTEM_TAG_LABEL : projectTagLabel(category, t);
+  return (
+    <span className="recent-projects__card-kind" aria-label={label} title={label}>
+      <Icon name={PROJECT_TAG_ICON[category]} size={14} />
+    </span>
+  );
+}
+
+export function ProjectTag({ category }: { category: ProjectCategory }) {
+  const t = useT();
+  const label = projectTagLabel(category, t);
+  return (
+    <span className={`design-card-tag tag-${category}`}>
+      <Icon name={PROJECT_TAG_ICON[category]} size={12} className="design-card-tag__icon" />
+      {label}
+    </span>
+  );
 }
 
 function DesignSystemProjectTag() {
-  return <span className="design-card-tag tag-design-system">{DESIGN_SYSTEM_TAG_LABEL}</span>;
+  return (
+    <span className="design-card-tag tag-design-system">
+      <Icon name={PROJECT_TAG_ICON['design-system']} size={12} className="design-card-tag__icon" />
+      {DESIGN_SYSTEM_TAG_LABEL}
+    </span>
+  );
 }
 
 function findDesignSystemLogoFile(files: ProjectFile[]): ProjectFile | null {

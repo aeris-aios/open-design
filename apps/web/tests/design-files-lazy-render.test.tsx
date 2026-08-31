@@ -147,10 +147,7 @@ function renderPanel(
       onRenameFile={vi.fn()}
       onDeleteFile={vi.fn()}
       onDeleteFiles={vi.fn()}
-      onUpload={vi.fn()}
       onUploadFiles={vi.fn()}
-      onPaste={vi.fn()}
-      onNewSketch={vi.fn()}
       {...overrides}
     />,
   );

@@ -216,7 +216,7 @@ export function buildSpeakerNotesPresenterHtml(options: {
     button:disabled { opacity: 0.45; cursor: default; }
     .stage { min-width: 0; min-height: 0; padding: 18px; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: 14px; border-right: 1px solid #303030; }
     .topbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; min-width: 0; }
-    .timer { font-size: 30px; line-height: 1; font-weight: 800; letter-spacing: 0; font-variant-numeric: tabular-nums; margin-right: 2px; white-space: nowrap; }
+    .timer { font-size: 30px; line-height: 1; font-weight: 700; letter-spacing: 0; font-variant-numeric: tabular-nums; margin-right: 2px; white-space: nowrap; }
     .counter { margin-left: auto; color: #bdbdbd; font-size: 18px; line-height: 1.1; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
     .current { position: relative; min-height: 0; border: 1px solid #2e2e2e; border-radius: 10px; overflow: hidden; background: #080808; cursor: pointer; transition: border-color 140ms cubic-bezier(0.23, 1, 0.32, 1); }
     .current:hover { border-color: #4a4a4a; }
@@ -238,7 +238,7 @@ export function buildSpeakerNotesPresenterHtml(options: {
     .filmstrip section:hover .thumb-frame { border-color: #4a4a4a; }
     .notes { min-width: 0; min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); background: #1b1b1b; }
     .notes-head { height: 58px; display: flex; align-items: center; gap: 14px; padding: 0 22px; border-bottom: 1px solid #303030; }
-    .notes-title { font-size: 16px; font-weight: 800; color: #d6d6d6; }
+    .notes-title { font-size: 16px; font-weight: 700; color: #d6d6d6; }
     .notes-body { min-height: 0; padding: 28px; overflow: auto; cursor: text; }
     .note-text { white-space: pre-wrap; font-size: 21px; line-height: 1.58; font-weight: 600; color: #eeeeee; }
     .note-text:focus-visible { outline: 2px solid #6da2ff; outline-offset: 6px; border-radius: 8px; }

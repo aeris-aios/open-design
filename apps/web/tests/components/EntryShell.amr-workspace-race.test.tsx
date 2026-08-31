@@ -476,7 +476,7 @@ describe('EntryShell AMR workspace precheck race', () => {
     expect(onCreateProject).not.toHaveBeenCalled();
   });
 
-  it('keeps one Home submit loading until a transient team billing read recovers', async () => {
+  it('keeps one Home submit single-flight without a loading flash while billing recovers', async () => {
     window.history.replaceState(null, '', '/');
     const workspace = teamContext('workspace-a', 'member-a');
     let contextReads = 0;
@@ -556,7 +556,8 @@ describe('EntryShell AMR workspace precheck race', () => {
       await Promise.resolve();
     });
     expect(mockedCheckAmrBalanceGate).toHaveBeenCalledTimes(1);
-    expect(screen.getByTestId('home-hero-submit').getAttribute('aria-busy')).toBe('true');
+    expect(screen.getByTestId('home-hero-submit').getAttribute('aria-busy')).toBe('false');
+    expect(screen.getByTestId('home-hero-submit').getAttribute('aria-label')).toBe('Run');
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(400);

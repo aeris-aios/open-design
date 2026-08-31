@@ -1,9 +1,8 @@
+/* Layout only — the scrim material comes from the shared `<Dialog>` backdrop
+   (--scrim-tint / --scrim-backdrop). See AmrArtifactUpgradeDialog. */
 .backdrop {
   z-index: 1700;
   padding: 16px;
-  background: color-mix(in srgb, var(--text-strong) 24%, transparent);
-  backdrop-filter: blur(6px) saturate(0.96);
-  -webkit-backdrop-filter: blur(6px) saturate(0.96);
 }
 
 .panel {
@@ -61,7 +60,7 @@
   margin: 3px 44px 8px 0;
   color: var(--brand-text);
   font-size: 12px;
-  font-weight: 750;
+  font-weight: 700;
   letter-spacing: 0.04em;
 }
 
@@ -70,7 +69,7 @@
   margin: 0;
   color: var(--text-strong);
   font-size: 29px;
-  font-weight: 680;
+  font-weight: 600;
   line-height: 1.14;
   letter-spacing: -0.035em;
   text-wrap: balance;
@@ -123,7 +122,7 @@
   padding: 4px 8px;
   border-radius: var(--radius-pill);
   font-size: 11px;
-  font-weight: 750;
+  font-weight: 700;
   white-space: nowrap;
 }
 
@@ -152,7 +151,7 @@
   color: var(--brand-text);
   background: var(--brand);
   font-size: 10px;
-  font-weight: 800;
+  font-weight: 700;
   white-space: nowrap;
 }
 
@@ -185,7 +184,7 @@
   border-color: var(--accent);
   color: var(--brand);
   background: var(--accent);
-  font-weight: 800;
+  font-weight: 700;
 }
 
 .panel .primaryAction:hover {
@@ -199,7 +198,7 @@
   border-color: transparent;
   color: var(--text-muted);
   background: transparent;
-  font-weight: 650;
+  font-weight: 600;
 }
 
 .panel .laterAction:hover {

@@ -85,19 +85,17 @@ afterEach(() => {
 });
 
 describe('HomeView media composer options', () => {
-  it('shows the Home composer mode picker and still defaults to Design mode', async () => {
+  it('drops the Home composer mode picker and still submits in Design mode', async () => {
     stubFetch();
     const onSubmit = vi.fn();
     renderHome({ onSubmit });
 
     await screen.findByTestId('home-hero-input');
 
-    // 设计 is the app default AND the default SELECTION: the composer opens with
-    // the Design pill showing, so the mode the request will run in is stated on
-    // screen rather than hidden behind a neutral glyph. The submitted payload
-    // carries design either way.
-    expect(screen.getByTestId('composer-mode-trigger').getAttribute('aria-label')).toBe('Mode: Design');
-    expect(screen.getByTestId('composer-mode-clear')).toBeTruthy();
+    // The 「设计」 pill was removed from the Home composer footer (the picker
+    // stays in the project chat composer). Home creates keep running in the
+    // app default — design — which the submitted payload still states.
+    expect(screen.queryByTestId('composer-mode-trigger')).toBeNull();
 
     await setHomePrompt('Create a clean loading animation');
     await submitHome();
@@ -127,14 +125,17 @@ describe('HomeView media composer options', () => {
     stubFetch();
     renderHome();
 
-    // The design-system picker is now the persistent row below the composer, so
-    // it is present for every kind and no longer a footer pill. Image/Video add
-    // no inline footer pills either; ratio / duration / model / resolution are
-    // asked for during the run (mirroring prototype/deck).
+    // The design-system picker is permanent at the head of the composer's foot
+    // row, right after the upload disc (per product: 设计系统常驻在添加附件
+    // 后面), so an untouched composer already carries it — and it is no longer
+    // a footer pill for any kind. Image/Video add no inline footer pills
+    // either; ratio / duration / model / resolution are asked for during the
+    // run (mirroring prototype/deck).
     expect(screen.getByTestId('home-hero-design-system-trigger')).toBeTruthy();
 
     await clickHomeRailChip('image');
     await waitFor(() => expect(screen.getByTestId('home-hero-template-trigger').textContent).not.toContain('None'));
+    expect(screen.getByTestId('home-hero-design-system-trigger')).toBeTruthy();
     expect(promptIsEmpty()).toBe(true);
     expect(screen.queryByTestId('home-hero-footer-option-designSystem')).toBeNull();
     expect(screen.queryByTestId('home-hero-footer-option-model')).toBeNull();
@@ -198,7 +199,7 @@ describe('HomeView media composer options', () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     try {
       renderHome({
-        defaultDesignSystemId: 'official-default',
+        defaultDesignSystemId: null,
         designSystems: [
           designSystem('official-default', 'Official Default', 'built-in', 'published'),
           designSystem('official-alt', 'Official Alt', 'built-in', 'published'),
@@ -389,15 +390,11 @@ describe('HomeView media composer options', () => {
     }
   });
 
-  it('resolves the run-facing snapshot from inputs with the deferred media settings stripped', async () => {
-    // Regression at the prompt/run boundary: the daemon renders `## Plugin
-    // inputs` verbatim from `snapshot.inputs` and tells the agent not to re-ask
-    // about anything listed there. The snapshot's inputs come from the body of
-    // the `/apply` call that yields `appliedPluginSnapshotId`, so submission
-    // must re-apply with the deferred footer/media fields stripped — otherwise
-    // the run prompt carries `ratio: 16:9` / `duration: 5` / `model: …` and the
-    // first-turn question-form discovery flow stays suppressed even though
-    // `onSubmit.pluginInputs` was stripped.
+  it('hands stripped media inputs to project creation without re-applying on Home', async () => {
+    // POST /api/projects resolves the run-facing snapshot transactionally from
+    // pluginId + pluginInputs. Home must hand those inputs off immediately —
+    // with the deferred media settings removed — instead of waiting for a
+    // second `/apply` request before the optimistic Chat route can mount.
     const fetchMock = stubFetch();
     const onSubmit = vi.fn();
     renderHome({ onSubmit });
@@ -405,45 +402,57 @@ describe('HomeView media composer options', () => {
     await clickHomeRailChip('video');
     await waitFor(() => expect(screen.getByTestId('home-hero-template-trigger').textContent).not.toContain('None'));
     await setHomePrompt('Create a launch teaser.');
+    const applyCountBeforeSubmit = fetchMock.mock.calls.filter(([url]) => (
+      typeof url === 'string' && url.includes('/api/plugins/od-media-generation/apply')
+    )).length;
     await submitHome();
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalled());
-    const [{ appliedPluginSnapshotId }] = onSubmit.mock.calls[0] as [{ appliedPluginSnapshotId?: string | null }];
-    expect(appliedPluginSnapshotId).toBe('snap-od-media-generation');
-
-    // The apply call that produced the forwarded snapshot is the LAST media
-    // apply: its inputs become `snapshot.inputs`, so they must already be free
-    // of the deferred settings.
-    const applyCalls = fetchMock.mock.calls.filter(([url]) => (
+    const [{ appliedPluginSnapshotId, pluginId, pluginInputs }] = onSubmit.mock.calls[0] as [{
+      appliedPluginSnapshotId?: string | null;
+      pluginId?: string | null;
+      pluginInputs?: Record<string, unknown>;
+    }];
+    expect(pluginId).toBe('od-media-generation');
+    expect(appliedPluginSnapshotId).toBeNull();
+    const applyCountAfterSubmit = fetchMock.mock.calls.filter(([url]) => (
       typeof url === 'string' && url.includes('/api/plugins/od-media-generation/apply')
-    ));
-    expect(applyCalls.length).toBeGreaterThan(0);
-    const snapshotInputs = JSON.parse(String(applyCalls.at(-1)?.[1]?.body)).inputs as Record<string, unknown>;
+    )).length;
+    expect(applyCountAfterSubmit).toBe(applyCountBeforeSubmit);
     for (const deferred of ['model', 'ratio', 'resolution', 'duration', 'audioType', 'voice']) {
-      expect(snapshotInputs).not.toHaveProperty(deferred);
+      expect(pluginInputs).not.toHaveProperty(deferred);
     }
-    // The required brief inputs the apply validates against survive the strip.
-    expect(snapshotInputs).toHaveProperty('subject');
+    // The required brief inputs project creation validates survive the strip.
+    expect(pluginInputs).toHaveProperty('subject');
   });
 
   it('submits HyperFrames as a video project with the hyperframes-html model', async () => {
-    stubFetch();
+    const fetchMock = stubFetch();
     const onSubmit = vi.fn();
     renderHome({ onSubmit });
 
     await clickHomeRailChip('hyperframes');
     await setHomePrompt('Create a HyperFrames launch bumper.');
-    // submit() re-applies the plugin from the deferral-stripped inputs before
-    // forwarding, so onSubmit fires after the apply round-trip resolves.
+    // The deferral-stripped inputs are handed directly to project creation;
+    // there is no Home-side apply round-trip before onSubmit.
+    const applyCountBeforeSubmit = fetchMock.mock.calls.filter(([url]) => (
+      typeof url === 'string' && url.includes('/api/plugins/example-hyperframes/apply')
+    )).length;
     await submitHome();
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
+      pluginId: 'example-hyperframes',
+      appliedPluginSnapshotId: null,
       projectKind: 'video',
       projectMetadata: expect.objectContaining({
         kind: 'video',
         videoModel: 'hyperframes-html',
       }),
     })));
+    const applyCountAfterSubmit = fetchMock.mock.calls.filter(([url]) => (
+      typeof url === 'string' && url.includes('/api/plugins/example-hyperframes/apply')
+    )).length;
+    expect(applyCountAfterSubmit).toBe(applyCountBeforeSubmit);
   });
 
   it('does not wait for rich Workspace context after a directory-scoped plugin was selected', async () => {
@@ -462,15 +471,26 @@ describe('HomeView media composer options', () => {
       failure: undefined,
     };
     view.rerender(<HomeView {...props} />);
-    await submitHome();
-
-    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
-    const localApply = fetchMock.mock.calls.filter(([url]) => (
+    const selectionApply = fetchMock.mock.calls.filter(([url]) => (
       typeof url === 'string'
       && url.includes('/api/plugins/od-media-generation/apply')
     )).at(-1);
-    expect(localApply).toBeTruthy();
-    expect(new Headers(localApply?.[1]?.headers).has('x-od-workspace-id')).toBe(false);
+    const applyCountBeforeSubmit = fetchMock.mock.calls.filter(([url]) => (
+      typeof url === 'string' && url.includes('/api/plugins/od-media-generation/apply')
+    )).length;
+    await submitHome();
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    const applyCountAfterSubmit = fetchMock.mock.calls.filter(([url]) => (
+      typeof url === 'string' && url.includes('/api/plugins/od-media-generation/apply')
+    )).length;
+    expect(applyCountAfterSubmit).toBe(applyCountBeforeSubmit);
+    expect(selectionApply).toBeTruthy();
+    expect(new Headers(selectionApply?.[1]?.headers).has('x-od-workspace-id')).toBe(false);
+    expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
+      pluginId: 'od-media-generation',
+      appliedPluginSnapshotId: null,
+    }));
   });
 
   it('keeps bundled plugins usable when identity is pending and the directory is empty', async () => {
@@ -498,11 +518,11 @@ describe('HomeView media composer options', () => {
     const applyCountAfterSubmit = fetchMock.mock.calls.filter(([url]) => (
       typeof url === 'string' && url.includes('/api/plugins/od-media-generation/apply')
     )).length;
-    expect(applyCountAfterSubmit).toBe(applyCountBeforeSubmit + 1);
-    const submittedApply = fetchMock.mock.calls.filter(([url]) => (
-      typeof url === 'string' && url.includes('/api/plugins/od-media-generation/apply')
-    )).at(-1);
-    expect(new Headers(submittedApply?.[1]?.headers).has('x-od-workspace-id')).toBe(false);
+    expect(applyCountAfterSubmit).toBe(applyCountBeforeSubmit);
+    expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
+      pluginId: 'od-media-generation',
+      appliedPluginSnapshotId: null,
+    }));
   });
 
   it('does not wait for directory discovery when applying a bundled plugin', async () => {
@@ -524,6 +544,12 @@ describe('HomeView media composer options', () => {
     const directoryReadsBeforeSubmit = fetchMock.mock.calls.filter(([url]) => (
       typeof url === 'string' && url === '/api/workspace/directory'
     )).length;
+    const selectionApply = fetchMock.mock.calls.filter(([url]) => (
+      typeof url === 'string' && url.includes('/api/plugins/od-media-generation/apply')
+    )).at(-1);
+    const applyCountBeforeSubmit = fetchMock.mock.calls.filter(([url]) => (
+      typeof url === 'string' && url.includes('/api/plugins/od-media-generation/apply')
+    )).length;
     await submitHome();
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
@@ -531,10 +557,11 @@ describe('HomeView media composer options', () => {
       typeof url === 'string' && url === '/api/workspace/directory'
     )).length;
     expect(directoryReadsAfterSubmit).toBe(directoryReadsBeforeSubmit);
-    const submittedApply = fetchMock.mock.calls.filter(([url]) => (
+    const applyCountAfterSubmit = fetchMock.mock.calls.filter(([url]) => (
       typeof url === 'string' && url.includes('/api/plugins/od-media-generation/apply')
-    )).at(-1);
-    expect(new Headers(submittedApply?.[1]?.headers).has('x-od-workspace-id')).toBe(false);
+    )).length;
+    expect(applyCountAfterSubmit).toBe(applyCountBeforeSubmit);
+    expect(new Headers(selectionApply?.[1]?.headers).has('x-od-workspace-id')).toBe(false);
   });
 
   it('does not expose a team plugin for unscoped apply while workspace identity is pending', async () => {
@@ -552,7 +579,9 @@ describe('HomeView media composer options', () => {
     renderHome();
 
     await screen.findByTestId('home-hero-input');
-    expect((screen.getByTestId('home-hero-template-trigger') as HTMLButtonElement).disabled).toBe(true);
+    expect(
+      (screen.getByTestId('home-hero-type-pill-deck') as HTMLButtonElement).disabled,
+    ).toBe(true);
     expect(fetchMock.mock.calls.some(([url]) => (
       typeof url === 'string' && url.includes('/api/plugins/od-media-generation/apply')
     ))).toBe(false);
@@ -574,9 +603,9 @@ describe('HomeView media composer options', () => {
 
     await clickHomeRailChip('video');
 
-    await waitFor(() => {
-      expect(screen.getByTestId('home-hero-submit').getAttribute('aria-busy')).toBe('false');
-    });
+    await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => (
+      typeof url === 'string' && url.includes('/api/plugins/od-media-generation/apply')
+    ))).toBe(true));
     const apply = fetchMock.mock.calls.find(([url]) => (
       typeof url === 'string' && url.includes('/api/plugins/od-media-generation/apply')
     ));
@@ -706,19 +735,16 @@ async function openOption(name: string) {
   await waitFor(() => expect(screen.getByTestId(`home-hero-footer-option-${name}-menu`)).toBeTruthy());
 }
 
+// Home starts with no creation type: the type row under the composer is the
+// empty state's only control, and it retires once something is picked.
 async function clickHomeRailChip(id: string) {
-  // #5517 removed the inline template rail from Home: every scenario template
-  // is picked from the composer footer's radial Template picker. Wait until the
-  // trigger and the wedge are enabled first — plugins load asynchronously, so
-  // both are briefly disabled after mount.
-  const trigger = await screen.findByTestId('home-hero-template-trigger');
-  await waitFor(() => expect((trigger as HTMLButtonElement).disabled).toBe(false));
-  fireEvent.click(trigger);
-  const wedgeId = `home-hero-template-wedge-${id}`;
-  await waitFor(() =>
-    expect(screen.getByTestId(wedgeId).getAttribute('aria-disabled')).not.toBe('true'),
-  );
-  fireEvent.click(screen.getByTestId(wedgeId));
+  // A type already picked retires the row, and the pill has no menu — so
+  // switching means clearing back to the empty state first.
+  const clear = screen.queryByTestId('home-hero-template-clear');
+  if (clear) fireEvent.click(clear);
+  const rowPill = await screen.findByTestId(`home-hero-type-pill-${id}`);
+  await waitFor(() => expect((rowPill as HTMLButtonElement).disabled).toBe(false));
+  fireEvent.click(rowPill);
 }
 
 // Drive the Lexical editor and let the OnChange -> onPromptChange -> setPrompt

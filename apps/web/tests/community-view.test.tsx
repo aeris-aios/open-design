@@ -206,11 +206,11 @@ describe('CommunityView catalogue source', () => {
     const facets = readFacets();
     expect(facets.map((facet) => facet.label)).toEqual(['Slides', 'Prototype', 'Image']);
 
-    // The card footer reads "<type> · <sub-facet>", both resolved from the
-    // shared plugins-home taxonomy. Asserted before the tab walk below, which
-    // leaves a different facet active.
+    // The card caption is the template's own title now — the type · sub-facet
+    // line it used to carry is what the filters above the grid already say.
+    // Asserted before the tab walk below, which leaves a different facet active.
     expect(renderedCards().map((card) => card.querySelector('.community-template-card__foot span')?.textContent))
-      .toEqual(['Slides · Fundraising pitch', 'Slides · B2B sales']);
+      .toEqual(['Seed Round Pitch', 'Enterprise Sales Deck']);
 
     // Slides leads and carries exactly the two deck plugins the daemon served
     // — not a bundled demo array.
@@ -418,7 +418,7 @@ describe('CommunityView use handoff', () => {
     const onUsePrompt = vi.fn();
     await renderCommunity({ onUsePrompt });
 
-    fireEvent.click(screen.getAllByRole('button', { name: 'Prompt' })[0]!);
+    fireEvent.click(screen.getAllByRole('button', { name: 'Try it now' })[0]!);
 
     expect(onUsePrompt).toHaveBeenCalledWith({
       templateId: 'example-fundraising-deck',
@@ -465,11 +465,14 @@ describe('CommunityView facet counts', () => {
 
     for (const { tab, label } of facets) {
       fireEvent.click(tab);
-      const footers = renderedCards().map(
-        (card) => card.querySelector('.community-template-card__foot span')?.textContent ?? '',
-      );
-      expect(footers.length).toBeGreaterThan(0);
-      for (const footer of footers) expect(footer.startsWith(`${label} ·`)).toBe(true);
+      // The caption is the template name now, so the type it was gridded under
+      // is read off the card itself rather than parsed out of the caption.
+      const types = renderedCards().map((card) => card.getAttribute('data-template-type') ?? '');
+      expect(types.length).toBeGreaterThan(0);
+      // `TemplateType` and its English tab label are the same string ('Slides',
+      // 'Prototype', …) and this suite renders in English, so the tab's own
+      // label is the expected value without a lookup table.
+      for (const type of types) expect(type).toBe(label);
     }
   });
 
@@ -482,5 +485,117 @@ describe('CommunityView facet counts', () => {
     const renderedTotal = readFacetCardCounts().reduce((sum, count) => sum + count, 0);
 
     expect(renderedTotal).toBe(4);
+  });
+});
+
+describe('CommunityView header search', () => {
+  /** The header field, plus the round toggle that owns the collapsed state. */
+  function searchParts() {
+    const root = document.querySelector('.community-template-view__search') as HTMLElement;
+    return {
+      root,
+      toggle: root.querySelector('.community-template-view__search-toggle') as HTMLButtonElement,
+      input: root.querySelector('input') as HTMLInputElement,
+    };
+  }
+
+  it('starts collapsed as a circle and expands into the field on click', async () => {
+    await renderCommunity();
+    const { root, toggle, input } = searchParts();
+
+    expect(root.classList.contains('is-open')).toBe(false);
+    expect(input.tabIndex).toBe(-1);
+
+    fireEvent.click(toggle);
+
+    expect(root.classList.contains('is-open')).toBe(true);
+    expect(input.tabIndex).toBe(0);
+    expect(document.activeElement).toBe(input);
+  });
+
+  it('narrows the grid to matching templates and reports an empty result', async () => {
+    await renderCommunity();
+    const { toggle, input } = searchParts();
+    const slidesCount = renderedCards().length;
+    expect(slidesCount).toBeGreaterThan(1);
+
+    fireEvent.click(toggle);
+    fireEvent.change(input, { target: { value: 'enterprise' } });
+
+    const matches = renderedCards();
+    expect(matches.length).toBe(1);
+    expect(matches.length).toBeLessThan(slidesCount);
+
+    fireEvent.change(input, { target: { value: 'no-such-template' } });
+    expect(renderedCards()).toHaveLength(0);
+    const empty = document.querySelector('.community-template-view__no-results');
+    expect(empty?.textContent).toContain('no-such-template');
+    // Copy on top, blueprint mark under it.
+    expect(empty?.firstElementChild?.tagName).toBe('P');
+    expect(empty?.querySelector('img.community-template-view__no-results-mark')
+      ?.getAttribute('src')).toBe('/community-empty-mark.svg');
+  });
+
+  it('clears the query and collapses again on Escape', async () => {
+    await renderCommunity();
+    const { root, toggle, input } = searchParts();
+    const slidesCount = renderedCards().length;
+
+    fireEvent.click(toggle);
+    fireEvent.change(input, { target: { value: 'enterprise' } });
+    expect(renderedCards().length).toBeLessThan(slidesCount);
+
+    fireEvent.keyDown(input, { key: 'Escape' });
+
+    expect(root.classList.contains('is-open')).toBe(false);
+    expect(input.value).toBe('');
+    expect(renderedCards()).toHaveLength(slidesCount);
+  });
+
+  it('stays open on blur while a query is live', async () => {
+    await renderCommunity();
+    const { root, toggle, input } = searchParts();
+
+    fireEvent.click(toggle);
+    fireEvent.change(input, { target: { value: 'enterprise' } });
+    fireEvent.blur(input);
+    expect(root.classList.contains('is-open')).toBe(true);
+
+    fireEvent.change(input, { target: { value: '' } });
+    fireEvent.blur(input);
+    expect(root.classList.contains('is-open')).toBe(false);
+  });
+});
+
+describe('CommunityView tab signal', () => {
+  // The docked composer at the foot of this view folds back to its collapsed
+  // default on every tab change (per product: tab 之间的切换的时候这个输入框
+  // 默认是收起来的). EntryShell turns each call into a counter bump that reaches
+  // HomeHero; this pins the signal at its source.
+  it('reports a tab change for the type row', async () => {
+    const onTabsChange = vi.fn();
+    await renderCommunity({ onTabsChange });
+    onTabsChange.mockClear();
+
+    const prototype = readFacets().find(({ label }) => label === 'Prototype')!.tab;
+    fireEvent.click(prototype);
+
+    expect(onTabsChange).toHaveBeenCalled();
+  });
+
+  it('reports a tab change for the category row too', async () => {
+    const onTabsChange = vi.fn();
+    const onActiveTypeChange = vi.fn();
+    await renderCommunity({ onTabsChange, onActiveTypeChange });
+    onTabsChange.mockClear();
+    onActiveTypeChange.mockClear();
+
+    fireEvent.click(screen.getByRole('button', { name: 'B2B sales' }));
+
+    // This is the half `onActiveTypeChange` cannot carry: a category pill
+    // leaves the composer's TYPE alone, but it is still a tab change to the
+    // person looking at the page.
+    expect(onTabsChange).toHaveBeenCalled();
+    expect(onActiveTypeChange).not.toHaveBeenCalled();
   });
 });

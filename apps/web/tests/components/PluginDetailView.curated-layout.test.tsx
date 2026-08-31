@@ -187,10 +187,13 @@ describe('PluginDetailView curated installed-extension layout', () => {
     expect(screen.getByText('@OpenDesign')).toBeTruthy();
     expect(screen.getByText('Open Design official')).toBeTruthy();
 
-    const advanced = screen.getByTestId('plugin-meta-advanced');
-    expect(advanced).not.toHaveAttribute('open');
-    expect(within(advanced).getByText('MIT')).toBeTruthy();
-    expect(within(advanced).getByText('od plugin install open-design/research-suite')).toBeTruthy();
+    // The 开发者详情 disclosure is gone (per product: 所有的开发者详情的信息
+    // 都去掉), and with it the manifest inspector, the license row and the
+    // install command it used to fold away. The curated blocks above — the
+    // ones a designer reads — are untouched, which is what the rest of this
+    // test still pins.
+    expect(screen.queryByTestId('plugin-meta-advanced')).toBeNull();
+    expect(screen.queryByText('od plugin install open-design/research-suite')).toBeNull();
 
     expect(screen.getByTestId('plugin-detail-preview-iframe').getAttribute('src'))
       .toBe('/api/plugins/research-suite/preview');

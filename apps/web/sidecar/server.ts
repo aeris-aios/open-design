@@ -3,6 +3,7 @@ import {
   Agent as HttpAgent,
   createServer as createHttpServer,
   request as createHttpRequest,
+  type ClientRequest,
   type IncomingMessage,
   type Server as HttpServer,
   type ServerResponse,
@@ -525,56 +526,121 @@ async function proxyHttpRequest(
     }
   }
 
-  const body = await captureProxyRequestBody(request);
+  let body: ProxyRequestBody | null = null;
+  let currentProxyRequest: ClientRequest | null = null;
+  let currentProxyResponse: IncomingMessage | null = null;
+  let settlePendingProxy: (() => void) | null = null;
+  let downstreamClosed = request.aborted || (response.destroyed && !response.writableFinished);
 
-  await new Promise<void>((resolveProxy) => {
-    const sendAttempt = (attempt: number): void => {
-      const proxyRequest = proxyRequestFactory(
-        target,
-        {
-          headers,
-          method: request.method,
-          // The replay must prove the failure was a stale pooled socket, so
-          // it bypasses the pool and dials a fresh connection.
-          agent: attempt === 0 ? (secure ? proxyHttpsAgent : proxyHttpAgent) : false,
-        },
-        (proxyResponse) => {
-          response.writeHead(proxyResponse.statusCode ?? 502, proxyResponse.headers);
-          proxyResponse.pipe(response);
-          proxyResponse.on("end", resolveProxy);
-        },
-      );
+  const destroyCurrentUpstream = () => {
+    if (body != null && !body.replayable && currentProxyRequest != null) {
+      body.stream.unpipe(currentProxyRequest);
+    }
+    currentProxyResponse?.destroy();
+    currentProxyRequest?.destroy();
+  };
+  const closeDownstream = () => {
+    if (downstreamClosed) return;
+    downstreamClosed = true;
+    destroyCurrentUpstream();
+    settlePendingProxy?.();
+  };
+  const onRequestAborted = () => closeDownstream();
+  const onResponseClose = () => {
+    // ServerResponse also emits close after a normal completed response. Only
+    // propagate a close that happened before the downstream response finished.
+    if (!response.writableFinished) closeDownstream();
+  };
 
-      proxyRequest.on("error", (error) => {
-        if (
-          shouldReplayProxyRequest({
-            attempt,
-            body,
-            error,
-            reusedSocket: proxyRequest.reusedSocket === true,
-            response,
-          })
-        ) {
-          sendAttempt(attempt + 1);
+  request.on("aborted", onRequestAborted);
+  response.on("close", onResponseClose);
+
+  try {
+    if (downstreamClosed) return;
+    body = await captureProxyRequestBody(request);
+    if (downstreamClosed) return;
+    const capturedBody = body;
+
+    await new Promise<void>((resolveProxy) => {
+      let settled = false;
+      const settleProxy = () => {
+        if (settled) return;
+        settled = true;
+        settlePendingProxy = null;
+        resolveProxy();
+      };
+      settlePendingProxy = settleProxy;
+
+      const sendAttempt = (attempt: number): void => {
+        if (downstreamClosed) {
+          settleProxy();
           return;
         }
-        if (!response.headersSent) {
-          response.statusCode = 502;
-          response.setHeader("content-type", "text/plain; charset=utf-8");
-        }
-        response.end(error instanceof Error ? error.message : String(error));
-        resolveProxy();
-      });
 
-      if (body.replayable) {
-        proxyRequest.end(body.body);
-      } else {
-        for (const chunk of body.prefix) proxyRequest.write(chunk);
-        body.stream.pipe(proxyRequest);
-      }
-    };
-    sendAttempt(0);
-  });
+        const proxyRequest = proxyRequestFactory(
+          target,
+          {
+            headers,
+            method: request.method,
+            // The replay must prove the failure was a stale pooled socket, so
+            // it bypasses the pool and dials a fresh connection.
+            agent: attempt === 0 ? (secure ? proxyHttpsAgent : proxyHttpAgent) : false,
+          },
+          (proxyResponse) => {
+            currentProxyResponse = proxyResponse;
+            if (downstreamClosed) {
+              proxyResponse.destroy();
+              proxyRequest.destroy();
+              settleProxy();
+              return;
+            }
+            response.writeHead(proxyResponse.statusCode ?? 502, proxyResponse.headers);
+            proxyResponse.pipe(response);
+            proxyResponse.on("end", settleProxy);
+          },
+        );
+        currentProxyRequest = proxyRequest;
+        currentProxyResponse = null;
+
+        proxyRequest.on("error", (error) => {
+          if (downstreamClosed) {
+            settleProxy();
+            return;
+          }
+          if (
+            shouldReplayProxyRequest({
+              attempt,
+              body: capturedBody,
+              error,
+              reusedSocket: proxyRequest.reusedSocket === true,
+              response,
+            })
+          ) {
+            sendAttempt(attempt + 1);
+            return;
+          }
+          if (!response.headersSent) {
+            response.statusCode = 502;
+            response.setHeader("content-type", "text/plain; charset=utf-8");
+          }
+          response.end(error instanceof Error ? error.message : String(error));
+          settleProxy();
+        });
+
+        if (capturedBody.replayable) {
+          proxyRequest.end(capturedBody.body);
+        } else {
+          for (const chunk of capturedBody.prefix) proxyRequest.write(chunk);
+          capturedBody.stream.pipe(proxyRequest);
+        }
+      };
+      sendAttempt(0);
+    });
+  } finally {
+    request.off("aborted", onRequestAborted);
+    response.off("close", onResponseClose);
+    settlePendingProxy = null;
+  }
 }
 
 async function prepareNextApp(app: { prepare(): Promise<void> }, dir: string): Promise<void> {

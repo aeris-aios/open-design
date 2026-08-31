@@ -76,17 +76,30 @@ interface Props {
    */
   heading?: string;
   /**
-   * 'minimal' keeps the designer-relevant blocks (author, example
-   * query) inline and tucks the developer-oriented manifest detail
-   * (inputs, context bundles, workflow, GenUI, connectors,
-   * capabilities, source) behind a collapsed "Developer details"
-   * disclosure. Defaults to 'full' so the scenario / media / design
-   * variants keep their existing flat inspector.
+   * How much of the manifest inspector to show, on one axis:
+   *   'full'     — every block, flat.
+   *   'minimal'  — designer-relevant blocks (author, example query)
+   *                inline, developer detail behind a collapsed
+   *                "Developer details" disclosure.
+   *   'identity' — the identity blocks ONLY (heading, author, and
+   *                whatever `omit` leaves of about / example query).
+   *                Everything from 输入项 down is dropped, not
+   *                collapsed (per product: 从作者下边的内容全部去掉) —
+   *                inputs, context bundles, workflow, GenUI,
+   *                connectors, capabilities and source are all
+   *                authoring-time detail that a reader browsing the
+   *                gallery has no use for.
+   * Defaults to 'identity': NO product surface opts into the other two
+   * any more, and a default that showed the inspector would hand it back
+   * to the next call site somebody adds. 'full' and 'minimal' are kept
+   * rather than deleted along with the blocks they gate — this checkout
+   * has no git history to restore them from — so putting a section back
+   * is a one-word change at the call site, not a rewrite.
    */
-  variant?: 'full' | 'minimal';
+  variant?: 'full' | 'minimal' | 'identity';
 }
 
-export function PluginMetaSections({ record, omit, compact, heading, variant = 'full' }: Props) {
+export function PluginMetaSections({ record, omit, compact, heading, variant = 'identity' }: Props) {
   const { locale } = useI18n();
   const [copied, setCopied] = useState(false);
 
@@ -242,7 +255,7 @@ export function PluginMetaSections({ record, omit, compact, heading, variant = '
       ) : null}
 
       {((advanced) =>
-        variant === 'minimal' ? (
+        variant === 'identity' ? null : variant === 'minimal' ? (
           <details
             className="plugin-meta-sections__advanced"
             data-testid="plugin-meta-advanced"

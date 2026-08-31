@@ -16,6 +16,7 @@ import type {
   InstalledPluginRecord,
   WorkspaceCollabContext,
 } from '@open-design/contracts';
+import { useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useT } from '../i18n';
 import type { Dict, Locale } from '../i18n/types';
@@ -191,15 +192,31 @@ export function buildCommunityTemplates(
 export function TemplatePreviewModal({
   template,
   onClose,
-  onUse,
-  busy,
 }: {
   template: TemplateDemo;
   onClose: () => void;
-  onUse: () => void;
+  /* The footer bar that carried the Remix / 使用 action is gone (per product:
+     去掉下边的 remix 那一条), so nothing consumes these any more. Kept — and
+     made optional — so the call sites that still pass them type-check
+     unchanged; drop them there whenever those files are touched next. */
+  onUse?: () => void;
   busy?: boolean;
 }) {
   const t = useT();
+  // Esc closes it. The overlay is portalled to <body> and holds no focus of its
+  // own, so the listener goes on the document rather than the panel — a click
+  // that lands on the iframe inside would otherwise move focus out of any
+  // element a keydown handler could see. Captured on `keydown` (not `keyup`)
+  // so it beats anything the previewed page does with the same key.
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent): void {
+      if (event.key !== 'Escape') return;
+      event.stopPropagation();
+      onClose();
+    }
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [onClose]);
   // The overlay is `position: fixed; inset: 0`, so it must render as a direct
   // child of <body> (the PluginDetailsModal convention). Left inline, any host
   // ancestor that forms a stacking context — e.g. `.home-view`'s
@@ -234,12 +251,6 @@ export function TemplatePreviewModal({
             ? { src: template.previewSrc }
             : { srcDoc: templatePreviewHtml(template) })}
         />
-        <footer className="community-template-preview__foot">
-          <span>{template.meta}</span>
-          <button type="button" disabled={busy} onClick={onUse}>
-            {busy ? t('common.loading') : templateActionLabel(template)}
-          </button>
-        </footer>
       </section>
     </div>
   );

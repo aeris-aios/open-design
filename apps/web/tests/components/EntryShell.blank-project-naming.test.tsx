@@ -10,7 +10,7 @@
 // no-name create path (`handleCreateProjectFromDesignSystem`, the New Project
 // panel's blank pick), which already tag `nameSource: 'generated'`.
 
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import {
   buildWorkspacePermissions,
   buildWorkspaceSeatSummary,
@@ -211,7 +211,7 @@ afterEach(() => {
 });
 
 describe('EntryShell team project content readiness', () => {
-  it('renders another member\'s catalog name and timestamp on Home instead of the fresh pulled placeholder', async () => {
+  it('renders another member\'s catalog name and timestamp on 全部项目 instead of the fresh pulled placeholder', async () => {
     const catalogUpdatedAt = Date.now() - (2 * 24 * 60 * 60 * 1000);
     globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
       const pathname = new URL(String(input), 'http://d.local').pathname;
@@ -236,7 +236,9 @@ describe('EntryShell team project content readiness', () => {
       return jsonResponse({});
     }) as typeof fetch;
 
-    renderAt('/', {
+    // Home carries no project grid. Shared projects live on 全部项目 because
+    // 个人项目 is the complement of the team catalog.
+    renderAt('/all-projects', {
       projects: [{
         id: 'shared-pulled',
         name: '共享项目',
@@ -293,9 +295,12 @@ describe('EntryShell team project content readiness', () => {
       onTeamProjectContentReady,
     });
 
-    const activeCard = await screen.findByRole('button', {
-      name: /Ready shared project/,
-    });
+    // Scoped to the project grid: the rail's 最近浏览过 list names the same
+    // projects, so an unscoped lookup matches the card AND its rail row.
+    const activeCard = await within(document.querySelector('main') as HTMLElement).findByRole(
+      'button',
+      { name: /Ready shared project/ },
+    );
     fireEvent.click(activeCard);
 
     await waitFor(() => {
@@ -440,7 +445,10 @@ describe('EntryShell team project content readiness', () => {
       onTeamProjectContentReady,
     });
 
-    expect(await screen.findByText('Ready shared project')).toBeTruthy();
+    // Scoped to the grid: the rail's 最近浏览过 list names the same project.
+    expect(
+      await within(document.querySelector('main') as HTMLElement).findByText('Ready shared project'),
+    ).toBeTruthy();
     expect(MockWorkspaceEventSource.instances).toHaveLength(1);
     act(() => {
       MockWorkspaceEventSource.instances[0]!.dispatch('team-project-content-ready', {
@@ -558,7 +566,10 @@ describe('EntryShell team project content readiness', () => {
       fresh: true,
     })).resolves.toEqual([]);
 
-    expect(await screen.findByText('Ready shared project')).toBeTruthy();
+    // Scoped to the grid: the rail's 最近浏览过 list names the same project.
+    expect(
+      await within(document.querySelector('main') as HTMLElement).findByText('Ready shared project'),
+    ).toBeTruthy();
     act(() => {
       MockWorkspaceEventSource.instances[0]!.dispatch('team-project-content-ready', {
         type: 'team-project-content-ready',
@@ -648,7 +659,10 @@ describe('EntryShell team project content readiness', () => {
       onTeamProjectContentReady,
     });
 
-    expect(await screen.findByText('Ready shared project')).toBeTruthy();
+    // Scoped to the grid: the rail's 最近浏览过 list names the same project.
+    expect(
+      await within(document.querySelector('main') as HTMLElement).findByText('Ready shared project'),
+    ).toBeTruthy();
     act(() => {
       MockWorkspaceEventSource.instances[0]!.dispatch('team-project-content-ready', {
         type: 'team-project-content-ready',
@@ -742,7 +756,10 @@ describe('EntryShell team project content readiness', () => {
         name: 'Ready shared project',
       }],
     }));
-    expect(await screen.findByText('Ready shared project')).toBeTruthy();
+    // Scoped to the grid: the rail's 最近浏览过 list names the same project.
+    expect(
+      await within(document.querySelector('main') as HTMLElement).findByText('Ready shared project'),
+    ).toBeTruthy();
     await waitFor(() => {
       expect(onTeamProjectContentReady).toHaveBeenCalledWith('shared-ready', 'ws-1', 'wm-1');
     });

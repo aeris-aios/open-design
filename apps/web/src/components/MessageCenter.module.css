@@ -30,7 +30,9 @@
   z-index: 2200;
   display: flex;
   justify-content: flex-end;
-  background: color-mix(in srgb, var(--text-strong, #111827) 12%, transparent);
+  background: var(--scrim-tint);
+  -webkit-backdrop-filter: var(--scrim-backdrop);
+  backdrop-filter: var(--scrim-backdrop);
 }
 
 .panel {
@@ -54,9 +56,29 @@
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 14px;
+  gap: 12px;
   padding: 18px 18px 14px;
   border-bottom: 1px solid var(--border-soft);
+}
+
+/* Inbox ⇄ 已归档 switch. A quiet text button: the archive is a shelf, not a
+   second feature, so it must not compete with the panel title beside it. */
+.shelfToggle {
+  flex: 0 0 auto;
+  height: auto;
+  padding: 2px 8px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.shelfToggle:hover:not(:disabled) {
+  background: var(--bg-subtle);
+  color: var(--text-strong);
 }
 
 .headerCopy {
@@ -71,15 +93,6 @@
   letter-spacing: 0;
 }
 
-.headerCopy p {
-  margin: 5px 0 0;
-  color: var(--text-muted);
-  font-size: 12.5px;
-  line-height: 1.45;
-}
-
-.filter:focus-visible,
-.markAll:focus-visible,
 .syncStatus button:focus-visible,
 .itemSummary:focus-visible,
 .itemActions button:focus-visible,
@@ -87,81 +100,6 @@
 .toast button:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
-}
-
-.controls {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 12px 14px;
-  border-bottom: 1px solid var(--border-soft);
-}
-
-.filters {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-  padding: 3px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-pill, 999px);
-  background: var(--bg-subtle);
-}
-
-.filter,
-.markAll {
-  border: 0;
-  background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-  font-size: 12px;
-  line-height: 1;
-}
-
-.filter {
-  min-height: 26px;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 0 9px;
-  border-radius: var(--radius-pill, 999px);
-}
-
-.filter:hover,
-.markAll:hover:not(:disabled) {
-  color: var(--text-strong);
-}
-
-.filterActive {
-  background: var(--bg-elevated, var(--bg-panel));
-  color: var(--text-strong);
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
-}
-
-.filterBadge {
-  min-width: 15px;
-  height: 15px;
-  padding: 0 4px;
-  border-radius: 999px;
-  background: var(--red);
-  color: var(--accent-contrast, #fff);
-  font-size: 9px;
-  font-weight: 700;
-  line-height: 15px;
-  text-align: center;
-}
-
-.markAll {
-  flex: 0 0 auto;
-  padding: 6px 4px;
-  border-radius: var(--radius-pill, 999px);
-}
-
-.markAll:disabled {
-  cursor: default;
-  opacity: 0.45;
 }
 
 .list {
@@ -228,25 +166,57 @@
   flex: 0 0 auto;
   position: relative;
   min-width: 0;
-}
-
-.item:not(:last-child)::after {
-  content: '';
-  position: absolute;
-  left: 3px;
-  right: 13px;
-  bottom: -4px;
-  height: 1px;
-  background: var(--border-soft);
+  border-radius: var(--radius-lg);
+  background: var(--accent-tint);
 }
 
 .itemUnread {
   box-shadow: inset 2px 0 0 var(--accent);
 }
 
+/* Archive toggle, parked in the card's top-right corner. Revealed on
+   hover/focus only: the summary line already carries title, body and meta, and
+   a permanent button there competed with the chevron for the same corner. It
+   stays reachable by keyboard because `:focus-within` opens it too. */
+.archiveAction {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--bg);
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms var(--ease-out), color 120ms var(--ease-out);
+}
+
+.item:hover .archiveAction,
+.item:focus-within .archiveAction {
+  opacity: 1;
+}
+
+.archiveAction:hover:not(:disabled) {
+  background: var(--bg);
+  color: var(--text-strong);
+}
+
+/* Touch has no hover to reveal it, so it stays put there. */
+@media (hover: none) {
+  .archiveAction {
+    opacity: 1;
+  }
+}
+
 .itemExpanded {
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--accent) 5%, transparent);
+  background: var(--accent-tint);
 }
 
 .itemSummary {
@@ -262,6 +232,7 @@
   gap: 6px;
   padding: 12px 13px 10px;
   border: 0;
+  border-radius: inherit;
   background: transparent;
   color: inherit;
   text-align: left;
@@ -276,36 +247,42 @@
   background: transparent;
 }
 
-.itemMeta {
+.itemTitle {
+  width: 100%;
   min-width: 0;
   max-width: 100%;
   display: flex;
-  align-items: center;
+  align-items: baseline;
   justify-content: flex-start;
-  gap: 12px;
-  color: var(--text-muted);
-  font-size: 11.5px;
-  line-height: 1.2;
+  gap: 6px;
 }
 
-.itemMeta span {
+.itemTitle strong {
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.itemSummary strong {
+.expandIcon {
+  flex: 0 0 auto;
+  color: var(--text-soft);
+  transform: rotate(180deg);
+}
+
+.itemExpanded .expandIcon {
+  transform: rotate(0deg);
+}
+
+.itemTitle strong {
   max-width: 100%;
-  overflow: hidden;
   color: var(--text);
   font-size: 13.5px;
   line-height: 1.35;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
-.itemUnread .itemSummary strong {
+.itemUnread .itemTitle strong {
   color: var(--text-strong);
   font-weight: 700;
 }
@@ -331,17 +308,58 @@
   white-space: normal;
 }
 
-.itemExpanded .itemSummary strong {
+.itemExpanded .itemTitle strong {
   overflow: visible;
   overflow-wrap: anywhere;
   text-overflow: clip;
   white-space: normal;
 }
 
+.itemMedia {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  margin-top: 2px;
+  overflow: hidden;
+  border-radius: var(--radius);
+  background: var(--bg-muted);
+}
+
+.itemMedia img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.itemMeta {
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--text-soft);
+  font-size: 11.5px;
+  line-height: 1.2;
+}
+
+.itemMeta > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.itemMeta time {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+}
+
 .itemActions {
   display: flex;
   align-items: center;
-  justify-content: flex-start;
+  justify-content: flex-end;
   padding: 0 13px 12px;
 }
 
@@ -349,7 +367,7 @@
   min-height: 30px;
   padding: 0 12px;
   border: 1px solid color-mix(in srgb, var(--accent) 72%, var(--border));
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-pill, 999px);
   background: var(--accent);
   color: var(--accent-contrast, #fff);
   cursor: pointer;
@@ -387,29 +405,6 @@
   margin: 0;
   font-size: 12.5px;
   line-height: 1.45;
-}
-
-.footer {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 12px 14px;
-  border-top: 1px solid var(--border-soft);
-  background: var(--bg-panel);
-}
-
-.footer p {
-  margin: 0;
-  color: var(--text-muted);
-  font-size: 12px;
-  line-height: 1.4;
-}
-
-.footer button {
-  flex: 0 0 auto;
-  white-space: nowrap;
 }
 
 .toast {
@@ -460,28 +455,6 @@
     border-left: 0;
     border-bottom: 0;
     border-radius: var(--radius) var(--radius) 0 0;
-  }
-
-  .controls {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .filters {
-    width: 100%;
-  }
-
-  .filter {
-    flex: 1;
-  }
-
-  .markAll {
-    align-self: flex-end;
-  }
-
-  .footer {
-    align-items: stretch;
-    flex-direction: column;
   }
 
   .toast {

@@ -348,8 +348,11 @@ describe('community template Use lands a sendable composer', () => {
       'Write a Demo Day Pitch',
     );
     expect(submit.disabled).toBe(false);
-    expect(submit.getAttribute('data-tooltip')).not.toBe('Type something to run');
-    expect(submit.getAttribute('data-tooltip')).toBe('Run');
+    // The composer dropped its send tooltip (the 运行 bubble landed on the
+    // prompt text right above the arrow), so `aria-label` is the button's only
+    // readout now — "Run" rather than the sending state.
+    expect(submit.getAttribute('data-tooltip')).toBeNull();
+    expect(submit.getAttribute('aria-label')).toBe('Run');
   });
 
   it('stays sendable across two Use clicks with different templates', async () => {

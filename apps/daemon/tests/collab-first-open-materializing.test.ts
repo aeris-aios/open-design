@@ -36,7 +36,7 @@ import {
 // response carries no evidence at all that content is on its way — which is
 // exactly what the web needs: `useProjectCollab.downloadPending` is gated on
 // `publishedVersion > cursor`, so it computes false and DesignFilesPanel
-// renders `design-files-empty` (with "create a new sketch" CTAs) instead of
+// renders `design-files-empty` (the "nothing here yet" state) instead of
 // `design-files-syncing`. Nothing else on the first request starts a pull
 // either: the daemon's self-materialization block is gated on `callerIsOwner`,
 // and the web's auto-pull is gated on the same missing `publishedVersion`.

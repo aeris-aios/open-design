@@ -14,7 +14,9 @@
 
 .pageHeader {
   display: flex;
-  align-items: center;
+  /* Top-aligned, not centred: the title keeps the same 16px to the chrome row
+     that the other entry pages' titles do, whatever the tools beside it are. */
+  align-items: flex-start;
   justify-content: space-between;
   gap: 24px;
 }
@@ -30,7 +32,9 @@
   margin: 0;
   color: var(--text-strong);
   font-family: var(--serif);
-  font-size: var(--font-size-20, 20px) !important;
+  /* 24px like every other entry page's title (per product). */
+  font-size: 24px !important;
+  line-height: 1.2;
   font-weight: 600;
   letter-spacing: -0.01em;
 }
@@ -200,7 +204,7 @@
   background: var(--bg-subtle);
   color: var(--text-muted);
   font-size: 12px;
-  font-weight: 500;
+  font-weight: 600;
   font-family: inherit;
   cursor: pointer;
   transition: border-color var(--dur-quick) var(--ease-out),
@@ -281,7 +285,7 @@
   background: transparent;
   color: var(--text-muted);
   font-size: 12px;
-  font-weight: 500;
+  font-weight: 600;
   font-family: inherit;
   cursor: pointer;
   transition: background-color var(--dur-quick) var(--ease-out),
@@ -409,7 +413,7 @@
   color: var(--text);
   font-family: inherit;
   font-size: 12px;
-  font-weight: 500;
+  font-weight: 600;
   text-align: left;
   cursor: pointer;
 }
@@ -742,7 +746,7 @@
   background: var(--bg-panel);
   color: var(--text-muted);
   font-size: 12px;
-  font-weight: 500;
+  font-weight: 600;
   font-family: inherit;
   cursor: pointer;
   transition: border-color var(--dur-quick) var(--ease-out),
@@ -1588,7 +1592,7 @@
   padding: 6px 12px;
   border-radius: var(--radius-sm);
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 600;
 }
 
 .teamActionButton {
@@ -1615,7 +1619,7 @@
   padding: 5px 10px;
   border-radius: var(--radius-sm);
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 600;
   color: var(--text-muted);
 }
 
@@ -1648,7 +1652,7 @@
   background: var(--bg-subtle);
   color: var(--text-muted);
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 600;
   font-family: inherit;
   cursor: pointer;
   transition: border-color var(--dur-quick) var(--ease-out),

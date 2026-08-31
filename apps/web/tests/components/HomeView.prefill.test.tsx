@@ -496,7 +496,7 @@ describe('HomeView prompt handoff', () => {
     window.sessionStorage.clear();
   });
 
-  it('keeps the existing sending state visible and preserves the draft when submit fails', async () => {
+  it('keeps the send appearance stable and preserves the draft when submit fails', async () => {
     let resolveSubmit: (accepted: boolean) => void = () => undefined;
     const submitResult = new Promise<boolean>((resolve) => {
       resolveSubmit = resolve;
@@ -525,8 +525,11 @@ describe('HomeView prompt handoff', () => {
     fireEvent.click(screen.getByTestId('home-hero-submit'));
 
     await waitFor(() => {
-      expect(screen.getByTestId('home-hero-submit').getAttribute('aria-busy')).toBe('true');
+      expect((screen.getByTestId('home-hero-submit') as HTMLButtonElement).disabled).toBe(true);
     });
+    expect(screen.getByTestId('home-hero-submit').getAttribute('aria-busy')).toBe('false');
+    expect(screen.getByTestId('home-hero-submit').getAttribute('aria-label')).toBe('Run');
+    expect(screen.getByTestId('home-hero-submit').className).not.toContain('is-sending');
     expect(homeHeroPromptValue()).toBe('Create an image of a quiet reading room.');
 
     await act(async () => {
@@ -541,42 +544,10 @@ describe('HomeView prompt handoff', () => {
     expect(screen.getByTestId('home-hero-submit').getAttribute('aria-busy')).toBe('false');
   });
 
-  it('keeps Send locked until the fresh-home default deck binding is ready', async () => {
-    let resolvePlugins: (response: Response) => void = () => undefined;
-    const pluginsResponse = new Promise<Response>((resolve) => {
-      resolvePlugins = resolve;
-    });
-    const fetchMock = vi.fn<typeof fetch>(async (url) => {
-      if (typeof url === 'string' && url === '/api/plugins') return pluginsResponse;
-      throw new Error(`unexpected fetch ${url}`);
-    });
-    vi.stubGlobal('fetch', fetchMock);
-    stubAnimationFrame();
-
-    render(
-      <HomeView
-        projects={[]}
-        onSubmit={() => undefined}
-        onOpenProject={() => undefined}
-        onViewAllProjects={() => undefined}
-      />,
-    );
-
-    await setPromptAndSettle('Turn these review habits into an infographic.');
-    const submit = screen.getByTestId('home-hero-submit') as HTMLButtonElement;
-    expect(submit.disabled).toBe(true);
-
-    await act(async () => {
-      resolvePlugins(new Response(JSON.stringify({ plugins: [SIMPLE_DECK_PLUGIN] }), {
-        status: 200,
-        headers: { 'content-type': 'application/json' },
-      }));
-      await pluginsResponse;
-    });
-
-    await waitFor(() => expect(submit.disabled).toBe(false));
-    expect(screen.getByTestId('home-hero-template-trigger').textContent).toContain('Slide deck');
-  });
+  // Removed with the fresh-home default deck seed: Home no longer binds a type
+  // on its own, so there is no binding turn for Send to wait on. Picking a type
+  // from the row below the composer is now the only thing that binds one, and
+  // the cases around it already cover that path.
 
   it('keeps creation types actionable while an expired plugin cache refreshes after a project round trip', async () => {
     let resolveRefresh: (response: Response) => void = () => undefined;
@@ -609,7 +580,7 @@ describe('HomeView prompt handoff', () => {
         onViewAllProjects={() => undefined}
       />,
     );
-    const firstTrigger = await screen.findByTestId('home-hero-template-trigger');
+    const firstTrigger = await screen.findByTestId('home-hero-type-pill-deck');
     await waitFor(() => expect((firstTrigger as HTMLButtonElement).disabled).toBe(false));
     firstHome.unmount();
 
@@ -630,7 +601,7 @@ describe('HomeView prompt handoff', () => {
 
       expect(pluginListReads).toBe(2);
       expect(
-        (screen.getByTestId('home-hero-template-trigger') as HTMLButtonElement).disabled,
+        (screen.getByTestId('home-hero-type-pill-deck') as HTMLButtonElement).disabled,
       ).toBe(false);
 
       await act(async () => {
@@ -850,7 +821,10 @@ describe('HomeView prompt handoff', () => {
     await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
       prompt: 'Use the selected starter as the driver',
       pluginId: 'example-web-prototype',
-      appliedPluginSnapshotId: 'snap-web-prototype',
+      // The handoff snapshot still contains the hidden fidelity default. Home
+      // strips that field and lets project creation resolve the exact snapshot
+      // from the forwarded inputs without delaying the Chat transition.
+      appliedPluginSnapshotId: null,
     })));
   });
 
@@ -997,7 +971,7 @@ describe('HomeView prompt handoff', () => {
     }));
   });
 
-  it('binds the Home rail UI Mockup chip locally and applies it on submit', async () => {
+  it('binds the Home rail UI Mockup chip and hands it straight to project creation', async () => {
     const fetchMock = vi.fn<typeof fetch>(async (url) => {
       if (typeof url === 'string' && url === '/api/plugins') {
         return new Response(JSON.stringify({ plugins: [WEB_PROTOTYPE_PLUGIN] }), {
@@ -1064,22 +1038,9 @@ describe('HomeView prompt handoff', () => {
     await setPromptAndSettle('Build a pricing-page prototype.');
     fireEvent.click(screen.getByTestId('home-hero-submit'));
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      '/api/plugins/example-web-prototype/apply-local',
-      expect.anything(),
-    ));
-    const applyCall = fetchMock.mock.calls.find(([url]) => (
-      typeof url === 'string' && url.includes('/api/plugins/example-web-prototype/apply-local')
-    ));
-    const protoApplyInputs = JSON.parse(String((applyCall?.[1] as RequestInit).body)).inputs;
-    expect(protoApplyInputs).toMatchObject({
-      artifactKind: 'web prototype',
-      audience: 'product evaluators',
-      designSystem: 'Refly Design System',
-      template: 'the bundled web prototype seed',
-    });
     await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
       pluginId: 'example-web-prototype',
+      appliedPluginSnapshotId: null,
       projectKind: 'prototype',
       prompt: 'Build a pricing-page prototype.',
       designSystemId: 'ds-refly',
@@ -1087,12 +1048,20 @@ describe('HomeView prompt handoff', () => {
         kind: 'prototype',
       }),
     })));
-    // Fidelity is deferred to first-turn discovery: the plugin is still applied
-    // with its full inputs, but its default must NOT be forwarded to the run, so
-    // the question-form flow collects it instead of inheriting a baked-in value.
+    expect(fetchMock.mock.calls.some(([url]) => (
+      typeof url === 'string' && url.includes('/api/plugins/example-web-prototype/apply-local')
+    ))).toBe(false);
     const [{ pluginInputs: protoSubmittedInputs }] = onSubmit.mock.calls[0] as [
       { pluginInputs?: Record<string, unknown> },
     ];
+    expect(protoSubmittedInputs).toMatchObject({
+      artifactKind: 'web prototype',
+      audience: 'product evaluators',
+      designSystem: 'Refly Design System',
+      template: 'the bundled web prototype seed',
+    });
+    // Fidelity is deferred to first-turn discovery and project creation builds
+    // the run-facing snapshot from this already-stripped input set.
     expect(protoSubmittedInputs).not.toHaveProperty('fidelity');
     expect(screen.queryByRole('alert')).toBeNull();
   });
@@ -1138,26 +1107,20 @@ describe('HomeView prompt handoff', () => {
 
     fireEvent.click(submit);
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      '/api/plugins/od-new-generation/apply-local',
-      expect.anything(),
-    ));
-    const applyCall = fetchMock.mock.calls.find(([url]) => (
-      typeof url === 'string' && url.includes('/api/plugins/od-new-generation/apply-local')
-    ));
-    expect(JSON.parse(String((applyCall?.[1] as RequestInit).body))).toMatchObject({
-      inputs: {
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
+      pluginId: 'od-new-generation',
+      appliedPluginSnapshotId: null,
+      pluginInputs: {
         artifactKind: 'document',
         audience: 'readers',
         topic: 'the user brief',
       },
-    });
-    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
-      pluginId: 'od-new-generation',
-      appliedPluginSnapshotId: 'snap-document-new-generation',
       projectKind: 'other',
       prompt: 'Write a crisp launch memo for the new analytics product.',
     })));
+    expect(fetchMock.mock.calls.some(([url]) => (
+      typeof url === 'string' && url.includes('/api/plugins/od-new-generation/apply-local')
+    ))).toBe(false);
     expect(screen.queryByRole('alert')).toBeNull();
   });
 
@@ -1200,29 +1163,26 @@ describe('HomeView prompt handoff', () => {
     await waitFor(() => {
       expect(screen.getByTestId('home-hero-template-trigger').textContent).toContain('UI Mockup');
     });
-    // Round-4 skin: the unset trigger reads "Design system" (the field name)
-    // instead of the "No design system" placeholder.
-    expect(
-      screen.getByTestId('home-hero-design-system-trigger').textContent,
-    ).toContain('Design system');
+    // Unset, the trigger is the palette glyph alone (per product: 不选择不显示
+    // 文案) — the field name lives on its accessible name / tooltip, and the
+    // pill carries no visible label at all.
+    const unsetDsTrigger = screen.getByTestId('home-hero-design-system-trigger');
+    expect(unsetDsTrigger.getAttribute('aria-label')).toBe('Design system');
+    expect(unsetDsTrigger.textContent).toBe('');
 
     await setPromptAndSettle('Build a pricing-page prototype.');
     fireEvent.click(screen.getByTestId('home-hero-submit'));
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      '/api/plugins/example-web-prototype/apply-local',
-      expect.anything(),
-    ));
-    const applyCall = fetchMock.mock.calls.find(([url]) => (
-      typeof url === 'string' && url.includes('/api/plugins/example-web-prototype/apply-local')
-    ));
-    const protoApplyInputs = JSON.parse(String((applyCall?.[1] as RequestInit).body)).inputs;
-    expect(protoApplyInputs).toMatchObject({ designSystem: 'No design system' });
     await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
       pluginId: 'example-web-prototype',
       projectKind: 'prototype',
       designSystemId: null,
+      appliedPluginSnapshotId: null,
+      pluginInputs: expect.objectContaining({ designSystem: 'No design system' }),
     })));
+    expect(fetchMock.mock.calls.some(([url]) => (
+      typeof url === 'string' && url.includes('/api/plugins/example-web-prototype/apply-local')
+    ))).toBe(false);
     expect(screen.queryByRole('alert')).toBeNull();
   });
 
@@ -1267,18 +1227,17 @@ describe('HomeView prompt handoff', () => {
       ).toContain('Refly Design System');
     });
 
-    // Open the shared design-system picker popover and pick the explicit
-    // "No design system" row.
-    fireEvent.click(screen.getByTestId('home-hero-design-system-trigger'));
-    const popover = await screen.findByTestId('project-ds-picker-popover');
-    const noneOption = await within(popover).findByText('No design system');
-    fireEvent.mouseDown(noneOption);
+    // The selected pill still opens the picker; only its separate close action
+    // clears the current design-system choice.
+    fireEvent.click(screen.getByRole('button', { name: 'Clear: Refly Design System' }));
     await waitFor(() => {
-      // Round-4 skin: with nothing selected the trigger reads "Design system".
-      expect(
-        screen.getByTestId('home-hero-design-system-trigger').textContent,
-      ).toContain('Design system');
+      // With nothing selected the trigger drops back to the icon-only pill:
+      // no visible label, the field name on its accessible name instead.
+      const dsTrigger = screen.getByTestId('home-hero-design-system-trigger');
+      expect(dsTrigger.getAttribute('aria-label')).toBe('Design system');
+      expect(dsTrigger.textContent).toBe('');
     });
+    expect(screen.queryByTestId('project-ds-picker-popover')).toBeNull();
 
     await setPromptAndSettle('Build a pricing-page prototype.');
     fireEvent.click(screen.getByTestId('home-hero-submit'));
@@ -1360,29 +1319,21 @@ describe('HomeView prompt handoff', () => {
 
     fireEvent.click(screen.getByTestId('home-hero-submit'));
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      '/api/plugins/example-web-prototype/apply-local',
-      expect.anything(),
-    ));
-    const applyCall = fetchMock.mock.calls.find(([url]) => (
-      typeof url === 'string' && url.includes('/api/plugins/example-web-prototype/apply-local')
-    ));
     // The preset card seeds the prompt as plain text while preserving the
-    // chip's structured inputs (artifactKind / fidelity / audience /
-    // designSystem / template all round-trip). Seeding the editor does NOT
+    // chip's structured inputs (artifactKind / audience / designSystem /
+    // template round-trip; hidden fidelity is deferred). Seeding does NOT
     // re-run the host's prompt-extraction (HomeHero suppresses the seed echo
     // in onChange), so designSystem keeps the chip/footer default rather than
     // being re-read from the prompt text.
-    expect(JSON.parse(String((applyCall?.[1] as RequestInit).body))).toMatchObject({
-      inputs: {
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
+      pluginId: 'example-web-prototype',
+      appliedPluginSnapshotId: null,
+      pluginInputs: expect.objectContaining({
         artifactKind: 'web prototype',
         audience: 'product evaluators',
         designSystem: 'Refly Design System',
         template: 'the bundled web prototype seed',
-      },
-    });
-    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
-      pluginId: 'example-web-prototype',
+      }),
       projectKind: 'prototype',
       prompt: 'Build a high-fidelity web prototype for product evaluators using the active project design system from the bundled web prototype seed.',
       designSystemId: 'ds-refly',
@@ -1390,6 +1341,9 @@ describe('HomeView prompt handoff', () => {
         kind: 'prototype',
       }),
     })));
+    expect(fetchMock.mock.calls.some(([url]) => (
+      typeof url === 'string' && url.includes('/api/plugins/example-web-prototype/apply-local')
+    ))).toBe(false);
   });
 
   it('binds the picked preset plugin on submit while preserving the chip metadata', async () => {
@@ -1456,14 +1410,11 @@ describe('HomeView prompt handoff', () => {
     // Picking a preset binds the preset's OWN plugin (so its SKILL.md /
     // example.html become generation context and the output recreates that
     // reference), while the live-artifact chip's project kind + metadata are
-    // carried forward. Submit resolves the snapshot for the preset plugin.
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      '/api/plugins/image-template-notion-team-dashboard-live-artifact/apply-local',
-      expect.anything(),
-    ));
+    // carried forward. Project creation resolves the snapshot from the plugin
+    // identity and inputs after the optimistic Chat handoff.
     await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
       pluginId: 'image-template-notion-team-dashboard-live-artifact',
-      appliedPluginSnapshotId: 'snap-live-artifact',
+      appliedPluginSnapshotId: null,
       projectKind: 'prototype',
       projectMetadata: expect.objectContaining({
         kind: 'prototype',
@@ -1472,9 +1423,12 @@ describe('HomeView prompt handoff', () => {
       }),
       prompt: 'Create a live Notion dashboard artifact.',
     })));
+    expect(fetchMock.mock.calls.some(([url]) => (
+      typeof url === 'string' && url.includes('/apply-local')
+    ))).toBe(false);
   });
 
-  it('binds the Home rail Live artifact chip with live-artifact metadata and applies it on submit', async () => {
+  it('binds the Home rail Live artifact chip and hands its metadata to project creation', async () => {
     const fetchMock = vi.fn<typeof fetch>(async (url) => {
       if (typeof url === 'string' && url === '/api/plugins') {
         return new Response(JSON.stringify({ plugins: [WEB_PROTOTYPE_PLUGIN, LIVE_ARTIFACT_PLUGIN] }), {
@@ -1515,19 +1469,10 @@ describe('HomeView prompt handoff', () => {
     await setPromptAndSettle('Build a refreshable Stripe revenue dashboard.');
     fireEvent.click(screen.getByTestId('home-hero-submit'));
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      '/api/plugins/example-live-artifact/apply-local',
-      expect.anything(),
-    ));
-    const applyCall = fetchMock.mock.calls.find(([url]) => (
-      typeof url === 'string' && url.includes('/api/plugins/example-live-artifact/apply-local')
-    ));
-    expect(JSON.parse(String((applyCall?.[1] as RequestInit).body))).toMatchObject({
-      inputs: {},
-    });
     await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
       pluginId: 'example-live-artifact',
-      appliedPluginSnapshotId: 'snap-live-artifact',
+      appliedPluginSnapshotId: null,
+      pluginInputs: {},
       projectKind: 'prototype',
       projectMetadata: expect.objectContaining({
         kind: 'prototype',
@@ -1536,10 +1481,13 @@ describe('HomeView prompt handoff', () => {
       }),
       prompt: 'Build a refreshable Stripe revenue dashboard.',
     })));
+    expect(fetchMock.mock.calls.some(([url]) => (
+      typeof url === 'string' && url.includes('/api/plugins/example-live-artifact/apply-local')
+    ))).toBe(false);
     expect(screen.queryByRole('alert')).toBeNull();
   });
 
-  it('binds the deck chip and keeps only the design-system picker in the footer', async () => {
+  it('binds the deck chip and hands it off without a submit-time apply', async () => {
     // Slide count + speaker-notes footer controls were removed from the deck
     // composer; the agent asks for them in the first-turn discovery flow. The
     // deck footer now mirrors the prototype footer — design system only.
@@ -1590,11 +1538,27 @@ describe('HomeView prompt handoff', () => {
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
       pluginId: 'example-simple-deck',
+      appliedPluginSnapshotId: null,
+      designSystemId: 'ds-refly',
+      pluginInputs: expect.objectContaining({
+        deckType: 'pitch deck',
+        topic: 'the user brief',
+        audience: 'decision makers',
+        designSystem: 'Refly Design System',
+      }),
       projectKind: 'deck',
       projectMetadata: expect.objectContaining({
         kind: 'deck',
       }),
     })));
+    const [{ pluginInputs }] = onSubmit.mock.calls[0] as [{
+      pluginInputs?: Record<string, unknown>;
+    }];
+    expect(pluginInputs).not.toHaveProperty('slideCount');
+    expect(pluginInputs).not.toHaveProperty('speakerNotes');
+    expect(fetchMock.mock.calls.some(([url]) => (
+      typeof url === 'string' && url.includes('/api/plugins/example-simple-deck/apply-local')
+    ))).toBe(false);
   });
 
   it('switches output-type chips without replacing an existing prompt', async () => {
@@ -1682,7 +1646,11 @@ describe('HomeView prompt handoff', () => {
       expect(screen.getByTestId('home-hero-template-trigger').textContent).toContain('Slide deck');
     });
     expect(screen.getByTestId('home-hero-plugin-presets')).toBeTruthy();
-    expect(screen.getByTestId('home-hero-plugin-presets').textContent).toContain('Simple Deck');
+    // The presets list shows each example's PROMPT on one line, not the
+    // template's name — so it reads as the text the row would seed.
+    expect(screen.getByTestId('home-hero-plugin-presets').textContent).toContain(
+      'Create a pitch deck for decision makers',
+    );
     fireEvent.click(screen.getAllByTestId('home-hero-plugin-preset')[0]!);
     expect(fetchMock.mock.calls.some(([url]) => (
       typeof url === 'string' && url.includes('/api/plugins/example-simple-deck/apply-local')
@@ -2235,29 +2203,27 @@ async function setPromptAndSettle(value: string): Promise<void> {
 }
 
 async function clearActiveTypeChip() {
-  // Reset the Template selection back to "None" via the radial's center Clear
-  // (#5517 replaced the dropdown Clear with the radial menu's center button).
-  const trigger = screen.queryByTestId('home-hero-template-trigger');
-  if (!trigger) return;
-  fireEvent.click(trigger);
-  const clear = screen.queryByTestId('home-hero-template-radial-clear');
-  if (clear) fireEvent.click(clear);
-  fireEvent.keyDown(document, { key: 'Escape' });
+  // Back to no type: the composer pill's leading icon is the clear (it swaps
+  // to an × on hover). With nothing picked the pill is not mounted at all, so
+  // an already-empty composer is a no-op.
+  const clear = screen.queryByTestId('home-hero-template-clear');
+  if (!clear) return;
+  fireEvent.click(clear);
 }
 
 // #5517 removed the inline template rail (and the "Start with a template…"
 // bar that held it) from Home. Scenario templates are now picked from the
 // composer footer's radial Template picker.
+// Home starts with no creation type: the type row under the composer is the
+// empty state's only control, and it retires once something is picked.
 async function pickHomeTemplate(id: string) {
-  const trigger = await screen.findByTestId('home-hero-template-trigger');
-  await waitFor(() => expect((trigger as HTMLButtonElement).disabled).toBe(false));
-  fireEvent.click(trigger);
-  const wedge = await screen.findByTestId(`home-hero-template-wedge-${id}`);
-  await waitFor(() =>
-    expect(screen.getByTestId(`home-hero-template-wedge-${id}`).getAttribute('aria-disabled'))
-      .not.toBe('true'),
-  );
-  fireEvent.click(wedge);
+  // A type already picked retires the row, and the pill has no menu — so
+  // switching means clearing back to the empty state first.
+  const clear = screen.queryByTestId('home-hero-template-clear');
+  if (clear) fireEvent.click(clear);
+  const rowPill = await screen.findByTestId(`home-hero-type-pill-${id}`);
+  await waitFor(() => expect((rowPill as HTMLButtonElement).disabled).toBe(false));
+  fireEvent.click(rowPill);
 }
 
 // The migrate shortcuts (plugin authoring / Figma / template) left the Home

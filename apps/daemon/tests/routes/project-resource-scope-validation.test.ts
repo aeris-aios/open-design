@@ -27,6 +27,7 @@ function functionProxy(overrides: Record<string, unknown> = {}) {
 }
 
 function buildDeps(input: {
+  projectCreatePreparationTimeoutMs?: number;
   validateDesignSystem?: ReturnType<typeof vi.fn>;
   validateSkill?: ReturnType<typeof vi.fn>;
   getPlugin?: ReturnType<typeof vi.fn>;
@@ -34,6 +35,10 @@ function buildDeps(input: {
   loadRegistry?: ReturnType<typeof vi.fn>;
   insertProject?: ReturnType<typeof vi.fn>;
   insertConversation?: ReturnType<typeof vi.fn>;
+  getTemplate?: ReturnType<typeof vi.fn>;
+  ensureProject?: ReturnType<typeof vi.fn>;
+  writeProjectFile?: ReturnType<typeof vi.fn>;
+  removeProjectDir?: ReturnType<typeof vi.fn>;
   fetchProjectCreationWorkspaceDirectory?: ReturnType<typeof vi.fn>;
 } = {}) {
   const binding = {
@@ -47,6 +52,9 @@ function buildDeps(input: {
   const insertProject = input.insertProject ?? vi.fn();
   const insertConversation = input.insertConversation ?? vi.fn();
   return {
+    ...(input.projectCreatePreparationTimeoutMs
+      ? { projectCreatePreparationTimeoutMs: input.projectCreatePreparationTimeoutMs }
+      : {}),
     db: {
       transaction: (fn: (...args: any[]) => unknown) => (...args: any[]) => fn(...args),
     },
@@ -82,16 +90,22 @@ function buildDeps(input: {
       getWorkspaceProject: () => binding,
       getWorkspaceProjectByProjectId: () => binding,
       updateProject: vi.fn(),
+      removeProjectDir: input.removeProjectDir ?? vi.fn(async () => undefined),
       listWorkspaceProjects: () => [],
       listProjects: () => [],
     }),
     projectFiles: functionProxy({
+      ensureProject: input.ensureProject ?? vi.fn(async () => ''),
+      writeProjectFile: input.writeProjectFile ?? vi.fn(async () => undefined),
       listFiles: () => [],
       listTabs: () => [],
       resolveProjectDir: () => '',
     }),
     conversations: functionProxy({ insertConversation }),
-    templates: functionProxy({ listTemplates: () => [] }),
+    templates: functionProxy({
+      getTemplate: input.getTemplate ?? vi.fn(() => null),
+      listTemplates: () => [],
+    }),
     status: functionProxy({
       listLatestProjectRunStatuses: () => new Map(),
       listProjectsAwaitingInput: () => new Set(),
@@ -452,6 +466,112 @@ describe('project resource selection uses the persisted exact member', () => {
       error: { code: 'PLUGIN_NOT_FOUND' },
     });
     expect(getLocalPluginBySource).toHaveBeenCalledTimes(2);
+    expect(insertProject).not.toHaveBeenCalled();
+    expect(insertConversation).not.toHaveBeenCalled();
+  });
+
+  it('times out a stalled plugin registry before writing the project or conversation', async () => {
+    const insertProject = vi.fn();
+    const insertConversation = vi.fn();
+    const loadRegistry = vi.fn(() => new Promise<never>(() => {}));
+    const baseUrl = await start(buildDeps({
+      projectCreatePreparationTimeoutMs: 10,
+      insertProject,
+      insertConversation,
+      loadRegistry,
+    }));
+
+    const response = await fetch(`${baseUrl}/api/projects`, {
+      method: 'POST',
+      headers: headers(),
+      body: JSON.stringify({
+        id: 'stalled-plugin-registry-project',
+        name: 'Stalled plugin registry project',
+        pluginId: 'stalled-plugin',
+      }),
+    });
+
+    expect(response.status).toBe(504);
+    await expect(response.json()).resolves.toMatchObject({
+      error: {
+        code: 'INTERNAL_ERROR',
+        message: expect.stringContaining('loading plugin resources'),
+      },
+    });
+    expect(insertProject).not.toHaveBeenCalled();
+    expect(insertConversation).not.toHaveBeenCalled();
+  });
+
+  it('stages saved-template files before committing the project and conversation', async () => {
+    let releaseWrite!: () => void;
+    const pendingWrite = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
+    const writeProjectFile = vi.fn(() => pendingWrite);
+    const insertProject = vi.fn((_: unknown, input: Record<string, unknown>) => input);
+    const insertConversation = vi.fn();
+    const baseUrl = await start(buildDeps({
+      getTemplate: vi.fn(() => ({
+        id: 'template-1',
+        files: [{ name: 'index.html', content: '<main>Seed</main>' }],
+      })),
+      writeProjectFile,
+      insertProject,
+      insertConversation,
+    }));
+
+    const responsePromise = fetch(`${baseUrl}/api/projects`, {
+      method: 'POST',
+      headers: headers(),
+      body: JSON.stringify({
+        id: 'template-project',
+        name: 'Template project',
+        conversationMode: 'chat',
+        metadata: { kind: 'template', templateId: 'template-1' },
+      }),
+    });
+
+    await vi.waitFor(() => expect(writeProjectFile).toHaveBeenCalledOnce());
+    expect(insertProject).not.toHaveBeenCalled();
+    expect(insertConversation).not.toHaveBeenCalled();
+
+    releaseWrite();
+    const response = await responsePromise;
+    expect(response.status).toBe(200);
+    expect(insertProject).toHaveBeenCalledOnce();
+    expect(insertConversation).toHaveBeenCalledOnce();
+  });
+
+  it('does not commit when managed template directory preparation fails', async () => {
+    const insertProject = vi.fn();
+    const insertConversation = vi.fn();
+    const removeProjectDir = vi.fn(async () => undefined);
+    const baseUrl = await start(buildDeps({
+      getTemplate: vi.fn(() => ({
+        id: 'template-1',
+        files: [{ name: 'index.html', content: '<main>Seed</main>' }],
+      })),
+      ensureProject: vi.fn(async () => {
+        throw new Error('template directory unavailable');
+      }),
+      removeProjectDir,
+      insertProject,
+      insertConversation,
+    }));
+
+    const response = await fetch(`${baseUrl}/api/projects`, {
+      method: 'POST',
+      headers: headers(),
+      body: JSON.stringify({
+        id: 'failed-template-project',
+        name: 'Failed template project',
+        conversationMode: 'chat',
+        metadata: { kind: 'template', templateId: 'template-1' },
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    expect(removeProjectDir).toHaveBeenCalledWith('', 'failed-template-project');
     expect(insertProject).not.toHaveBeenCalled();
     expect(insertConversation).not.toHaveBeenCalled();
   });

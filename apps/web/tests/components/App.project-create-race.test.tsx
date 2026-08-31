@@ -1245,6 +1245,20 @@ describe('App project creation routing', () => {
     expect(screen.getByText('Preparing...')).toBeTruthy();
     expect(screen.queryByTestId('entry-home-surface')).toBeNull();
     expect(screen.queryByTestId('project-view')).toBeNull();
+    expect(mockedGetProject).not.toHaveBeenCalled();
+
+    const pendingComposerShell = screen.getByTestId('pending-chat-composer-shell');
+    expect(pendingComposerShell.hasAttribute('inert')).toBe(true);
+    expect(
+      pendingComposerShell.previousElementSibling?.classList.contains('chat-log-wrap'),
+    ).toBe(true);
+    expect(
+      screen.getByTestId('chat-composer').classList.contains('composer-readonly'),
+    ).toBe(true);
+    expect((screen.getByTestId('chat-send') as HTMLButtonElement).disabled).toBe(true);
+    expect(
+      pendingComposerShell.querySelector('.composer-input--readonly'),
+    ).not.toBeNull();
 
     creation.resolve({
       project: {
@@ -1543,6 +1557,7 @@ describe('App project creation routing', () => {
             kind: 'other',
           }),
         }),
+        { requestTimeoutMs: 20_000 },
       );
     });
 

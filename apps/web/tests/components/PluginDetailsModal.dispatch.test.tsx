@@ -286,7 +286,10 @@ describe('PluginDetailsModal common metadata coverage', () => {
   // Each detail variant must surface the plugin-common manifest
   // fields (workflow, capabilities, file path, source provenance)
   // in addition to its kind-specific hero — otherwise users lose
-  // information when expanding a media/html/design tile.
+  // information when expanding a design tile.
+  // The MEDIA variant is the deliberate exception: it stops after the
+  // author (per product: 从作者下边的内容全部去掉), and the test below
+  // pins that rather than the shared rule.
   function pluginWithMeta(overrides: Partial<MakeArgs>): InstalledPluginRecord {
     return make({
       id: overrides.id ?? 'meta-plugin',
@@ -299,7 +302,7 @@ describe('PluginDetailsModal common metadata coverage', () => {
     });
   }
 
-  it('surfaces workflow + capabilities + file path inside the media variant sidebar', () => {
+  it('stops the media variant sidebar at the author, dropping the developer detail', () => {
     const html = render(
       pluginWithMeta({
         id: 'media-with-meta',
@@ -307,21 +310,26 @@ describe('PluginDetailsModal common metadata coverage', () => {
         query: 'Generate a {style} portrait of {subject}.',
       }),
     );
-    // Plugin info sidebar pane + heading.
+    // What the panel keeps: the prompt someone came to read, and the
+    // plugin's identity — version / trust / source kind in the heading,
+    // and who made it.
     expect(html).toContain('plugin-info-pane');
     expect(html).toContain('plugin-meta-sections');
     expect(html).toContain('plugin-meta-sections__heading');
     expect(html).toMatch(/<h3[^>]*>Plugin info<\/h3>/);
-    // Prompt body block lives inside the sidebar with the same panel.
     expect(html).toContain('plugin-media-sidebar__prompt');
     expect(html).toContain('Generate a {style} portrait of {subject}.');
-    // Manifest sections still render alongside the prompt.
-    expect(html).toContain('Workflow');
-    expect(html).toContain('Capabilities');
-    expect(html).toContain('fs:read');
-    expect(html).toContain('Source');
-    expect(html).toMatch(/Path<\/dt>/);
-    expect(html).toContain('/tmp');
+    expect(html).toContain('plugin-details-author');
+    // What it drops. `identity` REMOVES these rather than collapsing
+    // them, so unlike the 'minimal' variant below there is no
+    // disclosure left holding them either.
+    expect(html).not.toContain('Workflow');
+    expect(html).not.toContain('Capabilities');
+    expect(html).not.toContain('fs:read');
+    expect(html).not.toContain('Inputs');
+    expect(html).not.toContain('Context bundles');
+    expect(html).not.toMatch(/Path<\/dt>/);
+    expect(html).not.toContain('plugin-meta-advanced');
   });
 
   it('collapses the example variant sidebar by default so the preview owns the stage', () => {
@@ -409,8 +417,10 @@ describe('PluginDetailsModal common metadata coverage', () => {
     expect(html).toContain('plugin-design-sidebar__spec');
     expect(html).toContain('DESIGN.md');
     expect(html.indexOf('Plugin info')).toBeLessThan(html.indexOf('DESIGN.md'));
-    expect(html).toContain('Workflow');
-    expect(html).toContain('Source');
+    // Identity only, same as every other detail variant now.
+    expect(html).not.toContain('Workflow');
+    expect(html).not.toContain('Source');
+    expect(html).not.toContain('plugin-meta-advanced');
   });
 
   it('does not duplicate the plugin info heading inside the scenario fallback', () => {

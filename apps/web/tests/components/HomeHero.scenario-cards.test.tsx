@@ -72,37 +72,40 @@ function renderHero(overrides: Partial<React.ComponentProps<typeof HomeHero>> = 
 
 // #5517 removed the illustrated scenario-card rail from Home; scenarios are
 // picked from the composer footer's radial template picker instead.
-function openTemplatePicker() {
-  fireEvent.click(screen.getByTestId('home-hero-template-trigger'));
+// Types are a horizontal pill row under the working-directory row (product,
+// 2026-08-21); anything that does not fit folds into its 全部 popover.
+function typePill(chipId: string): HTMLElement | null {
+  return (
+    screen.queryByTestId(`home-hero-type-pill-${chipId}`) ??
+    screen.queryByTestId(`home-hero-type-pill-${chipId}-more`)
+  );
 }
 
 describe('HomeHero scenario cards', () => {
   it('labels each create scenario in the composer template picker', () => {
     renderHero();
-    openTemplatePicker();
-    expect(
-      screen.getByTestId('home-hero-template-wedge-prototype').getAttribute('aria-label'),
-    ).toContain('UI Mockup');
-    expect(
-      screen.getByTestId('home-hero-template-wedge-deck').getAttribute('aria-label'),
-    ).toContain('Slide deck');
+    expect(typePill('prototype')?.textContent).toContain('UI Mockup');
+    expect(typePill('deck')?.textContent).toContain('Slide deck');
   });
 
-  it('leads the create rail with UI Mockup, then Slide deck, and trails Website clone', () => {
+  it('leads the create rail with UI Mockup, then Slide deck, and trails the media scenarios', () => {
     const ordered = orderedCreateChips();
     const ids = ordered.map((chip) => chip.id);
     expect(ids.slice(0, 2)).toEqual(['prototype', 'deck']);
-    // Website clone sits behind every other explicit rail type (only the
-    // unlisted catalog tail, e.g. Brand Kit, follows), so the visible pill
-    // row overflows it into the 全部 popover at typical widths.
-    expect(ids.indexOf('web-clone')).toBeGreaterThan(ids.indexOf('audio'));
+    // The pure-media outputs sit behind every core build scenario (see
+    // CREATE_RAIL_ORDER), and the unlisted catalog tail — Brand Kit, which
+    // dispatches into its own tab rather than seeding a scenario — follows
+    // even those.
+    for (const media of ['image', 'video', 'audio']) {
+      expect(ids.indexOf(media)).toBeGreaterThan(ids.indexOf('document'));
+    }
+    expect(ids.indexOf('create-brand-kit')).toBeGreaterThan(ids.indexOf('audio'));
   });
 
   it('adds the finer-grained scenarios as templates routed to a scenario plugin', () => {
     renderHero();
-    openTemplatePicker();
     for (const id of ['wireframe', 'mobile', 'document']) {
-      expect(screen.getByTestId(`home-hero-template-wedge-${id}`)).toBeTruthy();
+      expect(typePill(id)).toBeTruthy();
       expect(findChip(id)?.action.kind).toBe('apply-scenario');
     }
     // Wireframe reuses the web-prototype seed at lo-fi fidelity.

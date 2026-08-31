@@ -1,8 +1,10 @@
 import type { ChatRunStatusResponse } from '@open-design/contracts';
 import type { Project } from '../../types';
 import type { PetRecentTaskSummary, PetTaskCenter, PetTaskSummary } from './PetOverlay';
-
-const TERMINAL_STATUSES = new Set(['succeeded', 'failed', 'canceled']);
+import {
+  isTerminalRunStatus,
+  terminalRunDisplayStatus,
+} from '../../state/projectRunStatus';
 
 export function buildPetTaskCenter(
   projects: Project[],
@@ -25,17 +27,13 @@ export function buildPetTaskCenter(
       addActiveSummary(queued, run.projectId, project.name, 'queued');
       continue;
     }
-    if (TERMINAL_STATUSES.has(run.status)) {
+    if (isTerminalRunStatus(run.status)) {
       const prev = recentByProject.get(run.projectId);
       if (prev && prev.updatedAt >= run.updatedAt) continue;
-      // A `succeeded` run that ended with unfinished declared work must not read
-      // as plain "recently completed" — that is the exact lie the reporter hit.
-      // File it as `incomplete` so its dot renders as needs-attention, never the
-      // success color (#1247 / #1060).
-      const status: PetRecentTaskSummary['status'] =
-        run.status === 'succeeded' && run.endedWithUnfinishedWork
-          ? 'incomplete'
-          : (run.status as PetRecentTaskSummary['status']);
+      // Shared with the tab-dropdown indicator so both surfaces agree on what
+      // "finished" means — in particular that a `succeeded` run with unfinished
+      // declared work is `incomplete`, never the success colour (#1247 / #1060).
+      const status: PetRecentTaskSummary['status'] = terminalRunDisplayStatus(run);
       recentByProject.set(run.projectId, {
         projectId: run.projectId,
         projectName: project.name,

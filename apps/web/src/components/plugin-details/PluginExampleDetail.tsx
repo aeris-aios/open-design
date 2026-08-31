@@ -131,15 +131,14 @@ export function PluginExampleDetail({
       }}
       onClose={onClose}
       sidebar={{
-        // Surface every plugin-common manifest field — workflow, context
-        // bundles, connectors, file paths, source provenance — alongside
-        // the rendered HTML preview. Designers are the primary audience
-        // here, so the sidebar starts COLLAPSED — the preview is the
-        // hero and gets the full stage by default — and when opened it
-        // shows a designer-first slice (author + example query) with the
-        // developer manifest detail tucked behind a "Developer details"
-        // disclosure (variant="minimal"). Fullscreen still gives an
-        // immersive view when needed.
+        // Designers are the primary audience here, so the sidebar starts
+        // COLLAPSED — the rendered HTML preview is the hero and gets the
+        // full stage by default — and when opened it shows the plugin's
+        // identity and the example query, nothing else. The manifest
+        // detail that used to sit behind a "Developer details" disclosure
+        // (workflow, context bundles, connectors, file paths, source
+        // provenance) is gone entirely (per product: 所有的开发者详情的信息
+        // 都去掉). Fullscreen still gives an immersive view when needed.
         label: pluginInfoLabel,
         defaultOpen: false,
         contentKey: record.id,
@@ -150,7 +149,7 @@ export function PluginExampleDetail({
               omit={{ description: true }}
               compact
               heading={pluginInfoLabel}
-              variant="minimal"
+              variant="identity"
             />
           </div>
         ),

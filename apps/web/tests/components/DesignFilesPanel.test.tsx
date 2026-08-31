@@ -117,10 +117,7 @@ function renderPanel(
       onRenameFile={vi.fn()}
       onDeleteFile={vi.fn()}
       onDeleteFiles={onDeleteFiles}
-      onUpload={vi.fn()}
       onUploadFiles={vi.fn()}
-      onPaste={vi.fn()}
-      onNewSketch={vi.fn()}
       onClearUploadError={onClearUploadError}
       {...overrides}
     />,
@@ -170,74 +167,29 @@ describe("DesignFilesPanel sections", () => {
     expect(screen.queryByTestId("design-files-empty-new-document")).toBeNull();
   });
 
-  it("shows prioritized project starter actions in the empty state", () => {
-    const onNewSketch = vi.fn();
-    const onOpenBrowser = vi.fn();
-    const onCreateDesignSystem = vi.fn();
-    const onPaste = vi.fn();
-    const onUpload = vi.fn();
+  it("echoes the chat's latest prompt in the empty state instead of starter CTAs", () => {
+    renderPanel([], { latestUserPrompt: "Build me a design studio portfolio" });
 
-    renderPanel([], {
-      onNewSketch,
-      onOpenBrowser,
-      onCreateDesignSystem,
-      onPaste,
-      onUpload,
-    });
-
-    fireEvent.click(screen.getByTestId("design-files-empty-new-sketch"));
-    fireEvent.click(screen.getByTestId("design-files-empty-open-browser"));
-    fireEvent.click(screen.getByTestId("design-files-empty-create-design-system"));
-    fireEvent.click(screen.getByTestId("design-files-empty-new-document"));
-    fireEvent.click(screen.getByTestId("design-files-upload-trigger"));
-
-    expect(onNewSketch).toHaveBeenCalledTimes(1);
-    expect(onOpenBrowser).toHaveBeenCalledTimes(1);
-    expect(onCreateDesignSystem).toHaveBeenCalledTimes(1);
-    expect(onPaste).toHaveBeenCalledTimes(1);
-    expect(onUpload).toHaveBeenCalledTimes(1);
+    const center = screen.getByTestId("design-files-empty-chat");
+    expect(center.textContent).toContain("Build me a design studio portfolio");
+    // Creating things now happens through the tab strip's "+" launcher.
+    expect(screen.queryByTestId("design-files-empty-new-sketch")).toBeNull();
+    expect(screen.queryByTestId("design-files-empty-new-document")).toBeNull();
+    expect(screen.queryByTestId("design-files-upload-trigger")).toBeNull();
+    expect(screen.queryByTestId("design-files-empty-open-browser")).toBeNull();
+    expect(screen.queryByTestId("design-files-empty-create-design-system")).toBeNull();
   });
 
-  it("keeps empty-state actions visible but disables mutations for read-only shared viewers", () => {
-    const onNewSketch = vi.fn();
-    const onOpenBrowser = vi.fn();
-    const onCreateDesignSystem = vi.fn();
-    const onPaste = vi.fn();
-    const onUpload = vi.fn();
+  it("swaps the empty state's status line while the agent is running", () => {
+    renderPanel([], { latestUserPrompt: "Build me a portfolio", running: true });
+    expect(screen.getByTestId("design-files-empty-chat").textContent).toContain("Thinking");
 
-    renderPanel([], {
-      viewerOnly: true,
-      onNewSketch,
-      onOpenBrowser,
-      onCreateDesignSystem,
-      onPaste,
-      onUpload,
-    });
+    cleanup();
 
-    const mutationButtons = [
-      screen.getByTestId("design-files-empty-new-sketch"),
-      screen.getByTestId("design-files-empty-new-document"),
-      screen.getByTestId("design-files-upload-trigger"),
-      screen.getByTestId("design-files-empty-create-design-system"),
-    ];
-    for (const button of mutationButtons) {
-      expect(button).toBeDisabled();
-      expect(button).toHaveAttribute(
-        "title",
-        "Shared project is read-only: you can comment, but cannot edit or export.",
-      );
-      fireEvent.click(button);
-    }
-
-    expect(onNewSketch).not.toHaveBeenCalled();
-    expect(onCreateDesignSystem).not.toHaveBeenCalled();
-    expect(onPaste).not.toHaveBeenCalled();
-    expect(onUpload).not.toHaveBeenCalled();
-
-    const openBrowser = screen.getByTestId("design-files-empty-open-browser");
-    expect(openBrowser).not.toBeDisabled();
-    fireEvent.click(openBrowser);
-    expect(onOpenBrowser).toHaveBeenCalledTimes(1);
+    renderPanel([], { latestUserPrompt: "Build me a portfolio", running: false });
+    expect(screen.getByTestId("design-files-empty-chat").textContent).toContain(
+      "Creations will appear here",
+    );
   });
 
   it("groups files into category tabs and shows one group at a time", () => {
@@ -410,10 +362,7 @@ describe("DesignFilesPanel selection", () => {
           onRenameFile={vi.fn()}
           onDeleteFile={vi.fn()}
           onDeleteFiles={vi.fn()}
-          onUpload={vi.fn()}
           onUploadFiles={vi.fn()}
-          onPaste={vi.fn()}
-          onNewSketch={vi.fn()}
         />
       </CollabProvider>,
     );
@@ -825,10 +774,7 @@ describe("DesignFilesPanel directory navigation", () => {
           onRenameFile={vi.fn()}
           onDeleteFile={vi.fn()}
           onDeleteFiles={vi.fn()}
-          onUpload={vi.fn()}
           onUploadFiles={vi.fn()}
-          onPaste={vi.fn()}
-          onNewSketch={vi.fn()}
         />
       );
     }
@@ -901,10 +847,7 @@ describe("DesignFilesPanel directory navigation", () => {
           onRenameFile={vi.fn()}
           onDeleteFile={vi.fn()}
           onDeleteFiles={vi.fn()}
-          onUpload={vi.fn()}
           onUploadFiles={vi.fn()}
-          onPaste={vi.fn()}
-          onNewSketch={vi.fn()}
         />
       );
     }
@@ -1064,10 +1007,7 @@ describe("DesignFilesPanel pending sync (downloadPending)", () => {
       onRenameFile: vi.fn(),
       onDeleteFile: vi.fn(),
       onDeleteFiles: vi.fn(),
-      onUpload: vi.fn(),
       onUploadFiles: vi.fn(),
-      onPaste: vi.fn(),
-      onNewSketch: vi.fn(),
       viewerOnly: true,
     };
     const { rerender } = render(

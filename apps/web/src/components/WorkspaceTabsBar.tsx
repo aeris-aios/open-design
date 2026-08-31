@@ -16,7 +16,15 @@ import {
 import { useT } from '../i18n';
 import { buildPath, navigate, type EntryHomeView, type Route } from '../router';
 import type { Project } from '../types';
+import type { ProjectDisplayStatus, WorkspaceCollabContext } from '@open-design/contracts';
 import { Icon, type IconName } from './Icon';
+import { MarqueeLabel } from './MarqueeLabel';
+import { hasRunStatusGlyph, ProjectRunStatusIcon } from './ProjectRunStatusIcon';
+import { projectCover, ProjectCoverMedia } from './RecentProjectsStrip';
+import { selectProjectFileCover, type ProjectCoverOverride } from './project-cover';
+import { fetchProjectFiles } from '../providers/registry';
+import { useProjectRunStatuses } from '../hooks/useProjectRunStatuses';
+import { STATUS_LABEL_KEYS } from '../state/projectRunStatus';
 import {
   HOME_APPLY_TEMPLATE_EVENT,
   orderedCreateChips,
@@ -25,10 +33,15 @@ import {
 import {
   ENTRY_RAIL_STATE_EVENT,
   ENTRY_RAIL_TOGGLE_EVENT,
+  ENTRY_SEARCH_OPEN_EVENT,
   readStoredRailOpen,
 } from './entryRailBridge';
+import { useAnalytics } from '../analytics/provider';
+import { trackEntryNavigationClick } from '../analytics/events';
+import { entryViewToTracking } from '../analytics/workspace';
 import { homeHeroChipLabel } from './home-hero/chip-labels';
 import { useGlideIndicator } from '../hooks/useGlideIndicator';
+import { isMacPlatform } from '../utils/platform';
 import { useLiquidGlass } from '../hooks/useLiquidGlass';
 
 type WorkspaceChromeTab =
@@ -115,7 +128,26 @@ interface Props {
    * tab without exposing those tabs in another scope.
    */
   identityScopeKey?: string | null;
+  /**
+   * Workspace headers for the per-project run lookups behind the dropdown's
+   * status glyphs. Optional: without it the requests go unscoped, which is
+   * correct for a local/unbound session and simply returns nothing readable
+   * in a workspace one.
+   */
+  workspaceContext?: WorkspaceCollabContext | null;
 }
+
+/* Dwell before the dock dropdown's hover preview commits to a row. Long
+   enough that running the pointer down the list to reach the bottom entry
+   mounts nothing on the way, short enough that stopping on a row feels
+   immediate. */
+const PREVIEW_HOVER_DELAY_MS = 180;
+
+/* Panel geometry, shared by the placement math here and the rule that paints
+   it (`.workspace-tabs-dropdown__preview`). Kept in JS too because the panel
+   is portaled to <body> and has to decide for itself which side it fits on. */
+const PREVIEW_WIDTH_PX = 240;
+const PREVIEW_GAP_PX = 8;
 
 const STORAGE_KEY = 'open-design:workspace-tabs:v1';
 const OPEN_WORKSPACE_TAB_EVENT = 'open-design:workspace-tabs:open';
@@ -648,13 +680,13 @@ function shouldRehomeAuthorizedProjectAfterSignIn({
 
 
 /** Corner home glyph (per product: the brand tile gave way to a plain home
- *  icon). `currentColor` so it follows the button's muted/hover ink. */
+ *  icon). Renders the SAME glyph as the rail's 首页 item (`Icon name="home"`
+ *  → remix home-5-line) rather than a hand-inlined path: the two sit on one
+ *  vertical axis (see the pinned pill's width in routines.css), so a
+ *  different house drawing read as a bug. `currentColor` so it follows the
+ *  button's muted/hover ink. */
 function ChromeHomeGlyph() {
-  return (
-    <svg className="workspace-chrome-logo" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-      <path d="M19 21H5C4.44772 21 4 20.5523 4 20V11L1 11L11.3273 1.6115C11.7087 1.26475 12.2913 1.26475 12.6727 1.6115L23 11L20 11V20C20 20.5523 19.5523 21 19 21ZM6 19H18V9.15745L12 3.7029L6 9.15745V19ZM8 15H16V17H8V15Z" />
-    </svg>
-  );
+  return <Icon name="home" size={16} className="workspace-chrome-logo" />;
 }
 
 export function WorkspaceTabsBar({
@@ -663,8 +695,15 @@ export function WorkspaceTabsBar({
   activeProjectWorkspaceId,
   onboardingCompleted = false,
   identityScopeKey,
+  workspaceContext = null,
 }: Props) {
   const t = useT();
+  const analytics = useAnalytics();
+  // Same binding the rail's own collapse control advertises (EntryShell owns
+  // the keydown handler); named here so the expand direction says it too.
+  const expandHint = `${t('entry.navExpand')} ${isMacPlatform() ? '⌘B' : 'Ctrl+B'}`;
+  const collapseHint = `${t('entry.navCollapse')} ${isMacPlatform() ? '⌘B' : 'Ctrl+B'}`;
+  const searchHint = `${t('common.search')} ${isMacPlatform() ? '⌘K' : 'Ctrl+K'}`;
   const [persistedTabsStore] = useState(readPersistedTabsStore);
   const [state, setState] = useState<WorkspaceTabsState>(
     () => initialTabsState(route, persistedTabsStore, identityScopeKey),
@@ -842,6 +881,22 @@ export function WorkspaceTabsBar({
     [projects],
   );
 
+  // Run status for the dock dropdown's rows. Only fetched while that menu is
+  // open: it costs one request per open project tab, and the glyphs it feeds
+  // are not on screen otherwise.
+  const dropdownProjectIds = useMemo(
+    () =>
+      state.tabs
+        .filter((tab): tab is Extract<WorkspaceChromeTab, { kind: 'project' }> =>
+          tab.kind === 'project')
+        .map((tab) => tab.projectId),
+    [state.tabs],
+  );
+  const runStatusByProjectId = useProjectRunStatuses(dropdownProjectIds, {
+    enabled: dockMenuOpen,
+    workspaceContext,
+  });
+
   // Project-route dock (workspaceTabsDock.ts): when ProjectView registers a
   // dock element at the top of the chat column, the strip portals there and
   // the full-width chrome row collapses (`is-docked` + the :has() row rule in
@@ -855,6 +910,131 @@ export function WorkspaceTabsBar({
   useEffect(() => {
     if (!tabsDockEl) setDockMenuOpen(false);
   }, [tabsDockEl]);
+
+  // Hovered row in the dock dropdown — the one the preview panel is showing.
+  // A row only claims it after a short dwell: sweeping the pointer down the
+  // list would otherwise mount (and abandon) one sandboxed cover frame per row
+  // it crossed, which is exactly the flood the thumbnail load gate exists to
+  // prevent. Leaving the menu clears it, so at most one preview is ever live.
+  const [previewTabId, setPreviewTabId] = useState<string | null>(null);
+  const previewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cancelPreviewTimer = useCallback(() => {
+    if (previewTimerRef.current === null) return;
+    clearTimeout(previewTimerRef.current);
+    previewTimerRef.current = null;
+  }, []);
+  const queuePreview = useCallback((tabId: string) => {
+    cancelPreviewTimer();
+    previewTimerRef.current = setTimeout(() => {
+      previewTimerRef.current = null;
+      setPreviewTabId(tabId);
+    }, PREVIEW_HOVER_DELAY_MS);
+  }, [cancelPreviewTimer]);
+  const clearPreview = useCallback(() => {
+    cancelPreviewTimer();
+    setPreviewTabId(null);
+  }, [cancelPreviewTimer]);
+  // Closing the menu (or unmounting) must not leave a queued preview to fire
+  // into a menu that is gone.
+  useEffect(() => {
+    if (!dockMenuOpen) clearPreview();
+  }, [dockMenuOpen, clearPreview]);
+  useEffect(() => cancelPreviewTimer, [cancelPreviewTimer]);
+
+  // Cover art per project, resolved lazily for whichever row is being
+  // previewed. `Project.metadata.entryFile` is empty for most projects — it is
+  // only stamped by some creation paths — so reading metadata alone previews
+  // almost everything as the fallback letter. The real cover comes from the
+  // project's file list, which is exactly what the project cards do (see
+  // RecentProjectsStrip's cover queue). Those cards need a queue because a
+  // grid resolves a hundred at once; here it is one project, gated behind a
+  // hover dwell, so a single fetch per project is enough.
+  //
+  // Cached per project id for the session: `undefined` = never asked,
+  // `null` = asked and this project has no cover (don't ask again).
+  const [previewCoverByProject, setPreviewCoverByProject] = useState<
+    Record<string, ProjectCoverOverride | null>
+  >({});
+  // The scan effect reads these through refs and keys ONLY on the hovered
+  // project id. `workspaceContext` is a fresh object on most parent renders and
+  // `projectById`/the cache change as results land, so listing any of them as a
+  // dependency re-ran the effect mid-flight — and its cleanup aborted the very
+  // fetch it had just started, forever. (Symptom: every preview stuck on the
+  // fallback letter, with no error anywhere.)
+  const previewCoverRef = useRef(previewCoverByProject);
+  previewCoverRef.current = previewCoverByProject;
+  const projectByIdRef = useRef(projectById);
+  projectByIdRef.current = projectById;
+  const workspaceContextRef = useRef(workspaceContext);
+  workspaceContextRef.current = workspaceContext;
+  // Where the portaled preview parks. The panel CANNOT live inside the
+  // dropdown: the dropdown is in the chat column, and the column's stacking
+  // context sits under the canvas pane beside it — a panel placed to the right
+  // rendered correctly, reported a sane rect, and was painted over by the
+  // canvas. So it portals to <body> and positions itself off the menu's rect.
+  const dockMenuRef = useRef<HTMLDivElement | null>(null);
+  const [previewAnchor, setPreviewAnchor] = useState<{ top: number; left: number } | null>(null);
+  const previewProjectId =
+    previewTabId
+      ? (() => {
+          const tab = state.tabs.find((entry) => entry.id === previewTabId);
+          return tab && tab.kind === 'project' ? tab.projectId : null;
+        })()
+      : null;
+  useEffect(() => {
+    if (previewProjectId === null) return;
+    if (previewProjectId in previewCoverRef.current) return;
+    const project = projectByIdRef.current.get(previewProjectId);
+    if (!project) return;
+    // A project whose metadata already names an entry file needs no scan —
+    // `projectCover` reads it directly, same as the cards do.
+    if (project.metadata?.entryFile) return;
+    const controller = new AbortController();
+    void (async () => {
+      let files;
+      try {
+        files = await fetchProjectFiles(previewProjectId, {
+          signal: controller.signal,
+          workspaceContext: workspaceContextRef.current,
+        });
+      } catch {
+        // Transient (abort / offline): leave it unrecorded so hovering again
+        // retries rather than caching a wrong "no cover".
+        return;
+      }
+      if (controller.signal.aborted) return;
+      const cover = selectProjectFileCover(files);
+      setPreviewCoverByProject((current) =>
+        previewProjectId in current ? current : { ...current, [previewProjectId]: cover },
+      );
+    })();
+    return () => controller.abort();
+  }, [previewProjectId]);
+  useLayoutEffect(() => {
+    if (!dockMenuOpen || previewTabId === null) {
+      setPreviewAnchor(null);
+      return;
+    }
+    const menu = dockMenuRef.current;
+    if (!menu) return;
+    const rect = menu.getBoundingClientRect();
+    // Right of the menu by default; flip to its left when the window has no
+    // room there (narrow window, or the chat column docked on the right).
+    const right = rect.right + PREVIEW_GAP_PX;
+    const fits = right + PREVIEW_WIDTH_PX + PREVIEW_GAP_PX <= window.innerWidth;
+    setPreviewAnchor({
+      top: rect.top,
+      left: fits ? right : Math.max(PREVIEW_GAP_PX, rect.left - PREVIEW_GAP_PX - PREVIEW_WIDTH_PX),
+    });
+  }, [dockMenuOpen, previewTabId]);
+
+  // Full-page settings borrows CHAT's chrome row: a lone Home logo at the left
+  // edge, no search / rail toggle. App swaps EntryShell out for the settings
+  // surface on this route, so the rail those two controls drive isn't mounted —
+  // the toggle collapses nothing and the ⌘K search (an EntryShell listener)
+  // never hears the event. The strip stays undocked here, so the row is the
+  // docked layout minus the dock: same button, same x, nothing else.
+  const settingsPageChrome = route.kind === 'home' && route.view === 'settings';
 
   // Refresh the fallback cache from whatever this fetch actually returned,
   // before `displayTabFor` below reads it — same render pass, so a tab
@@ -1622,6 +1802,27 @@ export function WorkspaceTabsBar({
     const projectTabs = state.tabs
       .filter((tab) => tab.kind !== 'entry')
       .sort((a, b) => mruRank(a) - mruRank(b));
+    // The hovered row's project, if the ambient list actually carries it. A tab
+    // can name a project this list has not loaded (deep link, other workspace);
+    // that row simply previews nothing rather than showing an empty frame.
+    const previewTab = previewTabId
+      ? projectTabs.find((tab) => tab.id === previewTabId)
+      : undefined;
+    const previewProject =
+      previewTab && previewTab.kind === 'project'
+        ? projectById.get(previewTab.projectId) ?? null
+        : null;
+    const previewCoverArt = previewProject
+      ? projectCover(
+          previewProject,
+          previewCoverByProject[previewProject.id] ?? null,
+          workspaceContext,
+        )
+      : null;
+    const previewTitle = previewTab
+      ? (displayTabById.get(previewTab.id)
+          ?? displayTabFor(previewTab, projectById, t, knownProjectNamesRef.current)).title
+      : '';
     return (
       <div className="workspace-tabs-dropdown" data-testid="workspace-tabs-dropdown">
         <button
@@ -1635,7 +1836,10 @@ export function WorkspaceTabsBar({
           <span className="workspace-tabs-dropdown__icon" aria-hidden>
             <Icon name={isEntryActive ? 'home' : activeDisplay.icon} size={14} />
           </span>
-          <span className="workspace-tabs-dropdown__label">{activeDisplay.title}</span>
+          <MarqueeLabel
+            className="workspace-tabs-dropdown__label"
+            text={activeDisplay.title}
+          />
           <Icon name="chevron-down" size={14} />
         </button>
         {dockMenuOpen ? (
@@ -1644,7 +1848,12 @@ export function WorkspaceTabsBar({
               className="workspace-tabs-dropdown__backdrop"
               onClick={() => setDockMenuOpen(false)}
             />
-            <div className="workspace-tabs-dropdown__menu" role="listbox">
+            <div
+              ref={dockMenuRef}
+              className="workspace-tabs-dropdown__menu"
+              role="listbox"
+              onMouseLeave={clearPreview}
+            >
               {projectTabs.map((tab) => {
                 const display =
                   displayTabById.get(tab.id)
@@ -1664,15 +1873,66 @@ export function WorkspaceTabsBar({
                         setDockMenuOpen(false);
                         openTab(tab);
                       }}
+                      /* Focus previews too, so the panel is not mouse-only:
+                         arrowing/tabbing the list shows the same picture. */
+                      onMouseEnter={() => queuePreview(tab.id)}
+                      onFocus={() => setPreviewTabId(tab.id)}
                     >
-                      <Icon name={display.icon} size={14} />
-                      <span className="workspace-tabs-dropdown__row-label">{display.title}</span>
-                      {active ? <Icon name="check" size={14} /> : null}
+                      {/* Always up: every row fills the slot now — a run
+                          status when there is one, the folder icon otherwise —
+                          so the column can't half-exist and names stay on one
+                          shared left edge. */}
+                      <span className="workspace-tabs-dropdown__row-lead">
+                        {leadGlyphFor(tab, display, runStatusByProjectId, t)}
+                      </span>
+                      <MarqueeLabel
+                        className="workspace-tabs-dropdown__row-label"
+                        text={display.title}
+                      />
+                      {active ? (
+                        <Icon name="check" size={14} className="workspace-tabs-dropdown__row-check" />
+                      ) : null}
                     </button>
                   </div>
                 );
               })}
             </div>
+            {/* Preview of the hovered row, parked beside the menu — the chat
+                column is narrow and everything to its right is canvas, so the
+                panel has room there and never covers the list it describes.
+                Purely informational: it is `aria-hidden` and takes no pointer
+                events, so it can't sit between the pointer and a row. */}
+            {previewProject && previewCoverArt && previewAnchor
+              ? createPortal(
+              <div
+                className="workspace-tabs-dropdown__preview"
+                data-testid="workspace-tabs-dropdown-preview"
+                style={{ top: previewAnchor.top, left: previewAnchor.left }}
+                aria-hidden
+              >
+                <div
+                  className="workspace-tabs-dropdown__preview-art"
+                  style={previewCoverArt.style}
+                >
+                  <ProjectCoverMedia
+                    /* Keyed by project so switching rows remounts the cover
+                       instead of pointing a live frame at a new document —
+                       an <iframe> that swaps `src` keeps the old page painted
+                       until the next one loads. */
+                    key={previewProject.id}
+                    cover={previewCoverArt}
+                    project={previewProject}
+                    workspaceContext={workspaceContext}
+                    ungated
+                  />
+                </div>
+                <span className="workspace-tabs-dropdown__preview-name">
+                  {previewTitle}
+                </span>
+              </div>,
+              document.body,
+            )
+              : null}
           </>
         ) : null}
       </div>
@@ -1685,13 +1945,14 @@ export function WorkspaceTabsBar({
       aria-label="Workspace tabs"
     >
       <div className="app-chrome-traffic-space workspace-tabs-traffic" aria-hidden />
-      {/* Docked mode: the chrome row keeps only the brand-logo button (the
+      {/* Docked mode (chat) — and the full-page settings route, which reuses
+          this exact row: the chrome row keeps only the brand-logo button (the
           floating account cluster rides fixed at the window's top-right on
           its own); the strip renders in the chat column's dock, level with
           the workspace 设计文件 row. The strip's own pinned entry tab hides
           inside the dock (CSS) — this button is its chrome-row stand-in.
-          In chat the logo means 回到首页. */}
-      {tabsDockEl && state.tabs[0] ? (
+          In chat and in settings alike the logo means 回到首页. */}
+      {(tabsDockEl || settingsPageChrome) && state.tabs[0] ? (
         <button
           type="button"
           className="workspace-tabs-home-chrome od-tooltip"
@@ -1773,8 +2034,9 @@ export function WorkspaceTabsBar({
                   className={`workspace-tab__rail-toggle od-tooltip${entryRailOpen ? ' is-inert' : ''}`}
                   aria-label={entryRailOpen ? t('entry.navHome') : t('entry.navExpand')}
                   aria-expanded={entryRailOpen}
-                  title={entryRailOpen ? undefined : t('entry.navExpand')}
-                  data-tooltip={entryRailOpen ? undefined : t('entry.navExpand')}
+                  title={entryRailOpen ? undefined : expandHint}
+                  data-tooltip={entryRailOpen ? undefined : expandHint}
+                  aria-keyshortcuts={isMacPlatform() ? 'Meta+B' : 'Control+B'}
                   data-tooltip-placement="bottom"
                   data-testid="workspace-home-rail-toggle"
                   onClick={(event) => {
@@ -1855,6 +2117,70 @@ export function WorkspaceTabsBar({
             </div>
           );
         })}
+        {/* Search + the rail toggle, moved out of the rail and up into the
+            chrome row (per product). They are this row's only controls now —
+            the Home logo is gone from it (per product: 顶部去掉 home icon,
+            只有 chat 里才显示), so the toggle owns BOTH directions: it stays
+            rendered while the rail is collapsed, where the logo used to be the
+            expand control. Only the undocked (entry) chrome shows them, and
+            only on routes that actually mount EntryShell — in chat the strip
+            lives in the column dock and there is no entry rail to toggle, and
+            full-page settings replaces the rail outright (settingsPageChrome).
+            Both targets live in EntryShell's tree, so the clicks travel as
+            window events (see entryRailBridge). The classes are the rail's own,
+            so the controls keep their look. */}
+        {!tabsDockEl && !settingsPageChrome ? (
+          <div className="entry-nav-rail__search-row workspace-tabs-rail-actions">
+            <button
+              type="button"
+              className="entry-nav-rail__search od-tooltip"
+              aria-label={t('common.search')}
+              aria-keyshortcuts={isMacPlatform() ? 'Meta+K' : 'Control+K'}
+              /* The rail revealed ⌘K by widening the control on hover; here the
+                 toggle sits right beside it and would get shoved sideways, so
+                 the shortcut rides the hover bubble instead — same as the
+                 toggle's own 收起侧栏 ⌘B. */
+              title={searchHint}
+              data-tooltip={searchHint}
+              data-tooltip-placement="bottom"
+              data-testid="entry-nav-search"
+              onClick={() => {
+                const activeTab = state.tabs.find((tab) => tab.id === state.activeTabId);
+                trackEntryNavigationClick(analytics.track, {
+                  // Same event the control fired from inside the rail; only
+                  // `entry_from` is dropped, since neither of its two values
+                  // (sidebar / workspace_switcher) describes the chrome row.
+                  page_name:
+                    activeTab?.kind === 'entry' ? entryViewToTracking(activeTab.view) : 'project',
+                  area: 'entry_nav',
+                  element: 'search',
+                  target: 'search',
+                });
+                window.dispatchEvent(new CustomEvent(ENTRY_SEARCH_OPEN_EVENT));
+              }}
+            >
+              <Icon name="search" size={16} />
+            </button>
+            <button
+              type="button"
+              className="entry-nav-rail__collapse od-tooltip"
+              aria-label={entryRailOpen ? t('entry.navCollapse') : t('entry.navExpand')}
+              aria-expanded={entryRailOpen}
+              aria-keyshortcuts={isMacPlatform() ? 'Meta+B' : 'Control+B'}
+              title={entryRailOpen ? collapseHint : expandHint}
+              data-tooltip={entryRailOpen ? collapseHint : expandHint}
+              data-tooltip-placement="bottom"
+              data-testid="entry-rail-collapse"
+              onClick={() => {
+                window.dispatchEvent(new CustomEvent(ENTRY_RAIL_TOGGLE_EVENT));
+              }}
+            >
+              {/* The bar sits on the side the rail is on while it is open, and
+                  flips out of the frame once it is collapsed. */}
+              <Icon name={entryRailOpen ? 'layout-left' : 'layout-right'} size={16} />
+            </button>
+          </div>
+        ) : null}
         {/* #5517 drops the top-right "+"; new tab stays reachable through
             ⌘/Ctrl+T. That "+" was the ONLY caller of openRadialMenu, so the
             radial template menu below is now unreachable — its state and
@@ -1929,6 +2255,34 @@ export function WorkspaceTabsBar({
         document.body,
       ) : null}
     </header>
+  );
+}
+
+/**
+ * The glyph leading one dropdown row.
+ *
+ * A project row with something to report shows its run status; every other row
+ * — nothing running, a status that draws nothing (not_started / canceled), a
+ * status that has not arrived yet, or a non-project tab like the plugin
+ * marketplace — leads with the row's own icon, the folder (per product: 空的
+ *那个位置放文件夹 icon). The slot is therefore never empty, and the column
+ * never has to decide whether to exist.
+ *
+ * Unknown is deliberately treated as "nothing to report" rather than guessed
+ * at: a guess would flash the wrong status glyph on every open.
+ */
+function leadGlyphFor(
+  tab: WorkspaceChromeTab,
+  display: DisplayTab,
+  runStatusByProjectId: ReadonlyMap<string, ProjectDisplayStatus>,
+  t: ReturnType<typeof useT>,
+): ReactNode {
+  const status = tab.kind === 'project' ? runStatusByProjectId.get(tab.projectId) : undefined;
+  if (!status || !hasRunStatusGlyph(status)) {
+    return <Icon name={display.icon} size={14} />;
+  }
+  return (
+    <ProjectRunStatusIcon status={status} size={14} label={t(STATUS_LABEL_KEYS[status])} />
   );
 }
 

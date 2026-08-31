@@ -260,7 +260,7 @@
 }
 .df-batch-count {
   font-size: 12.5px;
-  font-weight: 500;
+  font-weight: 600;
   color: var(--text-strong);
 }
 .df-batch-actions {
@@ -316,7 +316,7 @@
   padding: 6px 14px;
   border-radius: var(--radius-pill, 999px);
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 600;
   color: var(--text-muted);
   transition: color 120ms cubic-bezier(0.23, 1, 0.32, 1), background 120ms cubic-bezier(0.23, 1, 0.32, 1);
 }
@@ -335,7 +335,7 @@
 }
 .df-tab-count {
   color: var(--text-faint);
-  font-weight: 500;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 .df-tab.active .df-tab-count {
@@ -357,7 +357,7 @@
 .df-section-count {
   margin-left: 8px;
   color: var(--text-faint);
-  font-weight: 500;
+  font-weight: 600;
   letter-spacing: 0;
 }
 .df-file-row {
@@ -577,7 +577,7 @@
 }
 .df-row-name {
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 600;
   color: var(--text);
   white-space: nowrap;
   overflow: hidden;
@@ -693,16 +693,18 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 48px 24px;
   color: var(--text-muted);
   font-size: 13px;
   min-height: 320px;
-  /* Plain pure-white surface — grid pattern removed. */
+  /* Plain pure-white surface — the particle field paints on top of it. */
   background-color: #fff;
+  /* Hosts the empty state's absolutely-positioned particle canvas. */
+  position: relative;
+  overflow: hidden;
 }
 .df-empty-pill {
-  /* Chrome-less: the illustration / title / actions sit directly on the
-     empty-state surface — no card border, fill, or shadow around them. */
+  /* Chrome-less: the badge and its sentence sit directly on the empty-state
+     surface — no card border, fill, or shadow around them. */
   display: inline-flex;
   flex-direction: column;
   align-items: center;
@@ -711,115 +713,20 @@
   max-width: min(560px, 92%);
   text-align: center;
 }
-/* Fanned deck of blank ghost cards above the title — suggests "your generated
-   designs will fan out here". Three cards spread from a shared bottom pivot. */
-.df-empty-stack {
-  position: relative;
-  width: 148px;
-  height: 96px;
-  margin-bottom: 2px;
-}
-.df-empty-stack-card {
-  position: absolute;
-  bottom: 0;
-  left: 50%;
-  width: 70px;
-  height: 88px;
-  margin-left: -35px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 12px;
-  /* Borderless white cards — the shadow alone lifts the fan off the page.
-     Each card carries its CTA's icon (pencil / globe / blocks) instead of
-     skeleton shapes; the icon takes the CTA's accent on the paired hover. */
-  border: 0;
-  background: var(--bg-app, #fff);
-  box-shadow: 0 6px 16px -9px rgba(15, 15, 15, 0.28);
-  color: var(--text-faint);
-  transform-origin: bottom center;
-  transition:
-    transform 280ms cubic-bezier(0.23, 1, 0.32, 1),
-    box-shadow 280ms cubic-bezier(0.23, 1, 0.32, 1);
-}
-.df-empty-stack-card .od-icon {
-  transition: color 280ms cubic-bezier(0.23, 1, 0.32, 1);
-}
-.df-empty-stack-card--left {
-  transform: translateX(-30px) rotate(-13deg);
-  z-index: 1;
-}
-.df-empty-stack-card--right {
-  transform: translateX(30px) rotate(13deg);
-  z-index: 1;
-}
-.df-empty-stack-card--front {
-  transform: rotate(0deg);
-  z-index: 2;
-  box-shadow: 0 10px 22px -10px rgba(15, 15, 15, 0.3);
-}
-/* Hover a single card → only THAT card enlarges and pops to the front. Each
-   keeps its own fan offset/rotation (so it grows in place instead of jumping
-   to center), just scaled up with a stronger shadow. */
-.df-empty-stack-card--left:hover {
-  transform: translateX(-30px) rotate(-13deg) scale(1.12);
-  z-index: 3;
-  box-shadow: 0 16px 30px -12px rgba(15, 15, 15, 0.34);
-}
-.df-empty-stack-card--right:hover {
-  transform: translateX(30px) rotate(13deg) scale(1.12);
-  z-index: 3;
-  box-shadow: 0 16px 30px -12px rgba(15, 15, 15, 0.34);
-}
-.df-empty-stack-card--front:hover {
-  transform: rotate(0deg) scale(1.12);
-  z-index: 3;
-  box-shadow: 0 16px 30px -12px rgba(15, 15, 15, 0.34);
-}
-/* Hovering a CTA below pops its counterpart card in the fan — left / front /
-   right ↔ New sketch (red) / New Browser (green) / Create design system
-   (blue) — and its icon takes the CTA's accent. No border or wash: the pop +
-   icon color alone carry the pairing. */
-.df-empty-pill:has(.df-empty-cta-primary:hover:not(:disabled)) .df-empty-stack-card--left {
-  transform: translateX(-30px) rotate(-13deg) scale(1.12);
-  z-index: 3;
-  box-shadow: 0 16px 30px -12px rgba(15, 15, 15, 0.34);
-}
-.df-empty-pill:has(.df-empty-cta-secondary:hover:not(:disabled)) .df-empty-stack-card--front {
-  transform: rotate(0deg) scale(1.12);
-  z-index: 3;
-  box-shadow: 0 16px 30px -12px rgba(15, 15, 15, 0.34);
-}
-.df-empty-pill:has(.df-empty-cta-tertiary:hover:not(:disabled)) .df-empty-stack-card--right {
-  transform: translateX(30px) rotate(13deg) scale(1.12);
-  z-index: 3;
-  box-shadow: 0 16px 30px -12px rgba(15, 15, 15, 0.34);
-}
-.df-empty-pill:has(.df-empty-cta-primary:hover:not(:disabled)) .df-empty-stack-card--left .od-icon {
-  color: var(--red);
-}
-.df-empty-pill:has(.df-empty-cta-secondary:hover:not(:disabled)) .df-empty-stack-card--front .od-icon {
-  color: var(--green);
-}
-.df-empty-pill:has(.df-empty-cta-tertiary:hover:not(:disabled)) .df-empty-stack-card--right .od-icon {
-  color: var(--blue);
-}
-@media (prefers-reduced-motion: reduce) {
-  .df-empty-stack-card {
-    transition: none;
-  }
-}
 .df-empty-title {
   font-size: 16px;
   color: var(--text-strong);
-  font-weight: 500;
+  font-weight: 600;
   letter-spacing: -0.005em;
   line-height: 1.3;
 }
 /* A shared project whose local mirror hasn't caught up yet: a small row
    pairing the downloading badge with a "syncing" sentence, instead of the
-   illustrated empty state + create CTAs (which don't apply — content is on
-   its way, not absent). See DesignFilesPanel's `downloadPending` prop. */
+   particle-field empty state (which doesn't apply — content is on its way,
+   not absent). See DesignFilesPanel's `downloadPending` prop. */
+.df-empty-syncing {
+  padding: 48px 24px;
+}
 .df-empty-syncing .df-empty-pill {
   flex-direction: row;
   align-items: center;
@@ -827,101 +734,9 @@
 }
 .df-empty-syncing .df-empty-title {
   font-size: 13px;
-  font-weight: 400;
+  font-weight: 600;
   color: var(--text-muted);
 }
-.df-empty-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-}
-.df-empty-cta {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 7px 14px;
-  /* Hairline a step lighter than the default --border so the pills read
-     softly against the white panel. */
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius-pill);
-  background: var(--bg);
-  color: var(--text);
-  font: inherit;
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  flex-shrink: 0;
-  transition: background 120ms var(--ease-out), border-color 120ms var(--ease-out);
-}
-.df-empty-cta:disabled {
-  cursor: not-allowed;
-  opacity: 0.42;
-}
-.df-empty-cta-primary {
-  background: var(--bg);
-  border-color: var(--border-soft);
-  color: var(--text);
-}
-.df-empty-cta-secondary {
-  background: var(--bg);
-  border-color: var(--border-soft);
-  color: var(--text);
-}
-.df-empty-cta-tertiary {
-  background: var(--bg);
-  border-color: var(--border-soft);
-  color: var(--text);
-}
-/* Icon accents — the spec's semantic red / green / blue tokens (tokens.css),
-   one per action, in button order. Selector targets the Remix Icon <i>
-   (.od-icon) the Icon component actually renders — not svg. Text stays
-   neutral per the spec's neutral-button rule; tokens flip with the theme. */
-.df-empty-cta-primary .od-icon {
-  color: var(--red);
-}
-.df-empty-cta-secondary .od-icon {
-  color: var(--green);
-}
-.df-empty-cta-tertiary .od-icon {
-  color: var(--blue);
-}
-/* Moved-in doc / upload pills (from the top toolbar). No purple design token
-   exists (--purple resolves to ink gray), so the violet is a literal — the
-   same #8b5cf6 the community accents already use. */
-.df-empty-cta-doc .od-icon {
-  color: var(--green);
-}
-.df-empty-cta-upload .od-icon {
-  color: #8b5cf6;
-}
-/* Hover: only the pill's stroke takes the icon's color — the surface stays
-   white and the label stays neutral. */
-.df-empty-cta:hover:not(:disabled) {
-  background: var(--bg);
-  color: var(--text);
-}
-.df-empty-cta-primary:hover:not(:disabled) {
-  border-color: var(--red);
-}
-.df-empty-cta-secondary:hover:not(:disabled) {
-  border-color: var(--green);
-}
-.df-empty-cta-tertiary:hover:not(:disabled) {
-  border-color: var(--blue);
-}
-.df-empty-cta-doc:hover:not(:disabled) {
-  border-color: var(--green);
-}
-.df-empty-cta-upload:hover:not(:disabled) {
-  border-color: #8b5cf6;
-}
-.df-empty-cta:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
 /* Drag-to-upload: the whole panel is a drop target. While dragging files
    over the Design Files panel, an accent overlay invites the drop. */
 
@@ -1287,7 +1102,7 @@ button.df-card-thumb:focus:not(:disabled) {
 }
 .df-card-name {
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 600;
   color: var(--text);
   white-space: nowrap;
   overflow: hidden;

@@ -1128,6 +1128,7 @@ export interface Dict {
   'entry.discordAriaWithOnline': string;
   'entry.discordOnlineLabel': string;
   'entry.mailAria': string;
+  'entry.socialMail': string;
   'entry.accountSettings': string;
   'chat.collapsePane': string;
   'collabPresence.ariaOne': string;
@@ -1277,6 +1278,10 @@ export interface Dict {
   'messageCenter.emptyAllTitle': string;
   'messageCenter.emptyUnreadTitle': string;
   'messageCenter.emptyReadTitle': string;
+  'messageCenter.archive': string;
+  'messageCenter.unarchive': string;
+  'messageCenter.archivedTitle': string;
+  'messageCenter.emptyArchivedTitle': string;
   'messageCenter.emptyBody': string;
   'messageCenter.close': string;
   'messageCenter.desktopSettings': string;
@@ -1287,6 +1292,8 @@ export interface Dict {
 
   // Entry home
   'homeHero.title': string;
+  'homeHero.titleWords': string;
+  'homeHero.subtitle': string;
   'homeHero.startWithTemplate': string;
   'homeHero.startBlankProject': string;
   'homeHero.templatePicker.label': string;
@@ -1314,6 +1321,7 @@ export interface Dict {
   'homeHero.carousel.landingLayout': string;
   'homeHero.skills': string;
   'homeHero.addMenu': string;
+  'homeHero.uploadFiles': string;
   'homeHero.addPlugin': string;
   'homeHero.addConnectors': string;
   'homeHero.addMcp': string;
@@ -1329,6 +1337,8 @@ export interface Dict {
   'homeHero.clearActivePlugin': string;
   'homeHero.clearActiveSkill': string;
   'homeHero.contextItemsResolved': string;
+  'homeHero.attachmentsScrollPrev': string;
+  'homeHero.attachmentsScrollNext': string;
   'homeHero.removeFile': string;
   'homeHero.contextSearchResults': string;
   'homeHero.contextSurfaces': string;
@@ -1415,6 +1425,9 @@ export interface Dict {
   'homeWorkingDir.recent': string;
   'homeWorkingDir.recentEmpty': string;
   'homeWorkingDir.clear': string;
+  /** Why the working-directory menu's rows are inert while something is
+   *  already attached — the row holds one selection at a time. */
+  'homeWorkingDir.exclusiveHint': string;
   'homeWorkingDir.hint': string;
   'homeWorkingDir.missing': string;
   'homeWorkingDir.applyFailed': string;
@@ -1507,6 +1520,9 @@ export interface Dict {
   'recentProjects.sortNewest': string;
   'recentProjects.sortOldest': string;
   'recentProjects.sortName': string;
+  'recentProjects.collectionRecent': string;
+  'recentProjects.collectionPersonalProjects': string;
+  'recentProjects.collectionTeamProjects': string;
   'recentProjects.viewList': string;
   'recentProjects.sharedBadge': string;
   'recentProjects.sharedProjectFallbackName': string;

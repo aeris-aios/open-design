@@ -7,6 +7,7 @@ import {
   type CollabCluster,
 } from '@/playwright/collab-cluster';
 import { startFakeCollabHub } from '@/playwright/fake-collab-hub';
+import { pickHomeTemplate } from '@/playwright/home-hero';
 import { applyStandardMocks } from '@/playwright/mock-factory';
 import { ensureRailOpen } from '@/playwright/rail';
 import { expect, test } from '@/playwright/suite';
@@ -187,6 +188,9 @@ test('[P0] Team design systems catch up missed shares, updates, and retractions'
       () => hub.eventSubscriberCount(MEMBER.memberId),
       { timeout: T.long },
     ).toBeGreaterThan(0);
+    // The design-system pill sits beside the type pill in the composer's foot
+    // row, so it only exists once a type is picked.
+    await pickHomeTemplate(memberPage, 'prototype');
     await memberPage.getByTestId('home-hero-design-system-trigger').click();
     const picker = memberPage.getByTestId('project-ds-picker-popover');
     await expect(picker).toBeVisible();
@@ -215,6 +219,7 @@ test('[P0] Team design systems catch up missed shares, updates, and retractions'
     await expect(memberPage.getByTestId('workspace-switcher')).toContainText(
       'Design System Team',
     );
+    await pickHomeTemplate(memberPage, 'prototype');
     await expect(memberPage.getByTestId('home-hero-design-system-trigger')).toContainText(
       'Shared Product Language',
     );
@@ -392,6 +397,7 @@ test('[P0] Team design systems catch up missed shares, updates, and retractions'
     await expect(memberPage.getByTestId('workspace-switcher')).toContainText(
       `${MEMBER.name} workspace`,
     );
+    await pickHomeTemplate(memberPage, 'prototype');
     await memberPage.getByTestId('home-hero-design-system-trigger').click();
     const personalPicker = memberPage.getByTestId('project-ds-picker-popover');
     await expect(

@@ -77,9 +77,33 @@ interface CommunityViewProps {
     action: PluginUseAction,
     target: CommunityTemplateUseTarget,
   ) => void;
+  /** The output type the gallery is filtered to, reported on mount and on every
+   *  tab change. A shell that hosts a composer alongside this view (EntryShell's
+   *  docked one) binds it as the composer's create type, so 原型 in the tabs and
+   *  原型 in the composer are never out of step. `chipId`/`projectKind` are the
+   *  same pair a template's Use hands over. */
+  onActiveTypeChange?: (target: { chipId: string; projectKind: ProjectKind }) => void;
+  /** Raised whenever the gallery's tab selection changes — the type row AND the
+   *  category row. A shell hosting a composer under this view folds it back to
+   *  its collapsed default (per product: tab 之间的切换的时候这个输入框默认是收起
+   *  来的): the grid the bar sits over has become a different grid. Separate
+   *  from `onActiveTypeChange`, which is a binding and only tracks the type. */
+  onTabsChange?: () => void;
 }
 
-export function CommunityView({ onRemixTemplate, onUsePrompt, onUsePlugin }: CommunityViewProps) {
+/* Types whose artwork has no house format: user-shot photos, avatars, key art,
+   vertical clips. They lay out as an uncropped masonry instead of the shared
+   16:9 grid (per product: 图片和视频都用瀑布流). Everything else ships one
+   ratio and reads better as an even grid. */
+const MASONRY_TYPES = new Set<TemplateType>(['Image', 'Video']);
+
+export function CommunityView({
+  onRemixTemplate,
+  onUsePrompt,
+  onUsePlugin,
+  onActiveTypeChange,
+  onTabsChange,
+}: CommunityViewProps) {
   const { locale, t } = useI18n();
   const analytics = useAnalytics();
   const { context: workspaceContext } = useWorkspaceContext();
@@ -102,6 +126,28 @@ export function CommunityView({ onRemixTemplate, onUsePrompt, onUsePlugin }: Com
   const [detailsRecord, setDetailsRecord] = useState<InstalledPluginRecord | null>(null);
   const [activeType, setActiveType] = useState<TemplateType>('Slides');
   const [activeSubtype, setActiveSubtype] = useState('All');
+  // Mirror the picked type into whatever composer the host has on screen. Runs
+  // on mount too: this gallery is ALWAYS filtered to one type (unlike Home,
+  // which starts unbound), so the composer should open already carrying it.
+  useEffect(() => {
+    onActiveTypeChange?.(TEMPLATE_HOME_TARGET[activeType]);
+  }, [activeType, onActiveTypeChange]);
+  // Both rows, one signal. Keyed on the pair rather than folded into the effect
+  // above because a category change leaves the composer's TYPE alone — it is
+  // still a tab change to the person looking at the page.
+  useEffect(() => {
+    onTabsChange?.();
+  }, [activeType, activeSubtype, onTabsChange]);
+  // Header search starts collapsed as a round icon button and expands into a
+  // pill-shaped field on click. `searchOpen` only drives the affordance —
+  // the query keeps filtering while collapsed is impossible because a
+  // non-empty query holds the field open (see the blur handler below).
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
+  useEffect(() => {
+    if (searchOpen) searchInputRef.current?.focus();
+  }, [searchOpen]);
   // Remix (and the prompt-artifact copy path it shares) hands off to a
   // fire-and-forget parent callback (`onRemixTemplate`/`onUsePrompt` return
   // void) that kicks off a real POST /api/projects — nothing here observes
@@ -155,10 +201,18 @@ export function CommunityView({ onRemixTemplate, onUsePrompt, onUsePlugin }: Com
       .filter((template) => template.type === activeType && template.subtype)
       .map((template) => template.subtype),
   ));
+  // Search narrows WITHIN the active type/subtype tabs so the visible filter
+  // chips never lie about what the grid is showing.
+  const normalizedQuery = searchQuery.trim().toLowerCase();
   const filteredTemplates = templates.filter((template) => {
     const typeMatches = template.type === activeType;
     const subtypeMatches = activeSubtype === 'All' || template.subtype === activeSubtype;
-    return typeMatches && subtypeMatches;
+    if (!typeMatches || !subtypeMatches) return false;
+    if (!normalizedQuery) return true;
+    return [template.title, template.meta, template.subtype, ...template.tags]
+      .join(' ')
+      .toLowerCase()
+      .includes(normalizedQuery);
   });
   const templateScope = (templateId: string) => {
     const sourceKind = plugins.find((row) => row.id === templateId)?.sourceKind;
@@ -245,9 +299,43 @@ export function CommunityView({ onRemixTemplate, onUsePrompt, onUsePlugin }: Com
         <div>
           <h1 id="community-template-title" className="entry-section__title">{t('community.title')}</h1>
         </div>
-        <div className="community-template-view__search" role="search">
-          <Icon name="search" size={16} />
-          <input type="search" placeholder={t('community.searchPlaceholder')} aria-label={t('community.searchAria')} readOnly />
+        <div
+          className={`community-template-view__search${searchOpen ? ' is-open' : ''}`}
+          role="search"
+        >
+          <button
+            type="button"
+            className="community-template-view__search-toggle"
+            aria-label={t('community.searchAria')}
+            aria-expanded={searchOpen}
+            onClick={() => {
+              if (searchOpen) searchInputRef.current?.focus();
+              else setSearchOpen(true);
+            }}
+          >
+            <Icon name="search" size={16} aria-hidden />
+          </button>
+          <input
+            ref={searchInputRef}
+            type="search"
+            value={searchQuery}
+            placeholder={t('community.searchPlaceholder')}
+            aria-label={t('community.searchAria')}
+            aria-hidden={!searchOpen}
+            tabIndex={searchOpen ? 0 : -1}
+            onChange={(event) => setSearchQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key !== 'Escape') return;
+              event.stopPropagation();
+              setSearchQuery('');
+              setSearchOpen(false);
+            }}
+            // Collapse back to the circle only when the field is empty —
+            // clicking a card while a query is live must not wipe the filter.
+            onBlur={() => {
+              if (!searchQuery.trim()) setSearchOpen(false);
+            }}
+          />
         </div>
       </header>
 
@@ -322,22 +410,37 @@ export function CommunityView({ onRemixTemplate, onUsePrompt, onUsePlugin }: Com
       </div>
       </div>
 
-      <div className="community-template-grid">
+      {/* The layout is per-type: the two media tabs break out of the shared
+          16:9 grid into an uncropped masonry (see plugin-marketplace-demo.css).
+          The flag, not the type name, is what the stylesheet keys on — which
+          types qualify is a product call and belongs here, next to the tab
+          state, rather than spread across a dozen selectors. */}
+      <div
+        className="community-template-grid"
+        data-layout={MASONRY_TYPES.has(activeType) ? 'masonry' : undefined}
+      >
         {filteredTemplates.map((template) => (
           <article
             key={template.id}
             className="community-template-card is-clickable"
+            /* The caption names the template now, so the tile no longer prints
+               its type anywhere — this keeps that fact assertable (a tab may
+               only grid cards of its own type). */
+            data-template-type={template.type}
             onClick={() => openTemplateDetails(template)}
           >
-            <div
-              className="community-template-card__preview"
-              style={{ '--template-accent': template.accent } as CSSProperties}
-              aria-hidden
-            >
-              <TemplateThumb template={template} />
-            </div>
-            <footer className="community-template-card__foot">
-              <span>{template.meta}</span>
+            {/* The plate owns the actions' positioning context: they overlay
+                the thumbnail (per product: 按钮的位置在卡片上) but must stay
+                OUTSIDE the `aria-hidden` preview, or assistive tech loses two
+                real controls. */}
+            <div className="community-template-card__plate">
+              <div
+                className="community-template-card__preview"
+                style={{ '--template-accent': template.accent } as CSSProperties}
+                aria-hidden
+              >
+                <TemplateThumb template={template} />
+              </div>
               <div className="community-template-card__actions">
                 <button
                   type="button"
@@ -347,7 +450,22 @@ export function CommunityView({ onRemixTemplate, onUsePrompt, onUsePlugin }: Com
                     handleTemplateAction(template);
                   }}
                 >
-                  {remixingId === template.id ? t('common.loading') : templateActionLabel(template)}
+                  {remixingId === template.id ? (
+                    t('common.loading')
+                  ) : (
+                    <>
+                      {/* Icon leads the label on both pills (per product). It
+                          is decorative — the label already names the action —
+                          so `Icon` renders it aria-hidden. The glyph follows
+                          the label: this button says Copy prompt for a prompt
+                          artifact and Remix for everything else
+                          (`templateActionLabel`), and a remix loop over "Copy
+                          prompt" named the wrong action. `copy` resolves to
+                          Remix's `file-copy-line`. */}
+                      <Icon name={isPromptArtifact(template) ? 'copy' : 'remix-loop'} size={14} />
+                      {templateActionLabel(template)}
+                    </>
+                  )}
                 </button>
                 <button
                   type="button"
@@ -366,13 +484,28 @@ export function CommunityView({ onRemixTemplate, onUsePrompt, onUsePlugin }: Com
                     onUsePrompt?.(templateUseTarget(template));
                   }}
                 >
+                  <Icon name="make-same" size={14} />
                   {t('community.usePrompt')}
                 </button>
               </div>
+            </div>
+            <footer className="community-template-card__foot">
+              <span className="community-template-card__title">{template.title}</span>
             </footer>
           </article>
         ))}
       </div>
+      {normalizedQuery && filteredTemplates.length === 0 ? (
+        <div className="community-template-view__no-results">
+          <p>{t('homeHero.noResults', { query: searchQuery.trim() })}</p>
+          <img
+            className="community-template-view__no-results-mark"
+            src="/community-empty-mark.svg"
+            alt=""
+            aria-hidden
+          />
+        </div>
+      ) : null}
       {detailsRecord ? (
         <PluginDetailsModal
           record={detailsRecord}

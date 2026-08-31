@@ -4206,7 +4206,13 @@ export function SettingsDialog({
             title / subtitle / pet teaser) keeps its centred reading
             measure, and the close button always lands at the same
             optical location regardless of how much copy the header
-            renders. */}
+            renders.
+
+            The full-page presentation hides the buttons (it closes via
+            返回首页) and CSS re-anchors the lone autosave pill to the app's
+            top chrome row — `position: fixed`, but still rendered here, so
+            everything scoped to `.modal-settings` keeps reaching the save
+            state. */}
         <div className="settings-chrome" aria-hidden={false}>
           {/* Autosave status pill. Only renders something while a save
               is in flight or has just completed — idle = invisible so

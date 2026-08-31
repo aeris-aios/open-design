@@ -144,7 +144,7 @@ export function PluginScenarioDetail({
             />
           ) : null}
 
-          <PluginMetaSections record={record} />
+          <PluginMetaSections record={record} variant="identity" />
         </div>
 
         <footer className="plugin-details-modal__foot">

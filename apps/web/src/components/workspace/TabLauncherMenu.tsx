@@ -270,6 +270,7 @@ export function TabLauncherMenu({
                   <button
                     type="button"
                     className={styles.row}
+                    data-testid={`tab-launcher-action-${action.id}`}
                     onClick={() => runLauncherAction(action)}
                   >
                     <span

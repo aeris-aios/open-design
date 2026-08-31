@@ -1,4 +1,5 @@
 import { AgentIcon } from './AgentIcon';
+import { ChatComposer } from './ChatComposer';
 import { Icon } from './Icon';
 import { useI18n } from '../i18n';
 import { agentDisplayName, agentIconId } from '../utils/agentLabels';
@@ -11,6 +12,15 @@ interface Props {
   agentId?: string | null;
   onBack: () => void;
 }
+
+const ensureNoPendingProject = () => Promise.resolve(null);
+const ignorePendingComposerAction = () => undefined;
+const makePendingComposerInert = (node: HTMLDivElement | null) => {
+  // React 18's DOM runtime drops the boolean `inert` attribute even though
+  // current React typings expose it. Set the standards-based attribute on the
+  // node so keyboard focus is blocked as well as pointer interaction.
+  node?.setAttribute('inert', '');
+};
 
 /**
  * Immediate, read-free handoff shown while POST /api/projects is still
@@ -80,6 +90,24 @@ export function ProjectCreationPendingView({
                   </div>
                 </div>
               </div>
+            </div>
+            <div
+              className={`chat-composer-slot ${styles.pendingComposer}`}
+              data-testid="pending-chat-composer-shell"
+              ref={makePendingComposerInert}
+              aria-disabled="true"
+            >
+              <ChatComposer
+                projectId={null}
+                projectFiles={[]}
+                streaming={false}
+                sendDisabled
+                inputDisabled
+                composerPlaceholder={t('chat.composerPlaceholder')}
+                onEnsureProject={ensureNoPendingProject}
+                onSend={ignorePendingComposerAction}
+                onStop={ignorePendingComposerAction}
+              />
             </div>
           </div>
         </div>

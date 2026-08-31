@@ -32,8 +32,6 @@ import { localizePluginDescription, localizePluginTitle } from './plugins-home/l
 import { useAnalytics } from '../analytics/provider';
 import { trackPluginDetailClick } from '../analytics/events';
 import { Icon } from './Icon';
-import { PluginMetaSections } from './plugin-details/PluginMetaSections';
-import { buildPluginInstallCommand } from './plugin-details/PluginShareMenu';
 import { localizePluginChrome } from '../i18n/plugin-content';
 import { derivePluginSourceLinks } from '../runtime/plugin-source';
 import {
@@ -473,25 +471,12 @@ export function PluginDetailView(props: Props) {
         </DetailSection>
       ) : null}
 
-      <section className="plugin-suite-detail__section plugin-suite-detail__advanced">
-        <details
-          className="plugin-meta-sections__advanced"
-          data-testid="plugin-meta-advanced"
-        >
-          <summary className="plugin-meta-sections__advanced-summary">
-            {localizePluginChrome(locale, 'developerDetails')}
-          </summary>
-          <div>
-            <div className="plugins-view__install-command">
-              <code>{buildPluginInstallCommand(plugin)}</code>
-            </div>
-            <PluginMetaSections
-              record={plugin}
-              omit={{ byline: true, description: true, query: true }}
-            />
-          </div>
-        </details>
-      </section>
+      {/* The 开发者详情 disclosure is gone (per product: 所有的开发者详情的
+          信息都去掉). It held the manifest inspector — inputs, context
+          bundles, workflow, GenUI, connectors, capabilities, provenance —
+          plus the install command; the command is still one click away in
+          the 分享 menu (`copyPluginShareText(buildPluginInstallCommand…)`),
+          so nothing here was the only route to it. */}
 
       <footer className="plugin-suite-detail__section">
         <Button

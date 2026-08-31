@@ -137,7 +137,7 @@ function drawnTier(slot: Element | null | undefined): PlanBadgeTier | 'unrecogni
  * unchanged; only the one surface that draws it moved.
  */
 function nameplateTier() {
-  fireEvent.click(screen.getByTestId('entry-nav-account'));
+  fireEvent.pointerEnter(screen.getByTestId('entry-top-right-credits'));
   return drawnTier(document.querySelector('.entry-nav-rail__menu-credits'));
 }
 

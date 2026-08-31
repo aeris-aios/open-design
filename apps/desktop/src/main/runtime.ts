@@ -33,7 +33,11 @@ import { openFirstPartyMailto } from "./mailto-open.js";
 import { openValidatedDirectory } from "./open-path.js";
 import { exportArtifact as exportArtifactFromHtml } from "./artifact-export.js";
 import { createElectronPdfTarget, exportPdfFromHtml, savePrintReadyDocumentAsPdf } from "./pdf-export.js";
-import { SPLASH_VIDEO_DATA_URL } from "./splash-video.js";
+import {
+  SPLASH_PIXEL_SCAN_MARKUP,
+  SPLASH_PIXEL_SCAN_STYLE,
+  splashPixelScanScript,
+} from "./splash-pixel-scan.js";
 import { RendererCrashLoopBreaker } from "./renderer-crash-loop.js";
 import type { PrintReadyPdfOptions } from "./pdf-export.js";
 import type { DesktopUpdater } from "./updater.js";
@@ -785,6 +789,15 @@ const MAC_WINDOW_CHROME_CSS = `
     --app-chrome-traffic-space: 10px !important;
     --app-chrome-traffic-margin: 0px !important;
   }
+  /* The workspace tab strip carries its own 10px edge inset — the SAME inset
+     the nav-rail card below it uses, which is what puts the Home pill's glyph
+     on the rail's 首页 axis. In fullscreen there are no traffic lights to
+     clear, so a spacer here double-counts that inset and slides the pill (and
+     only the pill) 10px right of the icon column. Zero it for this header;
+     the windowed rule above still clears the lights. */
+  html.is-window-fullscreen .workspace-tabs-chrome.app-chrome-header {
+    --app-chrome-traffic-space: 0px !important;
+  }
   .app-chrome-traffic-space {
     flex: 0 0 var(--app-chrome-traffic-space) !important;
     width: var(--app-chrome-traffic-space) !important;
@@ -895,10 +908,12 @@ const MAC_WINDOW_CHROME_CSS = `
   }
 `;
 
-// Light-background startup splash shown while the web runtime boots. It plays
-// the brand intro clip once and then holds on its final settled logo frame until
-// the main window is ready. The clip is embedded as a base64 data URL so it
-// renders identically in dev and in packaged builds (see `splash-video.ts`).
+// Light-background startup splash shown while the web runtime boots. It runs the
+// Home hero's pixel-scan wordmark — the same shader, ported to plain WebGL and
+// inlined (logo art included) because the splash is up before any HTTP origin
+// exists (see `splash-pixel-scan.ts`). The sweep LOOPS: boots vary from two
+// seconds to a cold minute, and a clip that plays once leaves the rest of that
+// wait on a frozen frame.
 function createPendingHtml(): string {
   const start = splashStagePayload("starting");
   const initialPct = Math.max(0, Math.min(100, Math.round((start.step / start.total) * 100)));
@@ -920,13 +935,7 @@ function createPendingHtml(): string {
         display: flex;
         justify-content: center;
       }
-      video {
-        background: #f2f4f5;
-        height: auto;
-        max-height: 100%;
-        max-width: 100%;
-        width: auto;
-      }
+${SPLASH_PIXEL_SCAN_STYLE}
       .boot-stage {
         bottom: 56px;
         color: #7a838a;
@@ -979,14 +988,7 @@ function createPendingHtml(): string {
     </style>
   </head>
   <body>
-    <video
-      id="splash"
-      autoplay
-      muted
-      playsinline
-      disablepictureinpicture
-      src="${SPLASH_VIDEO_DATA_URL}"
-    ></video>
+${SPLASH_PIXEL_SCAN_MARKUP}
     <div class="boot-progress" aria-hidden="true">
       <div class="boot-progress-fill" id="boot-progress-fill" data-pct="${initialPct}" style="width: ${initialPct}%;"></div>
     </div>
@@ -994,17 +996,7 @@ function createPendingHtml(): string {
       <span class="boot-stage-step" id="boot-stage-step">${start.step}/${start.total}</span><span id="boot-stage-text">${start.label}</span><span class="boot-dots" aria-hidden="true"><span class="dot">.</span><span class="dot">.</span><span class="dot">.</span></span>
     </div>
     <script>
-      (function () {
-        var video = document.getElementById("splash");
-        if (!video) return;
-        var play = function () {
-          var attempt = video.play();
-          if (attempt && typeof attempt.catch === "function") attempt.catch(function () {});
-        };
-        video.addEventListener("loadedmetadata", function () { video.currentTime = 0; });
-        video.addEventListener("loadeddata", play);
-        play();
-      })();
+${splashPixelScanScript()}
       // Accepts the structured { step, total, label } payload (and tolerates a
       // bare label string for back-compat). The step counter + progress bar give
       // a slow cold boot a sense of how far along it is; the bar only ever grows

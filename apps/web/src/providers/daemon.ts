@@ -926,6 +926,19 @@ export function formatVelaBalanceUsd(raw?: string | null): string | null {
   return `${sign}$${Math.abs(amount).toFixed(2)}`;
 }
 
+/**
+ * Same as {@link formatVelaBalanceUsd} but WITHOUT the currency symbol
+ * ("12.30", "-1.25"). For surfaces that already carry the plan wordmark beside
+ * the number — the top-right credits chip — where the "$" was pure noise.
+ */
+export function formatVelaBalanceAmount(raw?: string | null): string | null {
+  if (raw == null || raw === '') return null;
+  const amount = Number(raw);
+  if (!Number.isFinite(amount)) return null;
+  const sign = amount < 0 ? '-' : '';
+  return `${sign}${Math.abs(amount).toFixed(2)}`;
+}
+
 /** Top subscription tier — no upgrade affordance is shown at/above this. */
 export const VELA_TOP_PLAN_TIER = 'max';
 
@@ -1201,6 +1214,41 @@ export async function listProjectRuns(
     return body.runs ?? [];
   } catch {
     return [];
+  }
+}
+
+/**
+ * One project's runs plus the awaiting-input flag the run bodies cannot carry.
+ *
+ * Scoped to a single project ON PURPOSE. The catalogue-wide `listProjectRuns`
+ * above 400s (`PROJECT_SCOPE_REQUIRED`) the moment any run belongs to a
+ * workspace-bound project — which, in a workspace session, is all of them — so
+ * it silently returns `[]` there. Asking per project id takes the route's
+ * authorized branch instead and actually works.
+ *
+ * Returns `null` when the project is unreadable or the daemon is unreachable,
+ * so a caller can tell "no runs" apart from "could not ask".
+ */
+export async function listRunsForProject(
+  projectId: string,
+  workspaceContext?: WorkspaceCollabContext | null,
+): Promise<{ runs: ChatRunStatusResponse[]; awaitingInputProjectIds: string[] } | null> {
+  try {
+    const resp = await fetch(`/api/runs?projectId=${encodeURIComponent(projectId)}`, {
+      ...(workspaceContext
+        ? { headers: workspaceProjectHeaders(workspaceContext) }
+        : {}),
+    });
+    if (!resp.ok) return null;
+    const body = (await resp.json()) as ChatRunListResponse;
+    return {
+      runs: body.runs ?? [],
+      // Absent on daemons older than this field; treat as "no pending
+      // question" rather than failing the whole read.
+      awaitingInputProjectIds: body.awaitingInputProjectIds ?? [],
+    };
+  } catch {
+    return null;
   }
 }
 

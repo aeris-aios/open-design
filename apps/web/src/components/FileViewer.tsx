@@ -14815,7 +14815,10 @@ function HtmlViewer({
                 setDeckThumbnailsCollapsed((value) => !value);
               }}
             >
-              <Icon name="panel-left" size={15} />
+              {/* Same pair as the shell's rail toggle (WorkspaceTabsBar): the
+                  bar sits on the side the rail is on while it is open, and
+                  flips out of the frame once it is collapsed. */}
+              <Icon name={deckThumbnailsCollapsed ? 'layout-right' : 'layout-left'} size={16} />
             </button>
           ) : null}
           <button

@@ -141,11 +141,15 @@ describe('updater rocket placement after the account avatar', () => {
     expect(slot, 'rocket must live in the updater slot').not.toBeNull();
     expect(slot?.contains(trigger)).toBe(false);
 
-    // AFTER the avatar chip: same account container, and the slot is the
-    // trigger's immediately-following sibling — nothing may slip between them.
+    // AFTER the avatar chip, in the same account container. The message-centre
+    // bell became a peer of the identity (it used to be a row behind the
+    // account menu), so the cluster reads trigger -> bell -> updater slot and
+    // nothing else may slip in.
     const account = trigger.closest('.entry-nav-rail__account');
     expect(account?.contains(slot as Node)).toBe(true);
-    expect(trigger.nextElementSibling).toBe(slot);
+    const bell = screen.getByTestId('entry-nav-account-message-center');
+    expect(trigger.nextElementSibling).toBe(bell);
+    expect(bell.nextElementSibling).toBe(slot);
     expect(
       trigger.compareDocumentPosition(rocket) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
@@ -169,7 +173,9 @@ describe('updater rocket placement after the account avatar', () => {
     expect(trigger.contains(rocket)).toBe(false);
 
     fireEvent.click(trigger);
-    await waitFor(() => expect(screen.getByTestId('account-menu-message-center')).toBeTruthy());
+    // The message-centre row left this menu, so the menu itself is the proxy
+    // for "the trigger still opens".
+    await waitFor(() => expect(screen.getByRole('menu')).toBeTruthy());
     expect(trigger.getAttribute('aria-expanded')).toBe('true');
   });
 

@@ -466,7 +466,7 @@ export function MemoryModelInline({
             marginLeft: 8,
             marginTop: -2,
             fontSize: 12,
-            fontWeight: 500,
+            fontWeight: 600,
             color: 'var(--text-success, #1f7a3a)',
             textTransform: 'none',
             letterSpacing: 0,

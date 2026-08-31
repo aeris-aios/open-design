@@ -533,9 +533,9 @@ export async function getProjectDetail(
 }
 
 /**
- * Bounded-retry knobs for {@link createProject}. Production callers omit this
- * and get the default 1s→…-jittered backoff; tests inject a no-op `sleep` (and
- * usually a small `maxRetries`) so the schedule is instant and deterministic.
+ * Retry/deadline knobs for {@link createProject}. Most callers use the default
+ * jittered retry policy; the optimistic Chat handoff also sets a request
+ * deadline. Tests inject short deadlines or a no-op retry `sleep`.
  */
 export interface CreateProjectRetryOptions {
   /** Additional attempts after the first. Default 3 (so up to 4 requests). */
@@ -544,6 +544,10 @@ export interface CreateProjectRetryOptions {
   backoff?: BackoffOptions;
   /** Test seam for the inter-retry wait. Defaults to a real `setTimeout` sleep. */
   sleep?: (ms: number) => Promise<void>;
+  /** Optional deadline for each create request. Ordinary non-optimistic callers omit it. */
+  requestTimeoutMs?: number;
+  /** Bounded read-back window used only after a timed-out create. Default 5s. */
+  recoveryTimeoutMs?: number;
 }
 
 const DEFAULT_CREATE_PROJECT_RETRY_BACKOFF: BackoffOptions = {
@@ -552,6 +556,112 @@ const DEFAULT_CREATE_PROJECT_RETRY_BACKOFF: BackoffOptions = {
   factor: 2,
   jitter: true,
 };
+
+const DEFAULT_CREATE_PROJECT_RECOVERY_TIMEOUT_MS = 5_000;
+
+type CreateProjectResult = {
+  project: Project;
+  conversationId: string;
+  appliedPluginSnapshotId?: string;
+};
+
+type CreateProjectAttemptResult =
+  | { kind: 'created'; created: CreateProjectResult }
+  | {
+      kind: 'failed';
+      status: number;
+      message: string;
+      retryable: boolean;
+      code: ApiErrorCode | null;
+      requestId: string | null;
+    };
+
+class ProjectCreateRequestTimeoutError extends Error {
+  constructor() {
+    super('Project creation request timed out');
+    this.name = 'ProjectCreateRequestTimeoutError';
+  }
+}
+
+function positiveTimeout(value: number | undefined): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
+    ? value
+    : null;
+}
+
+async function runWithTimeout<T>(
+  operation: (signal: AbortSignal | undefined) => Promise<T>,
+  timeoutMs: number | null,
+): Promise<T> {
+  if (timeoutMs == null) return operation(undefined);
+
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      operation(controller.signal),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => {
+          reject(new ProjectCreateRequestTimeoutError());
+          controller.abort();
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/**
+ * A timeout can race a successfully committed create whose response was lost.
+ * Read the caller-minted id back before rolling the optimistic route away so
+ * that case resumes normally instead of leaving an unreachable project.
+ */
+async function recoverTimedOutProjectCreate(
+  projectId: string,
+  workspaceContext: WorkspaceCollabContext | null | undefined,
+  timeoutMs: number,
+): Promise<CreateProjectResult | null> {
+  const headers = workspaceContext ? workspaceProjectHeaders(workspaceContext) : undefined;
+  try {
+    return await runWithTimeout(async (signal) => {
+      const init = {
+        ...(headers ? { headers } : {}),
+        ...(signal ? { signal } : {}),
+      };
+      const projectResponse = await fetch(
+        `/api/projects/${encodeURIComponent(projectId)}`,
+        init,
+      );
+      if (!projectResponse.ok) return null;
+      const projectBody = (await projectResponse.json()) as { project?: Project };
+      if (!projectBody.project || projectBody.project.id !== projectId) return null;
+
+      const conversationsResponse = await fetch(
+        `/api/projects/${encodeURIComponent(projectId)}/conversations`,
+        init,
+      );
+      if (!conversationsResponse.ok) return null;
+      const conversationsBody = (await conversationsResponse.json()) as {
+        conversations?: Conversation[];
+      };
+      const conversation = conversationsBody.conversations?.find(
+        (candidate) => candidate.projectId === projectId && typeof candidate.id === 'string',
+      );
+      if (!conversation) return null;
+
+      return {
+        project: projectBody.project,
+        conversationId: conversation.id,
+        ...(projectBody.project.appliedPluginSnapshotId
+          ? { appliedPluginSnapshotId: projectBody.project.appliedPluginSnapshotId }
+          : {}),
+      };
+    }, timeoutMs);
+  } catch {
+    return null;
+  }
+}
 
 function defaultRetrySleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -661,9 +771,12 @@ export async function createProject(
     workspaceContext?: WorkspaceCollabContext | null;
   },
   retryOptions: CreateProjectRetryOptions = {},
-): Promise<{ project: Project; conversationId: string; appliedPluginSnapshotId?: string }> {
+): Promise<CreateProjectResult> {
   const maxRetries = retryOptions.maxRetries ?? 3;
   const sleep = retryOptions.sleep ?? defaultRetrySleep;
+  const requestTimeoutMs = positiveTimeout(retryOptions.requestTimeoutMs);
+  const recoveryTimeoutMs = positiveTimeout(retryOptions.recoveryTimeoutMs)
+    ?? DEFAULT_CREATE_PROJECT_RECOVERY_TIMEOUT_MS;
   const backoff = new BackoffController(
     retryOptions.backoff ?? DEFAULT_CREATE_PROJECT_RETRY_BACKOFF,
   );
@@ -680,20 +793,60 @@ export async function createProject(
     // client-provided id is idempotent, never a duplicate project.
     const id = input.id ?? randomUUID();
     for (let attempt = 0; ; attempt += 1) {
-      const resp = await fetch('/api/projects', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(input.workspaceContext ? workspaceProjectHeaders(input.workspaceContext) : {}),
-        },
-        body: JSON.stringify({ id, ...omitWorkspaceContext(input) }),
-      });
-      if (resp.ok) {
-        const created = (await resp.json()) as {
-          project: Project;
-          conversationId: string;
-          appliedPluginSnapshotId?: string;
-        };
+      let attemptResult: CreateProjectAttemptResult;
+      try {
+        attemptResult = await runWithTimeout<CreateProjectAttemptResult>(async (signal) => {
+          const resp = await fetch('/api/projects', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(input.workspaceContext ? workspaceProjectHeaders(input.workspaceContext) : {}),
+            },
+            body: JSON.stringify({ id, ...omitWorkspaceContext(input) }),
+            ...(signal ? { signal } : {}),
+          });
+          if (resp.ok) {
+            return {
+              kind: 'created',
+              created: (await resp.json()) as CreateProjectResult,
+            };
+          }
+          if (await isLocalDaemonProxyFailure(resp)) {
+            throw new ProjectCreateError(
+              'Could not reach the local Open Design service',
+              null,
+              null,
+              true,
+              null,
+            );
+          }
+          return {
+            kind: 'failed',
+            status: resp.status,
+            ...await readWorkspaceWriteError(resp, 'Could not create project'),
+          };
+        }, requestTimeoutMs);
+      } catch (error) {
+        if (!(error instanceof ProjectCreateRequestTimeoutError)) throw error;
+        const recovered = await recoverTimedOutProjectCreate(
+          id,
+          input.workspaceContext,
+          recoveryTimeoutMs,
+        );
+        if (recovered) {
+          markProjectCreatedByViewer(recovered.project.id, input.workspaceContext ?? null);
+          return recovered;
+        }
+        throw new ProjectCreateError(
+          'Project creation took too long. Please try again.',
+          null,
+          'INTERNAL_ERROR',
+          true,
+          null,
+        );
+      }
+      if (attemptResult.kind === 'created') {
+        const { created } = attemptResult;
         // Preserve the exact Workspace authority used by this create request.
         // `useProjectCollab` may use this only to skip the initial status-unknown
         // read-only window; another Workspace with the same project id must not
@@ -701,24 +854,12 @@ export async function createProject(
         markProjectCreatedByViewer(created.project.id, input.workspaceContext ?? null);
         return created;
       }
-      if (await isLocalDaemonProxyFailure(resp)) {
-        throw new ProjectCreateError(
-          'Could not reach the local Open Design service',
-          null,
-          null,
-          true,
-          null,
-        );
-      }
-      const { message, retryable, code, requestId } = await readWorkspaceWriteError(
-        resp,
-        'Could not create project',
-      );
-      if (isRetryableWorkspaceWriteFailure(resp.status, retryable) && attempt < maxRetries) {
+      const { status, message, retryable, code, requestId } = attemptResult;
+      if (isRetryableWorkspaceWriteFailure(status, retryable) && attempt < maxRetries) {
         await sleep(backoff.nextDelay());
         continue;
       }
-      throw new ProjectCreateError(message, resp.status, code, retryable, requestId);
+      throw new ProjectCreateError(message, status, code, retryable, requestId);
     }
   } catch (err) {
     throw err instanceof Error ? err : new Error('Could not create project');

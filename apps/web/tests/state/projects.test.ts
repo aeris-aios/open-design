@@ -723,7 +723,140 @@ describe('listProjects', () => {
 
 describe('createProject', () => {
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
+  });
+
+  it('aborts a stalled optimistic create and returns a retryable timeout', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn<typeof fetch>((resource, init) => {
+      if (String(resource) === '/api/projects') {
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => {
+            reject(new DOMException('The operation was aborted.', 'AbortError'));
+          }, { once: true });
+        });
+      }
+      return Promise.resolve(new Response(null, { status: 404 }));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const create = createProject({
+      id: 'timed-out-project',
+      name: 'Timed out project',
+      skillId: null,
+      designSystemId: null,
+    }, {
+      requestTimeoutMs: 20,
+      recoveryTimeoutMs: 20,
+    }).catch((error: unknown) => error);
+
+    await vi.advanceTimersByTimeAsync(20);
+    const failure = await create;
+
+    expect(failure).toBeInstanceOf(ProjectCreateError);
+    expect(failure).toMatchObject({
+      status: null,
+      code: 'INTERNAL_ERROR',
+      retryable: true,
+    });
+    expect((failure as Error).message).toContain('took too long');
+    expect(fetchMock.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      '/api/projects/timed-out-project',
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+  });
+
+  it('times out when create response headers arrive but its JSON body stalls', async () => {
+    vi.useFakeTimers();
+    const readCreateBody = vi.fn(() => new Promise<never>(() => {}));
+    const fetchMock = vi.fn<typeof fetch>((resource) => {
+      if (String(resource) === '/api/projects') {
+        return Promise.resolve({
+          ok: true,
+          json: readCreateBody,
+        } as unknown as Response);
+      }
+      return Promise.resolve(new Response(null, { status: 404 }));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const create = createProject({
+      id: 'stalled-create-body',
+      name: 'Stalled create body',
+      skillId: null,
+      designSystemId: null,
+    }, {
+      requestTimeoutMs: 20,
+      recoveryTimeoutMs: 20,
+    }).catch((error: unknown) => error);
+
+    await vi.advanceTimersByTimeAsync(20);
+    const failure = await create;
+
+    expect(readCreateBody).toHaveBeenCalledOnce();
+    expect(failure).toBeInstanceOf(ProjectCreateError);
+    expect((failure as Error).message).toContain('took too long');
+    expect(fetchMock.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
+  });
+
+  it('recovers a committed project when only the create response times out', async () => {
+    vi.useFakeTimers();
+    const project = {
+      id: 'recovered-project',
+      name: 'Recovered project',
+      skillId: null,
+      designSystemId: null,
+      appliedPluginSnapshotId: 'snapshot-1',
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    const fetchMock = vi.fn<typeof fetch>((resource, init) => {
+      const url = String(resource);
+      if (url === '/api/projects') {
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => {
+            reject(new DOMException('The operation was aborted.', 'AbortError'));
+          }, { once: true });
+        });
+      }
+      if (url === '/api/projects/recovered-project') {
+        return Promise.resolve(Response.json({ project }));
+      }
+      if (url === '/api/projects/recovered-project/conversations') {
+        return Promise.resolve(Response.json({
+          conversations: [{
+            id: 'recovered-conversation',
+            projectId: project.id,
+            title: null,
+            createdAt: 1,
+            updatedAt: 1,
+          }],
+        }));
+      }
+      return Promise.resolve(new Response(null, { status: 404 }));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const create = createProject({
+      id: project.id,
+      name: project.name,
+      skillId: null,
+      designSystemId: null,
+    }, {
+      requestTimeoutMs: 20,
+      recoveryTimeoutMs: 20,
+    });
+
+    await vi.advanceTimersByTimeAsync(20);
+    await expect(create).resolves.toEqual({
+      project,
+      conversationId: 'recovered-conversation',
+      appliedPluginSnapshotId: 'snapshot-1',
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
   it('preserves daemon validation messages from non-2xx create responses', async () => {

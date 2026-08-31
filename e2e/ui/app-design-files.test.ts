@@ -579,7 +579,8 @@ test('[P1] design files new sketch creates a persisted sketch tab and restores i
   await expectWorkspaceReady(page);
 
   await openAllProjectFiles(page);
-  await page.getByTestId('design-files-empty-new-sketch').click();
+  await page.getByTestId('workspace-add-tab').click();
+  await page.getByTestId('tab-launcher-action-new-sketch').click();
 
   const sketchName = await waitForSingleSketchFile(page, projectId);
   const sketchTab = page.getByTestId('file-workspace').getByRole('tab', {
@@ -698,7 +699,8 @@ test('[P1] plan mode selection and new Excalidraw sketch emit analytics dimensio
   await expectWorkspaceReady(page);
   await selectComposerSessionMode(page, 'Plan mode');
   await openAllProjectFiles(page);
-  await page.getByTestId('design-files-empty-new-sketch').click();
+  await page.getByTestId('workspace-add-tab').click();
+  await page.getByTestId('tab-launcher-action-new-sketch').click();
 
   const sketchName = await waitForSingleSketchFile(page, projectId);
   await expect(page.getByTestId('sketch-excalidraw-editor')).toBeVisible();

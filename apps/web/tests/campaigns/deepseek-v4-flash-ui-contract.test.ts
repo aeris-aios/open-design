@@ -24,11 +24,14 @@ const campaignModalSource = readFileSync(
 );
 
 describe('DeepSeek V4 Flash workbench campaign entry', () => {
+  // Rides the workbench's top-right cluster as its leading (leftmost) item,
+  // so it sits just left of the GitHub chip.
   it('shows a top-right pricing badge for explicit campaign audiences', () => {
     expect(entryShellSource).toContain('deepseek-campaign-pricing-badge');
     expect(entryShellSource).toContain("t('campaign.deepseekV4Flash.workbenchBadge')");
     expect(entryShellSource).toContain("t('campaign.deepseekV4Flash.workbenchBadgeAria')");
     expect(entryShellSource).toContain('deepSeekV4FlashCampaignAudience !== \'unknown\'');
+    expect(entryShellSource).toContain('topRightSlot=');
   });
 
   // The badge lands where the modal's CTA lands: the console's plan surface,
@@ -48,8 +51,13 @@ describe('DeepSeek V4 Flash workbench campaign entry', () => {
   });
 
   it('uses a restrained green campaign treatment from shared brand tokens', () => {
+    // Body runs to a `}` that OWNS its line: a `[^}]*` capture stops dead at
+    // the first brace inside a declaration comment (the rule quotes
+    // `button { height: 36px }` while explaining its own min-height), which
+    // silently truncated this rule to its first three declarations and made
+    // every assertion below pass or fail for the wrong reason.
     const badgeRule = entryLayoutStyles.match(
-      /\.entry-deepseek-campaign-badge\s*\{([^}]*)\}/,
+      /\.entry-deepseek-campaign-badge\s*\{([\s\S]*?)\n\}/,
     )?.[1];
 
     expect(badgeRule).toContain('color: var(--brand-text)');

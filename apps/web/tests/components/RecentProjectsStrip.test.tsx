@@ -922,11 +922,13 @@ describe('RecentProjectsStrip', () => {
       />,
     );
 
-    expect(screen.getByText('Design System')).toBeTruthy();
-    expect(screen.getAllByText('Prototype').length).toBeGreaterThan(0);
+    // Grid cards wear the kind as an icon-only tile, so the type's word lives
+    // on its title / aria-label rather than in the card's visible text.
+    expect(screen.getByTitle('Design System')).toBeTruthy();
+    expect(screen.getAllByTitle('Prototype').length).toBeGreaterThan(0);
     const designSystemCard = container.querySelector('.recent-projects__card.is-design-system-project');
     expect(designSystemCard).toBeTruthy();
-    expect(designSystemCard?.querySelectorAll('.design-card-tag')).toHaveLength(1);
+    expect(designSystemCard?.querySelectorAll('.recent-projects__card-kind')).toHaveLength(1);
 
     await waitFor(() => {
       expect(designSystemCard?.querySelector('.recent-projects__card-thumb-image img')).toBeTruthy();
@@ -1132,7 +1134,8 @@ describe('recvqabp2Uy23r — shared badge grid overlay vs list inline', () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'List view' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Sort projects · View mode' }));
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'List view' }));
 
     const badge = screen.getByText('Shared').closest('.recent-projects__card-badge');
     expect(badge).not.toBeNull();
@@ -1154,50 +1157,9 @@ describe('recvqabp2Uy23r — shared badge grid overlay vs list inline', () => {
   });
 });
 
-describe('recvqbipG9QDTt — Recent Projects filter needs a visible clear entry', () => {
-  // RecentProjectsStrip mounts once per host view and stays alive across
-  // EntryShell tab switches — Home's instance in particular is only ever
-  // hidden via `content-visibility`, never unmounted — so kindFilter /
-  // ownerFilter state survives a round trip through another tab with no
-  // visible sign anything is filtered. A filter that now matches zero
-  // projects reads as "my projects disappeared" instead of "a filter is on".
-  it('shows no clear-filters entry while the default (unfiltered) view is showing', () => {
-    render(
-      <RecentProjectsStrip
-        projects={[project({ id: 'project-1', name: 'Only Project' })]}
-        onOpen={() => {}}
-        heading="All projects"
-      />,
-    );
-
-    expect(screen.queryByTestId('recent-projects-clear-filters')).toBeNull();
-  });
-
-  it('surfaces a clear-filters entry once the type filter hides every project, and restores the grid on click', () => {
-    render(
-      <RecentProjectsStrip
-        projects={[project({ id: 'project-1', name: 'Only Project' })]}
-        onOpen={() => {}}
-        heading="All projects"
-      />,
-    );
-
-    // Every project here falls back to the 'prototype' card category
-    // (projectCategory's default), so filtering to Media leaves zero
-    // matches — exactly the "did my projects disappear?" scenario reported.
-    fireEvent.click(screen.getByRole('button', { name: 'Any type' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Media' }));
-
-    expect(screen.queryByText('Only Project')).toBeNull();
-    const clearButton = screen.getByTestId('recent-projects-clear-filters');
-
-    fireEvent.click(clearButton);
-
-    expect(screen.getByText('Only Project')).toBeTruthy();
-    expect(screen.queryByTestId('recent-projects-clear-filters')).toBeNull();
-    expect(screen.getByRole('button', { name: 'Any type' })).toBeTruthy();
-  });
-});
+// recvqbipG9QDTt's clear-filters entry went away with the owner / type filter
+// chips it belonged to (Recent Projects' header is the view toggle only now),
+// so its two cases were dropped rather than left asserting a removed control.
 
 describe('recvqaRqM0dv2x — per-card Duplicate menu item', () => {
   // Duplicating a project you did not create always 403s (the daemon's

@@ -249,7 +249,7 @@ export function MemoryToast({
                 borderLeft: '1px solid rgba(255,255,255,0.18)',
                 opacity: 0.85,
                 fontSize: 12,
-                fontWeight: 500,
+                fontWeight: 600,
               }}
             >
               {clickHint} →

@@ -180,12 +180,14 @@ test('[P1] community Use hands into Home and the active template chip opens the 
 test('[P1] community category tabs filter the current template catalog', async ({ page }) => {
   await gotoCommunity(page);
 
+  // The caption under a card is the template's own title now, so the type it
+  // was gridded under is read off the card element itself.
   const cards = page.locator('article.community-template-card');
   await expect(cards).toHaveCount(1);
-  await expect(cards.locator('.community-template-card__foot')).toContainText('Slides');
+  await expect(cards).toHaveAttribute('data-template-type', 'Slides');
 
   await page.getByRole('button', { name: 'Prototype', exact: true }).click();
 
   await expect(cards).toHaveCount(1);
-  await expect(cards.locator('.community-template-card__foot')).toContainText('Prototype');
+  await expect(cards).toHaveAttribute('data-template-type', 'Prototype');
 });
