@@ -104,6 +104,7 @@ const landingPageStagingWorkflowPath = join(workspaceRoot, ".github", "workflows
 const landingPageProductionWorkflowPath = join(workspaceRoot, ".github", "workflows", "landing-page-production.yml");
 const dshBootstrapPublishWorkflowPath = join(workspaceRoot, ".github", "workflows", "dsh-bootstrap-publish.yml");
 const catalogPublishWorkflowPath = join(workspaceRoot, ".github", "workflows", "catalog-publish.yml");
+const catalogValidateWorkflowPath = join(workspaceRoot, ".github", "workflows", "catalog-validate.yml");
 const landingPageDailyFeishuScriptPath = join(workspaceRoot, ".github", "scripts", "landing-page-daily-feishu.ts");
 const releasePublishMetadataScriptPath = join(
   workspaceRoot,
@@ -1479,6 +1480,20 @@ process.stdin.on("end", () => {
     );
 
     expect(guardedJobs).toHaveLength(2);
+  });
+
+  it("[P2] triggers catalog publishing for shared storage helpers", async () => {
+    const [publishWorkflow, validateWorkflow] = await Promise.all([
+      readFile(catalogPublishWorkflowPath, "utf8"),
+      readFile(catalogValidateWorkflowPath, "utf8"),
+    ]);
+
+    for (const workflow of [publishWorkflow, validateWorkflow]) {
+      const trigger = sectionBetween(workflow, "on:", "\npermissions:");
+      expect(trigger).toContain('"tools/release/src/storage/publish-catalog.ts"');
+      expect(trigger).toContain('"tools/release/src/storage/common.ts"');
+      expect(trigger).toContain('"tools/release/src/storage/s3-upload.ts"');
+    }
   });
 
   it("[P1] preserves checksummed hidden files in the catalog handoff artifact", async () => {

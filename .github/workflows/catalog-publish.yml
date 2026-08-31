@@ -17,6 +17,8 @@ on:
       - "data/plugin-previews/**"
       - "tools/release/src/catalog/**"
       - "tools/release/src/storage/publish-catalog.ts"
+      - "tools/release/src/storage/common.ts"
+      - "tools/release/src/storage/s3-upload.ts"
       - "tools/release/package.json"
       - ".github/workflows/catalog-publish.yml"
   workflow_dispatch:

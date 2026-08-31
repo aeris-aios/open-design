@@ -15,6 +15,8 @@ on:
       - "data/plugin-previews/**"
       - "tools/release/src/catalog/**"
       - "tools/release/src/storage/publish-catalog.ts"
+      - "tools/release/src/storage/common.ts"
+      - "tools/release/src/storage/s3-upload.ts"
       - "tools/release/tests/catalog-*.test.ts"
       - "tools/release/tests/fixtures/catalog/**"
       - "tools/release/package.json"
