@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -242,26 +243,19 @@ describe('deterministic Electron frame capture', () => {
 
   test('[P0] real Electron captures a multi-second WebGL timeline without background paint stalls', async () => {
     const result = await probeRealElectronWebGlCapture();
-    expect(result.capture).toMatchObject({
-      duration: 7,
-      fps: 30,
-      frameCount: 210,
-      ok: true,
-    });
+    expect(result.frameCount).toBe(210);
     expect(result.lastFrameBytes).toBeGreaterThan(0);
+    expect(result.firstFrameSha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(result.lastFrameSha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(result.lastFrameSha256).not.toBe(result.firstFrameSha256);
   }, 120_000);
 });
 
 type ElectronCaptureProbeResult = {
-  capture: {
-    duration?: number;
-    error?: string;
-    errorCode?: string;
-    fps?: number;
-    frameCount?: number;
-    ok: boolean;
-  };
+  firstFrameSha256: string;
+  frameCount: number;
   lastFrameBytes: number;
+  lastFrameSha256: string;
 };
 
 async function probeRealElectronWebGlCapture(): Promise<ElectronCaptureProbeResult> {
@@ -295,8 +289,7 @@ globalThis.__odFrameRenderer={
 </script></body></html>`, 'utf8');
   await writeFile(join(probeDir, 'main.cjs'), `
 const { app } = require('electron');
-const { readFile, stat } = require('node:fs/promises');
-const path = require('node:path');
+const { readFile } = require('node:fs/promises');
 
 app.whenReady().then(async () => {
   const { renderDeterministicFrames } = await import(process.env.OD_FRAME_CAPTURE_MODULE_URL);
@@ -307,9 +300,7 @@ app.whenReady().then(async () => {
     outputDir: process.env.OD_FRAME_CAPTURE_OUTPUT_DIR,
     width: 320,
   });
-  const lastFrame = path.join(process.env.OD_FRAME_CAPTURE_OUTPUT_DIR, 'frame-00000209.png');
-  const lastFrameBytes = capture.ok ? (await stat(lastFrame)).size : 0;
-  process.stdout.write('OD_FRAME_CAPTURE:' + JSON.stringify({ capture, lastFrameBytes }) + '\\n');
+  if (!capture.ok) throw new Error(capture.error || 'Electron frame capture failed');
   app.quit();
 }).catch((error) => {
   process.stderr.write(String(error && error.stack ? error.stack : error) + '\\n');
@@ -333,10 +324,19 @@ app.whenReady().then(async () => {
       OD_FRAME_CAPTURE_OUTPUT_DIR: outputDir,
     };
     delete env.ELECTRON_RUN_AS_NODE;
-    const { stdout, stderr } = await execFileAsync(command, args, { env, timeout: 100_000 });
-    const marker = stdout.split(/\r?\n/).find((line) => line.startsWith('OD_FRAME_CAPTURE:'));
-    if (!marker) throw new Error(`Electron frame-capture probe returned no result: ${stdout || stderr}`);
-    return JSON.parse(marker.slice('OD_FRAME_CAPTURE:'.length)) as ElectronCaptureProbeResult;
+    await execFileAsync(command, args, { env, timeout: 100_000 });
+    const frameNames = (await readdir(outputDir))
+      .filter((name) => /^frame-\d{8}\.png$/.test(name))
+      .sort();
+    const firstFrame = await readFile(join(outputDir, frameNames[0] ?? 'missing-first-frame'));
+    const lastFramePath = join(outputDir, frameNames.at(-1) ?? 'missing-last-frame');
+    const lastFrame = await readFile(lastFramePath);
+    return {
+      firstFrameSha256: createHash('sha256').update(firstFrame).digest('hex'),
+      frameCount: frameNames.length,
+      lastFrameBytes: (await stat(lastFramePath)).size,
+      lastFrameSha256: createHash('sha256').update(lastFrame).digest('hex'),
+    };
   } finally {
     await rm(probeDir, { force: true, recursive: true });
   }
