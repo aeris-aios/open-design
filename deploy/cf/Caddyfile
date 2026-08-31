@@ -1,0 +1,8 @@
+# TLS termination only - all auth lives in the gate (deploy/cf/gate.mjs).
+# flush_interval -1 keeps SSE streaming unbuffered end to end.
+studio.commercefountain.com {
+	encode zstd gzip
+	reverse_proxy gate:8080 {
+		flush_interval -1
+	}
+}

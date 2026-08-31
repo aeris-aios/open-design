@@ -1,0 +1,26 @@
+/* Fountain Hills Chamber of Commerce - compiled brand tokens.
+   Keep in sync with DESIGN.md (accent #ed7d36, navy #054d87, Poppins). */
+:root {
+  --fhc-accent: #ed7d36;
+  --fhc-accent-strong: #d96a26;
+  --fhc-accent-soft: #fdeadd;
+  --fhc-brand: #054d87;
+  --fhc-brand-deep: #032f54;
+  --fhc-brand-soft: #e3eef7;
+
+  --fhc-bg: #ffffff;
+  --fhc-bg-panel: #faf7f4;
+  --fhc-text: #334155;
+  --fhc-text-strong: #0f172a;
+  --fhc-text-on-brand: #ffffff;
+  --fhc-text-on-accent: #ffffff;
+
+  --fhc-success: #16a34a;
+  --fhc-warning: #d97706;
+  --fhc-danger: #dc2626;
+
+  --fhc-font-sans: "Poppins", ui-sans-serif, system-ui, sans-serif;
+  --fhc-radius: 12px;
+  --fhc-radius-lg: 16px;
+  --fhc-shadow: 0 8px 24px rgba(5, 77, 135, 0.10);
+}

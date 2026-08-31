@@ -1,0 +1,19 @@
+# Commerce Fountain runtime layer: the themed base image (built from
+# deploy/Dockerfile in this fork) plus the Claude Code CLI, which upstream
+# intentionally keeps out of the published image ("build a separate private
+# runtime layer if a server deployment needs local code-agent CLIs installed
+# in the container" - deploy/README.md). The daemon auto-detects any CLI on
+# PATH at startup; ANTHROPIC_API_KEY (compose env) makes it run headless.
+ARG BASE_IMAGE=open-design-themed
+FROM ${BASE_IMAGE}
+
+USER root
+# libc6-compat: glibc shim so native binaries the CLI may fetch run on Alpine.
+RUN apk add --no-cache libc6-compat ripgrep && \
+    npm install -g @anthropic-ai/claude-code && \
+    mkdir -p /app/.od/home && chown -R open-design:open-design /app/.od
+
+# Claude Code needs a writable HOME (~/.claude state); the rootfs is read-only
+# so it lives on the data volume.
+ENV HOME=/app/.od/home
+USER open-design

@@ -1,0 +1,88 @@
+name: open-design
+
+# Commerce Fountain production stack: Caddy (TLS) -> gate (embed auth) ->
+# daemon (Bearer-token enforced, never published to the host).
+# Run from deploy/: docker compose -f cf/docker-compose.cf.yml up -d
+# after cf/build.sh has produced the open-design-cf image.
+
+services:
+  open-design:
+    container_name: open-design
+    image: open-design-cf
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      # Agent runs + exports need real headroom (upstream default is 192m).
+      NODE_OPTIONS: --max-old-space-size=2048
+      OD_BIND_HOST: 0.0.0.0
+      OD_PORT: 7456
+      OD_WEB_PORT: 7456
+      OD_API_TOKEN: ${OD_API_TOKEN:?set in .env}
+      OD_ALLOWED_ORIGINS: https://studio.commercefountain.com
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:?set in .env}
+      HOME: /app/.od/home
+    volumes:
+      - open_design_data:/app/.od
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 6g
+    pids_limit: 1024
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:7456/api/health',{headers:{authorization:'Bearer '+process.env.OD_API_TOKEN}}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  gate:
+    container_name: od-gate
+    build:
+      context: .
+      dockerfile: gate.Dockerfile
+    restart: unless-stopped
+    environment:
+      GATE_PORT: 8080
+      GATE_UPSTREAM: http://open-design:7456
+      DESIGN_STUDIO_EMBED_SECRET: ${DESIGN_STUDIO_EMBED_SECRET:?set in .env}
+      OD_API_TOKEN: ${OD_API_TOKEN:?set in .env}
+    depends_on:
+      - open-design
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:8080/gate/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  caddy:
+    container_name: od-caddy
+    image: docker.io/library/caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - gate
+
+volumes:
+  open_design_data:
+  caddy_data:
+  caddy_config:

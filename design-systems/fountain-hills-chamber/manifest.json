@@ -1,0 +1,15 @@
+{
+  "schemaVersion": "od-design-system-project/v1",
+  "id": "fountain-hills-chamber",
+  "name": "Fountain Hills Chamber",
+  "category": "Business & Community",
+  "description": "The Fountain Hills Chamber of Commerce brand: warm fountain orange on deep navy, Poppins throughout, clean and professional with generous whitespace.",
+  "source": {
+    "type": "local",
+    "origin": "Commerce Fountain brand kit"
+  },
+  "files": {
+    "design": "DESIGN.md",
+    "tokens": "tokens.css"
+  }
+}
