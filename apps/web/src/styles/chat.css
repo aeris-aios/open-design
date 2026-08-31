@@ -1243,6 +1243,13 @@
 .chat-composer-slot {
   flex: 0 0 auto;
 }
+.chat-composer-slot[aria-hidden='true'] {
+  /* Once the composer is portaled, this node is only its layout placeholder.
+     It can sit in a higher workspace stacking context (for example while
+     manual edit mode is active), so it must never intercept clicks intended
+     for the visible fixed-layer composer beneath it. */
+  pointer-events: none;
+}
 .chat-composer-fixed-layer {
   position: fixed;
   z-index: 45;
@@ -1253,6 +1260,12 @@
      fully above the transcript. */
   contain: layout style;
   transform: translateZ(0);
+}
+body:has(.manual-edit-workspace) .chat-composer-fixed-layer {
+  /* Manual edit elevates the workspace above a body-portaled survey. The
+     composer is portaled separately, so keep it one layer above that shell or
+     the shell wins hit testing even though the input remains visible. */
+  z-index: 1501;
 }
 .chat-composer-fixed-layer .composer,
 /* The 扩展 / 设计百宝箱 quick pills travel with the composer into this layer;
