@@ -18,6 +18,8 @@ export type PreviewJob = {
   htmlPath?: string;
   /** In-memory HTML (fallback card). */
   htmlContent?: string;
+  /** Local deterministic card used when the source requires remote resources. */
+  remoteDependencyCard?: string;
   /** Ready-made image to copy (png/webp). */
   reuseFrom?: string;
   label: string;
@@ -67,6 +69,17 @@ function previewJobsForRecord(record: CatalogRecord, repoRoot: string, index: nu
         stableId: record.id,
         relativePath: previewPath,
         htmlPath: example,
+        remoteDependencyCard: renderFallbackCard(
+          {
+            slug: record.id,
+            displayName: record.name,
+            description: record.description,
+            mode: record.mode,
+            category: record.category,
+            attribution: record.upstream,
+          },
+          index + 1,
+        ),
         label: `skill:${record.id}`,
       };
     }
@@ -109,6 +122,15 @@ function previewJobsForRecord(record: CatalogRecord, repoRoot: string, index: nu
           stableId: record.id,
           relativePath: previewPath,
           htmlPath: example,
+          remoteDependencyCard: renderFallbackCard(
+            {
+              slug: record.id,
+              displayName: record.name,
+              description: record.description,
+              mode: record.mode,
+            },
+            index + 1,
+          ),
           label: `template:${record.id}`,
         };
       }
@@ -148,6 +170,14 @@ function previewJobsForRecord(record: CatalogRecord, repoRoot: string, index: nu
         stableId: record.id,
         relativePath: previewPath,
         htmlPath: indexHtml,
+        remoteDependencyCard: renderFallbackCard(
+          {
+            slug: record.id,
+            displayName: record.name,
+            description: record.description,
+          },
+          index + 1,
+        ),
         label: `live:${record.id}`,
       };
     }
@@ -257,28 +287,38 @@ function deterministicRandomInitScript(stableId: string): string {
  * Isolated Playwright renderer. Import/launch failures are systemic and throw.
  * Individual example.html failures still return fallback bytes + warning.
  */
-export type PlaywrightPreviewRendererOptions = {
-  /** Test seam. Defaults to resolving the optional `playwright` package. */
-  importPlaywright?: () => Promise<{
-    chromium: { launch(options: { headless: boolean }): Promise<PlaywrightBrowser> };
-  }>;
+type PlaywrightModule = {
+  chromium: { launch(options: { headless: boolean }): Promise<PlaywrightBrowser> };
 };
 
-async function importPlaywrightPackage(): Promise<{
-  chromium: { launch(options: { headless: boolean }): Promise<PlaywrightBrowser> };
-}> {
+type ImportedPlaywrightModule = Partial<PlaywrightModule> & {
+  default?: PlaywrightModule;
+};
+
+export type PlaywrightPreviewRendererOptions = {
+  /** Test seam. Defaults to resolving the optional `playwright` package. */
+  importPlaywright?: () => Promise<ImportedPlaywrightModule>;
+};
+
+function unwrapPlaywrightModule(module: ImportedPlaywrightModule): PlaywrightModule {
+  if (module.chromium) return { chromium: module.chromium };
+  if (module.default?.chromium) return module.default;
+  throw new Error("playwright module does not export chromium");
+}
+
+async function importPlaywrightPackage(): Promise<PlaywrightModule> {
   // Optional peer: playwright is not a hard runtime dep of tools-release.
   try {
     const require = createRequire(import.meta.url);
     const resolved = require.resolve("playwright");
-    return (await import(pathToFileURL(resolved).href)) as {
-      chromium: { launch(options: { headless: boolean }): Promise<PlaywrightBrowser> };
-    };
+    return unwrapPlaywrightModule(
+      (await import(pathToFileURL(resolved).href)) as ImportedPlaywrightModule,
+    );
   } catch {
-    const importer = new Function("m", "return import(m)") as (m: string) => Promise<{
-      chromium: { launch(options: { headless: boolean }): Promise<PlaywrightBrowser> };
-    }>;
-    return importer("playwright");
+    const importer = new Function("m", "return import(m)") as (
+      m: string,
+    ) => Promise<ImportedPlaywrightModule>;
+    return unwrapPlaywrightModule(await importer("playwright"));
   }
 }
 
@@ -292,7 +332,7 @@ export function createPlaywrightPreviewRenderer(
       browserPromise = (async () => {
         try {
           const playwright = options.importPlaywright
-            ? await options.importPlaywright()
+            ? unwrapPlaywrightModule(await options.importPlaywright())
             : await importPlaywrightPackage();
           return await playwright.chromium.launch({ headless: true });
         } catch (error) {
@@ -360,11 +400,33 @@ export function createPlaywrightPreviewRenderer(
         } else {
           throw new Error("preview job has neither htmlPath nor htmlContent");
         }
-        await page.clock.runFor(PREVIEW_SETTLE_MS);
+        let initialRenderError: unknown;
+        try {
+          await page.clock.runFor(PREVIEW_SETTLE_MS);
+        } catch (error) {
+          if (!blockedRemoteResource) throw error;
+          initialRenderError = error;
+        }
+        let warning: string | undefined;
         if (blockedRemoteResource) {
-          throw new Error(
-            `blocked HTTP(S) dependency while rendering deterministic preview ${job.label}`,
-          );
+          if (!job.remoteDependencyCard) {
+            throw new Error(
+              `blocked HTTP(S) dependency while rendering deterministic preview ${job.label}`,
+            );
+          }
+          blockedRemoteResource = false;
+          await page.setContent(job.remoteDependencyCard, { waitUntil: "load", timeout: 30_000 });
+          await page.evaluate("document.fonts.ready");
+          await page.clock.runFor(PREVIEW_SETTLE_MS);
+          if (blockedRemoteResource) {
+            throw new Error(
+              `deterministic replacement card requested HTTP(S) resources for ${job.label}`,
+            );
+          }
+          const reason = initialRenderError instanceof Error
+            ? ` after source error: ${initialRenderError.message}`
+            : "";
+          warning = `rendered local deterministic card for remote-dependent preview ${job.label}${reason}`;
         }
         const png = await page.screenshot({
           type: "png",
@@ -376,6 +438,7 @@ export function createPlaywrightPreviewRenderer(
         return {
           bytes: webp,
           source: "render",
+          warning,
         };
       } finally {
         await context.close();

@@ -237,6 +237,30 @@ describe("playwright preview fail-closed", () => {
     await renderer.close?.();
   });
 
+  it("loads chromium from Playwright's CommonJS default export", async () => {
+    const renderer = createPlaywrightPreviewRenderer({
+      importPlaywright: async () => ({
+        default: {
+          chromium: {
+            launch: async () => {
+              throw new Error("default chromium reached");
+            },
+          },
+        },
+      }),
+    });
+    await expect(
+      renderer({
+        bucket: "skills",
+        stableId: "alpha",
+        relativePath: "previews/skills/alpha.webp",
+        htmlContent: "<html></html>",
+        label: "skill:alpha",
+      }),
+    ).rejects.toThrow(/default chromium reached/);
+    await renderer.close?.();
+  });
+
   it("does not count launch failure as a successful stub preview", async () => {
     const stagingDir = await mkdtemp(join(tmpdir(), "od-catalog-playwright-fail-"));
     try {
@@ -370,9 +394,14 @@ describe("playwright preview fail-closed", () => {
     }
   });
 
-  it("treats a blocked HTTP dependency as a failed capture", async () => {
+  it("renders a deterministic local card when an entry requests an HTTP dependency", async () => {
+    const png = await sharp({
+      create: { width: 2, height: 2, channels: 4, background: "#ff0000" },
+    }).png().toBuffer();
     let abortCalls = 0;
     let screenshotCalls = 0;
+    let clockRunCalls = 0;
+    const renderedHtml: string[] = [];
     const renderer = createPlaywrightPreviewRenderer({
       importPlaywright: async () => ({
         chromium: {
@@ -390,16 +419,74 @@ describe("playwright preview fail-closed", () => {
                 clock: {
                   install: async () => undefined,
                   pauseAt: async () => undefined,
+                  runFor: async () => {
+                    clockRunCalls += 1;
+                    if (clockRunCalls === 1) throw new Error("Chart is not defined");
+                  },
+                },
+                setContent: async (html) => {
+                  renderedHtml.push(html);
+                },
+                goto: async () => undefined,
+                evaluate: async () => undefined,
+                waitForTimeout: async () => undefined,
+                screenshot: async () => {
+                  screenshotCalls += 1;
+                  return png;
+                },
+              }),
+              close: async () => undefined,
+            }),
+            close: async () => undefined,
+          }),
+        },
+      }),
+    });
+
+    const result = await renderer({
+      bucket: "skills",
+      stableId: "alpha",
+      relativePath: "previews/skills/alpha.webp",
+      htmlContent: '<script src="https://cdn.example.test/runtime.js"></script>',
+      remoteDependencyCard: renderFallbackCard(
+        { slug: "alpha", displayName: "Alpha", description: "Local replacement" },
+        1,
+      ),
+      label: "skill:alpha",
+    });
+    expect(result.source).toBe("render");
+    expect(result.warning).toMatch(/local deterministic card/);
+    expect(result.bytes.subarray(0, 4).toString("ascii")).toBe("RIFF");
+    expect(abortCalls).toBe(1);
+    expect(clockRunCalls).toBe(2);
+    expect(screenshotCalls).toBe(1);
+    expect(renderedHtml).toHaveLength(2);
+    expect(renderedHtml[1]).toContain("alpha");
+    expect(renderedHtml[1]).not.toMatch(/https?:\/\//u);
+    await renderer.close?.();
+  });
+
+  it("still fails a remote-dependent entry without a deterministic replacement card", async () => {
+    const renderer = createPlaywrightPreviewRenderer({
+      importPlaywright: async () => ({
+        chromium: {
+          launch: async () => ({
+            newContext: async () => ({
+              route: async (_pattern, handler) => {
+                await handler({ abort: async () => undefined });
+              },
+              addInitScript: async () => undefined,
+              newPage: async () => ({
+                clock: {
+                  install: async () => undefined,
+                  pauseAt: async () => undefined,
                   runFor: async () => undefined,
                 },
                 setContent: async () => undefined,
                 goto: async () => undefined,
                 evaluate: async () => undefined,
                 waitForTimeout: async () => undefined,
-                screenshot: async () => {
-                  screenshotCalls += 1;
-                  return Buffer.from("unreachable");
-                },
+                screenshot: async () => Buffer.from("unreachable"),
               }),
               close: async () => undefined,
             }),
@@ -419,8 +506,6 @@ describe("playwright preview fail-closed", () => {
     expect(result.source).toBe("fallback");
     expect(result.warning).toMatch(/blocked HTTP\(S\) dependency/);
     expect(result.bytes).toEqual(MINIMAL_WEBP);
-    expect(abortCalls).toBe(1);
-    expect(screenshotCalls).toBe(0);
     await renderer.close?.();
   });
 
