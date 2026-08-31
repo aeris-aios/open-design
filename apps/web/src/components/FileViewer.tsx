@@ -14574,7 +14574,10 @@ function HtmlViewer({
     // so a normal HTML artifact reloads through its canonical URL transport.
     // Failed persistence keeps Edit open and aborts the destructive reload.
     const reloadLeavesManualEdit = manualEditMode || manualEditSrcDocActive;
-    if (reloadLeavesManualEdit) requestManualEditUrlStandbyRefresh();
+    const manualEditUrlStandbyRevision = reloadLeavesManualEdit
+      ? requestManualEditUrlStandbyRefresh()
+      : 0;
+    const reloadUsesManualEditUrlStandby = manualEditUrlStandbyRevision > 0;
     if (manualEditMode && !(await requestManualEditSafeExitRef.current())) return;
     if (reloadLeavesManualEdit) {
       setManualEditSrcDocActive(false);
@@ -14593,12 +14596,12 @@ function HtmlViewer({
     // The Edit path already navigated the hidden URL through its standby
     // revision. Bumping reloadKey after the visual handoff would immediately
     // navigate the now-visible frame a second time and reintroduce the flash.
-    if (!reloadLeavesManualEdit) {
+    if (!reloadUsesManualEditUrlStandby) {
       manualEditUrlStandbySourceFingerprintRef.current = null;
       frozenPreviewSrcUrlRef.current = null;
       setReloadKey((key) => key + 1);
     }
-    if (!useUrlLoadPreview && !reloadLeavesManualEdit) {
+    if (!useUrlLoadPreview && !reloadUsesManualEditUrlStandby) {
       // Capture the current source so the fetch effect can restore it if
       // fetchProjectFileText returns null (non-2xx / transient network error).
       // Without this, a failed reload leaves source null and the iframe blank

@@ -1,4 +1,5 @@
 import { expect, test } from '@/playwright/suite';
+import { ACTIVE_ARTIFACT_PREVIEW_SELECTOR } from '@/playwright/artifact-preview';
 import { ensureRailOpen, openNewProjectModal } from '@/playwright/rail';
 import { openAllProjectFiles } from '@/playwright/workspace';
 import { T } from '@/timeouts';
@@ -28,8 +29,6 @@ async function stubCatalogsEmpty(page: Page): Promise<void> {
 }
 
 const STORAGE_KEY = 'open-design:config';
-const ACTIVE_ARTIFACT_PREVIEW_SELECTOR = '[data-testid="artifact-preview-frame"]:not([data-od-handoff-pending]):visible, [data-testid="live-artifact-preview-frame"]:visible';
-
 function projectDesignSystemTrigger(page: Page): Locator {
   return page
     .getByTestId('chat-composer')

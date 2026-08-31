@@ -1284,4 +1284,65 @@ describe('FileViewer srcDoc reload — prevSourceBeforeReloadRef race conditions
     });
     expect(reloadEffectFetches).toBe(0);
   });
+
+  it('reloads fresh bytes when Edit exits without an eligible URL standby', async () => {
+    window.history.replaceState({}, '', '/?forceInline=1');
+    const initialSource =
+      '<!doctype html><html><body>'
+      + '<img src="/assets/hero.png" alt="Hero">'
+      + '<h1 data-od-id="hero">Before reload</h1>'
+      + '</body></html>';
+    const reloadedSource = initialSource.replace('Before reload', 'After reload');
+    let rawReads = 0;
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = typeof input === 'string'
+        ? input
+        : input instanceof Request
+          ? input.url
+          : String(input);
+      if (url.includes('/api/projects/project-1/raw/preview.html')) {
+        rawReads += 1;
+        return new Response(rawReads === 1 ? initialSource : reloadedSource, { status: 200 });
+      }
+      if (url.includes('/api/projects/project-1/deployments')) {
+        return new Response(JSON.stringify({ deployments: [] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response('{}', {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(
+      <FileViewer
+        projectId="project-1"
+        projectKind="prototype"
+        file={manualEditFile()}
+      />,
+    );
+    await waitFor(() => {
+      const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+      expect(frame.getAttribute('data-od-render-mode')).toBe('srcdoc');
+      expect(frame.srcdoc).toContain('Before reload');
+    });
+
+    fireEvent.click(screen.getByTestId('manual-edit-mode-toggle'));
+    await waitFor(() => {
+      expect(screen.getByTestId('manual-edit-mode-toggle').getAttribute('aria-pressed')).toBe('true');
+    });
+    fireEvent.click(screen.getByRole('button', { name: /reload preview/i }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('manual-edit-mode-toggle').getAttribute('aria-pressed')).toBe('false');
+      const frame = screen.getByTestId('artifact-preview-frame') as HTMLIFrameElement;
+      expect(frame.getAttribute('data-od-render-mode')).toBe('srcdoc');
+      expect(frame.srcdoc).toContain('After reload');
+    });
+    expect(rawReads).toBeGreaterThanOrEqual(2);
+    window.history.replaceState({}, '', '/');
+  });
 });

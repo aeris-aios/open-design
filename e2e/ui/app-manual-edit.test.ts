@@ -1,4 +1,5 @@
 import { expect, test } from '@/playwright/suite';
+import { ACTIVE_ARTIFACT_PREVIEW_SELECTOR } from '@/playwright/artifact-preview';
 import { expectStableCount } from '@/playwright/assertions';
 import { applyStandardMocks, routeAgents, routeSuccessfulRuns } from '@/playwright/mock-factory';
 import { clickDeckNextSlide, openAllProjectFiles } from '@/playwright/workspace';
@@ -7,8 +8,6 @@ import { pathToFileURL } from 'node:url';
 import { T } from '@/timeouts';
 
 const STORAGE_KEY = 'open-design:config';
-const ACTIVE_ARTIFACT_PREVIEW_SELECTOR = '[data-testid="artifact-preview-frame"]:not([data-od-handoff-pending]):visible, [data-testid="live-artifact-preview-frame"]:visible';
-
 test.describe.configure({ timeout: T.xlong });
 
 function artifactPreview(page: Page) {

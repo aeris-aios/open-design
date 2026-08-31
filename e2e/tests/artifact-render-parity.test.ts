@@ -3,9 +3,9 @@ import { describe, expect, it, vi } from 'vitest';
 import { PNG } from 'pngjs';
 
 import {
-  ARTIFACT_PARITY_ACTIVE_PREVIEW_SELECTOR,
-  settledActivePreview,
-} from '../scripts/artifact-render-parity.ts';
+  ACTIVE_ARTIFACT_PREVIEW_SELECTOR,
+  settledActiveArtifactPreview,
+} from '../lib/playwright/artifact-preview.ts';
 import {
   classifyPixelParity,
   combinePixelParityClassifications,
@@ -96,12 +96,12 @@ describe('artifact render parity', () => {
     const locator = { waitFor };
     const page = {
       locator: vi.fn((selector: string) => {
-        expect(selector).toBe(ARTIFACT_PARITY_ACTIVE_PREVIEW_SELECTOR);
-        return { last: () => locator };
+        expect(selector).toBe(ACTIVE_ARTIFACT_PREVIEW_SELECTOR);
+        return { first: () => locator };
       }),
     } as unknown as Page;
 
-    await expect(settledActivePreview(page, 50)).rejects.toThrow(
+    await expect(settledActiveArtifactPreview(page, 50)).rejects.toThrow(
       'Timed out waiting for data-od-handoff-pending to clear',
     );
     expect(waitFor).toHaveBeenCalledWith({ state: 'visible', timeout: 250 });

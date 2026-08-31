@@ -613,6 +613,50 @@ describe('selection bridge — empty annotation surface (#890)', () => {
     expect(win.document.querySelector('[data-od-id="today-screen"]')).toBeNull();
   });
 
+  it('restores generated source annotations after replacing a bare authored body', async () => {
+    const bareSource = '<main><h1>Bare source page</h1></main>';
+    const parserDom = new JSDOM('');
+    globalThis.DOMParser = parserDom.window.DOMParser;
+    const annotatedSrcdoc = buildSrcdoc(bareSource, { editBridge: true });
+    Reflect.deleteProperty(globalThis, 'DOMParser');
+    const annotatedDocument = new JSDOM(annotatedSrcdoc).window.document;
+    const annotatedMain = annotatedDocument.querySelector('main')?.outerHTML;
+    expect(bareSource).not.toContain('data-od-id');
+    expect(annotatedMain).toContain('data-od-id="path-0"');
+    expect(annotatedMain).toContain('data-od-source-path="path-0"');
+
+    const { win } = setupBridgeDom(
+      annotatedMain ?? bareSource,
+      'inspect',
+      [],
+      'runtime-state-generation',
+    );
+    win.dispatchEvent(
+      new win.MessageEvent('message', {
+        data: {
+          type: 'od:preview-runtime-state-restore',
+          id: 'restore-bare-source-page',
+          generation: 'runtime-state-generation',
+          state: {
+            version: 1,
+            hash: '',
+            bodyHtml: '<main><h1>Runtime-rendered page</h1></main>',
+            roots: [],
+            htmlAttrs: {},
+            bodyAttrs: {},
+            entries: [],
+          },
+        },
+      }),
+    );
+
+    await new Promise<void>((resolve) => win.setTimeout(resolve, 120));
+    const restoredMain = win.document.querySelector('main');
+    expect(restoredMain?.textContent).toContain('Runtime-rendered page');
+    expect(restoredMain?.getAttribute('data-od-id')).toBe('path-0');
+    expect(restoredMain?.getAttribute('data-od-source-path')).toBe('path-0');
+  });
+
   it('posts od:comment-target for the annotated card when the device-frame iframe is clicked', async () => {
     const { win, parentPostMessage } = setupBridgeDom(
       '<article data-od-id="tablet-card" class="frame-card"><div class="meta">Tablet edition</div><iframe id="f" class="tablet-frame" title="Tablet edition" src="about:blank"></iframe></article>',

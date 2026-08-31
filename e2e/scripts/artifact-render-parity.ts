@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 import { chromium, type BrowserContext, type Frame, type Locator, type Page } from '@playwright/test';
 
+import { settledActiveArtifactPreview as settledActivePreview } from '../lib/playwright/artifact-preview.ts';
 import {
   classifyPixelParity,
   combinePixelParityClassifications,
@@ -94,10 +95,6 @@ type BrowserSignals = {
   failedRequestHashes: Set<string>;
   httpErrorHashes: Set<string>;
 };
-
-export const ARTIFACT_PARITY_ACTIVE_PREVIEW_SELECTOR =
-  '[data-testid="artifact-preview-frame"]:not([data-od-handoff-pending]):visible, '
-  + '[data-testid="live-artifact-preview-frame"]:visible';
 
 const isDirectRun = process.argv[1] != null
   && fileURLToPath(import.meta.url) === path.resolve(process.argv[1]);
@@ -333,43 +330,6 @@ async function createProject(
     timeout: timeoutMs,
   });
   if (!uploaded.ok()) throw new Error(`HTML upload failed (${uploaded.status()}): ${await uploaded.text()}`);
-}
-
-async function activePreview(page: Page, timeoutMs: number): Promise<{ locator: Locator; frame: Frame }> {
-  const locator = page.locator(ARTIFACT_PARITY_ACTIVE_PREVIEW_SELECTOR).last();
-  await locator.waitFor({ state: 'visible', timeout: timeoutMs });
-  const handle = await locator.elementHandle();
-  const frame = await handle?.contentFrame();
-  if (frame == null) throw new Error('Active preview iframe has no browsing context');
-  return { locator, frame };
-}
-
-export async function settledActivePreview(
-  page: Page,
-  timeoutMs: number,
-): Promise<{ locator: Locator; frame: Frame }> {
-  const startedAt = Date.now();
-  let lastError: unknown;
-  while (Date.now() - startedAt < timeoutMs) {
-    try {
-      const active = await activePreview(page, Math.max(250, timeoutMs - (Date.now() - startedAt)));
-      await settleFrame(active.frame, Math.max(250, timeoutMs - (Date.now() - startedAt)));
-      if (await active.locator.getAttribute('data-od-active') === 'true') return active;
-    } catch (error) {
-      lastError = error;
-      if (!/detached|browsing context|Execution context was destroyed/i.test(formatError(error))) throw error;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  throw new Error(`Active preview did not settle: ${formatError(lastError)}`);
-}
-
-async function settleFrame(frame: Frame, timeoutMs: number): Promise<void> {
-  await frame.waitForLoadState('domcontentloaded', { timeout: timeoutMs }).catch(() => {});
-  await frame.evaluate(async () => {
-    if (document.fonts?.ready != null) await document.fonts.ready;
-    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
-  });
 }
 
 async function captureStable(
