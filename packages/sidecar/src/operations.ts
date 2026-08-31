@@ -69,6 +69,7 @@ export type SidecarRestartOptions = {
 };
 
 export type SidecarLaunchConvergenceOptions = {
+  ownerStamps?: readonly SidecarStamp[];
   retryDelayMs?: number;
   stabilityMs?: number;
   timeoutMs?: number;
@@ -220,6 +221,7 @@ export async function convergeSidecarLaunch(
   options: SidecarLaunchConvergenceOptions = {},
 ): Promise<SidecarLaunchConvergenceResult> {
   const stamp = normalizeSidecarStamp(request.stamp);
+  const ownerStamps = (options.ownerStamps ?? [stamp]).map(normalizeSidecarStamp);
   const timeoutMs = normalizeDuration(options.timeoutMs, 45_000);
   const stabilityMs = normalizeDuration(options.stabilityMs, EXISTING_GENERATION_STABILITY_MS);
   const retryDelayMs = normalizeDuration(options.retryDelayMs, 250);
@@ -253,13 +255,16 @@ export async function convergeSidecarLaunch(
         );
       }
 
-      const description = await describeSidecarGeneration(stamp);
-      const ownerPid = description?.ready === true ? description.resources.pid : null;
+      const descriptions = await Promise.all(ownerStamps.map(async (candidate) =>
+        await describeSidecarGeneration(candidate),
+      ));
+      const description = descriptions.find((candidate) => candidate?.ready === true) ?? null;
+      const ownerPid = description?.resources.pid ?? null;
       const ownerSnapshot = ownerPid == null
         ? null
         : (await captureProcessSnapshotsByPids([ownerPid]))[0] ?? null;
       const generationStable = ownerSnapshot != null &&
-        matchesStampedProcess(ownerSnapshot, stamp, SIDECAR_STAMP_CONTRACT) &&
+        description != null && matchesStampedProcess(ownerSnapshot, description.stamp, SIDECAR_STAMP_CONTRACT) &&
         !isSidecarLauncherCommand(ownerSnapshot.command);
       const launcherConverged = exit != null && exit.signal == null && (
         exit.code === 0 || exit.code === SIDECAR_LAUNCHER_RETRY_EXIT_CODE

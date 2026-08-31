@@ -310,7 +310,10 @@ async function startPackedWinAppLocked(config: ToolPackConfig, options: { waitFo
       runtimeRoot: join(config.roots.runtime.namespaceRoot, "runtime"),
     },
     stamp,
-  }, { timeoutMs: PACKAGED_COLD_START_CONVERGENCE_TIMEOUT_MS });
+  }, {
+    ownerStamps: [stamp, appStamp(config, APP_KEYS.DESKTOP, SIDECAR_SOURCES.PACKAGED)],
+    timeoutMs: PACKAGED_COLD_START_CONVERGENCE_TIMEOUT_MS,
+  });
   return {
     executablePath: target.executablePath,
     logPath,

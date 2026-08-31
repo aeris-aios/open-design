@@ -386,6 +386,45 @@ describe("server-side atomic operations", () => {
     }
   }, 15_000);
 
+  it.each(["runtime", "headless"] as const)("converges a tools-pack %s launch on an existing packaged-source owner", async (mode) => {
+    const fixture = fileURLToPath(new URL("./fixtures/converging-launcher.ts", import.meta.url));
+    const root = await mkdtemp(join(tmpdir(), "open-design-cross-source-convergence-"));
+    const ownerAttemptPath = join(root, "owner-attempt.txt");
+    const launcherAttemptPath = join(root, "launcher-attempt.txt");
+    const requestedStamp = {
+      ...stamp,
+      app: "desktop",
+      mode,
+      namespace: `cross-source-${mode}-${process.pid}`,
+      source: "tools-pack",
+    };
+    const ownerStamp = { ...requestedStamp, source: "packaged" };
+    await writeFile(ownerAttemptPath, "1");
+    await writeFile(launcherAttemptPath, "0");
+    try {
+      await launchSidecar({
+        args: ["--import", "tsx", fixture],
+        command: process.execPath,
+        env: { ...process.env, OD_TEST_LAUNCH_ATTEMPT: ownerAttemptPath },
+        resources: { dataRoot: join(root, "data"), ownerPid: null, port: 0, runtimeRoot: join(root, "runtime") },
+        stamp: ownerStamp,
+      });
+      const result = await convergeSidecarLaunch({
+        args: ["--import", "tsx", fixture],
+        command: process.execPath,
+        env: { ...process.env, OD_TEST_LAUNCH_ATTEMPT: launcherAttemptPath },
+        resources: { dataRoot: join(root, "data"), ownerPid: null, port: 0, runtimeRoot: join(root, "runtime") },
+        stamp: requestedStamp,
+      }, { ownerStamps: [requestedStamp, ownerStamp], stabilityMs: 100, timeoutMs: 10_000 });
+
+      expect(result.attempts).toBe(1);
+      expect(result.description).toMatchObject({ ready: true, stamp: ownerStamp });
+    } finally {
+      await stopSidecars([{ stamp: requestedStamp }, { stamp: ownerStamp }]).catch(() => undefined);
+      await rm(root, { force: true, recursive: true });
+    }
+  }, 15_000);
+
   it("retries a launcher generation retired by a competing lifecycle operation", async () => {
     const fixture = fileURLToPath(new URL("./fixtures/converging-launcher.ts", import.meta.url));
     const root = await mkdtemp(join(tmpdir(), "open-design-contended-launcher-"));

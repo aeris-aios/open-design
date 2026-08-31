@@ -25,7 +25,8 @@ async function main(): Promise<void> {
       async start(resources) {
         if (client.stamp.app !== APP_KEYS.DAEMON) throw new Error(`daemon sidecar cannot run stamp app ${client.stamp.app}`);
         if (!isSidecarSource(client.stamp.source)) throw new Error(`unsupported daemon sidecar source: ${client.stamp.source}`);
-        process.env.OD_DATA_DIR = resources.dataRoot;
+        if (resources.dataRoot == null) delete process.env.OD_DATA_DIR;
+        else process.env.OD_DATA_DIR = resources.dataRoot;
         const started = await startDaemonSidecar({
           base: resources.runtimeRoot,
           mode: client.stamp.mode,
@@ -51,7 +52,7 @@ async function main(): Promise<void> {
   });
   await client.start();
   if (!isSidecarSource(client.stamp.source)) throw new Error(`unsupported daemon sidecar source: ${client.stamp.source}`);
-  const desktopHandoff = await prepareLegacyPayloadDesktopHandoff({
+  const desktopHandoff = client.resources.dataRoot == null ? null : await prepareLegacyPayloadDesktopHandoff({
     dataRoot: client.resources.dataRoot,
     namespace: client.stamp.namespace,
     outerPid: client.resources.ownerPid,

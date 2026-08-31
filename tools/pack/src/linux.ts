@@ -965,7 +965,7 @@ export async function startPackedLinuxApp(config: ToolPackConfig): Promise<Linux
       runtimeRoot: join(config.roots.runtime.namespaceRoot, "runtime"),
     },
     stamp,
-  }, { timeoutMs: 60_000 });
+  }, { ownerStamps: launchStamps, timeoutMs: 60_000 });
 
   // 60s ceiling: AppImage --appimage-extract-and-run unpacks ~200MB to /tmp on
   // first launch before exec'ing the inner electron, which adds substantial
@@ -1261,7 +1261,7 @@ export async function startPackedLinuxHeadless(config: ToolPackConfig): Promise<
         runtimeRoot: join(config.roots.runtime.namespaceRoot, "runtime"),
       },
       stamp,
-    }, { timeoutMs: 95_000 });
+    }, { ownerStamps: launchStamps, timeoutMs: 95_000 });
     child = { pid: convergence.description.resources.pid };
   } finally {
     await logHandle.close().catch(() => undefined);

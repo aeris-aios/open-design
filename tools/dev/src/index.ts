@@ -1,6 +1,5 @@
 import { spawn } from "node:child_process";
 import { lstat, mkdir, open, readdir, rm, symlink, writeFile, type FileHandle } from "node:fs/promises";
-import { homedir } from "node:os";
 import path from "node:path";
 
 import { cac } from "cac";
@@ -51,6 +50,7 @@ import {
   type ToolDevConfig,
   type ToolDevOptions,
 } from "./config.js";
+import { resolveToolsDevDataRoot } from "./data-root.js";
 import {
   appendStartupLogDiagnostics,
   createUnsupportedNodeRuntimeError,
@@ -396,17 +396,6 @@ async function spawnSidecarRuntime(request: {
   return request.restart === true
     ? await restartSidecar(launchRequest, request.restartOptions)
     : await launchSidecar(launchRequest);
-}
-
-function resolveToolsDevDataRoot(workspaceRoot: string): string {
-  const configured = process.env.OD_DATA_DIR?.trim();
-  if (configured == null || configured.length === 0) return path.join(workspaceRoot, ".od");
-  const home = homedir();
-  const expanded = configured
-    .replace(/^~(?=$|[\\/])/, home)
-    .replace(/^\$HOME(?=$|[\\/])/, home)
-    .replace(/^\$\{HOME\}(?=$|[\\/])/, home);
-  return path.isAbsolute(expanded) ? path.resolve(expanded) : path.resolve(workspaceRoot, expanded);
 }
 
 async function spawnDaemonRuntime(

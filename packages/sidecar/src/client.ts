@@ -18,7 +18,7 @@ const INHERITED_ENDPOINT_ENV = "OD_SIDECAR_CLIENT_ENDPOINT";
 export const SIDECAR_SUPERVISOR_TARGET_ENV = "OD_SIDECAR_SUPERVISOR_TARGET";
 
 export type SidecarResources = Readonly<{
-  dataRoot: string;
+  dataRoot: string | null;
   ownerPid: number | null;
   pid: number;
   port: number;
@@ -81,8 +81,8 @@ export function normalizeSidecarLaunchResources(input: unknown): Omit<SidecarRes
     throw new Error("sidecar launch resources must contain a resource object");
   }
   const value = input as Record<string, unknown>;
-  if (typeof value.dataRoot !== "string" || value.dataRoot.length === 0) {
-    throw new Error("sidecar dataRoot must be a non-empty string");
+  if (value.dataRoot != null && (typeof value.dataRoot !== "string" || value.dataRoot.length === 0)) {
+    throw new Error("sidecar dataRoot must be null or a non-empty string");
   }
   if (typeof value.runtimeRoot !== "string" || value.runtimeRoot.length === 0) {
     throw new Error("sidecar runtimeRoot must be a non-empty string");
@@ -95,7 +95,7 @@ export function normalizeSidecarLaunchResources(input: unknown): Omit<SidecarRes
   if (ownerPid != null && (!Number.isSafeInteger(ownerPid) || ownerPid <= 0)) {
     throw new Error("sidecar ownerPid must be null or a positive safe integer");
   }
-  return Object.freeze({ dataRoot: value.dataRoot, ownerPid, port, runtimeRoot: value.runtimeRoot });
+  return Object.freeze({ dataRoot: value.dataRoot == null ? null : value.dataRoot, ownerPid, port, runtimeRoot: value.runtimeRoot });
 }
 
 export function readSidecarLaunchResources(env: NodeJS.ProcessEnv = process.env): Omit<SidecarResources, "pid"> {

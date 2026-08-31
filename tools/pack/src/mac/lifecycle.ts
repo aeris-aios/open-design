@@ -359,7 +359,7 @@ export async function startPackedMacApp(config: ToolPackConfig): Promise<MacStar
         runtimeRoot: join(config.roots.runtime.namespaceRoot, "runtime"),
       },
       stamp,
-    });
+    }, { ownerStamps: [stamp, convergedDesktopStamp(config, SIDECAR_SOURCES.PACKAGED)] });
   } finally {
     await logHandle.close().catch(() => undefined);
   }

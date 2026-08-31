@@ -22,6 +22,8 @@ import { resolvePackagedNamespacePaths } from "./paths.js";
 import type { PackagedSidecarHandle } from "./sidecars.js";
 import { startPackagedSidecars } from "./sidecars.js";
 
+const PACKAGED_SIDECAR_SOURCES = [SIDECAR_SOURCES.TOOLS_PACK, SIDECAR_SOURCES.PACKAGED] as const;
+
 function colorize(text: string): string {
   if (process.stdout.isTTY !== true || process.env.NO_COLOR != null) return text;
   return `\x1b[36m\x1b[4m${text}\x1b[0m`;
@@ -50,10 +52,14 @@ export async function runPackagedMcpActionAgainstExistingDaemon(
   } = {},
 ): Promise<boolean> {
   if (request.mcpInstallAgent == null) return false;
-  const status = await (dependencies.getStatus ?? getSidecarStatus)<{ state?: unknown; url?: unknown }>(
-    { ...stamp, app: APP_KEYS.DAEMON, mode: SIDECAR_MODES.RUNTIME },
-    { timeoutMs: 350 },
-  ).catch(() => null);
+  let status: { state?: unknown; url?: unknown } | null = null;
+  for (const source of [stamp.source, ...PACKAGED_SIDECAR_SOURCES.filter((candidate) => candidate !== stamp.source)]) {
+    status = await (dependencies.getStatus ?? getSidecarStatus)<{ state?: unknown; url?: unknown }>(
+      { ...stamp, app: APP_KEYS.DAEMON, mode: SIDECAR_MODES.RUNTIME, source },
+      { timeoutMs: 350 },
+    ).catch(() => null);
+    if (status?.state === "running" && typeof status.url === "string" && status.url.length > 0) break;
+  }
   if (status?.state !== "running" || typeof status.url !== "string" || status.url.length === 0) return false;
   await (dependencies.installMcp ?? installCodexMcp)(status.url);
   return true;
