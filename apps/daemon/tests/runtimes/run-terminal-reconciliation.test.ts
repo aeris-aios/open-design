@@ -6,6 +6,7 @@ import Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { reconcileDurableRunTerminals } from '../../src/runtimes/run-terminal-reconciliation.js';
+import { createChatRunService } from '../../src/runtimes/runs.js';
 
 describe('durable run terminal reconciliation', () => {
   let tmpDir: string;
@@ -29,6 +30,178 @@ describe('durable run terminal reconciliation', () => {
     vi.restoreAllMocks();
     db.close();
     fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('keeps the app version that started an interrupted run after a newer daemon restarts', async () => {
+    const startedWithVersion = {
+      version: '0.21.1',
+      channel: 'stable',
+      packaged: true,
+      platform: 'darwin',
+      arch: 'arm64',
+    };
+    const runs = createChatRunService({
+      createSseResponse: () => ({ send: vi.fn(), end: vi.fn(), cleanup: vi.fn() }),
+      createSseErrorPayload: (code: string, message: string) => ({ error: { code, message } }),
+      getAppVersionInfo: () => startedWithVersion,
+      runsLogDir: tmpDir,
+    } as never);
+    const run = runs.create({
+      projectId: 'p1',
+      conversationId: 'c1',
+      assistantMessageId: 'm1',
+      agentId: 'claude',
+    });
+    runs.setAnalyticsRecovery(run, {
+      context: {
+        deviceId: 'device-1',
+        sessionId: 'session-1',
+        clientType: 'desktop',
+        locale: 'en',
+      },
+      properties: {
+        page_name: 'chat_panel',
+        area: 'chat_panel',
+        project_id: 'p1',
+        conversation_id: 'c1',
+        run_id: run.id,
+      },
+      insertId: 'run-created-version-a',
+    });
+    run.status = 'running';
+    runs.persistState(run);
+
+    const statePath = path.join(tmpDir, run.id, 'state.json');
+    expect(JSON.parse(fs.readFileSync(statePath, 'utf8'))).toMatchObject({
+      appVersionInfo: startedWithVersion,
+    });
+
+    const capture = vi.fn(async () => undefined);
+    const reportLangfuse = vi.fn(async () => ({
+      langfuse_expected: true,
+      langfuse_delivery_status: 'accepted' as const,
+    }));
+    await reconcileDurableRunTerminals({
+      analytics: { capture },
+      appVersion: '0.22.0',
+      appVersionInfo: {
+        version: '0.22.0',
+        channel: 'stable',
+        packaged: true,
+        platform: 'darwin',
+        arch: 'arm64',
+      },
+      db,
+      reportLangfuse,
+      runsLogDir: tmpDir,
+    });
+
+    expect(capture).toHaveBeenCalledWith(expect.objectContaining({
+      eventName: 'run_finished',
+      appVersion: startedWithVersion.version,
+    }));
+    expect(reportLangfuse).toHaveBeenCalledWith(expect.objectContaining({
+      appVersion: startedWithVersion,
+    }));
+  });
+
+  it('uses the resolved current version when a legacy durable run has no version snapshot', async () => {
+    const runId = 'run-legacy-version';
+    const runDir = path.join(tmpDir, runId);
+    fs.mkdirSync(runDir, { recursive: true });
+    fs.writeFileSync(path.join(runDir, 'state.json'), JSON.stringify({
+      schemaVersion: 1,
+      id: runId,
+      projectId: 'p1',
+      conversationId: 'c1',
+      assistantMessageId: 'm1',
+      agentId: 'claude',
+      status: 'running',
+      createdAt: 1_000,
+      updatedAt: 2_000,
+      analyticsRecovery: {
+        context: {},
+        properties: { run_id: runId },
+        insertId: 'run-created-legacy-version',
+      },
+    }));
+    const currentVersion = {
+      version: '0.22.0',
+      channel: 'stable',
+      packaged: true,
+      platform: 'darwin',
+      arch: 'arm64',
+    };
+    const capture = vi.fn(async () => undefined);
+    const reportLangfuse = vi.fn(async () => ({
+      langfuse_expected: true,
+      langfuse_delivery_status: 'accepted' as const,
+    }));
+
+    await reconcileDurableRunTerminals({
+      analytics: { capture },
+      appVersion: currentVersion.version,
+      appVersionInfo: currentVersion,
+      db,
+      reportLangfuse,
+      runsLogDir: tmpDir,
+    });
+
+    expect(capture).toHaveBeenCalledWith(expect.objectContaining({
+      appVersion: currentVersion.version,
+    }));
+    expect(reportLangfuse).toHaveBeenCalledWith(expect.objectContaining({
+      appVersion: currentVersion,
+    }));
+  });
+
+  it('uses explicit unknown or missing semantics when no real version can be resolved', async () => {
+    const runId = 'run-version-unknown';
+    const runDir = path.join(tmpDir, runId);
+    fs.mkdirSync(runDir, { recursive: true });
+    fs.writeFileSync(path.join(runDir, 'state.json'), JSON.stringify({
+      schemaVersion: 1,
+      id: runId,
+      projectId: 'p1',
+      conversationId: 'c1',
+      assistantMessageId: 'm1',
+      agentId: 'claude',
+      status: 'running',
+      createdAt: 1_000,
+      updatedAt: 2_000,
+      analyticsRecovery: {
+        context: {},
+        properties: { run_id: runId },
+        insertId: 'run-created-version-unknown',
+      },
+    }));
+    const capture = vi.fn(async () => undefined);
+    const reportLangfuse = vi.fn(async () => ({
+      langfuse_expected: true,
+      langfuse_delivery_status: 'accepted' as const,
+    }));
+
+    await reconcileDurableRunTerminals({
+      analytics: { capture },
+      appVersion: '0.0.0',
+      appVersionInfo: {
+        version: '0.0.0',
+        channel: 'development',
+        packaged: false,
+        platform: 'darwin',
+        arch: 'arm64',
+      },
+      db,
+      reportLangfuse,
+      runsLogDir: tmpDir,
+    });
+
+    expect(capture).toHaveBeenCalledWith(expect.objectContaining({
+      appVersion: 'unknown',
+    }));
+    expect(reportLangfuse).toHaveBeenCalledWith(expect.objectContaining({
+      appVersion: null,
+    }));
   });
 
   it('fails an interrupted run, repairs its message, and emits missing terminal telemetry once', async () => {
