@@ -3997,7 +3997,16 @@ export function injectHyperFramesFrameBridge(sourceHtml: string, runtimeScript: 
   const safeRuntime = runtimeScript.replace(/<\/script/gi, '<\\/script');
   const bridge = `<script>${safeRuntime}</script><script>
 (() => {
-  const nextPaint = () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  const nextPaint = () => new Promise((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
+    setTimeout(finish, 100);
+    requestAnimationFrame(() => requestAnimationFrame(finish));
+  });
   const waitForRuntime = async () => {
     const deadline = Date.now() + 45000;
     while (Date.now() < deadline) {

@@ -214,5 +214,6 @@ describe('hyperframes-html media renderer preflight', () => {
     const injected = injectHyperFramesFrameBridge(source, 'window.__hfRuntimeLoaded = true;');
     expect(injected.indexOf('window.__odFrameRenderer')).toBeGreaterThan(source.indexOf('</script>'));
     expect(injected).toContain('const fake = "</body>";');
+    expect(injected).toContain('setTimeout(finish, 100)');
   });
 });

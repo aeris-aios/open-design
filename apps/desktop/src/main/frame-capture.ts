@@ -18,30 +18,76 @@ import { waitForPrintableContent } from "./pdf-export.js";
 const DEFAULT_FRAME_RATE = 30;
 const MAX_FRAME_COUNT = 1_000_000;
 export const FRAME_CAPTURE_TIMEOUT_MS = 5 * 60 * 1_000;
+export const FRAME_CAPTURE_STAGE_TIMEOUT_MS = 30 * 1_000;
+const FRAME_CAPTURE_SETUP_TIMEOUT_MS = 60 * 1_000;
+
+type FrameCaptureStage =
+  | "create-output-directory"
+  | "write-document"
+  | "load-document"
+  | "wait-for-printable-content"
+  | "wait-for-frame-renderer"
+  | "attach-debugger"
+  | "configure-viewport"
+  | "seek"
+  | "settle-paint"
+  | "capture-screenshot"
+  | "write-frame";
+
+type FrameCaptureWaitContext = {
+  frameCount?: number;
+  frameIndex?: number;
+  stage: FrameCaptureStage;
+  timeoutMs?: number;
+};
 
 class FrameCaptureTimeoutError extends Error {
-  constructor(timeoutMs: number) {
-    super(`Electron frame capture timed out after ${Math.round(timeoutMs / 1_000)} seconds`);
+  constructor(timeoutMs: number, context: FrameCaptureWaitContext, scope: "stage" | "total") {
+    const frameSuffix =
+      context.frameIndex == null || context.frameCount == null
+        ? ""
+        : ` at frame ${context.frameIndex + 1}/${context.frameCount}`;
+    super(
+      `Electron frame capture timed out during ${context.stage}${frameSuffix} after ` +
+        `${Math.round(timeoutMs / 1_000)} seconds (${scope} deadline)`,
+    );
     this.name = "FrameCaptureTimeoutError";
   }
 }
 
 type FrameCaptureDeadline = {
   clear(): void;
-  wait<T>(operation: Promise<T>): Promise<T>;
+  wait<T>(operation: Promise<T>, context: FrameCaptureWaitContext): Promise<T>;
 };
 
 function createFrameCaptureDeadline(timeoutMs: number): FrameCaptureDeadline {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(() => reject(new FrameCaptureTimeoutError(timeoutMs)), timeoutMs);
+  let totalTimer: ReturnType<typeof setTimeout> | undefined;
+  let activeContext: FrameCaptureWaitContext = { stage: "create-output-directory" };
+  const totalTimeout = new Promise<never>((_resolve, reject) => {
+    totalTimer = setTimeout(
+      () => reject(new FrameCaptureTimeoutError(timeoutMs, activeContext, "total")),
+      timeoutMs,
+    );
   });
   return {
     clear() {
-      if (timer !== undefined) clearTimeout(timer);
+      if (totalTimer !== undefined) clearTimeout(totalTimer);
     },
-    wait<T>(operation: Promise<T>) {
-      return Promise.race([operation, timeout]);
+    async wait<T>(operation: Promise<T>, context: FrameCaptureWaitContext) {
+      activeContext = context;
+      const stageTimeoutMs = context.timeoutMs ?? FRAME_CAPTURE_STAGE_TIMEOUT_MS;
+      let stageTimer: ReturnType<typeof setTimeout> | undefined;
+      const stageTimeout = new Promise<never>((_resolve, reject) => {
+        stageTimer = setTimeout(
+          () => reject(new FrameCaptureTimeoutError(stageTimeoutMs, context, "stage")),
+          stageTimeoutMs,
+        );
+      });
+      try {
+        return await Promise.race([operation, totalTimeout, stageTimeout]);
+      } finally {
+        if (stageTimer !== undefined) clearTimeout(stageTimer);
+      }
     },
   };
 }
@@ -67,6 +113,11 @@ export async function renderDeterministicFrames(
     show: false,
     enableLargerThanScreen: true,
     webPreferences: {
+      // HyperFrames' own Chrome launcher disables background and occlusion
+      // throttling. Keep the throwaway Electron renderer on the same contract:
+      // shader/page-compositor seeks rely on paint callbacks while this window
+      // is invisible and fully transparent.
+      backgroundThrottling: false,
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
@@ -81,12 +132,21 @@ export async function renderDeterministicFrames(
   let debuggerAttached = false;
 
   try {
-    await deadline.wait(mkdir(input.outputDir, { recursive: true }));
+    await deadline.wait(mkdir(input.outputDir, { recursive: true }), {
+      stage: "create-output-directory",
+    });
     await deadline.wait(
       writeFile(documentPath, injectBaseHref(input.html, input.baseHref), "utf8"),
+      { stage: "write-document" },
     );
-    await deadline.wait(loadArtifactDocument(window, pathToFileURL(documentPath).href));
-    await deadline.wait(waitForPrintableContent(window));
+    await deadline.wait(loadArtifactDocument(window, pathToFileURL(documentPath).href), {
+      stage: "load-document",
+      timeoutMs: FRAME_CAPTURE_SETUP_TIMEOUT_MS,
+    });
+    await deadline.wait(waitForPrintableContent(window), {
+      stage: "wait-for-printable-content",
+      timeoutMs: FRAME_CAPTURE_SETUP_TIMEOUT_MS,
+    });
 
     window.setContentSize(Math.round(input.width), Math.round(input.height));
     window.setOpacity(0);
@@ -106,6 +166,10 @@ export async function renderDeterministicFrames(
         })()`,
         true,
       ),
+      {
+        stage: "wait-for-frame-renderer",
+        timeoutMs: FRAME_CAPTURE_SETUP_TIMEOUT_MS,
+      },
     )) as FrameRendererMetadata;
     if (metadata?.hasAudio === true) {
       return {
@@ -135,7 +199,7 @@ export async function renderDeterministicFrames(
     const dbg = window.webContents.debugger;
     dbg.attach("1.3");
     debuggerAttached = true;
-    await deadline.wait(dbg.sendCommand("Page.enable"));
+    await deadline.wait(dbg.sendCommand("Page.enable"), { stage: "attach-debugger" });
     await deadline.wait(
       dbg.sendCommand("Emulation.setDeviceMetricsOverride", {
         width: Math.round(input.width),
@@ -143,17 +207,23 @@ export async function renderDeterministicFrames(
         deviceScaleFactor: 1,
         mobile: false,
       }),
+      { stage: "configure-viewport" },
     );
 
     for (let frameIndex = 0; frameIndex < frameCount; frameIndex += 1) {
       const timeSeconds = frameIndex / fps;
+      const frameContext = { frameCount, frameIndex };
       await deadline.wait(
         window.webContents.executeJavaScript(
           `globalThis.__odFrameRenderer.seek(${JSON.stringify(timeSeconds)}, ${frameIndex})`,
           true,
         ),
+        { ...frameContext, stage: "seek" },
       );
-      await deadline.wait(nextFrames(window));
+      await deadline.wait(settleFramePaint(window), {
+        ...frameContext,
+        stage: "settle-paint",
+      });
       const shot = (await deadline.wait(
         dbg.sendCommand("Page.captureScreenshot", {
           clip: {
@@ -166,9 +236,11 @@ export async function renderDeterministicFrames(
           format: "png",
           fromSurface: true,
         }),
+        { ...frameContext, stage: "capture-screenshot" },
       )) as { data: string };
       await deadline.wait(
         writeFile(frameFilePath(input.outputDir, frameIndex), Buffer.from(shot.data, "base64")),
+        { ...frameContext, stage: "write-frame" },
       );
     }
 
@@ -215,9 +287,18 @@ function positiveFinite(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null;
 }
 
-async function nextFrames(window: BrowserWindow): Promise<void> {
+async function settleFramePaint(window: BrowserWindow): Promise<void> {
   await window.webContents.executeJavaScript(
-    "new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))",
+    `new Promise((resolve) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        resolve();
+      };
+      setTimeout(finish, 100);
+      requestAnimationFrame(() => requestAnimationFrame(finish));
+    })`,
     true,
   );
 }

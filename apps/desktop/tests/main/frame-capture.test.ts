@@ -1,6 +1,9 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { promisify } from 'node:util';
 
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
@@ -19,10 +22,13 @@ vi.mock('../../src/main/pdf-export.js', () => ({
 }));
 
 import {
-  FRAME_CAPTURE_TIMEOUT_MS,
+  FRAME_CAPTURE_STAGE_TIMEOUT_MS,
   frameFilePath,
   renderDeterministicFrames,
 } from '../../src/main/frame-capture.js';
+
+const desktopRoot = fileURLToPath(new URL('../../', import.meta.url));
+const execFileAsync = promisify(execFile);
 
 describe('deterministic Electron frame capture', () => {
   const scratch: string[] = [];
@@ -84,8 +90,17 @@ describe('deterministic Electron frame capture', () => {
     });
 
     expect(result).toMatchObject({ frameCount: 3, fps: 30, ok: true });
+    expect(mocks.browserWindow).toHaveBeenCalledWith(expect.objectContaining({
+      webPreferences: expect.objectContaining({ backgroundThrottling: false }),
+    }));
     expect(events.filter((event) => event.startsWith('seek:'))).toEqual(['seek:0', 'seek:1', 'seek:2']);
     expect(events.filter((event) => event === 'capture')).toHaveLength(3);
+    const settleExpressions = window.webContents.executeJavaScript.mock.calls
+      .map(([expression]) => expression)
+      .filter((expression) => expression.includes('requestAnimationFrame'));
+    expect(settleExpressions).toHaveLength(3);
+    expect(settleExpressions.every((expression) => expression.includes('setTimeout(finish, 100)')))
+      .toBe(true);
     for (let frame = 0; frame < 3; frame += 1) {
       const seek = events.indexOf(`seek:${frame}`);
       const capture = events.indexOf('capture', seek);
@@ -207,8 +222,9 @@ describe('deterministic Electron frame capture', () => {
       expect.any(Object),
     );
 
-    await vi.advanceTimersByTimeAsync(FRAME_CAPTURE_TIMEOUT_MS);
+    await vi.advanceTimersByTimeAsync(FRAME_CAPTURE_STAGE_TIMEOUT_MS);
     await expect(renderPromise).resolves.toMatchObject({
+      error: `Electron frame capture timed out during seek at frame 2/30 after ${FRAME_CAPTURE_STAGE_TIMEOUT_MS / 1_000} seconds (stage deadline)`,
       errorCode: 'RENDER_TIMEOUT',
       ok: false,
     });
@@ -223,4 +239,105 @@ describe('deterministic Electron frame capture', () => {
     ).toHaveLength(1);
     await expect(readFile(frameFilePath(outputDir, 1))).rejects.toThrow();
   });
+
+  test('[P0] real Electron captures a multi-second WebGL timeline without background paint stalls', async () => {
+    const result = await probeRealElectronWebGlCapture();
+    expect(result.capture).toMatchObject({
+      duration: 7,
+      fps: 30,
+      frameCount: 210,
+      ok: true,
+    });
+    expect(result.lastFrameBytes).toBeGreaterThan(0);
+  }, 120_000);
 });
+
+type ElectronCaptureProbeResult = {
+  capture: {
+    duration?: number;
+    error?: string;
+    errorCode?: string;
+    fps?: number;
+    frameCount?: number;
+    ok: boolean;
+  };
+  lastFrameBytes: number;
+};
+
+async function probeRealElectronWebGlCapture(): Promise<ElectronCaptureProbeResult> {
+  const probeDir = await mkdtemp(join(tmpdir(), 'od-frame-capture-electron-'));
+  const outputDir = join(probeDir, 'frames');
+  const htmlFile = join(probeDir, 'webgl-composition.html');
+  const modulePath = join(desktopRoot, 'dist', 'main', 'frame-capture.js');
+  await stat(modulePath);
+  await writeFile(join(probeDir, 'package.json'), '{"main":"main.cjs"}\n');
+  await writeFile(htmlFile, `<!doctype html>
+<html><head><meta charset="utf-8"><style>
+html,body{margin:0;width:320px;height:180px;overflow:hidden;background:#07111f}
+canvas{width:320px;height:180px}
+</style></head><body><canvas id="stage" width="320" height="180"></canvas><script>
+const canvas=document.getElementById('stage');
+const gl=canvas.getContext('webgl');
+if(!gl) throw new Error('WebGL unavailable in Electron capture probe');
+const compile=(type,source)=>{const shader=gl.createShader(type);gl.shaderSource(shader,source);gl.compileShader(shader);return shader};
+const program=gl.createProgram();
+gl.attachShader(program,compile(gl.VERTEX_SHADER,'attribute vec2 p;void main(){gl_Position=vec4(p,0.,1.);}'));
+gl.attachShader(program,compile(gl.FRAGMENT_SHADER,'precision mediump float;uniform float t;void main(){vec2 uv=gl_FragCoord.xy/vec2(320.,180.);gl_FragColor=vec4(uv.x,uv.y,0.35+0.3*sin(t*2.),1.);}'));
+gl.linkProgram(program);gl.useProgram(program);
+const buffer=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,buffer);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,3,-1,-1,3]),gl.STATIC_DRAW);
+const position=gl.getAttribLocation(program,'p');gl.enableVertexAttribArray(position);gl.vertexAttribPointer(position,2,gl.FLOAT,false,0,0);
+const time=gl.getUniformLocation(program,'t');
+const paint=()=>new Promise((resolve)=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+globalThis.__odFrameRenderer={
+  ready:async()=>({duration:7,fps:30}),
+  seek:async(timeSeconds)=>{gl.uniform1f(time,timeSeconds);gl.drawArrays(gl.TRIANGLES,0,3);gl.finish();await paint();},
+};
+</script></body></html>`, 'utf8');
+  await writeFile(join(probeDir, 'main.cjs'), `
+const { app } = require('electron');
+const { readFile, stat } = require('node:fs/promises');
+const path = require('node:path');
+
+app.whenReady().then(async () => {
+  const { renderDeterministicFrames } = await import(process.env.OD_FRAME_CAPTURE_MODULE_URL);
+  const capture = await renderDeterministicFrames({
+    fps: 30,
+    height: 180,
+    html: await readFile(process.env.OD_FRAME_CAPTURE_HTML_FILE, 'utf8'),
+    outputDir: process.env.OD_FRAME_CAPTURE_OUTPUT_DIR,
+    width: 320,
+  });
+  const lastFrame = path.join(process.env.OD_FRAME_CAPTURE_OUTPUT_DIR, 'frame-00000209.png');
+  const lastFrameBytes = capture.ok ? (await stat(lastFrame)).size : 0;
+  process.stdout.write('OD_FRAME_CAPTURE:' + JSON.stringify({ capture, lastFrameBytes }) + '\\n');
+  app.quit();
+}).catch((error) => {
+  process.stderr.write(String(error && error.stack ? error.stack : error) + '\\n');
+  app.exit(1);
+});
+`);
+
+  try {
+    const electronRelativePath = (await readFile(
+      join(desktopRoot, 'node_modules', 'electron', 'path.txt'),
+      'utf8',
+    )).trim();
+    const electronPath = join(desktopRoot, 'node_modules', 'electron', 'dist', electronRelativePath);
+    const electronArgs = [probeDir, '--no-sandbox', '--enable-webgl', '--ignore-gpu-blocklist'];
+    const command = process.platform === 'linux' ? 'xvfb-run' : electronPath;
+    const args = process.platform === 'linux' ? ['-a', electronPath, ...electronArgs] : electronArgs;
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      OD_FRAME_CAPTURE_HTML_FILE: htmlFile,
+      OD_FRAME_CAPTURE_MODULE_URL: pathToFileURL(modulePath).href,
+      OD_FRAME_CAPTURE_OUTPUT_DIR: outputDir,
+    };
+    delete env.ELECTRON_RUN_AS_NODE;
+    const { stdout, stderr } = await execFileAsync(command, args, { env, timeout: 100_000 });
+    const marker = stdout.split(/\r?\n/).find((line) => line.startsWith('OD_FRAME_CAPTURE:'));
+    if (!marker) throw new Error(`Electron frame-capture probe returned no result: ${stdout || stderr}`);
+    return JSON.parse(marker.slice('OD_FRAME_CAPTURE:'.length)) as ElectronCaptureProbeResult;
+  } finally {
+    await rm(probeDir, { force: true, recursive: true });
+  }
+}
