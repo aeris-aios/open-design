@@ -876,8 +876,8 @@ function formOptionDisplayForValue(
     match.agentGuidance
   ) {
     return (
-      `${match.label} [value: ${match.value}; ` +
-      `foundation: ${match.foundationDirectionId}; guidance: ${match.agentGuidance}]`
+      `${match.label} [foundation: ${match.foundationDirectionId}; ` +
+      `guidance: ${match.agentGuidance}] [value: ${match.value}]`
     );
   }
   return `${match.label} [value: ${match.value}]`;

@@ -282,6 +282,26 @@ describe('QuestionFormView', () => {
     ).toEqual({ platform: 'mobile' });
   });
 
+  it('restores direction values while ignoring Host foundation metadata', () => {
+    const directionForm: QuestionForm = {
+      id: 'direction',
+      title: 'Choose direction',
+      questions: [{
+        id: 'direction',
+        label: 'Visual direction',
+        type: 'direction-cards',
+      }],
+    };
+    expect(parseSubmittedAnswers(
+      directionForm,
+      '[form answers — direction]\n- Visual direction: Quiet SaaS [foundation: modern-minimal; guidance: Calm hierarchy.] [value: prototype-quiet-saas]',
+    )).toEqual({ direction: 'prototype-quiet-saas' });
+    expect(parseSubmittedAnswers(
+      directionForm,
+      '[form answers — direction]\n- Visual direction: Quiet SaaS [value: prototype-quiet-saas; foundation: modern-minimal; guidance: Calm hierarchy.]',
+    )).toEqual({ direction: 'prototype-quiet-saas' });
+  });
+
   it('renders radio object options and submits the readable label with stable value', () => {
     const onSubmit = vi.fn();
     render(<QuestionFormView form={richForm} interactive onSubmit={onSubmit} />);

@@ -2124,7 +2124,13 @@ export function parseSubmittedAnswers(
 function parseSubmittedOptionToken(raw: string): string {
   const match = /\s+\[value:\s*([^\]]+)\]\s*$/i.exec(raw);
   if (!match) return raw.trim();
-  return match[1]!.trim();
+  const valuePayload = match[1]!.trim();
+  // A short-lived direction-card answer format carried Host metadata inside
+  // the value token: `[value: host-id; foundation: …; guidance: …]`. Preserve
+  // replay for answers created with that build while keeping the canonical
+  // format's final `[value: host-id]` token machine-readable.
+  const foundationOffset = valuePayload.search(/;\s*foundation\s*:/i);
+  return (foundationOffset >= 0 ? valuePayload.slice(0, foundationOffset) : valuePayload).trim();
 }
 
 /**

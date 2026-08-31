@@ -100,9 +100,9 @@ describe('direction-cards 由内置目录接管', () => {
     fireEvent.click(container.querySelector(`[title="${selected.title}"]`)!);
     fireEvent.click(screen.getByRole('button', { name: 'Next' }));
 
-    expect(onSubmit.mock.calls[0]?.[0]).toContain(`${selected.title} [value: ${selected.value};`);
-    expect(onSubmit.mock.calls[0]?.[0]).toContain('foundation: editorial-monocle;');
+    expect(onSubmit.mock.calls[0]?.[0]).toContain(`${selected.title} [foundation: editorial-monocle;`);
     expect(onSubmit.mock.calls[0]?.[0]).toContain(`guidance: ${selected.description}]`);
+    expect(onSubmit.mock.calls[0]?.[0]).toContain(`[value: ${selected.value}]`);
     expect(onSubmit.mock.calls[0]?.[1]).toEqual({ direction: [selected.value] });
   });
 
