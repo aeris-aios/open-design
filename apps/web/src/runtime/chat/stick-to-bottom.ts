@@ -27,8 +27,9 @@
  *                    没有它,「往回滚一点」会立刻被判回跟随,死锁原样复活。
  *   · 「离底部多远」—— 纯几何量,每次现算,**不存**。
  *
- * 出和回用两个不同的门槛(迟滞),这个不对称本身就是防抖:
- *   出去只要真的离开了底部;回来必须**主动往下滚**并且落进整条带子里。
+ * 出和回用两个不同的条件:
+ *   出去只要真的离开了底部;回来必须**主动往下滚并真的到底**。
+ * “距底部几十像素”仍是用户选定的阅读位置,不是授权自动吸底。
  *
  * ## 怎么分清「用户滚的」和「内容/我们自己引起的」
  *
@@ -122,8 +123,10 @@ export function nextFollowIntent(
 ): FollowIntent {
   // 位置变小**且内容总高没变** = 用户的手。内容变化引起的位移(浏览器夹取、
   // scroll anchoring 修正)必然伴随 `scrollHeight` 变化,在这里就被排掉了。
-  const scrolledUp = next.scrollTop < previous.scrollTop && next.scrollHeight === previous.scrollHeight;
-  const scrolledDown = next.scrollTop > previous.scrollTop;
+  const layoutStable =
+    next.scrollHeight === previous.scrollHeight && next.clientHeight === previous.clientHeight;
+  const scrolledUp = next.scrollTop < previous.scrollTop && layoutStable;
+  const scrolledDown = next.scrollTop > previous.scrollTop && layoutStable;
 
   let { following, escaped } = current;
   // 还贴在底上的一两个像素抖动不算挣脱 —— 高 DPI 屏上这种抖动是常态。
@@ -131,10 +134,13 @@ export function nextFollowIntent(
     escaped = true;
     following = false;
   }
-  if (scrolledDown) escaped = false;
-  // 重新跟上要**两个条件同时成立**:清掉了 escaped(说明是主动往下滚),而且落进带子里。
-  // 少了 escaped 这一半,「往上滚 40px」会被 48px 的带子当场判回跟随,死锁复活。
-  if (!escaped && isNearBottom(next)) following = true;
+  // 清掉 escaped 和重启 following 必须是**同一次用户下滚到底**。
+  // 不能在“距底几十像素”时先清 latch:随后 Plan / queue / composer 高度变化
+  // 就可能让这几十像素自然消失,尽管用户没再动,也会被错误挂回跟随。
+  if (scrolledDown && isAtBottom(next)) {
+    escaped = false;
+    following = true;
+  }
   return { following, escaped };
 }
 

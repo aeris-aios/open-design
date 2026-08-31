@@ -16,7 +16,7 @@
  *
  * 展开态那张独立卡(第 70 格)**拍板不做**(D33 / S9),这里不要顺手补。
  */
-import type { MutableRefObject, ReactElement } from 'react';
+import type { ReactElement } from 'react';
 import { useT } from '../../i18n';
 import { planPillState, type PlanPillTodo } from '../../runtime/chat/plan-pill';
 import { Orb } from './primitives/Orb';
@@ -29,17 +29,11 @@ export interface PlanPillProps {
   todos: readonly PlanPillTodo[] | undefined;
   /** run 还在跑吗;跑完了这枚药丸就该走 */
   running: boolean;
-  /**
-   * 交给 `ChatPane` 观察高度用。
-   *
-   * 这枚药丸钉在 `.chat-log` 滚动容器**外面**,它一出一没都在改流水的可用高度 ——
-   * 不把它挂进那套 `ResizeObserver`,新消息来了页面就不会自动滚到底。
-   * 和 `QueuedSendStrip` 同一个契约,别自己另想办法。
-   */
-  containerRef?: MutableRefObject<HTMLDivElement | null>;
+  /** “回到最新”同时出现时上移一档,两枚浮层不互相盖住。 */
+  raised?: boolean;
 }
 
-export function PlanPill({ todos, running, containerRef }: PlanPillProps): ReactElement | null {
+export function PlanPill({ todos, running, raised = false }: PlanPillProps): ReactElement | null {
   const t = useT();
   const state = planPillState(todos, running);
   // 出没判据全在纯函数里,这里只认 null(chat/AGENTS.md §3:数据缺席时不占位)
@@ -47,11 +41,15 @@ export function PlanPill({ todos, running, containerRef }: PlanPillProps): React
 
   return (
     /* 两层是**两件事**,不能并成一层:
-       外层 `.row` 铺满 `.pane` 这一列并把药丸摆到正中(和输入框同一条中线),
-       同时当浮层的包含块 —— 浮层的宽度上限要按「这一列有多宽」来收;
+       外层 `.row` 绝对铺满 `.chat-log-viewport` 并把药丸摆到正中
+       (和输入框同一条中线),同时当浮层的包含块 ——
+       浮层的宽度上限要按「这一列有多宽」来收;
        内层 `.wrap` 只裹住药丸本身,它是悬停 / 聚焦的触发面 ——
        并成一层就等于让整条空白都能把浮层勾出来。 */
-    <div ref={containerRef} className={styles.row} data-testid="chat-plan-pill">
+    <div
+      className={`${styles.row}${raised ? ` ${styles.raised}` : ''}`}
+      data-testid="chat-plan-pill"
+    >
       <div className={styles.wrap}>
         <div className={styles.pop}>
           <ol className={styles.steps} data-testid="chat-plan-pill-steps">

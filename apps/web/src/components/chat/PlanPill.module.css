@@ -15,30 +15,37 @@
    产品 2026-08-27 的原话:「把这个 todo 放到左右居中,第 N/M 步和上面的 hover 卡片,
    都和对话内容、下面输入框中心对齐」。
 
-   中线不是自己算的,是**沿用同一套机制**:`.pane` 是一列 flex,
-   `.chat-composer-slot`(输入框)和 `.chat-queued-send-strip`(发送队列)都靠
-   「交叉轴 stretch 铺满整列 + 左右对称的内缩」拿到那条中线,`.composer` 自己的
-   左右内距也是对称的。这一行照做 —— 不写 `align-self`(交叉轴跟着 `.pane` 铺满)、
-   左右内缩取同一个 `--chat-composer-inline-inset`、`justify-content: center`
-   把药丸摆到正中。面板拖宽拖窄、侧栏开合,中线自动跟着走,
-   **没有任何一个写死的偏移量**(写死的量在下一次拖动就漂了)。
+   这一行绝对定位在 `.chat-log-viewport` 底部,左右同时贴边后再用
+   `--chat-composer-inline-inset` 对称内缩,`justify-content: center` 因此与输入框共用中线。
+   关键是它**不进普通文档流**:Plan 出没不再压缩 `.chat-log` 的 clientHeight,
+   也就不会在消息与输入框之间撑出整条白带。
 
-   `position: relative` 从 `.wrap` 挪到了这里:浮层要能按「这一列有多宽」收自己的
-   宽度上限(见下面的 `max-width`),而 `.wrap` 只有药丸那么宽,拿它当包含块的话
-   百分比算的是药丸的宽度,收不住任何东西。 */
+   满宽的 `.row` 同时是清单 popover 的包含块,让 `max-width: 100%` 按 viewport 宽度收;
+   它自己 `pointer-events: none`,只让真药丸 `.wrap` 恢复交互,透明区不挡消息。 */
 .row {
-  position: relative;
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 12px;
+  z-index: 9;
   display: flex;
   justify-content: center;
-  margin: 0 var(--chat-composer-inline-inset, 12px) 4px;
+  margin: 0 var(--chat-composer-inline-inset, 12px);
+  pointer-events: none;
+  transition: bottom var(--chat-dur-normal) var(--chat-ease-out);
+}
+
+.raised {
+  bottom: 52px;
 }
 
 /* 稿子 `.pmini { position: relative; display: inline-flex }`。
-   `position: relative` 见上面 `.row` 的注释,不在这儿。
+   定位包含块由上面满宽的 `.row` 承担,不在这儿。
    这一层仍旧是**悬停 / 聚焦的触发面**:它裹住药丸本身,不铺满整行 ——
    铺满的话整条空白扫过去都会把浮层勾出来。 */
 .wrap {
   display: inline-flex;
+  pointer-events: auto;
 }
 
 .wrap .pill {

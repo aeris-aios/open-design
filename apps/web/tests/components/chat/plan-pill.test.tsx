@@ -135,13 +135,13 @@ describe('Plan 药丸 · 收起态(第 71 格)', () => {
     ]);
     const markOf = (li: HTMLElement) =>
       within(li).getByRole('img').getAttribute('aria-label');
-    expect(markOf(steps[0] as HTMLElement)).toBe('已完成');
-    expect(markOf(steps[1] as HTMLElement)).toBe('未开始');
-    expect(markOf(steps[2] as HTMLElement)).toBe('进行中');
-    expect(markOf(steps[3] as HTMLElement)).toBe('未开始');
+    expect(markOf(steps[0] as HTMLElement)).toBe('Done');
+    expect(markOf(steps[1] as HTMLElement)).toBe('Not started');
+    expect(markOf(steps[2] as HTMLElement)).toBe('Working');
+    expect(markOf(steps[3] as HTMLElement)).toBe('Not started');
   });
 
-  it('和发送队列同时在场时,药丸在队列上面 —— 队列长高就把它顶上去', () => {
+  it('和发送队列同时在场时,药丸浮在队列上方的滚动 viewport 内', () => {
     render(pane(messagesWithTodos(FOUR), {
       queuedItems: [
         { id: 'q1', prompt: '设置页也加上深色模式开关' },
@@ -150,11 +150,13 @@ describe('Plan 药丸 · 收起态(第 71 格)', () => {
     }));
     const pill = screen.getByTestId('chat-plan-pill');
     const strip = screen.getByTestId('chat-queued-send-strip');
-    // DOCUMENT_POSITION_FOLLOWING:药丸在文档流里排在队列**之前**,
-    // 于是队列变高时把药丸往上推,而不是压在它身上。
+    // queue 仍在普通布局中缩短 viewport;Plan 只在 viewport 内浮动,
+    // 自己 mount / unmount 不得改变 chat-log 的 clientHeight。
     expect(pill.compareDocumentPosition(strip) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    // 而且两者是同一层的兄弟,中间没有独立的定位/裁切容器 ——
-    // 浮层是往上开的,夹一层 overflow:hidden 就会被切掉。
-    expect(pill.parentElement).toBe(strip.parentElement);
+    const viewport = pill.parentElement;
+    const wrap = viewport?.parentElement;
+    expect(viewport?.classList.contains('chat-log-viewport')).toBe(true);
+    expect(wrap?.classList.contains('chat-log-wrap')).toBe(true);
+    expect(wrap?.parentElement).toBe(strip.parentElement);
   });
 });

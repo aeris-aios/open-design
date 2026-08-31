@@ -331,6 +331,16 @@
 - 类型债（已修）：`thinking-markdown.test.tsx` 的 ExecutionShell fixture 与 `artifact-card-desktop-viewport.test.ts` 的 nullable regex capture 均已修正，web typecheck 通过。
 - 验证边界：按用户要求未跑全量测试；本轮使用聚焦测试、typecheck 和 packaged 关键路径。当前源码已成功构建 macOS app 与 DMG，并直接启动该构建产物验证 Electron `od://app/` ready、Beta identity / version / channel 正确；`tools-pack mac install` 仍暴露一个既有 harness 名称不匹配（DMG 内为 `Open Design Beta.app`，install 查找 `Open Design.app`），因此本轮不宣称 installer harness 通过。隔离 package 没有完整 Team authoritative resource 环境，bootstrap P1 仍需真实 Beta namespace 复验。
 
+### 22. Question Form select 与 Chat 底部滚动 / Plan 浮层
+
+- 状态：**当前三个现场问题已修复，补丁待提交；滚动专项审计另有两个 P1 尚未实现。**
+- Question Form `type: "select"`：撤掉原生下拉框，复用设计稿现有的纵向单选行和内联“自己填”。不改 schema / 提交协议；旧会话里的 machine value、显示 label 和未知自定义文本均可恢复，已固化三类兼容用例。
+- 距底几十像素自动吸底：旧状态机在 40–120px resume band 内提前清除 escape intent。现在只有同一次真实用户下滚到 8px bottom tolerance 内才重启跟随；`scrollHeight` / `clientHeight` 变化和原生 scroll anchoring 不得伪装成用户动作。ResizeObserver 落定后同步刷新几何 baseline，避免下一次真滚动仍拿旧高度比较。
+- Plan Pill 白带：根因是 Plan 作为 `.pane` 的普通 flex 子项，mount 时压缩 chat-log clientHeight，不是单纯背景色问题。现已新增 `.chat-log-viewport`，Plan 在其底部绝对定位，满宽透明层不接管 pointer events；queue / composer 仍按普通布局改变 viewport，project toast 保持在 viewport 外。“回到最新”同时出现时 Plan 上移一档。
+- Question Form 初始定位：撤掉 `scrollIntoView(... smooth)` 的中间帧竞争，改为 instant/auto 定位；预测落点只有真底部才恢复 follow，不再使用 near-bottom band。
+- 聚焦验证：Question Form / scroll-following / stick-to-bottom / Plan Pill / jump / feedback 共 7 个文件 98 条通过；Web typecheck 通过。仅有 jsdom 既有 canvas warning，按用户要求未跑全量测试。
+- 审计剩余 P1：① Question Form Next / Back / 自己填导致的卡片高度切换缺少 first-visible rect 补偿；② `>80` 条消息时虚拟行从估算高度切到实测高度，对 viewport 上方行的 transform-only 重排没有 first-visible anchor。两者需独立红规格和真浏览器几何复验，本次不伪装为已完成。
+
 ## 已完成 / 已合入本分支
 
 ### 修复批次 `c5b047dfd9 fix(chat): address module feedback regressions`

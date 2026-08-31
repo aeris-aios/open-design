@@ -1,7 +1,7 @@
 import { QuoteBar } from './chat/QuoteBar';
 import { shouldShowJumpToLatest } from '../runtime/chat/jump-to-latest';
 import {
-  isNearBottom as isSampleNearBottom,
+  isAtBottom as isSampleAtBottom,
   nextFollowIntent,
   type FollowIntent,
   type ScrollSample,
@@ -1284,7 +1284,6 @@ export function ChatPane({
   const composerSlotRef = useRef<HTMLDivElement | null>(null);
   const composerLayerRef = useRef<HTMLDivElement | null>(null);
   const queuedSendStripRef = useRef<HTMLDivElement | null>(null);
-  const planPillRef = useRef<HTMLDivElement | null>(null);
   const didInitialScrollRef = useRef(false);
   const runFailedToastSurfaceKeysRef = useRef<Set<string>>(new Set());
   const runRecoverySurfaceKeysRef = useRef<Set<string>>(new Set());
@@ -2210,7 +2209,11 @@ export function ChatPane({
         if (formEl && !scrolledToFormRef.current.has(formEl.dataset.formId!)) {
           scrolledToFormRef.current.add(formEl.dataset.formId!);
           const distance = distanceFromBottomAfterAligningTop(el, formEl);
-          formEl.scrollIntoView({ block: 'start', behavior: 'smooth' });
+          // This is initial positioning, not a user-facing animated action.
+          // Smooth scrolling emits intermediate scroll events after we have
+          // predicted the destination, which makes those frames look like
+          // user input and can rearm/escape follow incorrectly.
+          formEl.scrollIntoView({ block: 'start', behavior: 'auto' });
           settleFollowAfterPredictedScroll(el, distance);
           return;
         }
@@ -2542,6 +2545,12 @@ export function ChatPane({
         // fighting a manual scroll-down.
         if (anchorActiveRef.current) sizeAnchorSpacer();
         syncFollowState();
+        // A layout-only resize changes the geometry that the next scroll
+        // event is compared against. Refresh the baseline after the resize
+        // has settled; otherwise the user's next real scroll still carries
+        // the old scrollHeight and is mistaken for another layout correction.
+        const target = logRef.current;
+        if (target) rememberScrollSample(target);
       });
     };
 
@@ -2576,11 +2585,9 @@ export function ChatPane({
       }
     };
 
-    /*
-     * chat-log 之外、但会改变可用高度的那几块,各自跟一份「当前观察的是谁」。
-     * 它们随数据出没(队列空了就卸载、run 跑完药丸就消失),所以不能只 observe 一次:
-     * 下面的 MutationObserver 每次子树变动都回来重挂一遍。
-     */
+    /* chat-log 之外、但会改变可用高度的发送队列随数据出没,
+       所以要跟一份“当前观察的是谁”。PlanPill 已改为滚动区内的绝对定位浮层,
+       不再改变可用高度,因此不得加入这个 observer 契约。 */
     const outsideLog = (ref: MutableRefObject<HTMLDivElement | null>) => {
       let observed: Element | null = null;
       return () => {
@@ -2597,7 +2604,6 @@ export function ChatPane({
       };
     };
     const syncQueuedSendStrip = outsideLog(queuedSendStripRef);
-    const syncPlanPill = outsideLog(planPillRef);
 
     /*
      * 滚动容器**自己**也要观察:输入框长高、软键盘弹出、旁边的 flex 兄弟变大,
@@ -2607,14 +2613,12 @@ export function ChatPane({
     resizeObserver?.observe(el);
     syncObservedChildren();
     syncQueuedSendStrip();
-    syncPlanPill();
 
     const mutationObserver =
       typeof MutationObserver !== 'undefined'
         ? new MutationObserver(() => {
             syncObservedChildren();
             syncQueuedSendStrip();
-            syncPlanPill();
             scheduleFollowSync();
           })
         : null;
@@ -2626,12 +2630,9 @@ export function ChatPane({
       childList: true,
       subtree: true,
     });
-    // QueuedSendStrip and the Plan pill live outside the chat-log subtree. Watch
-    // their nearest common ancestor so resize observation follows them when they
-    // mount or unmount. (The pinned TodoCard that used to sit here retired with
-    // B17; the Plan pill is a different animal — a one-line pinned pill, not the
-    // list itself.)
-    const paneEl = el.parentElement?.parentElement ?? null;
+    // QueuedSendStrip lives outside the chat-log subtree. Watch its nearest
+    // common ancestor so resize observation follows it when it mounts/unmounts.
+    const paneEl = el.closest('.pane');
     if (paneEl && mutationObserver) {
       mutationObserver.observe(paneEl, { childList: true });
     }
@@ -2816,8 +2817,8 @@ export function ChatPane({
   /**
    * 表单/消息滚到位之后,按**预测的**落点定跟随意图和浮标。
    *
-   * 为什么用预测而不是等真实滚动落地:`scrollIntoView` 可能是平滑的,也可能因为目标
-   * 本来就在底部而**根本不产生滚动** —— 后一种情况永远等不到 scroll 事件来纠正,
+   * 为什么用预测而不是等真实滚动落地:`scrollIntoView` 可能因为目标
+   * 本来就在底部而**根本不产生滚动** —— 那种情况永远等不到 scroll 事件来纠正,
    * 浮标就会挂着没东西可回(recvqajMdAnfmd)。
    */
   function settleFollowAfterPredictedScroll(el: HTMLDivElement, distance: number) {
@@ -2833,7 +2834,7 @@ export function ChatPane({
       clientHeight,
     };
     lastScrollSampleRef.current = viewport;
-    followIntentRef.current = isSampleNearBottom(viewport)
+    followIntentRef.current = isSampleAtBottom(viewport)
       ? { following: true, escaped: false }
       : { following: false, escaped: true };
     // 浮标仍然按「底下还有没有内容」算 —— 预留空白不是内容。
@@ -3271,15 +3272,16 @@ export function ChatPane({
         {tab === 'chat' ? (
           <>
             <div className={`chat-log-wrap${chatLogTray ? ' has-chat-log-tray' : ''}`}>
-              <ChatMessageRail
-                messages={displayMessages}
-                loading={loading}
-                logRef={logRef}
-                activeConversationKey={activeConversationId ?? 'no-conversation'}
-                onNavigate={handleChatRailNavigate}
-                t={t}
-              />
-              <div
+              <div className="chat-log-viewport">
+                <ChatMessageRail
+                  messages={displayMessages}
+                  loading={loading}
+                  logRef={logRef}
+                  activeConversationKey={activeConversationId ?? 'no-conversation'}
+                  onNavigate={handleChatRailNavigate}
+                  t={t}
+                />
+                <div
                 className={[
                   'chat-log',
                   loading ? 'is-loading' : '',
@@ -3737,9 +3739,8 @@ export function ChatPane({
                 <div className="chat-log-tail-spacer" ref={tailSpacerRef} aria-hidden />
                 {/* 正文取词的浮条:只认 chat-log 里的选区(输入框、侧栏的选中不该弹它) */}
                 <QuoteBar scopeRef={logRef} onQuote={handleQuote} />
-              </div>
-              {chatLogTray}
-              {/* Always mounted so the CSS transition can play in both
+                </div>
+                {/* Always mounted so the CSS transition can play in both
                   directions; the `chat-jump-btn-active` class flips the
                   slide + opacity, and `aria-hidden` + `tabIndex={-1}`
                   keep it out of the a11y tree when it's not visible.
@@ -3751,7 +3752,7 @@ export function ChatPane({
                   higher stacking layer, so its menu occludes the pill only
                   where the two physically overlap instead of deleting the
                   pill's state from the rest of the pane. */}
-              <button
+                <button
                 type="button"
                 ref={jumpBtnGlassRef}
                 className={`chat-jump-btn od-glass-refract${scrolledFromBottom ? ' chat-jump-btn-active' : ''}`}
@@ -3760,23 +3761,21 @@ export function ChatPane({
                 title={t('chat.scrollToLatest')}
                 aria-hidden={!scrolledFromBottom}
                 tabIndex={scrolledFromBottom ? 0 : -1}
-              >
-                <Icon name="arrow-up" size={14} style={{ transform: 'rotate(180deg)' }} />
-                <span>{t('chat.jumpToLatest')}</span>
-              </button>
+                >
+                  <Icon name="arrow-up" size={14} style={{ transform: 'rotate(180deg)' }} />
+                  <span>{t('chat.jumpToLatest')}</span>
+                </button>
+                {/* Plan 药丸是滚动区上的浮层,不是输入框前的一行布局。
+                  放在 chat-log-wrap 里绝对定位,才不会撑出一条白带并遮住流水末尾。
+                  “回到最新”出现时它上移一档,两枚浮层不重叠。 */}
+                <PlanPill
+                  todos={planPillTodos}
+                  running={planPillRunning}
+                  raised={scrolledFromBottom}
+                />
+              </div>
+              {chatLogTray}
             </div>
-            {/* B17:钉在输入框上方的 TodoCard 退场 —— 同一份清单不再显示两处。
-                清单现在只在执行记录里以「执行计划 · N 步」+ 分段出现(D29 / 组件 7)。
-                根 `AGENTS.md` 的「Chat UI conventions」那一段已同步改掉。
-
-                取而代之的是收起态的那枚药丸(设计稿第 71 格):它不是把清单搬回来,
-                只钉一句「第 N / M 步」,整张清单退到悬停浮层里。
-                它排在队列**之前**,所以队列有内容时把药丸往上顶,两者不互相压。 */}
-            <PlanPill
-              containerRef={planPillRef}
-              todos={planPillTodos}
-              running={planPillRunning}
-            />
             <QueuedSendStrip
               containerRef={queuedSendStripRef}
               items={queuedItems}

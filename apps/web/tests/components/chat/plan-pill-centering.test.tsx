@@ -177,22 +177,23 @@ function renderPane() {
 }
 
 describe('Plan 药丸 · 和对话内容 / 输入框同一条中线', () => {
-  it('药丸那一行是 .pane 这一列的直接孩子 —— 铺满整列才谈得上「居中」', () => {
+  it('药丸浮在滚动区底部,不再作为普通 flex 孩子撑出白带', () => {
     renderPane();
     const row = screen.getByTestId('chat-plan-pill');
-    const slot = document.querySelector('.chat-composer-slot');
-    expect(slot).not.toBeNull();
-    // 和输入框槽位同一层兄弟:两者吃的是同一套「交叉轴 stretch + 对称内缩」,
-    // 中线因此天然重合。中间夹一层就换了一套宽度来源,中线立刻分家。
-    expect(row.parentElement).toBe(slot!.parentElement);
+    expect(row.parentElement?.classList.contains('chat-log-viewport')).toBe(true);
+    expect(row.parentElement?.parentElement?.classList.contains('chat-log-wrap')).toBe(true);
     // 挂的必须是**那一行**自己的类名。少了这一条,把两层并回一层(外层也写 `.wrap`)
     // 时整组断言会全部假过 —— 消融验过,那一改法八条一条都不红。
-    expect(row.className).toBe(planStyles.row);
-    // 而且这一行本身**不能**自己退回内容宽度 —— 退回去就没有可居中的宽度了。
+    expect(row.classList.contains(planStyles.row!)).toBe(true);
     const body = declarationsFor(`.${local(planStyles.row)}`);
-    expect(valueOf(body, 'align-self'), '这一行不许 align-self,交叉轴要跟着 .pane 铺满').toBeNull();
+    expect(valueOf(body, 'position')).toBe('absolute');
+    expect(valueOf(body, 'bottom')).toBe('12px');
+    expect(valueOf(body, 'left')).toBe('0');
+    expect(valueOf(body, 'right')).toBe('0');
     expect(valueOf(body, 'display')).toBe('flex');
     expect(valueOf(body, 'justify-content'), '药丸靠这条落到那一行的正中').toBe('center');
+    expect(valueOf(body, 'pointer-events'), '满宽定位层不许挡住消息文字').toBe('none');
+    expect(valueOf(declarationsFor(`.${local(planStyles.wrap)}`), 'pointer-events')).toBe('auto');
   });
 
   it('横向内缩取输入框那一列的同一个 token,而且左右对称', () => {
@@ -227,8 +228,13 @@ describe('Plan 药丸 · 和对话内容 / 输入框同一条中线', () => {
   it('浮层的定位基准是那一行,不是药丸 —— 否则百分比宽度上限没有意义', () => {
     const row = declarationsFor(`.${local(planStyles.row)}`);
     const wrap = declarationsFor(`.${local(planStyles.wrap)}`);
-    expect(valueOf(row, 'position'), '包含块必须是满宽的那一行').toBe('relative');
+    expect(valueOf(row, 'position'), '包含块必须是满宽的那一行').toBe('absolute');
     expect(valueOf(wrap, 'position'), '药丸自己不能再当包含块,否则 100% 只有药丸那么宽').toBeNull();
+  });
+
+  it('回到最新同时出现时把 Plan 上移一档', () => {
+    const body = declarationsFor(`.${local(planStyles.raised)}`);
+    expect(valueOf(body, 'bottom')).toBe('52px');
   });
 
   it('浮层被夹在那一行之内 —— .pane 是 overflow:hidden,窄面板下会被切', () => {

@@ -7,7 +7,6 @@ import { Fragment,
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
 } from 'react';
 import type {
   MouseEvent as ReactMouseEvent,
@@ -648,7 +647,7 @@ export const QuestionFormView = forwardRef<QuestionFormHandle, Props>(function Q
                 {q.required ? <span className="qf-required">{t('qf.required')}</span> : null}
               </div>
               {q.help ? <div className="qf-help">{q.help}</div> : null}
-              {q.type === 'radio' && q.options && !visualStyleCards ? (
+              {(q.type === 'radio' || q.type === 'select') && q.options && !visualStyleCards ? (
                 <div className="qf-options" role="radiogroup" aria-label={q.label}>
                   {q.options.map((opt) => (
                     <OptionButton
@@ -713,49 +712,6 @@ export const QuestionFormView = forwardRef<QuestionFormHandle, Props>(function Q
                 />
               ) : null}
 
-              {q.type === 'select' && q.options ? (
-                <select
-                  className="qf-select"
-                  value={
-                    typeof value === 'string' && value.length > 0 && questionValueIsKnown(q, value)
-                      ? value
-                      : customChoiceExpanded(q)
-                        ? OTHER_SELECT_VALUE
-                        : ''
-                  }
-                  disabled={locked}
-                  onChange={(e) => {
-                    if (e.target.value === OTHER_SELECT_VALUE) {
-                      if (!customChoiceExpanded(q)) toggleOther(q);
-                      return;
-                    }
-                    pickFixed(q, e.target.value);
-                  }}
-                >
-                  <option value="" disabled>
-                    {q.placeholder ?? t('qf.choose')}
-                  </option>
-                  {q.options.map((opt) => (
-                    <option key={opt.value} value={opt.value} title={opt.description}>
-                      {opt.label}
-                    </option>
-                  ))}
-                  {shouldRenderCustomChoice(q) ? (
-                    <option value={OTHER_SELECT_VALUE}>{t('qf.otherOption')}…</option>
-                  ) : null}
-                </select>
-              ) : null}
-              {q.type === 'select' && q.options && shouldRenderCustomChoice(q) ? (
-                <CollapsibleCustomChoice open={customChoiceExpanded(q)}>
-                  <CustomChoiceInput
-                    label={q.customLabel ?? t('qf.customLabel')}
-                    value={customSingleValue(q, value)}
-                    placeholder={q.customPlaceholder ?? t('qf.customPlaceholder')}
-                    disabled={locked || !customChoiceExpanded(q)}
-                    onChange={(next) => update(q.id, next)}
-                  />
-                </CollapsibleCustomChoice>
-              ) : null}
               {q.type === 'text' ? (
                 <input
                   type="text"
@@ -1057,56 +1013,6 @@ function OptionCopy({ option }: { option: FormOption }) {
       <span>{option.label}</span>
       {option.description ? <span className="qf-chip-desc">{option.description}</span> : null}
     </span>
-  );
-}
-
-// Sentinel value for the host-injected "Other…" entry in a select control.
-// Never leaks into answers: choosing it only expands the type-in field.
-const OTHER_SELECT_VALUE = '__od-other__';
-
-// Accordion wrapper for the custom type-in field: stays mounted so the
-// collapse transition can play (see AGENTS.md → UI animation philosophy).
-function CollapsibleCustomChoice({ open, children }: { open: boolean; children: ReactNode }) {
-  return (
-    <div className={`accordion-collapsible qf-custom-collapsible${open ? ' open' : ''}`}>
-      <div className="accordion-collapsible-inner">{children}</div>
-    </div>
-  );
-}
-
-function CustomChoiceInput({
-  label,
-  value,
-  placeholder,
-  disabled,
-  onChange,
-}: {
-  label: string;
-  value: string;
-  placeholder: string;
-  disabled: boolean;
-  onChange: (value: string) => void;
-}) {
-  const chars = customInputCharCount(value, placeholder);
-  return (
-    <label className="qf-custom">
-      <span className="qf-custom-label">{label}</span>
-      {/*
-        多行:稿子给的占位就是一整句「用你自己的说法写 —— 比如「只有价格那一行沿用,其余重画」」,
-        一行的输入框装不下,人写到一半就看不见前面写了什么。
-        `field-sizing: content` 让它跟着内容长(不支持的浏览器退回 rows=1 的高度)。
-      */}
-      <textarea
-        rows={1}
-        className="qf-input"
-        data-testid="qf-input"
-        value={value}
-        placeholder={placeholder}
-        disabled={disabled}
-        style={{ '--qf-custom-chars': String(chars) } as CSSProperties}
-        onChange={(event) => onChange(event.target.value)}
-      />
-    </label>
   );
 }
 
@@ -2143,11 +2049,6 @@ function splitCustomEntries(raw: string): string[] {
     .split(/[\n,]/)
     .map((entry) => entry.trim())
     .filter(Boolean);
-}
-
-function customInputCharCount(value: string, placeholder: string): number {
-  const base = value.length > 0 ? value.length : Math.min(placeholder.length, 22);
-  return Math.max(18, Math.min(base + 2, 72));
 }
 
 function normalizeColorInputValue(value: string | string[] | undefined): string {

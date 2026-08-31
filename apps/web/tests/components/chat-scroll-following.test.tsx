@@ -435,6 +435,20 @@ describe('流式输出时的滚动跟随(用户 2026-08-27)', () => {
     await flushFrames();
     expect(geom.scrollTop).toBe(maxScrollTop());
   });
+
+  it('手动滚到距底部几十像素时不许提前吸底', async () => {
+    geom = { contentHeight: 5000, clientHeight: 400, scrollTop: 0 };
+    render(chatPaneEl(longConversation('chunk'), { streaming: true }));
+    await flushFrames();
+    expect(geom.scrollTop).toBe(4600);
+
+    // 先明确离开跟随,再往下滚到距真实底部 30px。
+    await userScrollTo(3000);
+    await userScrollTo(maxScrollTop() - 30);
+
+    // 这是用户选的阅读位置,不是“回到最新”。只有真的到底或点按钮才重新跟随。
+    expect(geom.scrollTop).toBe(maxScrollTop() - 30);
+  });
 });
 
 describe('「回到最新」什么时候该在(用户 2026-08-27:「总是在不该出现的时候出现」)', () => {
@@ -820,10 +834,9 @@ describe('尾部预留空白不能把「用户滑走了」这件事吃掉(用户
 
   it('滑走之后,内容回流带来的 1px 向下修正不许被当成「他又回来了」', async () => {
     /*
-     * 第二条病根,同一个根因。`nextFollowIntent` 里「重新跟上」的判据是
-     * `!escaped && isNearBottom(next)` —— 而扣掉 250px 空白之后 `isNearBottom`
-     * 在整段 250px 里**恒为真**。于是上方内容回流时浏览器原生 scroll anchoring
-     * 往下修一个像素(方向朝下 → 清掉 `escaped`),跟随当场自己挂回来。
+     * 第二条病根,同一个根因。旧 `nextFollowIntent` 会把任何向下的
+     * `scrollTop` 修正当成用户回来,包括上方内容回流时浏览器原生 scroll anchoring
+     * 往下修的一个像素。现在的判据要求布局几何稳定,而且必须是同一次用户下滚真正到底。
      *
      * 用滚轮松手(而不是靠 scroll 事件),是为了让这一条**只**验「重新跟上」那一半:
      * 滚轮那条路不看几何,两边代码都会松手,所以红/绿的差别只可能来自下面这一跳。

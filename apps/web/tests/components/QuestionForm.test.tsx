@@ -234,19 +234,18 @@ describe('QuestionFormView', () => {
     expect(container.querySelector('.qf-chip')).toBeNull();
   });
 
-  it('renders select options with labels and submits the selected voice id', () => {
+  it('renders select options as single-choice rows and submits the selected voice id', () => {
     const onSubmit = vi.fn();
     const { container, rerender } = render(
       <QuestionFormView form={voiceForm} interactive submittedAnswers={undefined} onSubmit={onSubmit} />,
     );
 
-    const select = screen.getByRole('combobox') as HTMLSelectElement;
-    expect(container.querySelector('option[value="21m00Tcm4TlvDq8ikWAM"]')?.textContent).toBe(
-      'Rachel — american · female',
-    );
+    expect(screen.queryByRole('combobox')).toBeNull();
+    expect(screen.getByRole('radio', { name: 'Rachel — american · female' })).toBeTruthy();
+    expect(screen.getByRole('radio', { name: 'Adam — american · male' })).toBeTruthy();
     expect(screen.queryByTestId('qf-input')).toBeNull();
 
-    fireEvent.change(select, { target: { value: '21m00Tcm4TlvDq8ikWAM' } });
+    fireEvent.click(chip('Rachel — american · female'));
     fireEvent.click(screen.getByRole('button', { name: 'Use voice' }));
 
     expect(onSubmit).toHaveBeenCalledWith(
@@ -389,23 +388,51 @@ describe('QuestionFormView', () => {
     expect(container.querySelector('.answered')?.textContent).toContain('Wearable kiosk');
   });
 
-  it('reveals the custom input from the select Other… entry', () => {
+  it('reveals the custom input from the select own-choice row', () => {
     const { container } = render(
       <QuestionFormView form={selectObjectForm} interactive onSubmit={vi.fn()} />,
     );
 
-    const select = container.querySelector('select');
-    if (!select) throw new Error('expected select control');
+    expect(container.querySelector('select')).toBeNull();
     expect(
-      container.querySelector('.qf-custom-collapsible')?.classList.contains('open'),
-    ).toBe(false);
+      screen.queryByTestId('qf-input'),
+    ).toBeNull();
 
-    fireEvent.change(select, { target: { value: '__od-other__' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Write your own' }));
 
-    expect(
-      container.querySelector('.qf-custom-collapsible')?.classList.contains('open'),
-    ).toBe(true);
-    expect(select.value).toBe('__od-other__');
+    expect(screen.getByTestId('qf-input')).toBeTruthy();
+  });
+
+  it('restores legacy select drafts that stored an option label', () => {
+    const { container } = render(
+      <QuestionFormView
+        form={selectObjectForm}
+        interactive
+        draftAnswers={{ platform: 'Mobile (iOS/Android)' }}
+        onSubmit={vi.fn()}
+      />,
+    );
+
+    expect(container.querySelector('select')).toBeNull();
+    expect(chip('Mobile (iOS/Android)').getAttribute('aria-checked')).toBe('true');
+    expect(chosen(container)).toHaveLength(1);
+  });
+
+  it('restores legacy select drafts with a custom value in the own-choice row', () => {
+    const { container } = render(
+      <QuestionFormView
+        form={selectObjectForm}
+        interactive
+        draftAnswers={{ platform: 'Wearable kiosk' }}
+        onSubmit={vi.fn()}
+      />,
+    );
+
+    expect(container.querySelector('select')).toBeNull();
+    expect((screen.getByTestId('qf-input') as HTMLTextAreaElement).value).toBe(
+      'Wearable kiosk',
+    );
+    expect(container.querySelector('.qf-chip-other.qf-chip-on')).not.toBeNull();
   });
 
   it('combines checkbox presets with custom user entries', () => {
@@ -499,9 +526,8 @@ describe('QuestionFormView', () => {
     // Required select unanswered → submit stays disabled (regression guard).
     expect((submit as HTMLButtonElement).disabled).toBe(true);
 
-    const select = container.querySelector('select');
-    if (!select) throw new Error('expected select control');
-    fireEvent.change(select, { target: { value: 'mobile' } });
+    expect(container.querySelector('select')).toBeNull();
+    fireEvent.click(chip('Mobile (iOS/Android)'));
 
     expect((submit as HTMLButtonElement).disabled).toBe(false);
     fireEvent.click(submit);

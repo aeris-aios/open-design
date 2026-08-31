@@ -3740,8 +3740,22 @@ body.entry-resizing { cursor: col-resize; user-select: none; }
 /* ============================================================
    Scroll-to-bottom button (chat)
    ============================================================ */
-.chat-log-wrap { position: relative; flex: 1; min-height: 0; min-width: 0; display: flex; }
-.chat-log-wrap .chat-log { flex: 1; }
+.chat-log-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.chat-log-viewport {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+}
+.chat-log-viewport .chat-log { flex: 1; }
 .chat-jump-btn {
   position: absolute;
   bottom: 12px;
