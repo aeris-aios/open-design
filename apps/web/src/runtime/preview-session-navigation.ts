@@ -58,12 +58,15 @@ export function buildPreviewSessionNavigation(
     sandboxProfile === 'powered' ? scoped.poweredUrl : scoped.normalUrl,
   );
 
-  if (sandboxProfile === 'normal') {
-    if (guards.storage) url.searchParams.append('odPreviewBridge', 'sandbox');
-    if (guards.focus) url.searchParams.append('odPreviewBridge', 'focus');
-    if (guards.redirect) url.searchParams.append('odPreviewBridge', 'redirect');
+  // Storage emulation exists only for the opaque-origin normal profile.
+  // Focus and redirect protection guard authored behavior and are required in
+  // both profiles. Interactive Deck support is negotiated after navigation;
+  // it must never become part of the document URL.
+  if (sandboxProfile === 'normal' && guards.storage) {
+    url.searchParams.append('odPreviewBridge', 'sandbox');
   }
-  if (deck) url.searchParams.append('odPreviewRuntime', 'deck');
+  if (guards.focus) url.searchParams.append('odPreviewBridge', 'focus');
+  if (guards.redirect) url.searchParams.append('odPreviewBridge', 'redirect');
 
   return {
     sessionId: scoped.sessionId,

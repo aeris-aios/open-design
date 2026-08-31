@@ -9523,7 +9523,7 @@ describe('FileViewer tweaks toolbar', () => {
     ) as HTMLIFrameElement;
     expect(frame).toHaveAttribute(
       'src',
-      'http://n-scope-0002.localhost:43111/gated.html?odPreviewRuntime=deck',
+      'http://n-scope-0002.localhost:43111/gated.html',
     );
     expect(fetchMock.mock.calls.some(([input]) => (
       String(input).startsWith('/api/projects/project-1/raw/gated.html')
@@ -9577,7 +9577,7 @@ describe('FileViewer tweaks toolbar', () => {
     await waitFor(() => {
       expect(screen.getByTestId('preview-runtime-frame-current')).toHaveAttribute(
         'src',
-        'http://n-scope-0002.localhost:43111/gated.html?odPreviewRuntime=deck',
+        'http://n-scope-0002.localhost:43111/gated.html',
       );
     });
     expect(fetchMock.mock.calls.filter(([input]) => (
@@ -9761,9 +9761,54 @@ describe('FileViewer tweaks toolbar', () => {
 
     expect(await screen.findByTestId('preview-runtime-frame-standby')).toHaveAttribute(
       'src',
-      'http://p-scope-old.localhost:43111/old-daemon.html',
+      'http://p-scope-old.localhost:43111/old-daemon.html?odPreviewBridge=focus',
     );
     expect(screen.queryByTestId('preview-runtime-frame-current')).toBeNull();
+  });
+
+  it('falls back to the legacy URL transport when an old daemon does not advertise scoped origins', async () => {
+    const file = htmlPreviewFile({ name: 'legacy-only.html', path: 'legacy-only.html' });
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = typeof input === 'string'
+        ? input
+        : input instanceof Request
+          ? input.url
+          : String(input);
+      if (url.startsWith('/api/projects/project-1/raw/legacy-only.html')) {
+        return new Response('<!doctype html><html><body><main>Legacy fallback</main></body></html>', {
+          status: 200,
+          headers: { 'Content-Type': 'text/html' },
+        });
+      }
+      if (url === '/api/projects/project-1/files') {
+        return new Response(JSON.stringify({ files: [file] }), { status: 200 });
+      }
+      if (url.includes('/api/projects/project-1/preview-url')) {
+        return new Response(JSON.stringify({
+          url: '/api/projects/project-1/preview/legacy-scope/legacy-only.html',
+          file: 'legacy-only.html',
+          expiresAt: Date.now() + 60 * 60 * 1000,
+        }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ deployments: [] }), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(
+      <FileViewer
+        projectId="project-1"
+        projectKind="prototype"
+        file={file}
+        previewRuntimeConvergence
+      />,
+    );
+
+    const legacyFrame = await screen.findByTestId('artifact-preview-frame');
+    expect(legacyFrame.getAttribute('data-od-render-mode')).toBe('url-load');
+    expect(legacyFrame.getAttribute('src')).toContain(
+      '/api/projects/project-1/raw/legacy-only.html',
+    );
+    expect(screen.queryByTestId('preview-runtime-navigation-error')).toBeNull();
   });
 
   it('surfaces an initial converged navigation failure and recovers on explicit reload', async () => {
@@ -10512,7 +10557,7 @@ describe('FileViewer tweaks toolbar', () => {
     ));
     const initialSrc = frame.getAttribute('src');
     expect(initialSrc).toBe(
-      `http://n-${sessionId}.localhost:43111/deck.html?odPreviewRuntime=deck`,
+      `http://n-${sessionId}.localhost:43111/deck.html`,
     );
     const postMessage = vi.spyOn(frame.contentWindow!, 'postMessage');
     const capabilities: PreviewRuntimeCapability[] = [

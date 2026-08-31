@@ -1,6 +1,6 @@
 import http from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
-import { mkdir, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
@@ -1663,6 +1663,40 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
     }
   });
 
+  it('changes the navigation identity when same-length bytes replace a file with restored mtime', async () => {
+    const filePath = path.join(projectsRoot, projectId, 'exact-version.html');
+    const firstSource = '<!doctype html><main>AAAA</main>';
+    const secondSource = '<!doctype html><main>BBBB</main>';
+    expect(Buffer.byteLength(secondSource)).toBe(Buffer.byteLength(firstSource));
+    await writeFile(filePath, firstSource);
+    const fixedTime = new Date('2026-08-31T10:00:00.000Z');
+    await utimes(filePath, fixedTime, fixedTime);
+    const originalStat = await stat(filePath);
+
+    const mintVersion = async (): Promise<string> => {
+      const response = await fetch(
+        `${baseUrl}/api/projects/${projectId}/preview-url?file=exact-version.html`,
+      );
+      expect(response.status).toBe(200);
+      const body = await response.json() as {
+        scopedOrigin?: { documentVersion?: string };
+      };
+      return String(body.scopedOrigin?.documentVersion ?? '');
+    };
+
+    const firstVersion = await mintVersion();
+    await writeFile(filePath, secondSource);
+    await utimes(filePath, originalStat.atime, originalStat.mtime);
+    const restoredStat = await stat(filePath);
+    expect(restoredStat.size).toBe(originalStat.size);
+    expect(restoredStat.mtimeMs).toBe(originalStat.mtimeMs);
+
+    const secondVersion = await mintVersion();
+    expect(firstVersion).toMatch(/^sha256:[a-f0-9]{64}$/u);
+    expect(secondVersion).toMatch(/^sha256:[a-f0-9]{64}$/u);
+    expect(secondVersion).not.toBe(firstVersion);
+  });
+
   it('binds a scoped preview origin to one project root and blocks daemon APIs', async () => {
     const minted = await fetch(
       `${baseUrl}/api/projects/${projectId}/preview-url?file=prototypes%2Fbooking%2Findex.html`,
@@ -1688,7 +1722,7 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
     expect(preview.scopedOrigin).toEqual({
       normalUrl: `http://n-${scope}.localhost:${port}/prototypes/booking/index.html`,
       poweredUrl: `http://p-${scope}.localhost:${port}/prototypes/booking/index.html`,
-      documentVersion: expect.stringMatching(/^\d+:\d+(?:\.\d+)?$/u),
+      documentVersion: expect.stringMatching(/^sha256:[a-f0-9]{64}$/u),
       previewPolicy: {
         sandboxProfile: 'powered',
         guards: { storage: true, focus: true, redirect: false },
@@ -1714,7 +1748,7 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
     expect(html.body).toContain('data-od-preview-observability');
     expect(html.body).toContain("register(\"observability\"");
     expect(html.body).toContain('data-od-preview-runtime');
-    expect(html.body).toContain('"content_measurement","scroll","snapshot","observability","selection","comment","inspect","draw","tweaks","palette","edit"');
+    expect(html.body).toContain('"content_measurement","scroll","snapshot","observability","selection","comment","inspect","draw","tweaks","palette","deck","edit"');
     expect(html.body).toContain("register('tweaks'");
     expect(html.body).toContain("register('palette'");
     expect(html.body).toContain("register('edit'");
@@ -1750,10 +1784,7 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
       large.body.indexOf('<script src="./support.js">'),
     );
 
-    const smallDeck = await scopedRequest(
-      '/deck.html?odPreviewRuntime=deck',
-      normalHost,
-    );
+    const smallDeck = await scopedRequest('/deck.html', normalHost);
     expect(smallDeck.status).toBe(200);
     expect(smallDeck.body).toContain('"palette","deck"');
     expect(smallDeck.body).toContain("register('deck'");
@@ -1766,10 +1797,7 @@ describe('GET /api/projects/:id/raw/* range request route', () => {
     expect(smallDeckStage).not.toBeNull();
     expect(smallDeck.body.indexOf('__odDeckStageFallbackInstalled')).toBeLessThan(smallDeckStage!.index);
 
-    const largeDeck = await scopedRequest(
-      '/large-deck.html?odPreviewRuntime=deck',
-      normalHost,
-    );
+    const largeDeck = await scopedRequest('/large-deck.html', normalHost);
     expect(largeDeck.status).toBe(200);
     expect(largeDeck.body).toContain('"palette","deck"');
     expect(largeDeck.body).toContain("register('deck'");

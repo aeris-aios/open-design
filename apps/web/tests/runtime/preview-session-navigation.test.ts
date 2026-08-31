@@ -67,7 +67,7 @@ describe('buildPreviewSessionNavigation', () => {
 
     const result = buildPreviewSessionNavigation(authoritative, policy({ deck: false }));
 
-    expect(new URL(result.url).searchParams.getAll('odPreviewRuntime')).toEqual(['deck']);
+    expect(new URL(result.url).searchParams.getAll('odPreviewRuntime')).toEqual([]);
     expect(result.deck).toBe(true);
   });
 
@@ -85,10 +85,10 @@ describe('buildPreviewSessionNavigation', () => {
       'focus',
       'redirect',
     ]);
-    expect(url.searchParams.getAll('odPreviewRuntime')).toEqual(['deck']);
+    expect(url.searchParams.getAll('odPreviewRuntime')).toEqual([]);
   });
 
-  it('uses powered isolation without opaque-origin guards', () => {
+  it('uses powered isolation while retaining document guards', () => {
     const result = buildPreviewSessionNavigation(scoped, policy({
       sandboxProfile: 'powered',
       guards: { storage: true, focus: true, redirect: true },
@@ -97,8 +97,11 @@ describe('buildPreviewSessionNavigation', () => {
     const url = new URL(result.url);
 
     expect(url.origin).toBe('http://p-scope-0001.localhost:17456');
-    expect(url.searchParams.getAll('odPreviewBridge')).toEqual([]);
-    expect(url.searchParams.getAll('odPreviewRuntime')).toEqual(['deck']);
+    expect(url.searchParams.getAll('odPreviewBridge')).toEqual([
+      'focus',
+      'redirect',
+    ]);
+    expect(url.searchParams.getAll('odPreviewRuntime')).toEqual([]);
   });
 
   it('is deterministic and does not mutate the cached scoped navigation', () => {

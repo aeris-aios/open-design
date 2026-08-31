@@ -104,7 +104,7 @@ async function createWorkspaceBuildCacheKey(config: ToolPackConfig): Promise<str
     packageManager: await readPackageManager(config.workspaceRoot),
     platform: config.platform,
     pnpmLock: await hashPath(join(config.workspaceRoot, "pnpm-lock.yaml")),
-    schemaVersion: 8,
+    schemaVersion: 9,
     webOutputMode: config.webOutputMode,
   });
 }

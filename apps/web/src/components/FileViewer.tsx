@@ -9527,7 +9527,9 @@ function HtmlViewer({
     enabled: previewRuntimeNavigationEnabled,
     retainLastGoodWhenDisabled: true,
   });
-  const daemonPreviewPolicy = previewRuntimeConvergence
+  const previewRuntimeConvergenceActive =
+    previewRuntimeConvergence && !previewRuntimeScopedNavigation.unsupported;
+  const daemonPreviewPolicy = previewRuntimeConvergenceActive
     ? previewRuntimeScopedNavigation.scoped?.previewPolicy
     : undefined;
   const daemonDeckPolicy = daemonPreviewPolicy?.deck;
@@ -9881,8 +9883,8 @@ function HtmlViewer({
     sandboxProfile: needsPowered ? 'powered' as const : 'normal' as const,
     guards: {
       storage: needsSandboxShim && !needsPowered,
-      focus: needsFocusGuard && !needsPowered,
-      redirect: needsRedirectGuard && !needsPowered,
+      focus: needsFocusGuard,
+      redirect: needsRedirectGuard,
     },
     deck: sourceDeckHint,
   };
@@ -10324,7 +10326,7 @@ function HtmlViewer({
   // previews retain their existing single-runtime ownership for now because
   // their URL carries a separately resolved origin and sandbox contract.
   const keepUrlTransportWarmForManualEdit =
-    !previewRuntimeConvergence
+    !previewRuntimeConvergenceActive
     && mode === 'preview'
     && manualEditRequiresSrcDoc
     && urlLoadPreviewSupportedWithoutManualEdit
@@ -10665,13 +10667,13 @@ function HtmlViewer({
     if (mode !== 'preview') return undefined;
     return subscribePreviewIframeMessages(({ source: messageSource, data }) => {
       if (!workspaceActiveRef.current) return;
-      const activeFrame = previewRuntimeConvergence
+      const activeFrame = previewRuntimeConvergenceActive
         ? iframeRef.current
         : useUrlLoadPreview
           ? urlPreviewIframeRef.current
           : srcDocPreviewIframeRef.current;
       if (!activeFrame || messageSource !== activeFrame.contentWindow) return;
-      if (!previewRuntimeConvergence && useUrlLoadPreview && data.event === 'visible_paint') {
+      if (!previewRuntimeConvergenceActive && useUrlLoadPreview && data.event === 'visible_paint') {
         const keepAliveKey = urlPreviewKeepAliveKeyRef.current;
         const sourceUrl = data.source_url;
         const documentEpoch = data.document_epoch;
@@ -10711,7 +10713,7 @@ function HtmlViewer({
       }
       reportPreviewIframeMessage(data, {
         surface: 'artifact_preview',
-        renderMode: previewRuntimeConvergence || useUrlLoadPreview ? 'url_load' : 'srcdoc',
+        renderMode: previewRuntimeConvergenceActive || useUrlLoadPreview ? 'url_load' : 'srcdoc',
         artifactId: anonymizeArtifactId({ projectId, fileName: file.name }),
         artifactKind: handoffArtifactKind ?? artifactKindToTracking({ fileKind: file.kind ?? null }),
         projectId,
@@ -10722,12 +10724,12 @@ function HtmlViewer({
     file.name,
     handoffArtifactKind,
     mode,
-    previewRuntimeConvergence,
+    previewRuntimeConvergenceActive,
     projectId,
     useUrlLoadPreview,
   ]);
   useEffect(() => {
-    if (previewRuntimeConvergence) return;
+    if (previewRuntimeConvergenceActive) return;
     const activeFrame = useUrlLoadPreview
       ? urlPreviewIframeRef.current
       : srcDocPreviewIframeRef.current;
@@ -10740,7 +10742,7 @@ function HtmlViewer({
     }
   }, [
     beginDesktopPreviewContentMeasurementGeneration,
-    previewRuntimeConvergence,
+    previewRuntimeConvergenceActive,
     transportPreviewMeasurementDocumentEpoch,
     scheduleDesktopPreviewContentMeasure,
     useUrlLoadPreview,
@@ -10759,8 +10761,8 @@ function HtmlViewer({
   useEffect(() => {
     if (!workspaceActive) return;
     function onMessage(ev: MessageEvent) {
-      const runtimeFrame = previewRuntimeConvergence ? iframeRef.current : null;
-      const fromPreview = previewRuntimeConvergence
+      const runtimeFrame = previewRuntimeConvergenceActive ? iframeRef.current : null;
+      const fromPreview = previewRuntimeConvergenceActive
         ? ev.source === runtimeFrame?.contentWindow
         : ev.source === srcDocPreviewIframeRef.current?.contentWindow
           || ev.source === urlPreviewIframeRef.current?.contentWindow;
@@ -10772,7 +10774,7 @@ function HtmlViewer({
     }
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, [iframeKeepAlivePool, previewRuntimeConvergence, workspaceActive]);
+  }, [iframeKeepAlivePool, previewRuntimeConvergenceActive, workspaceActive]);
 
   // Resolve the cross-origin powered-preview URL for artifacts that need it.
   // `resolved:false` means the (cached) daemon isolation probe is still in
@@ -11167,12 +11169,12 @@ function HtmlViewer({
     workspaceActive,
   ]);
   useEffect(() => {
-    if (previewRuntimeConvergence) return;
+    if (previewRuntimeConvergenceActive) return;
     const urlFrame = urlPreviewIframeRef.current;
     const srcDocFrame = srcDocPreviewIframeRef.current;
     postPreviewObservabilityHostState(urlFrame);
     if (srcDocFrame !== urlFrame) postPreviewObservabilityHostState(srcDocFrame);
-  }, [postPreviewObservabilityHostState, previewRuntimeConvergence]);
+  }, [postPreviewObservabilityHostState, previewRuntimeConvergenceActive]);
   // Only materialized while the in-tab presentation overlay is up — building
   // it eagerly would re-run buildSrcdoc on every source edit for a document
   // nobody is presenting.
@@ -11420,7 +11422,7 @@ function HtmlViewer({
       || !Number.isSafeInteger(failure.eventId)
       || !Number.isFinite(failure.occurredAtMs)
     ) return;
-    if (previewRuntimeConvergence) {
+    if (previewRuntimeConvergenceActive) {
       const frame = previewRuntimeStandbyIframeRef.current;
       const navigation = previewRuntimeNavigation.navigation;
       if (
@@ -11542,7 +11544,7 @@ function HtmlViewer({
   }, [
     iframeKeepAlivePool,
     mode,
-    previewRuntimeConvergence,
+    previewRuntimeConvergenceActive,
     previewRuntimeNavigation.navigation,
     previewRuntimeNavigationGeneration,
     probeSrcDocTransport,
@@ -12397,7 +12399,7 @@ function HtmlViewer({
   ]);
 
   useEffect(() => {
-    if (!workspaceActive || previewRuntimeConvergence) return;
+    if (!workspaceActive || previewRuntimeConvergenceActive) return;
     const win = iframeRef.current?.contentWindow;
     if (!win) return;
     win.postMessage({
@@ -12405,10 +12407,10 @@ function HtmlViewer({
       enabled: boardMode,
       mode: boardTool,
     }, '*');
-  }, [boardMode, boardTool, previewRuntimeConvergence, srcDoc, useUrlLoadPreview, workspaceActive]);
+  }, [boardMode, boardTool, previewRuntimeConvergenceActive, srcDoc, useUrlLoadPreview, workspaceActive]);
 
   useEffect(() => {
-    if (!workspaceActive || previewRuntimeConvergence) return;
+    if (!workspaceActive || previewRuntimeConvergenceActive) return;
     const target = iframeRef.current;
     const win = target?.contentWindow;
     if (!win) return;
@@ -12424,7 +12426,7 @@ function HtmlViewer({
     postSelectedManualEditTargetToIframe(manualEditMode ? selectedManualEditTarget?.id ?? null : null);
   }, [
     manualEditMode,
-    previewRuntimeConvergence,
+    previewRuntimeConvergenceActive,
     selectedManualEditTarget?.id,
     srcDoc,
     useUrlLoadPreview,
@@ -12459,11 +12461,11 @@ function HtmlViewer({
   }
 
   useEffect(() => {
-    if (!workspaceActive || previewRuntimeConvergence) return;
+    if (!workspaceActive || previewRuntimeConvergenceActive) return;
     const win = iframeRef.current?.contentWindow;
     if (!win) return;
     win.postMessage({ type: 'od:inspect-mode', enabled: inspectMode }, '*');
-  }, [inspectMode, previewRuntimeConvergence, srcDoc, useUrlLoadPreview, workspaceActive]);
+  }, [inspectMode, previewRuntimeConvergenceActive, srcDoc, useUrlLoadPreview, workspaceActive]);
 
   // Mirror the bridge's `od:comment-targets` broadcast into
   // `liveCommentTargets` whenever EITHER Inspect or Comments mode is
@@ -12781,7 +12783,7 @@ function HtmlViewer({
   useEffect(() => {
     if (
       !workspaceActive
-      || previewRuntimeConvergence
+      || previewRuntimeConvergenceActive
       || !boardMode
       || !activeCommentTarget
       || activeCommentTarget.selectionKind === 'pod'
@@ -12796,7 +12798,7 @@ function HtmlViewer({
     activeCommentTarget?.selector,
     activeCommentTarget?.selectionKind,
     boardMode,
-    previewRuntimeConvergence,
+    previewRuntimeConvergenceActive,
     workspaceActive,
   ]);
 
@@ -13884,7 +13886,7 @@ function HtmlViewer({
     // capability acknowledgement. Posting here as well would deliver the
     // same direct `go` twice: once imperatively and once from the transport's
     // deckSlideIndex update. Legacy frames still need the direct message.
-    if (previewRuntimeConvergence) return;
+    if (previewRuntimeConvergenceActive) return;
     postSlide('go', target);
   }
 
@@ -13897,7 +13899,7 @@ function HtmlViewer({
 
   useEffect(() => {
     if (
-      previewRuntimeConvergence
+      previewRuntimeConvergenceActive
       || !workspaceActive
       || mode !== 'preview'
       || useUrlLoadPreview
@@ -13913,7 +13915,7 @@ function HtmlViewer({
   }, [
     effectiveDeck,
     mode,
-    previewRuntimeConvergence,
+    previewRuntimeConvergenceActive,
     previewStateKey,
     useUrlLoadPreview,
     workspaceActive,
@@ -14825,7 +14827,7 @@ function HtmlViewer({
       ? requestManualEditUrlStandbyRefresh()
       : 0;
     const reloadUsesManualEditUrlStandby = manualEditUrlStandbyRevision > 0;
-    if (manualEditMode && previewRuntimeConvergence) {
+    if (manualEditMode && previewRuntimeConvergenceActive) {
       // The converged runtime keeps Edit in the same real-URL document. A
       // user-requested reload must first persist pending work, but it must not
       // turn the tool off: the replacement document re-enables the exact same
@@ -14836,7 +14838,7 @@ function HtmlViewer({
     } else if (manualEditMode && !(await requestManualEditSafeExitRef.current())) {
       return;
     }
-    if (reloadLeavesManualEdit && !previewRuntimeConvergence) {
+    if (reloadLeavesManualEdit && !previewRuntimeConvergenceActive) {
       setManualEditSrcDocActive(false);
       manualEditPersistedDocumentRef.current = null;
     }
@@ -14850,7 +14852,7 @@ function HtmlViewer({
     void capturePreviewScrollPosition();
     imageExportSnapshotDataUrlRef.current = null;
     setInlinedSource(null);
-    if (previewRuntimeConvergence) {
+    if (previewRuntimeConvergenceActive) {
       // Reload the real URL in a fresh standby browsing context even when the
       // daemon's exact documentVersion is unchanged (for example, when only a
       // relative support.js or stylesheet changed). The promoted last-good
@@ -15108,7 +15110,7 @@ function HtmlViewer({
         // the whole viewer-body width here would make a Deck jump across the
         // thumbnail rail when Edit changes the surrounding host chrome.
         setManualEditViewportWidth(
-          previewRuntimeConvergence ? null : (previewBodyRef.current?.clientWidth ?? null),
+          previewRuntimeConvergenceActive ? null : (previewBodyRef.current?.clientWidth ?? null),
         );
         setManualEditExitHandoffPending(false);
         setManualEditEntryHandoffPending(
@@ -15120,7 +15122,7 @@ function HtmlViewer({
         setManualEditMode(true);
         closeArtifactToolMenus();
       };
-      if (!previewRuntimeConvergence && !useUrlLoadPreview) {
+      if (!previewRuntimeConvergenceActive && !useUrlLoadPreview) {
         // A snapshot is only valid for the URL-load -> srcDoc handoff that
         // captured it. Once srcDoc is already the active transport it owns the
         // newest in-frame navigation state; retaining a missed/late snapshot
@@ -15131,7 +15133,7 @@ function HtmlViewer({
         return;
       }
       const activationFileIdentity = previewFileIdentityRef.current;
-      const activationFrame = previewRuntimeConvergence
+      const activationFrame = previewRuntimeConvergenceActive
         ? iframeRef.current
         : urlPreviewIframeRef.current;
       manualEditActivationPendingRef.current = true;
@@ -15492,12 +15494,12 @@ function HtmlViewer({
     const count = slideState?.count ?? cachedCount ?? target + 1;
     setSlideStateCached(previewStateKey, { active: target, count });
     setSlideState({ active: target, count });
-    if (!previewRuntimeConvergence) syncCachedSlideStateToIframe();
+    if (!previewRuntimeConvergenceActive) syncCachedSlideStateToIframe();
   }, [
     slideNavRequest?.nonce,
     slideNavRequest?.slideIndex,
     effectiveDeck,
-    previewRuntimeConvergence,
+    previewRuntimeConvergenceActive,
     previewStateKey,
     slideState?.count,
   ]);
@@ -15601,7 +15603,7 @@ function HtmlViewer({
     const hostSnapshot = await captureHostIframeSnapshot(visibleIframe);
     if (hostSnapshot) return hostSnapshot;
 
-    if (previewRuntimeConvergence) {
+    if (previewRuntimeConvergenceActive) {
       const activeIframe = iframeRef.current;
       if (!activeIframe) {
         captureFailureStageRef.current = 'NO_URL_IFRAME';
@@ -16145,7 +16147,7 @@ function HtmlViewer({
     if (state === 'failed') return t('fileViewer.deployLinkFailed');
     return t('fileViewer.deployLinkPreparingLabel');
   };
-  const initialPreviewLoading = !previewRuntimeConvergence
+  const initialPreviewLoading = !previewRuntimeConvergenceActive
     && source === null
     && !sourceEverLoadedRef.current;
   const sourceModeLoading = mode === 'source' && source === null;
@@ -16168,7 +16170,7 @@ function HtmlViewer({
     effectiveDeck
     && source !== null
     && deckSlideTotal > 0
-    && (!manualEditMode || previewRuntimeConvergence);
+    && (!manualEditMode || previewRuntimeConvergenceActive);
   const showDeckFloatingNav = effectiveDeck && deckSlideTotal > 0 && !manualEditMode && !inTabPresent;
   const deckNavTotal = Math.max(deckSlideTotal, activeDeckSlideIndex + 1, 1);
   const versioningAvailable = isHtmlVersionableFile(file);
@@ -17704,7 +17706,7 @@ function HtmlViewer({
                     toolbarHost={manualEditMode ? null : commentComposerHost}
                   >
                     <div className="artifact-preview-transport-stack">
-                      {previewRuntimeConvergence ? (
+                      {previewRuntimeConvergenceActive ? (
                         redirectLoopBlocked ? (
                           <iframe
                             data-testid="preview-runtime-redirect-loop-blocked"

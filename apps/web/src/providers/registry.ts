@@ -2510,6 +2510,13 @@ export interface ProjectScopedPreviewNavigation {
   renewalScope: ProjectPreviewBaseScope;
 }
 
+/** Rolling-upgrade signal: the daemon can serve legacy preview URLs but does not support scoped origins. */
+export const PROJECT_SCOPED_PREVIEW_UNSUPPORTED = Symbol('project-scoped-preview-unsupported');
+export type ProjectScopedPreviewNavigationResult =
+  | ProjectScopedPreviewNavigation
+  | typeof PROJECT_SCOPED_PREVIEW_UNSUPPORTED
+  | null;
+
 // Newer daemons return the authoritative scope expiry. During a rolling
 // desktop/web update the web bundle can briefly run against an older daemon,
 // so retain a conservative refresh horizon instead of rejecting an otherwise
@@ -2561,13 +2568,13 @@ export async function fetchProjectPreviewBaseHref(
 
 /**
  * Resolve the converged real-URL preview capability when the daemon advertises
- * it. Returning null is an intentional rolling-upgrade fallback: callers keep
- * using the legacy transport until both sides support scoped origins.
+ * it. A dedicated unsupported result selects the legacy transport during a
+ * rolling upgrade; null is reserved for a real mint or validation failure.
  */
 export async function fetchProjectScopedPreviewNavigation(
   projectId: string,
   name: string,
-): Promise<ProjectScopedPreviewNavigation | null> {
+): Promise<ProjectScopedPreviewNavigationResult> {
   const params = new URLSearchParams({ file: name });
   try {
     const response = await fetch(
@@ -2576,7 +2583,14 @@ export async function fetchProjectScopedPreviewNavigation(
     );
     if (!response.ok) return null;
     const body = (await response.json()) as ProjectPreviewUrlResponse;
-    if (!body.scopedOrigin || typeof body.url !== 'string') return null;
+    if (typeof body.url !== 'string') return null;
+
+    const legacy = new URL(body.url, 'http://open-design.local');
+    const expectedPrefix = `/api/projects/${encodeURIComponent(projectId)}/preview/`;
+    if (!legacy.pathname.startsWith(expectedPrefix)) return null;
+    const directoryEnd = legacy.pathname.lastIndexOf('/') + 1;
+    if (directoryEnd <= expectedPrefix.length) return null;
+    if (!body.scopedOrigin) return PROJECT_SCOPED_PREVIEW_UNSUPPORTED;
 
     const normal = new URL(body.scopedOrigin.normalUrl);
     const powered = new URL(body.scopedOrigin.poweredUrl);
@@ -2610,11 +2624,6 @@ export async function fetchProjectScopedPreviewNavigation(
       || !validPreviewPolicy
     ) return null;
 
-    const legacy = new URL(body.url, 'http://open-design.local');
-    const expectedPrefix = `/api/projects/${encodeURIComponent(projectId)}/preview/`;
-    if (!legacy.pathname.startsWith(expectedPrefix)) return null;
-    const directoryEnd = legacy.pathname.lastIndexOf('/') + 1;
-    if (directoryEnd <= expectedPrefix.length) return null;
     const expiresAt = typeof body.expiresAt === 'number' && Number.isFinite(body.expiresAt)
       ? body.expiresAt
       : Date.now() + LEGACY_PREVIEW_SCOPE_REFRESH_MS;

@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { createReadStream } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
 import { Readable } from 'node:stream';
@@ -300,8 +301,12 @@ interface HtmlPreviewPolicyFileIdentity {
   mime?: string;
 }
 
-function htmlPreviewDocumentVersion(meta: { size: number; mtime: number }): string {
-  return `${meta.size}:${meta.mtime}`;
+async function htmlPreviewDocumentVersion(meta: { filePath: string }): Promise<string> {
+  const digest = createHash('sha256');
+  for await (const chunk of createReadStream(meta.filePath)) {
+    digest.update(chunk);
+  }
+  return `sha256:${digest.digest('hex')}`;
 }
 
 function prewarmHtmlPreviewPolicyFile(
@@ -313,10 +318,11 @@ function prewarmHtmlPreviewPolicyFile(
     ? /^text\/html(?:;|$)/i.test(file.mime)
     : /\.html?$/i.test(fileName);
   if (!isHtml) return;
-  index.prewarm({
-    filePath: file.filePath,
-    documentVersion: htmlPreviewDocumentVersion(file),
-  });
+  void htmlPreviewDocumentVersion(file)
+    .then((documentVersion) => {
+      index.prewarm({ filePath: file.filePath, documentVersion });
+    })
+    .catch(() => undefined);
 }
 
 export interface RegisterProjectRoutesDeps extends RouteDeps<'db' | 'design' | 'http' | 'paths' | 'projectStore' | 'projectFiles' | 'conversations' | 'templates' | 'status' | 'events' | 'ids' | 'telemetry' | 'appConfig' | 'agents' | 'validation' | 'collabSync'> {
@@ -6689,10 +6695,11 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
       const normalOrigin = buildProjectPreviewOrigin(scope, 'normal', daemonPort);
       const poweredOrigin = buildProjectPreviewOrigin(scope, 'powered', daemonPort);
       const encodedFilePath = encodeProjectPathForUrl(meta.name);
+      const documentVersion = await htmlPreviewDocumentVersion(meta);
       const previewPolicy = /^text\/html(?:;|$)/i.test(meta.mime)
         ? await htmlPreviewPolicyIndex.get({
             filePath: meta.filePath,
-            documentVersion: htmlPreviewDocumentVersion(meta),
+            documentVersion,
           })
         : null;
       /** @type {import('@open-design/contracts').ProjectPreviewUrlResponse} */
@@ -6708,7 +6715,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
               scopedOrigin: {
                 normalUrl: `${normalOrigin}/${encodedFilePath}`,
                 poweredUrl: `${poweredOrigin}/${encodedFilePath}`,
-                documentVersion: htmlPreviewDocumentVersion(meta),
+                documentVersion,
                 ...(previewPolicy
                   ? {
                       previewPolicy: {
@@ -6829,7 +6836,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
       const previewPolicy = /^text\/html(?:;|$)/i.test(meta.mime)
         ? await htmlPreviewPolicyIndex.get({
             filePath: meta.filePath,
-            documentVersion: htmlPreviewDocumentVersion(meta),
+            documentVersion: await htmlPreviewDocumentVersion(meta),
           })
         : null;
       const passiveGuardScan = previewPolicy?.scan ?? null;
@@ -7052,7 +7059,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
           ? async (streamMeta) => {
               const { scan } = await htmlPreviewPolicyIndex.get({
                 filePath: streamMeta.filePath,
-                documentVersion: htmlPreviewDocumentVersion(streamMeta),
+                documentVersion: await htmlPreviewDocumentVersion(streamMeta),
               });
               const workspaceId = typeof req.query.workspaceId === 'string'
                 ? req.query.workspaceId
@@ -7162,7 +7169,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
           ? async (streamMeta) => {
               const { scan } = await htmlPreviewPolicyIndex.get({
                 filePath: streamMeta.filePath,
-                documentVersion: htmlPreviewDocumentVersion(streamMeta),
+                documentVersion: await htmlPreviewDocumentVersion(streamMeta),
               });
               return {
                 insertionOffset: scan.insertionOffset,
@@ -7234,20 +7241,17 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
         relPath,
         project.metadata,
       );
-      const documentVersion = htmlPreviewDocumentVersion(previewMeta);
+      const documentVersion = await htmlPreviewDocumentVersion(previewMeta);
       const scopedBridgeRequest = [
         ...previewBridgeTokens(req.query.odPreviewBridge).filter((token) =>
           token === 'sandbox' || token === 'focus' || token === 'redirect'),
       ];
-      const wantsDeckRuntime = previewBridgeTokens(req.query.odPreviewRuntime).includes('deck');
       const buildScopedRuntimeBootstrap = (
-        deckRuntime?: ReturnType<typeof buildDeckRuntimeModule>,
+        deckRuntime: ReturnType<typeof buildDeckRuntimeModule>,
       ) => buildPreviewRuntimeBootstrap({
         sessionId: authority.scope,
         documentVersion,
-        availableCapabilities: deckRuntime
-          ? [...scopedPreviewBaseRuntimeCapabilities, 'deck']
-          : scopedPreviewBaseRuntimeCapabilities,
+        availableCapabilities: [...scopedPreviewBaseRuntimeCapabilities, 'deck'],
         modules: [
           buildScrollAndMeasurementRuntimeModule(),
           buildSharedLazyScriptRuntimeModule(
@@ -7268,7 +7272,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
           buildTweaksRuntimeModule(),
           buildPaletteRuntimeModule(),
           buildManualEditRuntimeModule(),
-          ...(deckRuntime ? [deckRuntime] : []),
+          deckRuntime,
         ],
       });
       const streamRuntimeBootstrap = /^text\/html(?:;|$)/iu.test(previewMeta.mime)
@@ -7299,7 +7303,7 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
             ? transformed.toString('utf8')
             : String(transformed);
           const runtimeBootstrap = buildScopedRuntimeBootstrap(
-            wantsDeckRuntime ? buildDeckRuntimeModule(artifactHtml) : undefined,
+            buildDeckRuntimeModule(artifactHtml),
           );
           const bridged = applyUrlPreviewBridgesToHtml(
             transformed,
@@ -7322,17 +7326,15 @@ export function registerProjectFileRoutes(app: Express, ctx: RegisterProjectFile
                 documentVersion,
               });
               const runtimeBootstrap = buildScopedRuntimeBootstrap(
-                wantsDeckRuntime
-                  ? buildDeckRuntimeModule('', {
-                      hasDeckStageElement: scan.hasDeckStageElement,
-                      isFrameworkDeck: scan.hasFrameworkDeckId,
-                      artifactHasKeydownNavigation: scan.hasInlineKeydownNavigation,
-                      hasInlineSlideMessageListener: scan.hasInlineSlideMessageListener,
-                      artifactDeckProtocolVersion: scan.artifactDeckProtocolVersion,
-                      hasInlineHashNavigation: scan.hasInlineHashNavigation,
-                      inlineHashIndexPrefix: scan.inlineHashIndexPrefix,
-                    })
-                  : undefined,
+                buildDeckRuntimeModule('', {
+                  hasDeckStageElement: scan.hasDeckStageElement,
+                  isFrameworkDeck: scan.hasFrameworkDeckId,
+                  artifactHasKeydownNavigation: scan.hasInlineKeydownNavigation,
+                  hasInlineSlideMessageListener: scan.hasInlineSlideMessageListener,
+                  artifactDeckProtocolVersion: scan.artifactDeckProtocolVersion,
+                  hasInlineHashNavigation: scan.hasInlineHashNavigation,
+                  inlineHashIndexPrefix: scan.inlineHashIndexPrefix,
+                }),
               );
               return {
                 insertionOffset: scan.insertionOffset,

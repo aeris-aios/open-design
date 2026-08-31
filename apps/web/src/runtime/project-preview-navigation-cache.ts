@@ -1,7 +1,9 @@
 import {
   fetchProjectScopedPreviewNavigation,
+  PROJECT_SCOPED_PREVIEW_UNSUPPORTED,
   renewProjectPreviewBaseScope,
   type ProjectScopedPreviewNavigation,
+  type ProjectScopedPreviewNavigationResult,
 } from '../providers/registry';
 
 export interface ProjectPreviewNavigationRequest {
@@ -19,7 +21,7 @@ export interface ProjectPreviewNavigationCacheOptions {
   mint?: (
     projectId: string,
     fileName: string,
-  ) => Promise<ProjectScopedPreviewNavigation | null>;
+  ) => Promise<ProjectScopedPreviewNavigationResult>;
   renew?: (projectId: string, href: string) => Promise<number | null>;
 }
 
@@ -48,7 +50,7 @@ export class ProjectPreviewNavigationCache {
   readonly #mint: NonNullable<ProjectPreviewNavigationCacheOptions['mint']>;
   readonly #renew: NonNullable<ProjectPreviewNavigationCacheOptions['renew']>;
   readonly #settled = new Map<string, ProjectScopedPreviewNavigation>();
-  readonly #inFlight = new Map<string, Promise<ProjectScopedPreviewNavigation | null>>();
+  readonly #inFlight = new Map<string, Promise<ProjectScopedPreviewNavigationResult>>();
   #epoch = 0;
 
   constructor(options: ProjectPreviewNavigationCacheOptions = {}) {
@@ -62,7 +64,7 @@ export class ProjectPreviewNavigationCache {
     this.#renew = options.renew ?? renewProjectPreviewBaseScope;
   }
 
-  get(request: ProjectPreviewNavigationRequest): Promise<ProjectScopedPreviewNavigation | null> {
+  get(request: ProjectPreviewNavigationRequest): Promise<ProjectScopedPreviewNavigationResult> {
     const key = requestKey(request);
     const cached = this.#settled.get(key);
     if (cached && cached.renewalScope.expiresAt - this.#now() > this.#refreshAheadMs) {
@@ -91,7 +93,7 @@ export class ProjectPreviewNavigationCache {
     key: string,
     cached: ProjectScopedPreviewNavigation | undefined,
     epoch: number,
-  ): Promise<ProjectScopedPreviewNavigation | null> {
+  ): Promise<ProjectScopedPreviewNavigationResult> {
     if (cached) {
       const expiresAt = await this.#renew(
         request.projectId,
@@ -108,7 +110,8 @@ export class ProjectPreviewNavigationCache {
     }
 
     const minted = await this.#mint(request.projectId, request.fileName);
-    if (!minted || minted.renewalScope.expiresAt <= this.#now()) return null;
+    if (minted === PROJECT_SCOPED_PREVIEW_UNSUPPORTED || !minted) return minted;
+    if (minted.renewalScope.expiresAt <= this.#now()) return null;
     if (epoch === this.#epoch) this.#touch(key, minted);
     return minted;
   }

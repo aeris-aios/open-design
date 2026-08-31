@@ -1,5 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { ProjectScopedPreviewNavigation } from '../providers/registry';
+import {
+  PROJECT_SCOPED_PREVIEW_UNSUPPORTED,
+  type ProjectScopedPreviewNavigation,
+  type ProjectScopedPreviewNavigationResult,
+} from '../providers/registry';
 import {
   PROJECT_PREVIEW_NAVIGATION_REFRESH_AHEAD_MS,
   projectPreviewNavigationCache,
@@ -14,7 +18,7 @@ import {
 interface ProjectPreviewNavigationSource {
   get(
     request: ProjectPreviewNavigationRequest,
-  ): Promise<ProjectScopedPreviewNavigation | null>;
+  ): Promise<ProjectScopedPreviewNavigationResult>;
 }
 
 export interface UseProjectScopedPreviewNavigationOptions
@@ -37,6 +41,7 @@ export interface ProjectScopedPreviewNavigationState {
   scoped: ProjectScopedPreviewNavigation | null;
   loading: boolean;
   unavailable: boolean;
+  unsupported: boolean;
   expiresAt: number | null;
 }
 
@@ -44,6 +49,7 @@ export interface ProjectPreviewSessionNavigationState {
   navigation: PreviewSessionNavigation | null;
   loading: boolean;
   unavailable: boolean;
+  unsupported: boolean;
   expiresAt: number | null;
 }
 
@@ -67,6 +73,7 @@ const EMPTY_SCOPED_STATE: LoadedScopedNavigationState = {
   lastGoodScoped: null,
   loading: false,
   unavailable: false,
+  unsupported: false,
   expiresAt: null,
   renewalFailures: 0,
 };
@@ -129,6 +136,7 @@ export function useProjectScopedPreviewNavigation({
             scoped: null,
             loading: false,
             unavailable: false,
+            unsupported: false,
             renewalFailures: 0,
           }
         : { ...EMPTY_SCOPED_STATE, ownerKey });
@@ -142,14 +150,29 @@ export function useProjectScopedPreviewNavigation({
           scoped: null,
           loading: true,
           unavailable: false,
+          unsupported: false,
           expiresAt: null,
           renewalFailures: 0,
         }
       : { ...EMPTY_SCOPED_STATE, ownerKey, loading: true });
 
-    void cache.get(request).then((scoped) => {
+    void cache.get(request).then((result) => {
       if (requestGenerationRef.current !== generation) return;
-      if (!scoped) {
+      if (result === PROJECT_SCOPED_PREVIEW_UNSUPPORTED) {
+        setState((previous) => ({
+          ...previous,
+          ownerKey,
+          loadKey,
+          scoped: null,
+          loading: false,
+          unavailable: false,
+          unsupported: true,
+          expiresAt: null,
+          renewalFailures: 0,
+        }));
+        return;
+      }
+      if (!result) {
         setState((previous) => ({
           ...previous,
           ownerKey,
@@ -157,11 +180,13 @@ export function useProjectScopedPreviewNavigation({
           scoped: null,
           loading: false,
           unavailable: true,
+          unsupported: false,
           expiresAt: null,
           renewalFailures: 0,
         }));
         return;
       }
+      const scoped = result;
       setState(() => ({
         ownerKey,
         loadKey,
@@ -169,6 +194,7 @@ export function useProjectScopedPreviewNavigation({
         lastGoodScoped: scoped,
         loading: false,
         unavailable: false,
+        unsupported: false,
         expiresAt: scoped.renewalScope.expiresAt,
         renewalFailures: 0,
       }));
@@ -181,6 +207,7 @@ export function useProjectScopedPreviewNavigation({
         scoped: null,
         loading: false,
         unavailable: true,
+        unsupported: false,
         expiresAt: null,
         renewalFailures: 0,
       }));
@@ -211,9 +238,16 @@ export function useProjectScopedPreviewNavigation({
         );
     const generation = requestGenerationRef.current;
     const timer = window.setTimeout(() => {
-      void cache.get(request).then((scoped) => {
+      void cache.get(request).then((result) => {
         if (requestGenerationRef.current !== generation) return;
-        if (!scoped) {
+        if (result === PROJECT_SCOPED_PREVIEW_UNSUPPORTED) {
+          setState((previous) => previous.ownerKey === ownerKey
+            && previous.loadKey === loadKey
+            ? { ...previous, unsupported: true, unavailable: false, loading: false }
+            : previous);
+          return;
+        }
+        if (!result) {
           setState((previous) => previous.ownerKey === ownerKey
             && previous.loadKey === loadKey
             ? {
@@ -224,6 +258,7 @@ export function useProjectScopedPreviewNavigation({
             : previous);
           return;
         }
+        const scoped = result;
         setState((previous) => {
           if (previous.ownerKey !== ownerKey || previous.loadKey !== loadKey) return previous;
           const needsAnotherAttempt = scoped.renewalScope.expiresAt
@@ -233,6 +268,7 @@ export function useProjectScopedPreviewNavigation({
             scoped,
             lastGoodScoped: scoped,
             unavailable: false,
+            unsupported: false,
             expiresAt: scoped.renewalScope.expiresAt,
             renewalFailures: needsAnotherAttempt ? previous.renewalFailures + 1 : 0,
           };
@@ -258,6 +294,7 @@ export function useProjectScopedPreviewNavigation({
         scoped: state.lastGoodScoped,
         loading: false,
         unavailable: false,
+        unsupported: false,
         expiresAt: state.expiresAt,
       };
     }
@@ -265,16 +302,24 @@ export function useProjectScopedPreviewNavigation({
       scoped: null,
       loading: false,
       unavailable: false,
+      unsupported: false,
       expiresAt: null,
     };
   }
   if (state.ownerKey !== ownerKey) {
-    return { scoped: null, loading: true, unavailable: false, expiresAt: null };
+    return {
+      scoped: null,
+      loading: true,
+      unavailable: false,
+      unsupported: false,
+      expiresAt: null,
+    };
   }
   return {
     scoped: state.lastGoodScoped,
     loading: state.loading,
     unavailable: state.unavailable,
+    unsupported: state.unsupported,
     expiresAt: state.expiresAt,
   };
 }
@@ -332,6 +377,7 @@ export function usePreviewSessionNavigationFromScope({
     loading: scopedState.loading
       || (scopedState.scoped !== null && !scopedState.scoped.previewPolicy && policy === null),
     unavailable: scopedState.unavailable,
+    unsupported: scopedState.unsupported,
     expiresAt: scopedState.expiresAt,
   };
 }

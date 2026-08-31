@@ -168,6 +168,48 @@ describe("ensureWorkspaceBuildArtifacts", () => {
     }
   });
 
+  it("keys preview-runtime source while treating its dist directory as build output", async () => {
+    const root = await mkdtemp(join(tmpdir(), "open-design-workspace-build-preview-runtime-"));
+    const cache = new ToolPackCache(join(root, ".cache"));
+    const config = createConfig(root, cache.root);
+    let builds = 0;
+
+    try {
+      await writeWorkspace(root);
+      const build = async () => {
+        builds += 1;
+        await writeOutputs(root, `build-${builds}`);
+      };
+
+      await ensureWorkspaceBuildArtifacts(config, cache, build);
+      await writeFile(
+        join(root, "packages/preview-runtime/src/index.ts"),
+        "export const value = 2;\n",
+        "utf8",
+      );
+      await ensureWorkspaceBuildArtifacts(config, cache, build);
+      await writeFile(
+        join(root, "packages/preview-runtime/dist/index.mjs"),
+        "locally modified output\n",
+        "utf8",
+      );
+      await ensureWorkspaceBuildArtifacts(config, cache, build);
+
+      expect(builds).toBe(2);
+      expect(cache.report().entries.map((entry) => entry.status)).toEqual([
+        "miss",
+        "miss",
+        "hit",
+      ]);
+      expect(await readFile(
+        join(root, "packages/preview-runtime/dist/index.mjs"),
+        "utf8",
+      )).toBe("locally modified output\n");
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+
   it("writes a Windows version-family alias after a successful build", async () => {
     const root = await mkdtemp(join(tmpdir(), "open-design-workspace-build-alias-"));
     const cache = new ToolPackCache(join(root, ".cache"));
