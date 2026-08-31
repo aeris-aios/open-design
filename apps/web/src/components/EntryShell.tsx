@@ -286,7 +286,7 @@ const ONBOARDING_BYOK_AUTO_TEST_DELAY_MS = 500;
 // Validating a local runtime spawns the agent CLI and waits for a real model
 // reply, so the debounce is long enough that browsing the agent strip does not
 // start one spawn per chip — only a selection the user rests on validates.
-const ONBOARDING_LOCAL_AUTO_TEST_DELAY_MS = 500;
+export const ONBOARDING_LOCAL_AUTO_TEST_DELAY_MS = 500;
 
 type OnboardingInlineTestRun = {
   inputKey: string;
@@ -2625,18 +2625,35 @@ function OnboardingView({
   }
 
   /**
-   * Drop whichever runtime validation is still in flight.
+   * Undo whichever runtime validation is still in flight.
    *
    * A validation is not free to abandon: proving a local runtime spawns a real
    * agent CLI, and left alone that child occupies the daemon until its own
    * timeout — so a user who opens the setup step, looks, and leaves would pay
    * for a check nobody can consume. Aborting hands the child back immediately.
+   *
+   * Undoing means the bookkeeping too. An aborted run deliberately writes no
+   * result, so leaving `*AutoTestKeyRef` claiming these inputs were validated
+   * would strand the panel on a `running` state no run will ever finish, and
+   * the auto-validation effect would skip them for good on the way back in.
+   * A run that already finished is left alone — its result is still the truth
+   * about the current selection, and re-proving it would cost another spawn.
    */
   function abortRuntimeValidations(): void {
-    agentTestRunRef.current?.controller.abort();
-    agentTestRunRef.current = null;
-    providerTestRunRef.current?.controller.abort();
-    providerTestRunRef.current = null;
+    if (agentTestRunRef.current) {
+      agentTestRunRef.current.controller.abort();
+      agentTestRunRef.current = null;
+      agentAutoTestKeyRef.current = null;
+      setAgentTestState((current) => (current.status === 'running' ? { status: 'idle' } : current));
+    }
+    if (providerTestRunRef.current) {
+      providerTestRunRef.current.controller.abort();
+      providerTestRunRef.current = null;
+      providerAutoTestKeyRef.current = null;
+      setProviderTestState((current) => (
+        current.status === 'running' ? { status: 'idle' } : current
+      ));
+    }
   }
 
   function selectDefaultCliAgent(availableAgents: AgentInfo[]): AgentInfo | null {
@@ -3465,6 +3482,10 @@ function OnboardingView({
     if (!canTestProvider) return;
     if (providerAutoTestKeyRef.current === providerTestInputKey) return;
     const timer = window.setTimeout(() => {
+      // Re-read at fire time: a manual Test press does not disturb this
+      // effect's inputs, so an armed debounce would otherwise spend a second
+      // request on inputs that were just validated by hand.
+      if (providerAutoTestKeyRef.current === providerTestInputKey) return;
       void testProviderInline();
     }, ONBOARDING_BYOK_AUTO_TEST_DELAY_MS);
     return () => window.clearTimeout(timer);
@@ -3482,22 +3503,31 @@ function OnboardingView({
     if (!canTestAgent) return;
     if (agentAutoTestKeyRef.current === agentTestInputKey) return;
     const timer = window.setTimeout(() => {
+      // Re-read at fire time: a manual Test press does not disturb this
+      // effect's inputs, so an armed debounce would otherwise spend a second
+      // agent spawn on inputs that were just validated by hand.
+      if (agentAutoTestKeyRef.current === agentTestInputKey) return;
       void testAgentInline();
     }, ONBOARDING_LOCAL_AUTO_TEST_DELAY_MS);
     return () => window.clearTimeout(timer);
   }, [agentTestInputKey, canTestAgent, runtime, step]);
 
-  // A validation only has a consumer while the user is still on the setup step
-  // that started it. Back, a runtime switch, and leaving onboarding all end
-  // that, so they all release the agent child rather than letting an
-  // unconsumable check run out the daemon's timeout. The unmount case is
-  // covered too: React runs this cleanup on the way out.
+  // A validation only has a consumer while the setup step can still act on its
+  // verdict. Leaving the step (Back, a runtime switch, closing onboarding) ends
+  // that, and so does staying put while the inputs stop being testable at all —
+  // a cleared BYOK key or a daemon that went away leaves a request nothing can
+  // consume, exactly like walking out. Both release the runtime through the
+  // same cleanup, and React runs it on unmount too.
+  const runtimeValidationConsumable =
+    runtimeSetupStep
+    && ((runtime === 'local' && canTestAgent) || (runtime === 'byok' && canTestProvider));
+
   useEffect(() => {
-    if (!runtimeSetupStep) return;
+    if (!runtimeValidationConsumable) return;
     return () => {
       abortRuntimeValidations();
     };
-  }, [runtime, runtimeSetupStep]);
+  }, [runtime, runtimeValidationConsumable]);
 
   const primaryActionLabel = t('settings.onboardingContinue');
 
