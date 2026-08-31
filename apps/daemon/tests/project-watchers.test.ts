@@ -255,7 +255,7 @@ describe('project-watchers (real chokidar)', () => {
     }> = [];
     const sub = subscribe(root, projectId, (event, file) => {
       observed.push({ event, file });
-    }, FAST_WATCH_OPTIONS);
+    });
     await sub.ready;
 
     try {
