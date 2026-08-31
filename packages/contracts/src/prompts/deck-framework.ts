@@ -359,6 +359,7 @@ ${DECK_PROTOCOL_V1_INLINE_RUNTIME}
 </html>`;
 
 export type DeckFrameworkHandoffProfile = 'filesystem' | 'text_artifact';
+export type DeckFrameworkMode = 'canonical' | 'legacy_compatible';
 
 const DECK_FRAMEWORK_BODY = `# Slide deck — fixed framework (this is non-negotiable for deck mode)
 
@@ -555,13 +556,30 @@ const DECK_TEXT_ARTIFACT_HANDOFF = `## Final handoff — text artifact
 
 This execution profile has no file tools. After the deck is complete and the self-check passes, the final ordinary assistant response MUST contain exactly one \`<artifact type="text/html">...</artifact>\` block with the complete \`<!doctype html>\` deck document. Do not merely summarize a file or claim that a file was written: the artifact block itself is the canonical deliverable.`;
 
+const LEGACY_DECK_COMPATIBILITY_BODY = `# Slide deck — selected or existing scaffold compatibility
+
+This deck already has a source-of-truth scaffold: either the user selected a legacy deck seed or the project contains an existing HTML deck. Preserve that scaffold and follow its owning Skill/template instructions. If the selected Skill requires \`assets/template.html\`, copy and fill that seed; if a deck HTML file already exists, edit it in place and preserve its filename.
+
+Do not replace the selected/existing scaffold with Open Design's canonical skeleton. Do not rewrite its navigation runtime, add a second navigation runtime, or copy OD Deck Protocol v1 markers into a legacy seed. The host viewer's compatibility bridge owns navigation for legacy deck shapes. If the existing scaffold already implements OD Deck Protocol v1, preserve it as-is.
+
+Keep the selected scaffold's slide structure, styling contract, keyboard behavior, and print rules intact while changing only the deck-specific content and the slots its Skill allows.`;
+
+function renderDeckHandoff(profile: DeckFrameworkHandoffProfile): string {
+  return profile === 'text_artifact'
+    ? DECK_TEXT_ARTIFACT_HANDOFF
+    : DECK_FILESYSTEM_HANDOFF;
+}
+
 export function renderDeckFrameworkDirective(
   profile: DeckFrameworkHandoffProfile,
 ): string {
-  const handoff = profile === 'text_artifact'
-    ? DECK_TEXT_ARTIFACT_HANDOFF
-    : DECK_FILESYSTEM_HANDOFF;
-  return `${DECK_FRAMEWORK_BODY}\n\n${handoff}`;
+  return `${DECK_FRAMEWORK_BODY}\n\n${renderDeckHandoff(profile)}`;
+}
+
+export function renderLegacyDeckCompatibilityDirective(
+  profile: DeckFrameworkHandoffProfile,
+): string {
+  return `${LEGACY_DECK_COMPATIBILITY_BODY}\n\n${renderDeckHandoff(profile)}`;
 }
 
 /**

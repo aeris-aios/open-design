@@ -11,7 +11,11 @@ import {
   type StrategyTaskTypeV2,
 } from '../plugins/strategy-v2.js';
 import type { ChatSessionMode } from '../api/chat.js';
-import { renderDeckFrameworkDirective } from './deck-framework.js';
+import {
+  renderDeckFrameworkDirective,
+  renderLegacyDeckCompatibilityDirective,
+  type DeckFrameworkMode,
+} from './deck-framework.js';
 import type { OdNextDeviceFrameContextV2 } from './od-next-device-frame.js';
 import { serializeOdNextRequestTurnV1 } from './od-next-prompt-bundle.js';
 import type {
@@ -76,6 +80,11 @@ export interface OdNextStrategyStableRequestContextV2 {
    * runtime contract when the Build chooses to produce a deck.
    */
   deckIntent?: boolean | undefined;
+  /**
+   * Canonical is only safe for a blank/new deck. Selected legacy seeds and
+   * existing deck HTML keep their own scaffold and rely on the host bridge.
+   */
+  deckFrameworkMode?: DeckFrameworkMode | undefined;
   metadata?: object | undefined;
   template?: {
     id?: string | undefined;
@@ -175,20 +184,18 @@ function requireText(value: string, field: string): string {
   return trimmed;
 }
 
-/**
- * Keep OD Next on its single task-skill path while pinning the same canonical
- * deck runtime used by the classic prompt. The bundled PPT profile owns deck
- * content guidance; this host-owned suffix owns only the viewer protocol and
- * scaffold that generated decks must not re-author.
- */
-function composeOdNextTaskSkillV2(
-  taskType: OdNextStrategyRequestRecipeV2['taskType'],
-  taskSkill: string,
-  executionProfile: OdNextStrategyRequestRecipeV2['executionProfile'],
-): string {
-  return taskType === 'ppt'
-    ? `${taskSkill}\n\n${renderDeckFrameworkDirective(executionProfile)}`
-    : taskSkill;
+export function resolveOdNextDeckFrameworkMode(input: {
+  taskType: OdNextStrategyRequestRecipeV2['taskType'];
+  deckIntent?: boolean | undefined;
+  hasSelectedDeckSeed?: boolean | undefined;
+  hasExistingDeckArtifact?: boolean | undefined;
+}): DeckFrameworkMode | undefined {
+  if (input.taskType === 'ppt') {
+    return input.hasSelectedDeckSeed || input.hasExistingDeckArtifact
+      ? 'legacy_compatible'
+      : 'canonical';
+  }
+  return input.deckIntent ? 'canonical' : undefined;
 }
 
 export const OD_NEXT_PROMPT_STAGE_CONTRACT_V2 = [
@@ -515,12 +522,17 @@ export function composeOdNextStrategyStableRequestContextV2(
   if (Object.keys(runtimeSelection).length > 0) {
     factualStructured('runtime-selection', runtimeSelection);
   }
-  if (context.deckIntent) {
+  const deckFrameworkMode = context.deckFrameworkMode
+    ?? (context.deckIntent ? 'canonical' : undefined);
+  if (deckFrameworkMode) {
     // This is static, host-owned protocol text rather than plugin or user
     // input. Its verification steps happen inside Build before handoff, so it
     // deliberately bypasses the guard for untrusted stable instructions.
+    const directive = deckFrameworkMode === 'legacy_compatible'
+      ? renderLegacyDeckCompatibilityDirective(executionProfile)
+      : renderDeckFrameworkDirective(executionProfile);
     blocks.push(
-      `<od-next-context kind="instruction" name="deck-framework">\n${escaped(renderDeckFrameworkDirective(executionProfile))}\n</od-next-context>`,
+      `<od-next-context kind="instruction" name="deck-framework">\n${escaped(directive)}\n</od-next-context>`,
     );
   }
   if (context.metadata) {
@@ -784,14 +796,16 @@ export function composeOdNextStrategyRequestPromptV2(
     'generalOrchestration',
   );
   assertOdNextPlanningBuildOnlyV2(taskSkill, 'taskSkill');
-  const composedTaskSkill = composeOdNextTaskSkillV2(
-    input.taskType,
-    taskSkill,
-    input.executionProfile,
-  );
-  const stableContext = input.taskType === 'ppt' && context.deckIntent
-    ? { ...context, deckIntent: false }
-    : context;
+  const deckFrameworkMode = context.deckFrameworkMode
+    ?? resolveOdNextDeckFrameworkMode({
+      taskType: input.taskType,
+      deckIntent: context.deckIntent,
+    });
+  const stableContext = {
+    ...context,
+    deckIntent: false,
+    ...(deckFrameworkMode ? { deckFrameworkMode } : {}),
+  };
   const stageBlocks = renderOdNextActiveStageBlocksV2(assertOdNextActiveStagesV2(input.activeStages));
   const sections = [
     EXECUTION_AND_SECURITY_SECTION,
@@ -801,7 +815,7 @@ export function composeOdNextStrategyRequestPromptV2(
     composeOdNextStrategyStableRequestContextV2(stableContext, input.executionProfile),
     `## OD Next core strategy\n\n${coreStrategy}`,
     `## OD Next general orchestration\n\n${generalOrchestration}`,
-    `## Task Skill — ${input.taskType}\n\nExactly this one Task Skill is active for the logical task.\n\n${composedTaskSkill}`,
+    `## Task Skill — ${input.taskType}\n\nExactly this one Task Skill is active for the logical task.\n\n${taskSkill}`,
     ...stageBlocks,
     renderMachineOutputSection(input, context),
   ].filter((section) => section.length > 0);
@@ -838,7 +852,7 @@ function verifyOdNextRecipeV2(input: OdNextStrategyRequestRecipeV2): {
   return {
     coreStrategy,
     generalOrchestration,
-    taskSkill: composeOdNextTaskSkillV2(input.taskType, taskSkill, input.executionProfile),
+    taskSkill,
     stages: assertOdNextActiveStagesV2(input.activeStages),
     snapshotId: requireText(input.snapshotId, 'snapshotId'),
     strategyVersion: requireText(input.strategyVersion, 'strategyVersion'),

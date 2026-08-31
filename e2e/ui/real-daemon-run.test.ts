@@ -259,17 +259,9 @@ for (const strategyMode of ['active', 'off'] as const) {
 
     const { projectId } = await currentProjectContext(page);
     await expectProjectFilesToContain(page, projectId, [OD_NEXT_CANARY_FILE]);
-    await expect(page.getByText(
-      strategyMode === 'active'
-        ? 'Created od-next-active-canary.html through the continued native session.'
-        : 'Created the selected-template legacy deck canary.',
-    ).last()).toBeVisible();
+    await expect(page.getByText('Created the selected-template legacy deck canary.').last()).toBeVisible();
     const source = await readProjectFile(page, projectId, OD_NEXT_CANARY_FILE);
-    if (strategyMode === 'active') {
-      expect(source).toContain('data-od-deck-protocol="1"');
-    } else {
-      expect(source).not.toContain('data-od-deck-protocol="1"');
-    }
+    expect(source).not.toContain('data-od-deck-protocol="1"');
     await expectDeckThumbnailNavigationUnderBudget(page);
   });
 }

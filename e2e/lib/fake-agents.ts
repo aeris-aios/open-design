@@ -285,7 +285,7 @@ async function emitRun(promptText) {
     return;
   }
   if (promptText.includes('# OD Next native continuation — production')) {
-    await emitOdNextProductionRun();
+    await emitOdNextProductionRun(promptText);
     return;
   }
   if (promptText.includes('# OD Next native continuation — clarification')) {
@@ -337,25 +337,28 @@ async function emitRun(promptText) {
       return;
     }
     if (promptText.includes('<recipe_identity ')) {
-      const requiredDeckProtocolMarkers = [
-        'OD Deck Protocol v1',
-        'data-od-deck-protocol="1"',
-        "type: 'od:deck-ready'",
-        "type: 'od:slide-state'",
+      const requiredCompatibilityMarkers = [
+        'selected or existing scaffold compatibility',
+        'assets/template.html',
       ];
-      const missingDeckProtocolMarkers = requiredDeckProtocolMarkers.filter(
+      const missingCompatibilityMarkers = requiredCompatibilityMarkers.filter(
         (marker) => !promptText.includes(marker),
       );
-      if (missingDeckProtocolMarkers.length > 0) {
+      if (missingCompatibilityMarkers.length > 0) {
         process.stderr.write(
-          'OD Next selected-template prompt is missing Deck Protocol v1 markers: '
-            + missingDeckProtocolMarkers.join(', ')
+          'OD Next selected-template prompt is missing compatibility markers: '
+            + missingCompatibilityMarkers.join(', ')
             + '\\n',
         );
         process.exitCode = 1;
         return;
       }
-      emitOdNextPlanningRun(promptText, 'request', 'ppt');
+      if (promptText.includes('data-od-deck-protocol="1"')) {
+        process.stderr.write('OD Next selected-template prompt unexpectedly injected Deck Protocol v1\\n');
+        process.exitCode = 1;
+        return;
+      }
+      emitOdNextPlanningRun(promptText, 'request', 'ppt', { legacyDeck: true });
     } else {
       await emitDeckProtocolCanaryRun(
         legacyTemplateDeckCanaryHtml,
@@ -523,10 +526,13 @@ function odNextPromptIdentity(promptText) {
   return JSON.parse(readFileSync(odNextIdentityPath, 'utf8'));
 }
 
-function emitOdNextPlanningRun(promptText, inputStage = 'request', taskTypeOverride) {
+function emitOdNextPlanningRun(promptText, inputStage = 'request', taskTypeOverride, options = {}) {
   const identity = odNextPromptIdentity(promptText);
   if (taskTypeOverride) {
     identity.taskType = taskTypeOverride;
+  }
+  if (options.legacyDeck) identity.legacyDeck = true;
+  if (taskTypeOverride || options.legacyDeck) {
     writeFileSync(odNextIdentityPath, JSON.stringify(identity), 'utf8');
   }
   const deliverableKind = identity.taskType === 'ppt' ? 'deck' : 'prototype';
@@ -620,14 +626,22 @@ function emitOdNextBlockedRun() {
   exitSoon(0);
 }
 
-async function emitOdNextProductionRun() {
-  await writeFileFs(join(projectDir(), 'od-next-active-canary.html'), protocolDeckCanaryHtml, 'utf8');
+async function emitOdNextProductionRun(promptText) {
+  const identity = odNextPromptIdentity(promptText);
+  const legacyDeck = identity.legacyDeck === true;
+  await writeFileFs(
+    join(projectDir(), 'od-next-active-canary.html'),
+    legacyDeck ? legacyTemplateDeckCanaryHtml : protocolDeckCanaryHtml,
+    'utf8',
+  );
   const state = {
     schema: 'open-design.strategy-state/v2', route: 'full_plan', inputStage: 'production',
     outcome: 'completed', executionMode: 'simple', reasonCodes: [],
   };
   emitSuccess(
-    'Created od-next-active-canary.html through the continued native session.\\n'
+    (legacyDeck
+      ? 'Created the selected-template legacy deck canary.\\n'
+      : 'Created od-next-active-canary.html through the continued native session.\\n')
       + '<open-design-runtime-state>\\n' + JSON.stringify(state)
       + '\\n</open-design-runtime-state>',
     false,

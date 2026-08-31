@@ -33,7 +33,10 @@ import type { ChatSessionMode } from '../api/chat.js';
 import type { ProjectMetadata, ProjectTemplate } from '../api/projects.js';
 import { OFFICIAL_DESIGNER_PROMPT, renderOfficialDesignerPrompt } from './official-system.js';
 import { DISCOVERY_AND_PHILOSOPHY } from './discovery.js';
-import { renderDeckFrameworkDirective } from './deck-framework.js';
+import {
+  renderDeckFrameworkDirective,
+  type DeckFrameworkMode,
+} from './deck-framework.js';
 import { MEDIA_GENERATION_CONTRACT } from './media-contract.js';
 import {
   composeOdNextStrategyRequestPromptV2,
@@ -265,6 +268,8 @@ export interface ComposeInput {
   // bound task type is not already PPT, so cross-surface deck requests receive
   // the canonical runtime contract without changing their Task Profile.
   freeformDeckSignal?: boolean | undefined;
+  /** Host-resolved OD Next deck scaffold policy for blank vs legacy/existing decks. */
+  deckFrameworkMode?: DeckFrameworkMode | undefined;
   // Free-form instructions the user set at the global (user-level)
   // settings panel. Injected after personal memory.
   userInstructions?: string | undefined;
@@ -301,6 +306,7 @@ export function composeSystemPrompt({
   sessionMode,
   locale,
   freeformDeckSignal,
+  deckFrameworkMode,
   userInstructions,
   projectInstructions,
 }: ComposeInput): string {
@@ -310,6 +316,7 @@ export function composeSystemPrompt({
       sessionMode,
       locale,
       deckIntent: odNextStrategyRecipe.taskType !== 'ppt' && freeformDeckSignal === true,
+      deckFrameworkMode,
       metadata,
       template,
       designSystemBody,

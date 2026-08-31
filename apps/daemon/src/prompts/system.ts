@@ -52,6 +52,7 @@ import {
   SETTINGS_MEDIA_PROVIDERS_PATH,
   type ByokMediaDefaults,
   type ChatSessionMode,
+  type DeckFrameworkMode,
   type ExecutionProfile,
   type MediaExecutionPolicy,
   type MediaSurface,
@@ -828,6 +829,8 @@ export interface ComposeInput {
   // contract when a non-PPT project receives a cross-surface deck request.
   // Deck-kind projects ignore this — their framework is unconditional.
   freeformDeckSignal?: boolean | undefined;
+  /** Host-resolved OD Next deck scaffold policy for blank vs legacy/existing decks. */
+  deckFrameworkMode?: DeckFrameworkMode | undefined;
   // Which always-on doctrine core to compose. `classic` (default) keeps the
   // legacy DISCOVERY_AND_PHILOSOPHY + designer-charter stack plus its tail
   // overrides. `slim` swaps all of that for the single rewritten charter in
@@ -884,6 +887,7 @@ export function composeSystemPrompt({
   byokMediaDefaults,
   executionProfile,
   freeformDeckSignal,
+  deckFrameworkMode,
   promptCoreVariant,
   mediaHintSignal,
   platformHintSignal,
@@ -894,6 +898,7 @@ export function composeSystemPrompt({
       sessionMode,
       locale,
       deckIntent: odNextStrategyRecipe.taskType !== 'ppt' && freeformDeckSignal === true,
+      deckFrameworkMode,
       metadata,
       template,
       designSystemBody,
