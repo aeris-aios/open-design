@@ -23,7 +23,7 @@ import {
   type DaemonStatusSnapshot,
   type DesktopUpdateInput,
   type RegisterDesktopAuthResult,
-  type SidecarStamp,
+  type LegacySidecarRuntimeLayout,
   type WebStatusSnapshot,
 } from "@open-design/sidecar-proto";
 import { dirname, join } from "node:path";
@@ -363,7 +363,7 @@ type DesktopMenuController = {
 };
 
 function installDesktopMenu(
-  runtime: SidecarRuntimeContext<SidecarStamp>,
+  runtime: SidecarRuntimeContext<LegacySidecarRuntimeLayout>,
   options: Pick<DesktopMainOptions, "discoverDaemonUrl" | "discoverWebUrl"> & {
     onOpenUpdateDialog?: () => void;
     updater: DesktopUpdater;
@@ -636,7 +636,7 @@ function summarizeDesktopIpcInput(input: unknown): Record<string, unknown> | nul
  * bypassable path. We log the failure so the operator can investigate.
  */
 export async function runDesktopMain(
-  runtime: SidecarRuntimeContext<SidecarStamp>,
+  runtime: SidecarRuntimeContext<LegacySidecarRuntimeLayout>,
   options: DesktopMainOptions,
 ): Promise<DesktopMainHandle> {
   // Install the defensive uncaughtException filter BEFORE awaiting
@@ -1019,7 +1019,7 @@ if (isDirectEntry()) {
         if (client.stamp.app !== APP_KEYS.DESKTOP) throw new Error(`desktop sidecar cannot run stamp app ${client.stamp.app}`);
         if (!isSidecarMode(client.stamp.mode)) throw new Error(`unsupported desktop sidecar mode: ${client.stamp.mode}`);
         if (!isSidecarSource(client.stamp.source)) throw new Error(`unsupported desktop sidecar source: ${client.stamp.source}`);
-        const runtime: SidecarRuntimeContext<SidecarStamp> = {
+        const runtime: SidecarRuntimeContext<LegacySidecarRuntimeLayout> = {
           app: APP_KEYS.DESKTOP,
           base: resources.runtimeRoot,
           mode: client.stamp.mode,

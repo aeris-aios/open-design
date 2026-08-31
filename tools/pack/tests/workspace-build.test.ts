@@ -9,9 +9,11 @@ import { ToolPackCache } from "@/cache/index.js";
 import type { ToolPackConfig } from "@/config/index.js";
 import {
   createWorkspaceBuildCacheKey,
+  createWorkspaceBuildCacheKeyFromInputs,
   ensureWorkspaceBuildArtifacts,
   runWorkspaceBuild,
   WORKSPACE_BUILD_COMMANDS,
+  WORKSPACE_BUILD_CACHE_SCHEMA_VERSION,
   WORKSPACE_BUILD_PACKAGES,
   type WorkspaceBuildRunner,
 } from "@/workspace-build.js";
@@ -405,7 +407,7 @@ describe("runWorkspaceBuild", () => {
 });
 
 describe("createWorkspaceBuildCacheKey", () => {
-  it("witnesses workspace topology and source inputs but ignores generated outputs", async () => {
+  it("witnesses every declared package source and ignores generated outputs", async () => {
     const root = await mkdtemp(join(tmpdir(), "open-design-workspace-key-"));
     const config = createConfig(root, join(root, ".cache"));
 
@@ -416,13 +418,18 @@ describe("createWorkspaceBuildCacheKey", () => {
       await writeFile(join(root, "packages/sidecar/dist/generated.js"), "generated\n", "utf8");
       expect(await createWorkspaceBuildCacheKey(config)).toBe(baseline);
 
-      await writeFile(join(root, "packages/sidecar/src/index.ts"), "export const value = 2;\n", "utf8");
-      const sourceKey = await createWorkspaceBuildCacheKey(config);
-      expect(sourceKey).not.toBe(baseline);
+      for (const packageInfo of WORKSPACE_BUILD_PACKAGES) {
+        const sourcePath = join(root, packageInfo.directory, "src/index.ts");
+        await writeFile(sourcePath, `export const value = ${JSON.stringify(packageInfo.name)};\n`, "utf8");
+        expect(await createWorkspaceBuildCacheKey(config), packageInfo.name).not.toBe(baseline);
+        await writeFile(sourcePath, "export const value = 1;\n", "utf8");
+      }
+
+      expect(await createWorkspaceBuildCacheKey(config)).toBe(baseline);
 
       await writeFile(join(root, "pnpm-workspace.yaml"), "packages:\n  - packages/*\n", "utf8");
       const topologyKey = await createWorkspaceBuildCacheKey(config);
-      expect(topologyKey).not.toBe(sourceKey);
+      expect(topologyKey).not.toBe(baseline);
 
       await writeFile(join(root, "pnpm-lock.yaml"), "lockfileVersion: '9.1'\n", "utf8");
       const lockKey = await createWorkspaceBuildCacheKey(config);
@@ -436,5 +443,35 @@ describe("createWorkspaceBuildCacheKey", () => {
     } finally {
       await rm(root, { force: true, recursive: true });
     }
+  });
+
+  it("witnesses every pure command, runtime, and schema determinant", () => {
+    const inputs = {
+      buildCommands: WORKSPACE_BUILD_COMMANDS,
+      node: "win.workspace-build",
+      nodeVersion: "v24.0.0",
+      packageHashes: Object.fromEntries(WORKSPACE_BUILD_PACKAGES.map(({ name }) => [name, `hash:${name}`])),
+      packageManager: "pnpm@10.33.2",
+      platform: "win" as const,
+      pnpmLock: "lock-hash",
+      pnpmWorkspace: "workspace-hash",
+      schemaVersion: WORKSPACE_BUILD_CACHE_SCHEMA_VERSION,
+      webOutputMode: "standalone" as const,
+    };
+    const baseline = createWorkspaceBuildCacheKeyFromInputs(inputs);
+
+    for (const [index, command] of WORKSPACE_BUILD_COMMANDS.entries()) {
+      const buildCommands = WORKSPACE_BUILD_COMMANDS.map((entry, entryIndex) =>
+        entryIndex === index ? { ...entry, args: [...entry.args, "--witness"] } : entry,
+      );
+      expect(
+        createWorkspaceBuildCacheKeyFromInputs({ ...inputs, buildCommands }),
+        `build command ${JSON.stringify(command.args)}`,
+      ).not.toBe(baseline);
+    }
+
+    expect(createWorkspaceBuildCacheKeyFromInputs({ ...inputs, node: "mac.workspace-build" })).not.toBe(baseline);
+    expect(createWorkspaceBuildCacheKeyFromInputs({ ...inputs, nodeVersion: "v24.0.1" })).not.toBe(baseline);
+    expect(createWorkspaceBuildCacheKeyFromInputs({ ...inputs, schemaVersion: inputs.schemaVersion + 1 })).not.toBe(baseline);
   });
 });

@@ -2,7 +2,7 @@ import {
   APP_KEYS,
   SIDECAR_MODES,
   SIDECAR_SOURCES,
-  type SidecarStamp,
+  type SidecarSource,
 } from "@open-design/sidecar-proto";
 import {
   parseLauncherAfterQuitArgs,
@@ -18,7 +18,7 @@ import {
   SidecarFactory,
   type SidecarClient,
   type SidecarRuntimeContext,
-  type SidecarStamp as ConvergedSidecarStamp,
+  type SidecarStamp,
 } from "@open-design/sidecar";
 import {
   applyLoopbackConnectionLimitSwitch,
@@ -124,7 +124,7 @@ async function main(): Promise<void> {
   const namespace = convergedArgvStamp?.namespace ?? config.namespace;
   const namespaceConfig = namespace === config.namespace ? config : { ...config, namespace };
   const initialPaths = resolvePackagedNamespacePaths(namespaceConfig, namespace, process.env);
-  const launchStamp: ConvergedSidecarStamp = {
+  const launchStamp: SidecarStamp = {
     app: APP_KEYS.DESKTOP,
     channel: convergedArgvStamp?.channel
       ?? releaseChannelFromVersion(namespaceConfig.appVersion)
@@ -278,7 +278,7 @@ async function main(): Promise<void> {
     base: paths.runtimeRoot,
     mode: SIDECAR_MODES.RUNTIME,
     namespace,
-    source: convergedStamp.source as SidecarStamp["source"],
+    source: convergedStamp.source as SidecarSource,
   } satisfies SidecarRuntimeContext<SidecarStamp>;
 
   const sidecars = await startPackagedSidecars(runtime, paths, {

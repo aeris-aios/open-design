@@ -4,7 +4,6 @@ import {
   APP_KEYS,
   SIDECAR_MODES,
   SIDECAR_SOURCES,
-  type SidecarStamp as LegacySidecarStamp,
 } from "@open-design/sidecar-proto";
 import {
   getSidecarStatus,
@@ -191,12 +190,12 @@ export async function runPackagedHeadless(
     port: 0,
     runtimeRoot: paths.runtimeRoot,
   });
-  const runtime: SidecarRuntimeContext<LegacySidecarStamp> = {
+  const runtime: SidecarRuntimeContext<SidecarStamp> = {
     app: APP_KEYS.DESKTOP,
     base: paths.runtimeRoot,
     mode: SIDECAR_MODES.RUNTIME,
     namespace: config.namespace,
-    source: stamp.source as LegacySidecarStamp["source"],
+    source: stamp.source,
   };
 
   type HeadlessRuntime = PackagedHeadlessStartupHandle;

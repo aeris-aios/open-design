@@ -599,7 +599,12 @@ export type ShutdownResult = {
   accepted: true;
 };
 
-export type SidecarStamp = {
+/**
+ * Legacy runtime-layout descriptor retained for the generic path/bootstrap
+ * contract. This is not sidecar process identity: `@open-design/sidecar` owns
+ * the authoritative five-field argv stamp, and IPC is private transport state.
+ */
+export type LegacySidecarRuntimeLayout = {
   app: AppKey;
   ipc: string;
   mode: SidecarMode;
@@ -607,8 +612,8 @@ export type SidecarStamp = {
   source: SidecarSource;
 };
 
-export type SidecarStampInput = Partial<Record<(typeof SIDECAR_STAMP_FIELDS)[number], unknown>>;
-export type SidecarStampCriteria = Partial<SidecarStamp>;
+type LegacySidecarRuntimeLayoutInput = Partial<Record<(typeof SIDECAR_STAMP_FIELDS)[number], unknown>>;
+type LegacySidecarRuntimeLayoutCriteria = Partial<LegacySidecarRuntimeLayout>;
 
 export type OpenDesignSidecarContract = {
   appKeys: typeof APP_KEYS;
@@ -620,8 +625,8 @@ export type OpenDesignSidecarContract = {
   normalizeApp: typeof normalizeAppKey;
   normalizeNamespace: typeof normalizeNamespace;
   normalizeSource: typeof normalizeSidecarSource;
-  normalizeStamp: typeof normalizeSidecarStamp;
-  normalizeStampCriteria: typeof normalizeSidecarStampCriteria;
+  normalizeStamp: typeof normalizeSidecarRuntimeLayout;
+  normalizeStampCriteria: typeof normalizeSidecarRuntimeLayoutCriteria;
   sources: typeof SIDECAR_SOURCES;
   stampFields: typeof SIDECAR_STAMP_FIELDS;
   stampFlags: typeof SIDECAR_STAMP_FLAGS;
@@ -715,7 +720,7 @@ function assertKnownStampKeys(value: Record<string, unknown>, label: string): vo
   assertKnownKeys(value, SIDECAR_STAMP_FIELDS, label);
 }
 
-export function normalizeSidecarStamp(input: unknown): SidecarStamp {
+export function normalizeSidecarRuntimeLayout(input: unknown): LegacySidecarRuntimeLayout {
   const value = assertObject(input, "sidecar stamp");
   assertKnownStampKeys(value, "sidecar stamp");
   return {
@@ -727,7 +732,7 @@ export function normalizeSidecarStamp(input: unknown): SidecarStamp {
   };
 }
 
-export function normalizeSidecarStampCriteria(input: unknown = {}): SidecarStampCriteria {
+export function normalizeSidecarRuntimeLayoutCriteria(input: unknown = {}): LegacySidecarRuntimeLayoutCriteria {
   const value = assertObject(input, "sidecar stamp criteria");
   assertKnownStampKeys(value, "sidecar stamp criteria");
   return {
@@ -739,8 +744,8 @@ export function normalizeSidecarStampCriteria(input: unknown = {}): SidecarStamp
   };
 }
 
-export function assertSidecarStamp(input: unknown): asserts input is SidecarStamp {
-  normalizeSidecarStamp(input);
+function assertSidecarRuntimeLayout(input: unknown): asserts input is LegacySidecarRuntimeLayout {
+  normalizeSidecarRuntimeLayout(input);
 }
 
 function normalizeDesktopEvalInput(input: unknown): DesktopEvalInput {
@@ -1021,8 +1026,8 @@ export const OPEN_DESIGN_SIDECAR_CONTRACT = Object.freeze({
   normalizeApp: normalizeAppKey,
   normalizeNamespace,
   normalizeSource: normalizeSidecarSource,
-  normalizeStamp: normalizeSidecarStamp,
-  normalizeStampCriteria: normalizeSidecarStampCriteria,
+  normalizeStamp: normalizeSidecarRuntimeLayout,
+  normalizeStampCriteria: normalizeSidecarRuntimeLayoutCriteria,
   sources: SIDECAR_SOURCES,
   stampFields: SIDECAR_STAMP_FIELDS,
   stampFlags: SIDECAR_STAMP_FLAGS,

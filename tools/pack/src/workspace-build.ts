@@ -47,6 +47,25 @@ export const WORKSPACE_BUILD_COMMANDS = [
   { args: ["--filter", "@open-design/packaged", "run", "build"] },
 ] as const;
 
+export const WORKSPACE_BUILD_CACHE_SCHEMA_VERSION = 10;
+
+export type WorkspaceBuildCacheKeyInputs = {
+  buildCommands: unknown;
+  node: string;
+  nodeVersion: string;
+  packageHashes: Readonly<Record<string, string>>;
+  packageManager: unknown;
+  platform: ToolPackConfig["platform"];
+  pnpmLock: string;
+  pnpmWorkspace: string;
+  schemaVersion: number;
+  webOutputMode: ToolPackConfig["webOutputMode"];
+};
+
+export function createWorkspaceBuildCacheKeyFromInputs(inputs: WorkspaceBuildCacheKeyInputs): string {
+  return hashJson(inputs);
+}
+
 export type WorkspaceBuildRunner = (
   args: string[],
   extraEnv?: NodeJS.ProcessEnv,
@@ -96,7 +115,7 @@ export async function createWorkspaceBuildCacheKey(config: ToolPackConfig): Prom
   }
   const nodeId = `${config.platform}.workspace-build`;
 
-  return hashJson({
+  return createWorkspaceBuildCacheKeyFromInputs({
     buildCommands: WORKSPACE_BUILD_COMMANDS,
     node: nodeId,
     nodeVersion: process.version,
@@ -105,7 +124,7 @@ export async function createWorkspaceBuildCacheKey(config: ToolPackConfig): Prom
     platform: config.platform,
     pnpmLock: await hashPath(join(config.workspaceRoot, "pnpm-lock.yaml")),
     pnpmWorkspace: await hashPath(join(config.workspaceRoot, "pnpm-workspace.yaml")),
-    schemaVersion: 10,
+    schemaVersion: WORKSPACE_BUILD_CACHE_SCHEMA_VERSION,
     webOutputMode: config.webOutputMode,
   });
 }

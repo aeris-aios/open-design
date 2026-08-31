@@ -13,7 +13,6 @@ import {
   type AppKey,
   type DaemonStatusSnapshot,
   type RegisterWebUrlResult,
-  type SidecarStamp as LegacySidecarStamp,
   type WebStatusSnapshot,
 } from "@open-design/sidecar-proto";
 import {
@@ -735,7 +734,7 @@ async function spawnSidecarChild(options: {
   env: NodeJS.ProcessEnv;
   nodeCommand: string | null;
   paths: PackagedNamespacePaths;
-  runtime: SidecarRuntimeContext<LegacySidecarStamp>;
+  runtime: SidecarRuntimeContext<SidecarStamp>;
 }): Promise<ManagedSidecarChild> {
   const stamp = {
     app: options.app,
@@ -838,7 +837,7 @@ export async function registerPackagedWebUrl(
 }
 
 export async function startPackagedSidecars(
-  runtime: SidecarRuntimeContext<LegacySidecarStamp>,
+  runtime: SidecarRuntimeContext<SidecarStamp>,
   paths: PackagedNamespacePaths,
   options: {
     appVersion: string | null;
