@@ -1653,6 +1653,18 @@ process.stdin.on("end", () => {
     );
   });
 
+  it("[P1] builds platform before sidecar in Nix workspace builds", async () => {
+    const flake = await readFile(flakePath, "utf8");
+    const daemonWorkspaces = sectionBetween(flake, "      daemonWorkspacePaths = [", "      ];");
+    const webWorkspaces = sectionBetween(flake, "      webWorkspacePaths = [", "      ];");
+
+    for (const workspaces of [daemonWorkspaces, webWorkspaces]) {
+      expect(workspaces.indexOf('"packages/platform"')).toBeLessThan(
+        workspaces.indexOf('"packages/sidecar"'),
+      );
+    }
+  });
+
   it("[P2] routes trusted Linux CI through the Nexu runner fleet", async () => {
     const workflow = await readFile(ciWorkflowPath, "utf8");
     const runners = sectionBetween(workflow, "  runners:", "  plan:");

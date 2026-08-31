@@ -190,6 +190,7 @@ export type DesktopStatusSnapshot = {
     /** Hidden Electron Chromium can deterministically capture authored frame timelines. */
     frameRenderer?: boolean;
   };
+  executablePath?: string;
   pid?: number | null;
   state: DesktopRuntimeState;
   title?: string | null;
@@ -638,12 +639,6 @@ export type DesktopSidecarMessage =
 
 export type ShutdownResult = {
   accepted: true;
-  /**
-   * When true, the sidecar accepted shutdown but is holding process exit for
-   * critical work (for example a handoff journal commit). The owner should
-   * wait a longer bounded grace for self-exit before force-stopping.
-   */
-  deferred?: boolean;
 };
 
 export type SidecarStamp = {

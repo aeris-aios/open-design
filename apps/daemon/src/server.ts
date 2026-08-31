@@ -9,6 +9,7 @@ import type {
   DesktopRenderSlidesInput,
   DesktopRenderSlidesResult,
 } from '@open-design/sidecar-proto';
+import { SidecarFactory } from '@open-design/sidecar';
 import express from 'express';
 import multer from 'multer';
 import JSZip from 'jszip';
@@ -1713,6 +1714,7 @@ export function createAgentRuntimeEnv(
     },
     SANDBOX_RUNTIME,
   );
+  Object.assign(env, SidecarFactory.inheritedEnvironment(baseEnv));
   // The daemon API token authorizes the whole non-loopback API surface. Agent
   // children receive only their run-scoped tool capability, never that broad
   // credential inherited from the daemon process (including Windows casing).
@@ -1730,10 +1732,6 @@ export function createAgentRuntimeEnv(
     if (!/\.exe/i.test(pathextValue)) {
       env[pathextKey] = '.COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC';
     }
-  }
-  const sidecarIpcPath = baseEnv[SIDECAR_ENV.IPC_PATH];
-  if (typeof sidecarIpcPath === 'string' && sidecarIpcPath.length > 0) {
-    env[SIDECAR_ENV.IPC_PATH] = sidecarIpcPath;
   }
   if (SANDBOX_RUNTIME.enabled) {
     const noProxy = mergeNoProxyWithLoopbackDefaults(env.NO_PROXY ?? env.no_proxy);
@@ -7464,6 +7462,7 @@ export async function startServer({
 
   const telemetry = registerTelemetryRoutes(app, {
     dataDir: RUNTIME_DATA_DIR,
+    namespace: runtime?.namespace,
     readAppConfig,
     writeAppConfig,
   });
