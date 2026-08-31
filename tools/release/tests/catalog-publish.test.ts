@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -234,6 +234,34 @@ describe("catalog publish", () => {
           storage: server.storage,
         }),
       ).rejects.toThrow(/catalog provenance validation failed/);
+
+      expect(server.listObjectKeys()).toEqual([]);
+    } finally {
+      await server.close();
+      await rm(stagingDir, { force: true, recursive: true });
+    }
+  });
+
+  it("rejects provenance recordCounts that do not match the catalog", async () => {
+    const server = await startFixtureServer();
+    const stagingDir = await stagePackedCatalog(SOURCE_COMMIT);
+    try {
+      const provenancePath = join(stagingDir, "provenance.json");
+      const provenance = JSON.parse(await readFile(provenancePath, "utf8")) as {
+        recordCounts: Record<string, number>;
+      };
+      provenance.recordCounts = {};
+      await writeFile(provenancePath, `${JSON.stringify(provenance, null, 2)}\n`);
+
+      await expect(
+        publishCatalogSnapshot({
+          stagingDir,
+          sourceCommit: SOURCE_COMMIT,
+          sourceCommitGeneration: 42,
+          publicOrigin: "https://releases.example.test",
+          storage: server.storage,
+        }),
+      ).rejects.toThrow(/recordCounts .* do not match catalog/);
 
       expect(server.listObjectKeys()).toEqual([]);
     } finally {

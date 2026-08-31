@@ -204,6 +204,7 @@ export type ExpectedCatalogProvenance = {
   sourceCommit: string;
   generatedAt: string;
   bundleSha256: string;
+  recordCounts: Record<string, number>;
 };
 
 export function validateCatalogProvenance(
@@ -248,10 +249,21 @@ export function validateCatalogProvenance(
   if (!doc.recordCounts || typeof doc.recordCounts !== "object" || Array.isArray(doc.recordCounts)) {
     errors.push("recordCounts must be an object");
   } else {
+    let countsOk = true;
     for (const [type, count] of Object.entries(doc.recordCounts)) {
-      if (!Number.isInteger(count) || (count as number) < 0) {
+      if (typeof count !== "number" || !Number.isInteger(count) || count < 0) {
+        countsOk = false;
         errors.push(`recordCounts.${type} must be a non-negative integer`);
       }
+    }
+    if (
+      countsOk &&
+      JSON.stringify(sortedCountEntries(doc.recordCounts)) !==
+        JSON.stringify(sortedCountEntries(expected.recordCounts))
+    ) {
+      errors.push(
+        `recordCounts ${JSON.stringify(doc.recordCounts)} do not match catalog ${JSON.stringify(expected.recordCounts)}`,
+      );
     }
   }
 
@@ -267,4 +279,10 @@ export function assertValidCatalogProvenance(
   if (!result.ok) {
     throw new Error(`catalog provenance validation failed:\n- ${result.errors.join("\n- ")}`);
   }
+}
+
+function sortedCountEntries(counts: Record<string, number>): Array<[string, number]> {
+  return Object.keys(counts)
+    .sort((a, b) => a.localeCompare(b))
+    .map((key) => [key, counts[key]!]);
 }

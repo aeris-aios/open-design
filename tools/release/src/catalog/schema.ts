@@ -204,6 +204,14 @@ export type CatalogProvenance = {
   recordCounts: Record<string, number>;
 };
 
+export function catalogRecordCounts(records: readonly { type: string }[]): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const record of records) {
+    counts[record.type] = (counts[record.type] ?? 0) + 1;
+  }
+  return counts;
+}
+
 export type CatalogLatestPointer = {
   schemaVersion: typeof CATALOG_SCHEMA_VERSION;
   sourceCommit: string;

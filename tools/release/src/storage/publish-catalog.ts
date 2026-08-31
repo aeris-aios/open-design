@@ -3,6 +3,7 @@ import { appendFileSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 
 import {
+  catalogRecordCounts,
   catalogSnapshotPrefix,
   CATALOG_LATEST_KEY,
   type CatalogDocument,
@@ -245,6 +246,7 @@ export async function publishCatalogSnapshot(options: PublishCatalogOptions): Pr
     sourceCommit,
     generatedAt: catalog.generatedAt,
     bundleSha256: localBundleDigest,
+    recordCounts: catalogRecordCounts(catalog.records),
   });
 
   const files = walkFiles(stagingDir);

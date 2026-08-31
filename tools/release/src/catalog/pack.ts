@@ -15,6 +15,7 @@ import { join, relative, resolve } from "node:path";
 import { assertValidCatalog } from "./validate.ts";
 import {
   CATALOG_SCHEMA_VERSION,
+  catalogRecordCounts,
   type CatalogDocument,
   type CatalogProvenance,
 } from "./schema.ts";
@@ -197,10 +198,7 @@ export function packCatalogSnapshot(options: PackCatalogOptions): PackCatalogRes
     if (existsSync(full)) unlinkSync(full);
   }
 
-  const counts: Record<string, number> = {};
-  for (const record of catalog.records) {
-    counts[record.type] = (counts[record.type] ?? 0) + 1;
-  }
+  const counts = catalogRecordCounts(catalog.records);
 
   // Content checksums cover catalog, previews, and runnable entry assets.
   const checksumsPath = writeChecksums(
