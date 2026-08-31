@@ -1,10 +1,5 @@
 import { expect, test } from '@/playwright/suite';
-<<<<<<< HEAD
-=======
 import { ACTIVE_ARTIFACT_PREVIEW_SELECTOR } from '@/playwright/artifact-preview';
-import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
->>>>>>> 1c1ecae47 (fix(web): preserve HTML preview state across edit handoffs (#7592))
 import { openNewProjectModal as openNewProjectModalFromProjects } from '@/playwright/rail';
 import { runErrorCard } from '@/playwright/chat';
 import { openAllProjectFiles } from '@/playwright/workspace';
@@ -18,12 +13,6 @@ import type { FakeAgentId } from '@/playwright/fake-agents';
 import { T } from '@/timeouts';
 
 const STORAGE_KEY = 'open-design:config';
-<<<<<<< HEAD
-const ACTIVE_ARTIFACT_PREVIEW_SELECTOR = '[data-testid="artifact-preview-frame"]:visible, [data-testid="artifact-preview-frame-url-load"]:visible, [data-testid="artifact-preview-frame-srcdoc"]:visible, [data-testid="live-artifact-preview-frame"]:visible';
-=======
-const EXPERIENCE_SURVEY_RETIRED_KEY = 'open-design:experience-survey:v1:retired';
-const EXPERIENCE_SURVEY_DELIVERIES_KEY = 'open-design:experience-survey:v1:deliveries';
->>>>>>> 1c1ecae47 (fix(web): preserve HTML preview state across edit handoffs (#7592))
 const GENERATED_FILE = 'real-daemon-smoke.html';
 const GENERATED_HEADING = 'Real Daemon Smoke';
 const EDITED_GENERATED_HEADING = 'Real Daemon Smoke Edited';
