@@ -32,6 +32,7 @@ import {
   recordRunTelemetryDeliveryAttempt,
 } from '../observability/delivery-state.js';
 import { mintRunDoneKey } from './run-done-key.js';
+import { normalizeTelemetryAppVersionInfo } from '../app-version.js';
 
 export const TERMINAL_RUN_STATUSES = new Set(['succeeded', 'failed', 'canceled']);
 
@@ -529,6 +530,7 @@ function durableRunState(run) {
       ? { strategyRolloutDecision: run.strategyRolloutDecision }
       : {}),
     agentId: run.agentId,
+    ...(run.appVersionInfo ? { appVersionInfo: run.appVersionInfo } : {}),
     status: run.status,
     createdAt: run.createdAt,
     updatedAt: run.updatedAt,
@@ -681,6 +683,9 @@ export function createChatRunService({
   // durable but before the terminal SSE event is published, so local outbox
   // writes share the exact terminal timestamp without delaying on delivery.
   onTerminal = null,
+  // Snapshot the daemon version at Run creation so a later daemon version
+  // cannot rewrite this Run's terminal telemetry during restart recovery.
+  getAppVersionInfo = () => null,
 }) {
   const runs = new Map();
   const runIdsByClientRequestId = new Map();
@@ -817,6 +822,13 @@ export function createChatRunService({
   const create = (meta = {}) => {
     const now = Date.now();
     const id = randomUUID();
+    let appVersionInfo = null;
+    try {
+      appVersionInfo = normalizeTelemetryAppVersionInfo(getAppVersionInfo());
+    } catch {
+      // Version attribution is best-effort; missing is explicit in the
+      // durable state instead of persisting a placeholder release number.
+    }
     const run = {
       id,
       // This turn's done-marker nonce. Injected into the system prompt and
@@ -838,6 +850,7 @@ export function createChatRunService({
           ? meta.strategyRolloutDecision
           : null,
       agentId: typeof meta.agentId === 'string' && meta.agentId ? meta.agentId : null,
+      appVersionInfo,
       projectMetadata:
         meta.projectMetadata && typeof meta.projectMetadata === 'object' && !Array.isArray(meta.projectMetadata)
           ? meta.projectMetadata
