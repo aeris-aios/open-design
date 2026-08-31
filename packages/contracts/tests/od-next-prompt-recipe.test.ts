@@ -105,6 +105,7 @@ describe('OD Next V2 prompt recipe', () => {
       expect(text).toContain('MUST contain exactly one `<artifact type="text/html">...</artifact>` block');
       expect(text).not.toContain('## Final handoff — filesystem');
       expect(text).not.toContain('summarize the written or changed deck file');
+      expect(text).not.toMatch(/TodoWrite[^\n]{0,80}(?:must|required)/i);
     }
 
     const pptPromptWithMatchingSignal = composeOdNextStrategyRequestPromptV2(pptRecipe, {

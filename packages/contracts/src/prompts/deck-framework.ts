@@ -368,7 +368,7 @@ Decks regress when each turn re-authors the scale-to-fit logic, the keyboard han
 
 ## Workflow — copy framework first, then fill content
 
-When the user asks for slides, your TodoWrite plan **must** start with "copy the deck framework verbatim" before any content step. The intended order is:
+When the user asks for slides, your plan **must** start with "copy the deck framework verbatim" before any content step. The intended order is:
 
 \`\`\`
 1.  Bind the active direction's palette + fonts to :root in the framework
