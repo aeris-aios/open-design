@@ -358,7 +358,9 @@ ${DECK_PROTOCOL_V1_INLINE_RUNTIME}
 </body>
 </html>`;
 
-export const DECK_FRAMEWORK_DIRECTIVE = `# Slide deck — fixed framework (this is non-negotiable for deck mode)
+export type DeckFrameworkHandoffProfile = 'filesystem' | 'text_artifact';
+
+const DECK_FRAMEWORK_BODY = `# Slide deck — fixed framework (this is non-negotiable for deck mode)
 
 Decks regress when each turn re-authors the scale-to-fit logic, the keyboard handler, the slide visibility toggle, the counter, and the print rules. The user has hit this enough times that we now ship a **fixed framework**: 1920×1080 canvas, scale-to-fit, OD Deck Protocol v1 absolute navigation + state events, hidden programmatic prev/next + counter, capture-phase keyboard with R reset-to-first-slide, half-slide click navigation, localStorage position restore, and a print stylesheet that emits a multi-page vertical PDF on Save-as-PDF — all baked in.
 
@@ -375,7 +377,7 @@ When the user asks for slides, your TodoWrite plan **must** start with "copy the
 4.  Add per-deck classes inside the second <style> block
 5.  Replace each <section class="slide"> SLOT with real content
 6.  Self-check (no rewriting framework chrome / @media print / nav script)
-7.  Summarize the written or changed deck file in a short ordinary assistant message
+7.  Complete the active execution profile's final handoff exactly as described after the canonical skeleton
 \`\`\`
 
 If you find yourself writing \`<style>\` rules for \`.deck-shell\`, \`.deck-stage\`, \`.slide\`, \`.canvas\`, \`fit()\`, \`@media print\`, or a keyboard handler — STOP. The framework already has them. Re-read this directive, then keep going from "fill SLOT content".
@@ -518,7 +520,7 @@ Rules — same weight as the density rules above:
 - ❌ Don't pass \`var(--fg)\` strings into \`themeVariables\` — Mermaid needs literal colors.
 - ❌ Don't hand-recolor a single label to "fix" contrast; theme the whole diagram.
 
-## Pre-handoff self-check — run this BEFORE the final file summary
+## Pre-handoff self-check — run this BEFORE the final handoff
 
 For every \`<section class="slide">\`, mentally render at 1920×1080 and answer:
 
@@ -544,3 +546,26 @@ ${DECK_SKELETON_HTML}
 
 When the brief is "make me a deck", your output is this skeleton with theme tokens tuned, per-deck classes added, and \`<section class="slide">\` blocks filled in — nothing more, nothing less. Skill-specific guidance (typography, theme presets, layout vocabulary) layers *on top of* this framework, not in place of it.
 `;
+
+const DECK_FILESYSTEM_HANDOFF = `## Final handoff — filesystem
+
+Write or edit the semantically named deck HTML file with the runtime's native file tools. After the file is complete and the self-check passes, summarize the written or changed deck file in a short ordinary assistant message. Do not emit the deck source in an \`<artifact>\` block; the saved project file is the canonical deliverable.`;
+
+const DECK_TEXT_ARTIFACT_HANDOFF = `## Final handoff — text artifact
+
+This execution profile has no file tools. After the deck is complete and the self-check passes, the final ordinary assistant response MUST contain exactly one \`<artifact type="text/html">...</artifact>\` block with the complete \`<!doctype html>\` deck document. Do not merely summarize a file or claim that a file was written: the artifact block itself is the canonical deliverable.`;
+
+export function renderDeckFrameworkDirective(
+  profile: DeckFrameworkHandoffProfile,
+): string {
+  const handoff = profile === 'text_artifact'
+    ? DECK_TEXT_ARTIFACT_HANDOFF
+    : DECK_FILESYSTEM_HANDOFF;
+  return `${DECK_FRAMEWORK_BODY}\n\n${handoff}`;
+}
+
+/**
+ * Backward-compatible filesystem form for callers that run native agents.
+ * API/BYOK callers must use renderDeckFrameworkDirective('text_artifact').
+ */
+export const DECK_FRAMEWORK_DIRECTIVE = renderDeckFrameworkDirective('filesystem');

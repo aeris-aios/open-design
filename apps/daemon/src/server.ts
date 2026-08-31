@@ -10172,7 +10172,10 @@ export async function startServer({
       odNextRecipeIdentity,
       odNextRuntimeFacts,
       odNextStableContextPrompt: odNextStableRequestContext
-        ? composeOdNextStrategyStableRequestContextV2(odNextStableRequestContext)
+        ? composeOdNextStrategyStableRequestContextV2(
+            odNextStableRequestContext,
+            odNextStrategyRecipe?.executionProfile ?? 'filesystem',
+          )
         : '',
       activeSkillDir,
       activeSkillDirs: odNextStrategyRecipe ? [] : activeSkillDirs,

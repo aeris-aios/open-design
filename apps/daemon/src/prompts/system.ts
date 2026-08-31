@@ -38,7 +38,7 @@ import {
   SLIM_V2_ROLE_BOUNDARY_GUARD,
 } from './core-slim.js';
 import { renderDirectionIndexBlock, renderDirectionSpecBlock } from './directions.js';
-import { DECK_FRAMEWORK_DIRECTIVE } from './deck-framework.js';
+import { renderDeckFrameworkDirective } from './deck-framework.js';
 import {
   MEDIA_USER_REPLY_CONTRACT,
   renderMediaGenerationContract,
@@ -1000,6 +1000,7 @@ export function composeSystemPrompt({
   const resolvedExclusiveSurface = resolveExclusiveSurface({ metadata, skillMode, skillModes });
   const resolvedExecutionProfile =
     executionProfile ?? executionProfileFromStreamFormat(streamFormat);
+  const deckFrameworkDirective = renderDeckFrameworkDirective(resolvedExecutionProfile);
 
   // API/BYOK mode (streamFormat === 'plain'): mirrors the same fix from
   // `@open-design/contracts`'s composer. The daemon hits this path for
@@ -1324,7 +1325,7 @@ export function composeSystemPrompt({
   const hasDeckSkillSeed =
     activeSkillModes.has('deck') && !!skillBody && /assets\/template\.html/.test(skillBody);
   if (!isAskMode && isDeckProject && !hasDeckSkillSeed) {
-    parts.push(`\n\n---\n\n${DECK_FRAMEWORK_DIRECTIVE}`);
+    parts.push(`\n\n---\n\n${deckFrameworkDirective}`);
   } else if (
     !isAskMode &&
     !isDeckProject &&
@@ -1339,7 +1340,7 @@ export function composeSystemPrompt({
     // third navigation runtime. Preserve the legacy absent-signal default for
     // kind=other projects only.
     (isSlimCore ? slimTurnVariableParts : parts).push(
-      `\n\n---\n\n## If this brief is a slide deck / keynote / presentation\n\nThe user did not pre-select a "Slide deck" surface, but their request may still call for one. **If — and only if — the brief reads as slides, keynote, presentation, deck, PPT, or 讲解, follow the framework below.** Otherwise ignore everything in this section and continue with the freeform output you would have written anyway.\n\n${DECK_FRAMEWORK_DIRECTIVE}`,
+      `\n\n---\n\n## If this brief is a slide deck / keynote / presentation\n\nThe user did not pre-select a "Slide deck" surface, but their request may still call for one. **If — and only if — the brief reads as slides, keynote, presentation, deck, PPT, or 讲解, follow the framework below.** Otherwise ignore everything in this section and continue with the freeform output you would have written anyway.\n\n${deckFrameworkDirective}`,
     );
   }
 

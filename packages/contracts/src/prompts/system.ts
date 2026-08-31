@@ -33,7 +33,7 @@ import type { ChatSessionMode } from '../api/chat.js';
 import type { ProjectMetadata, ProjectTemplate } from '../api/projects.js';
 import { OFFICIAL_DESIGNER_PROMPT, renderOfficialDesignerPrompt } from './official-system.js';
 import { DISCOVERY_AND_PHILOSOPHY } from './discovery.js';
-import { DECK_FRAMEWORK_DIRECTIVE } from './deck-framework.js';
+import { renderDeckFrameworkDirective } from './deck-framework.js';
 import { MEDIA_GENERATION_CONTRACT } from './media-contract.js';
 import {
   composeOdNextStrategyRequestPromptV2,
@@ -369,6 +369,9 @@ export function composeSystemPrompt({
   // still composed in — Ask mode is light, not amnesiac. Mirror the daemon
   // composer's `isAskMode` gating.
   const isAskMode = sessionMode === 'chat';
+  const deckFrameworkDirective = renderDeckFrameworkDirective(
+    streamFormat === 'plain' ? 'text_artifact' : 'filesystem',
+  );
 
   if (sessionMode === 'plan') {
     parts.push(PLAN_MODE_OVERRIDE);
@@ -521,7 +524,7 @@ export function composeSystemPrompt({
   const hasDeckSkillSeed =
     skillMode === 'deck' && !!skillBody && /assets\/template\.html/.test(skillBody);
   if (!isAskMode && isDeckProject && !hasDeckSkillSeed) {
-    parts.push(`\n\n---\n\n${DECK_FRAMEWORK_DIRECTIVE}`);
+    parts.push(`\n\n---\n\n${deckFrameworkDirective}`);
   } else if (
     !isAskMode &&
     !isDeckProject &&
@@ -536,7 +539,7 @@ export function composeSystemPrompt({
     // third navigation runtime. Preserve the legacy absent-signal default for
     // kind=other projects only.
     parts.push(
-      `\n\n---\n\n## If this brief is a slide deck / keynote / presentation\n\nThe user did not pre-select a "Slide deck" surface, but their request may still call for one. **If — and only if — the brief reads as slides, keynote, presentation, deck, PPT, or 讲解, follow the framework below.** Otherwise ignore everything in this section and continue with the freeform output you would have written anyway.\n\n${DECK_FRAMEWORK_DIRECTIVE}`,
+      `\n\n---\n\n## If this brief is a slide deck / keynote / presentation\n\nThe user did not pre-select a "Slide deck" surface, but their request may still call for one. **If — and only if — the brief reads as slides, keynote, presentation, deck, PPT, or 讲解, follow the framework below.** Otherwise ignore everything in this section and continue with the freeform output you would have written anyway.\n\n${deckFrameworkDirective}`,
     );
   }
 

@@ -64,6 +64,7 @@ describe('OD Next V2 prompt recipe', () => {
       expect(text).toContain('data-od-deck-protocol="1"');
       expect(text).toContain("type: 'od:deck-ready'");
       expect(text).toContain("type: 'od:slide-state'");
+      expect(text).toContain('## Final handoff — filesystem');
     }
     expect(prompt.match(/^## Task Skill —/gm)).toHaveLength(1);
 
@@ -83,6 +84,28 @@ describe('OD Next V2 prompt recipe', () => {
     });
     expect(stableDeckContext).toContain('name="deck-framework"');
     expect(stableDeckContext).toContain('data-od-deck-protocol="1"');
+
+    const textArtifactRecipe: OdNextStrategyRequestRecipeV2 = {
+      ...pptRecipe,
+      executionProfile: 'text_artifact',
+    };
+    const textArtifactPrompt = composeOdNextStrategyRequestPromptV2(textArtifactRecipe);
+    const textArtifactBundleSkill = composeOdNextStrategyBundleHeadV2(textArtifactRecipe)
+      .sessionSkills.taskTypeSkill.body;
+    const textArtifactStableContext = composeOdNextStrategyStableRequestContextV2(
+      { deckIntent: true },
+      'text_artifact',
+    );
+    for (const text of [
+      textArtifactPrompt,
+      textArtifactBundleSkill,
+      textArtifactStableContext,
+    ]) {
+      expect(text).toContain('## Final handoff — text artifact');
+      expect(text).toContain('MUST contain exactly one `<artifact type="text/html">...</artifact>` block');
+      expect(text).not.toContain('## Final handoff — filesystem');
+      expect(text).not.toContain('summarize the written or changed deck file');
+    }
 
     const pptPromptWithMatchingSignal = composeOdNextStrategyRequestPromptV2(pptRecipe, {
       deckIntent: true,
