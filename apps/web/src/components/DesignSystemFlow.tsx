@@ -5409,7 +5409,7 @@ function buildFallbackDesignMdFromState(state: SetupState): string {
     state.company.trim()
     || state.notes.trim()
     || sourceNotes
-    || 'Design system generated from source material supplied in OpenDesign.';
+    || 'Design system generated from source material supplied in Design Studio.';
   return [
     '---',
     `name: ${yamlString(title.replace(/\s+Design System$/iu, ''))}`,

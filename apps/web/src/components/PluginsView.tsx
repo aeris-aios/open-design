@@ -194,10 +194,10 @@ const PLUGIN_SHARE_DETAILS: Record<PluginShareAction, {
     eyebrow: 'GitHub repository',
     fallbackTitle: 'Publish Plugin to GitHub',
     fallbackDescription:
-      'Creates a public GitHub repository for this local OpenDesign plugin.',
+      'Creates a public GitHub repository for this local Design Studio plugin.',
     confirmLabel: 'Start publishing',
     steps: [
-      'Create a new OpenDesign project for the publish workflow.',
+      'Create a new Design Studio project for the publish workflow.',
       'Copy this plugin into that project as isolated source context.',
       'Run the official publish action plugin against the local daemon.',
     ],
@@ -209,7 +209,7 @@ const PLUGIN_SHARE_DETAILS: Record<PluginShareAction, {
       'Opens a pull request that adds this plugin to the OpenDesign community catalog.',
     confirmLabel: 'Start contribution',
     steps: [
-      'Create a new OpenDesign project for the contribution workflow.',
+      'Create a new Design Studio project for the contribution workflow.',
       'Copy this plugin into that project as isolated source context.',
       'Run the official contribution action plugin against the local daemon.',
     ],

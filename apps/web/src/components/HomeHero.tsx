@@ -4256,7 +4256,7 @@ const HOME_PROMPT_EXAMPLES: Record<Locale, Record<string, string[]>> = {
       "Website URL to clone: https://open-design.ai",
     ],
     prototype: [
-      "Design a high-converting website for an AI CRM with a clear hero, feature story, proof points, and trial CTA",
+      "Design a high-converting website for a smart CRM with a clear hero, feature story, proof points, and trial CTA",
       "Create a desktop dashboard for a team knowledge base with search, recent updates, permissions, and collaboration entry points",
       "Redesign onboarding for a financial SaaS product so new users can connect data, finish setup, and see first value fast",
       "Prototype a mobile fitness coaching app covering goal setup, weekly plans, workout check-ins, and progress review",
@@ -4286,7 +4286,7 @@ const HOME_PROMPT_EXAMPLES: Record<Locale, Record<string, string[]>> = {
       "Create a strategic business review deck covering quarterly performance, root causes, opportunities, and next actions",
     ],
     image: [
-      "Generate a glassmorphism AI workspace poster with multi-screen collaboration, soft lighting, and a premium launch mood",
+      "Generate a glassmorphism smart workspace poster with multi-screen collaboration, soft lighting, and a premium launch mood",
       "Create an ecommerce hero image for new wireless headphones that highlights material detail, lifestyle context, and core benefits",
       "Design a minimalist tech launch key visual with a clean composition, strong product focus, and restrained launch copy",
       "Make a social teaser set for a product drop, including countdown, close-up detail, benefit reveal, and launch-day visual",

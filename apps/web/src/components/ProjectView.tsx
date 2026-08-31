@@ -12638,7 +12638,7 @@ export function resolveSucceededRunStatus(status: ChatMessage['runStatus']): Cha
 const DESIGN_RESULT_MISSING_DETAIL =
   'The design run finished without producing a deliverable project file.';
 const DESIGN_RESULT_DELIVERY_FAILED_DETAIL =
-  'The design result was generated, but OpenDesign could not save it to the project.';
+  'The design result was generated, but Design Studio could not save it to the project.';
 
 function applyDesignDeliveryOutcome(
   message: ChatMessage,

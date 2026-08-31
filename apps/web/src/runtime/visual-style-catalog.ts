@@ -353,7 +353,7 @@ const PROTOTYPE_STYLE_CATALOG: VisualStyleCatalogEntry[] = [
   {
     slug: 'tech-futurist',
     title: 'Tech futurist',
-    description: 'Credible AI and data surfaces with cyan and violet signals.',
+    description: 'Credible tech and data surfaces with cyan and violet signals.',
     variant: 'utility',
     category: 'business',
   },

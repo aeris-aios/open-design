@@ -491,7 +491,7 @@ function shouldSuppressLifecycleExitFallback(
 }
 
 const AMR_OPENCODE_INCOMPLETE_MESSAGE =
-  'OpenDesign started, but the run did not complete. Please retry or check the run details for the session stream error.';
+  'Design Studio started, but the run did not complete. Please retry or check the run details for the session stream error.';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -523,7 +523,7 @@ function daemonCreateRunError(response: Response, responseText: string): Error {
   if (!apiError || typeof apiError !== 'object') {
     return new Error(`daemon ${response.status}: ${responseText || 'no body'}`);
   }
-  const error = new Error(apiError.message || `OpenDesign service returned ${response.status}`) as Error & {
+  const error = new Error(apiError.message || `Design Studio service returned ${response.status}`) as Error & {
     code?: string;
     requestId?: string;
     retryable?: boolean;
@@ -599,10 +599,10 @@ function formatOpenCodeSessionError(value: unknown): string | null {
     return message;
   }
   if (statusCode === 404) {
-    return 'The model service returned 404 Not Found for the configured runtime endpoint. Check the OpenDesign link URL or model route.';
+    return 'The model service returned 404 Not Found for the configured runtime endpoint. Check the Design Studio link URL or model route.';
   }
   if (statusCode === 401 || statusCode === 403) {
-    return 'OpenDesign authentication failed. Please sign in again or refresh the runtime key.';
+    return 'Design Studio authentication failed. Please sign in again or refresh the runtime key.';
   }
   if (statusCode === 429) {
     return 'The model service rejected the request due to quota or rate limits. Retry later or check quota and rate limits.';

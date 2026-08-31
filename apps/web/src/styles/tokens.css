@@ -34,16 +34,16 @@
   --text-soft: #848484;
   --text-faint: #bdbdbd;
 
-  --accent: #353535;
-  --accent-contrast: #fafafa;
-  --accent-strong: #202020;
-  --accent-soft: #ededed;
-  --accent-tint: #f7f7f7;
-  --accent-hover: #202020;
-  --brand: #87ea5c;
-  --brand-weak: #d0ffb5;
-  --brand-soft: #ebffde;
-  --brand-text: #0d5400;
+  --accent: #ed7d36;
+  --accent-contrast: #ffffff;
+  --accent-strong: #d96a26;
+  --accent-soft: #fdeadd;
+  --accent-tint: #fef4ec;
+  --accent-hover: #d96a26;
+  --brand: #054d87;
+  --brand-weak: #b9d4ea;
+  --brand-soft: #e3eef7;
+  --brand-text: #054d87;
 
   /* Semantic accent tints used by tool / status pills. */
   --green: #00AA54;
@@ -114,8 +114,8 @@
   --selected: #353535;
   --selected-soft: color-mix(in srgb, #353535 12%, transparent);
 
-  --serif: "Albert Sans", "PingFang SC", "Microsoft YaHei", sans-serif;
-  --sans: "Albert Sans", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --serif: var(--font-poppins, "Poppins"), "Albert Sans", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --sans: var(--font-poppins, "Poppins"), "Albert Sans", "PingFang SC", "Microsoft YaHei", sans-serif;
   --mono: "JiduMono Pro", ui-monospace, "SFMono-Regular", monospace;
 
   /* Chat prose scale: body 13, headings 14, top-level emphasis 16 — the
