@@ -3758,9 +3758,17 @@ body.entry-resizing { cursor: col-resize; user-select: none; }
   flex: 1;
   min-height: 0;
   min-width: 0;
-  display: flex;
+  /* The log is the sole in-flow owner of this viewport. Keep it stretched to
+     both logical edges with an explicit grid cell while the rail / jump /
+     Plan controls remain positioned overlays. */
+  display: grid;
+  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
 }
-.chat-log-viewport .chat-log { flex: 1; }
+.chat-log-viewport > .chat-log {
+  grid-area: 1 / 1;
+  min-height: 0;
+  min-width: 0;
+}
 .chat-jump-btn {
   position: absolute;
   bottom: 12px;
