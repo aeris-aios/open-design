@@ -2318,11 +2318,27 @@ async function assertFirstNativeChromeActionClick(): Promise<void> {
   const setup = await runToolsPackJson<MacInspectResult>('inspect', [
     '--expr',
     `(() => {
-      const target =
-        document.querySelector('[data-testid="entry-top-right-github"]') ??
-        document.querySelector('[data-testid="entry-nav-home"]');
+      const selectors = [
+        '[data-testid="workspace-home-rail-toggle"]',
+        '[data-testid="workspace-home-nav"]',
+        '[data-testid="workspace-home-chrome"]',
+        '[data-testid="entry-top-right-github"]',
+        '[data-testid="entry-nav-home"]',
+      ];
+      const target = selectors
+        .map((selector) => document.querySelector(selector))
+        .find((candidate) => {
+          if (!(candidate instanceof HTMLElement)) return false;
+          const rect = candidate.getBoundingClientRect();
+          if (rect.width <= 0 || rect.height <= 0) return false;
+          const hitTarget = document.elementFromPoint(
+            rect.left + rect.width / 2,
+            rect.top + rect.height / 2,
+          );
+          return hitTarget != null && candidate.contains(hitTarget);
+        });
       if (!(target instanceof HTMLElement)) {
-        throw new Error('first-render chrome action is missing');
+        throw new Error('first-render chrome action is missing or obscured');
       }
       window[${JSON.stringify(probeKey)}]?.cleanup?.();
       const probe = { clickCount: 0 };
