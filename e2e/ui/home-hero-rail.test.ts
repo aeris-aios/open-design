@@ -1347,36 +1347,12 @@ test('[P0] empty home composer submits the active prototype suggestion without e
   await expect(page).toHaveURL(/\/projects\//);
 });
 
-test('[P1] home session mode toggle switches Ask planning prompts away from design routing', async ({ page }) => {
+test('[P1] home composer stays fixed to Design routing without exposing a mode picker', async ({ page }) => {
   await routeProjectCreates(page);
   await routeRunsAccepted(page);
   await gotoEntryHome(page);
 
-  const modeTrigger = page.getByTestId('composer-mode-trigger');
-  // Design is the app default and is now represented as an explicit selection.
-  await expect(modeTrigger).toHaveAttribute('aria-label', 'Mode: Design');
-  await modeTrigger.click();
-  // Every mode description is always visible in the open menu (no hover card).
-  await expect(page.getByText(/planning, and discussion/i)).toBeVisible();
-
-  await page.getByTestId('composer-mode-menu-chat').click();
-  await expect(modeTrigger).toContainText('Ask');
-  await page.getByTestId('home-hero-input').fill('Help me plan the IA before designing screens.');
-
-  const askRequestPromise = page.waitForRequest((request) =>
-    request.method() === 'POST' && new URL(request.url()).pathname === '/api/projects',
-  );
-  await page.getByTestId('home-hero-submit').click();
-  const askBody = await askRequestPromise.then((request) => request.postDataJSON() as {
-    conversationMode?: string;
-    pluginId?: string | null;
-  });
-
-  expect(askBody.conversationMode).toBe('chat');
-  expect(askBody.pluginId ?? null).toBeNull();
-
-  await gotoEntryHome(page);
-  await expect(page.getByTestId('composer-mode-trigger')).toHaveAttribute('aria-label', 'Mode: Design');
+  await expect(page.getByTestId('composer-mode-trigger')).toHaveCount(0);
   await page.getByTestId('home-hero-input').fill('Design the screens from this brief.');
 
   const designRequestPromise = page.waitForRequest((request) =>

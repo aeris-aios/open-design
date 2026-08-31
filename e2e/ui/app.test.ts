@@ -7,7 +7,12 @@ import {
   routeSuccessfulRuns,
   successfulRunEventBody,
 } from '@/playwright/mock-factory';
-import { clickDeckNextSlide, clickDeckPreviousSlide, openAllProjectFiles } from '@/playwright/workspace';
+import {
+  clickDeckNextSlide,
+  clickDeckPreviousSlide,
+  clickPreviewToolbarAction,
+  openAllProjectFiles,
+} from '@/playwright/workspace';
 import type { Dialog, Locator, Page, Request, Response } from '@playwright/test';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -336,8 +341,7 @@ test('[P0] sending preview comments opens the refreshed follow-up artifact', asy
   await waitForLoadingToClear(page);
   await expect(artifactPreview(page)).toBeVisible();
 
-  await page.getByTestId('board-mode-toggle').click();
-  await page.getByTestId('comment-panel-toggle').click();
+  await enterPreviewCommentMode(page);
   await clickCommentTargetInPreview(page, '[data-od-id="hero-title"]');
   await expect(page.getByTestId('comment-popover')).toBeVisible();
   await page.getByTestId('comment-popover-input').fill('Make the headline more specific.');
@@ -1063,12 +1067,16 @@ async function clickCommentTargetInPreview(page: Page, selector: string) {
   await target.click({ force: true });
 }
 
+async function enterPreviewCommentMode(page: Page) {
+  await clickPreviewToolbarAction(page, 'board-mode-toggle', /^Comment$/);
+  await clickPreviewToolbarAction(page, 'comment-panel-toggle', /^Comments \(\d+\)$/);
+}
+
 async function runCommentAttachmentFlow(
   page: Page,
   entry: UiScenario,
 ) {
-  await page.getByTestId('board-mode-toggle').click();
-  await page.getByTestId('comment-panel-toggle').click();
+  await enterPreviewCommentMode(page);
   await clickCommentTargetInPreview(page, '[data-od-id="hero-title"]');
   await expect(page.getByTestId('comment-popover')).toBeVisible();
   await page.getByTestId('comment-popover-input').fill('Make the headline more specific.');

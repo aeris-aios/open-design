@@ -1142,8 +1142,6 @@ test('[P0] signed-out Local setup can navigate the surviving rail destinations',
 test('[P0] @critical home composer delegates the default prototype scenario to daemon authority', async ({ page }) => {
   await gotoEntryHome(page);
 
-  await expect(page.getByTestId('composer-mode-trigger')).toHaveAttribute('aria-label', 'Mode: Design');
-
   const input = page.getByTestId('home-hero-input');
   const prompt =
     'Turn this into an infographic: "5 habits of effective code reviewers — read the PR description first, review tests before implementation"';

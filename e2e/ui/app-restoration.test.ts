@@ -5,6 +5,7 @@ import { runErrorCard } from '@/playwright/chat';
 import {
   clickDeckNextSlide,
   clickDeckPreviousSlide,
+  clickPreviewToolbarAction,
   expectAllProjectFilesActive,
   expectAllProjectFilesInactive,
   openAllProjectFiles,
@@ -1310,12 +1311,13 @@ test('[P0] retrying a failed run does not duplicate the original user message', 
   const prompt = 'retry dedup prompt';
   await sendPrompt(page, prompt);
   await expectFriendlyGenericRunFailure(page);
-  await expect(page.locator('.chat-error-retry')).toBeVisible();
+  const retryButton = runErrorCard(page).getByRole('button', { name: /^Retry$/i });
+  await expect(retryButton).toBeVisible();
   await expect(page.locator('.msg.user', { hasText: prompt })).toHaveCount(1);
 
   await Promise.all([
     page.waitForResponse((resp) => /\/api\/runs$/.test(new URL(resp.url()).pathname) && resp.request().method() === 'POST'),
-    page.locator('.chat-error-retry').click(),
+    retryButton.click(),
   ]);
 
   await expect(page.getByRole('tab', { name: /retry-dedup-artifact\.html/i })).toHaveAttribute(
@@ -1581,11 +1583,7 @@ test('[P0] editing a queued prompt from an artifact file route keeps the file ed
   await expect(
     artifactPreviewFrame(page).getByRole('heading', { name: 'Original Hero' }),
   ).toBeVisible();
-  const activeEditToggle = page.locator(
-    '[data-testid="file-workspace"] [data-testid="manual-edit-mode-toggle"]:visible',
-  );
-  await expect(activeEditToggle).toHaveCount(1);
-  await activeEditToggle.click();
+  await clickPreviewToolbarAction(page, 'manual-edit-mode-toggle', /^Edit$/i);
   await expect(artifactPreviewFrame(page).locator('html[data-od-edit-mode]')).toHaveCount(1);
 
   await sendPrompt(page, 'first artifact file edit prompt');

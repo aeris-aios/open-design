@@ -25,17 +25,17 @@
 
 - [x] 当前 HEAD `77859f01f7` 已消费 `main@a8ec5784` 与 `v0.21.0@dbbd3b42` 两份 immutable producer DB；首次打开 / 展开 / 硬刷新 / 再展开断言一致，图片 2、结论 1、DSML / marker 0，producer DB hash 前后不变。
 - [x] Agent runtime / host protocol 聚焦矩阵已完成：首轮 18 文件中 16 文件 / 223 条直接通过；stderr 单文件 2 / 2 通过；media routes 暴露 watcher 生命周期 bug，补 `collabPublishWatcher.dispose()` 后单文件 6 / 6 通过。覆盖 Codex 默认与 fallback、Claude stream-json / Todo、steer、取消 / 重试、marker、media、stderr 与重启恢复。
-- [ ] `0.21.1-beta.7` macOS cold Home → Run：发送约 551ms 内出现用户消息和 Agent 正文、AMR test profile / `$19.89` 余额与文件打开已通过；首次 Cmd+Shift+R 曾白屏，随后 beta.7 与当前 HEAD 隔离副本均刷新通过。新 beta 必须连续刷新复验后才能关闭。
+- [x] `0.21.1-beta.8` macOS 已安装并以 AMR `test` profile 启动；精确历史项目连续 10 次 Ctrl+Shift+R 均保留项目、会话、用户消息、助手消息与完成态，没有白屏或新增 React #185。证据：`.tmp/chat-panel-beta8-qa-20260831/01-beta8-hard-refresh-10x-pass.png`。同一客户端 AMR 发送约 462ms 出现用户消息，约 12.4s 得到预期助手正文，余额稳定为 `$19.89`。
 - [ ] `0.21.1-beta.7` production CSS：Question Form、错误卡三按钮、分享 / 导出、disabled / hover，以及至少一个非 Chat 共享 Button。
 - [ ] 真实 Team Beta cold path：直接深链、Home → Team、硬刷新、catalog 短断与权限错误。
-- [ ] 单 worker 聚焦浏览器证据：受影响的 4 个现有 E2E 文件，并补顺序生图与 Queue witness；不跑全量套件。
-- [ ] beta.7 新发现：新项目在 Cmd+Shift+R 后出现过一次白屏且不自愈，renderer 记录 `Minified React error #185`；随后同 beta.7 remote debugging 和当前 HEAD + beta 数据隔离副本均无法复现。补精确 StrictMode 组合回归，新 beta 对 project / history / file route 连续硬刷新后再关闭。
+- [ ] 聚焦浏览器证据改由远端执行，避免占用本机：`functional-e2e` p0p1 run `33366584600` 覆盖 AMR recovery、workspace restoration 与 Question Form；顺序生图与 Queue witness 仍需单独补齐。首个 run `33366389708` 仅因调度时误传短 SHA 导致 checkout 失败，没有执行测试，不计为产品失败。
+- [x] beta.7 新项目硬刷新曾出现一次 `Minified React error #185`；beta.8 已对精确 project / history 会话连续硬刷新 10 次，renderer 未新增 #185，当前无法复现并以新包证据关闭。
 - [x] beta.7 `od_next_protocol_runtime_state_missing` 已完成归因：QA 探针要求“只回复一句”，但 Home 固定 `sessionMode=design` 并自动进入 OD Next full-plan；run / transport 实际 succeeded，失败卡来自策略协议 fail-closed。此探针不用于证明 cold send；不隐藏失败卡、不做关键词猜测。未来若要支持 Design 模式纯问答，需显式 structured intent，作为独立产品设计而非本次尾项。
 - [x] beta.7 次级日志已排除当前链路影响：`update-store-invalid-shape` 来自 release-beta 历史非空 update store 缺 metadata，可通过现有 Clear update cache 恢复；test Vela `/api/v1/resources` TLS timeout 属 catalog 外部网络波动。两者均未阻塞 cold first output、AMR test 余额或文件打开。
 
 ### C. 工程收口
 
-- [ ] 同步最新 `origin/main`，解决冲突后只重跑受影响聚焦测试，并重新构建 beta 包。
+- [x] 已合并最新 `origin/main`（merge `f7a51fdf94`），完成受影响 Web / daemon / contracts 聚焦验证，并构建、签名、安装 `0.21.1-beta.8` dogfood 包；macOS 与 Windows 产物均已发布到 immutable R2 路径。
 - [ ] 汇总上述结果：已关闭项写回本地日志；飞书提测文档删除研发内部待办，仅保留外部依赖和真实产品决策。
 - [x] OPEND-2410 按当前产品契约关闭：Claude 启动环境已显式开启 `CLAUDE_CODE_ENABLE_TODO_TOOLS=1`，TaskCreate / TaskUpdate 会归一为 `TodoWrite`，本轮聚焦矩阵通过；模型仍可能选择不发计划，此时执行记录按既定 flat 模式诚实渲染。不新增 `plan_missing`，不伪造 Todo，也不继续堆提示词。
 

@@ -5062,12 +5062,16 @@ describe('FileViewer SVG artifacts', () => {
     );
 
     // Both destinations stay on the bar as a two-segment tablist.
-    expect(screen.getByRole('tab', { name: 'Code' })).toBeTruthy();
-    expect(screen.getByRole('tab', { name: 'Preview' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('tab', { name: 'Code' }));
-    expect(screen.getByRole('tab', { name: 'Code' }).getAttribute('aria-selected')).toBe('true');
+    const codeTab = screen.getByRole('tab', { name: 'Code' });
+    const previewTab = screen.getByRole('tab', { name: 'Preview' });
+    expect(codeTab.getAttribute('aria-label')).toBe('Code');
+    expect(codeTab.getAttribute('title')).toBe('Code');
+    expect(previewTab.getAttribute('aria-label')).toBe('Preview');
+    expect(previewTab.getAttribute('title')).toBe('Preview');
+    fireEvent.click(codeTab);
+    expect(codeTab.getAttribute('aria-selected')).toBe('true');
     expect(container.querySelector('.viewer-source')?.textContent).toContain('data-od-id="hero"');
-    fireEvent.click(screen.getByRole('tab', { name: 'Preview' }));
+    fireEvent.click(previewTab);
     fireEvent.click(screen.getByTestId('manual-edit-mode-toggle'));
 
     await waitFor(() => {

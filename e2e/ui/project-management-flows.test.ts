@@ -1704,7 +1704,7 @@ test('[P0] @critical project detail composer agent menu lets the user switch the
   ).toContainText(/GPT 5\.5/i);
 });
 
-test('[P0] project detail composer model and Plan mode switches carry into the next daemon run request', async ({ page }) => {
+test('[P0] project detail composer model selection carries into the next fixed Design-mode daemon run request', async ({ page }) => {
   test.setTimeout(60_000);
   const runRequestBodies: Array<Record<string, unknown>> = [];
   await routeSuccessfulRuns(page, { bodies: runRequestBodies, runId: 'agent-model-run' });
@@ -1718,10 +1718,8 @@ test('[P0] project detail composer model and Plan mode switches carry into the n
 
   await pickComposerModel(page, /^GPT 5\.5$/i);
 
-  await selectComposerSessionMode(page, 'Plan mode');
-
   const input = page.getByTestId('chat-composer-input');
-  await input.fill('Plan the selected local agent run.');
+  await input.fill('Use the selected local agent for this design run.');
   await Promise.all([
     page.waitForRequest((request) => request.url().includes('/api/runs') && request.method() === 'POST'),
     page.getByTestId('chat-send').click(),
@@ -1730,7 +1728,7 @@ test('[P0] project detail composer model and Plan mode switches carry into the n
   expect(runRequestBodies.length).toBeGreaterThan(0);
   expect(runRequestBodies[0]?.agentId).toBe('codex');
   expect(runRequestBodies[0]?.model).toBe('gpt-5.5');
-  expect(runRequestBodies[0]?.sessionMode).toBe('plan');
+  expect(runRequestBodies[0]?.sessionMode).toBe('design');
 });
 
 test('[P1] GPT 5.5 Fast service tier carries into the next Codex daemon run request', async ({ page }) => {
@@ -1768,13 +1766,14 @@ test('[P1] GPT 5.5 Fast service tier carries into the next Codex daemon run requ
     serviceTier: 'priority',
   });
 });
-test('[P1] project detail composer can alternate Design, Ask, and Plan modes across turns', async ({ page }) => {
+
+test('[P1] project detail composer keeps fixed Design mode across consecutive turns', async ({ page }) => {
   test.setTimeout(60_000);
   const runRequestBodies: Array<Record<string, unknown>> = [];
-  await routeSuccessfulRuns(page, { bodies: runRequestBodies, runIdPrefix: 'mode-run' });
+  await routeSuccessfulRuns(page, { bodies: runRequestBodies, runIdPrefix: 'fixed-design-mode-run' });
 
   await page.goto('/');
-  await createProject(page, 'Composer session mode alternation');
+  await createProject(page, 'Composer fixed Design mode');
   await expectWorkspaceReady(page);
 
   async function sendTurn(prompt: string) {
@@ -1788,50 +1787,11 @@ test('[P1] project detail composer can alternate Design, Ask, and Plan modes acr
     await expect(input).toHaveText('');
   }
 
-  await selectComposerSessionMode(page, 'Design mode');
-  await sendTurn('Design the first iteration.');
+  await expect(page.getByTestId('composer-mode-trigger')).toHaveCount(0);
+  await sendTurn('Design the first pass.');
+  await sendTurn('Design the second pass.');
 
-  await selectComposerSessionMode(page, 'Ask mode');
-  await sendTurn('Ask a clarifying question about the direction.');
-
-  await selectComposerSessionMode(page, 'Plan mode');
-  await sendTurn('Plan the implementation steps.');
-
-  await selectComposerSessionMode(page, 'Design mode');
-  await sendTurn('Design the final iteration.');
-
-  expect(runRequestBodies.map((body) => body.sessionMode)).toEqual(['design', 'chat', 'plan', 'design']);
-});
-
-test('[P1] project detail composer keeps the selected mode across consecutive turns', async ({ page }) => {
-  test.setTimeout(60_000);
-  const runRequestBodies: Array<Record<string, unknown>> = [];
-  await routeSuccessfulRuns(page, { bodies: runRequestBodies, runIdPrefix: 'same-mode-run' });
-
-  await page.goto('/');
-  await createProject(page, 'Composer same session mode reuse');
-  await expectWorkspaceReady(page);
-
-  async function sendTurn(prompt: string) {
-    const input = page.getByTestId('chat-composer-input');
-    await expect(input).toBeVisible();
-    await input.fill(prompt);
-    await Promise.all([
-      page.waitForRequest((request) => request.url().includes('/api/runs') && request.method() === 'POST'),
-      page.getByTestId('chat-send').click(),
-    ]);
-    await expect(input).toHaveText('');
-  }
-
-  await selectComposerSessionMode(page, 'Plan mode');
-  await sendTurn('Plan the first pass.');
-  await sendTurn('Plan the second pass without changing mode.');
-
-  expect(runRequestBodies.map((body) => body.sessionMode)).toEqual(['plan', 'plan']);
-  await expect(page.getByTestId('chat-composer').getByTestId('composer-mode-trigger')).toHaveAttribute(
-    'aria-label',
-    'Mode: Plan',
-  );
+  expect(runRequestBodies.map((body) => body.sessionMode)).toEqual(['design', 'design']);
 });
 
 test('[P0] @critical project detail composer opens Execution settings where BYOK model choice persists', async ({ page }) => {
@@ -2213,47 +2173,6 @@ test('[P1] project detail workspace keeps design file tabs and preview controls 
   await expect(page.locator('pre.viewer-source')).toHaveCount(0);
 });
 
-test('[P1] project detail session mode switch carries Ask and Plan semantics into daemon runs', async ({ page }) => {
-  const runRequestBodies: Array<Record<string, unknown>> = [];
-  await routeSuccessfulRuns(page, { bodies: runRequestBodies, runIdPrefix: 'session-mode-run' });
-
-  await page.goto('/');
-  await createProject(page, 'Project session mode contract');
-  await expectWorkspaceReady(page);
-
-  const modeTrigger = page.getByTestId('composer-mode-trigger');
-  // Design is the app default and is represented as an explicit selection.
-  await expect(modeTrigger).toHaveAttribute('aria-label', 'Mode: Design');
-
-  await modeTrigger.click();
-  await page.getByTestId('composer-mode-menu-plan').click();
-  await expect(modeTrigger).toHaveAttribute('aria-label', 'Mode: Plan');
-  await expect(modeTrigger).toContainText('Plan');
-
-  await page.getByTestId('chat-composer-input').fill('Draft the plan before generating files.');
-  await Promise.all([
-    page.waitForRequest((request) => request.url().includes('/api/runs') && request.method() === 'POST'),
-    page.getByTestId('chat-send').click(),
-  ]);
-  await expect.poll(() => runRequestBodies.length).toBe(1);
-  expect(runRequestBodies[0]?.sessionMode).toBe('plan');
-  await expect(page.getByTestId('msg-session-mode-chip').last()).toContainText('Plan');
-
-  await modeTrigger.click();
-  await page.getByTestId('composer-mode-menu-chat').click();
-  await expect(modeTrigger).toHaveAttribute('aria-label', 'Mode: Ask');
-  await expect(modeTrigger).toContainText('Ask');
-
-  await page.getByTestId('chat-composer-input').fill('Just answer this without creating files.');
-  await Promise.all([
-    page.waitForRequest((request) => request.url().includes('/api/runs') && request.method() === 'POST'),
-    page.getByTestId('chat-send').click(),
-  ]);
-  await expect.poll(() => runRequestBodies.length).toBe(2);
-  expect(runRequestBodies[1]?.sessionMode).toBe('chat');
-  await expect(page.getByTestId('msg-session-mode-chip').last()).toContainText('Ask');
-});
-
 test('[P1] BYOK OpenCode project run sends provider config through the daemon contract', async ({ page }) => {
   const byokConfig = {
     mode: 'api',
@@ -2498,7 +2417,7 @@ test('[P1] project detail active file context is sent with the run and shown on 
   await expect(chip).toContainText(uploadedName);
 });
 
-test('[P1] project detail session mode and active file context survive reload in message history', async ({ page }) => {
+test('[P1] project detail active file context survives reload in message history', async ({ page }) => {
   const runRequestBodies: Array<Record<string, unknown>> = [];
   await routeSuccessfulRuns(page, { bodies: runRequestBodies, runIdPrefix: 'workspace-context-reload-run' });
 
@@ -2513,11 +2432,6 @@ test('[P1] project detail session mode and active file context survive reload in
   );
   await expect(tabBySuffix(page, uploadedName)).toHaveAttribute('aria-selected', 'true');
 
-  const modeTrigger = page.getByTestId('composer-mode-trigger');
-  await modeTrigger.click();
-  await page.getByTestId('composer-mode-menu-plan').click();
-  await expect(modeTrigger).toHaveAttribute('aria-label', 'Mode: Plan');
-
   await page.getByTestId('chat-composer-input').fill('Persist this file context through reload.');
   await Promise.all([
     page.waitForRequest((request) => request.url().includes('/api/runs') && request.method() === 'POST'),
@@ -2526,14 +2440,14 @@ test('[P1] project detail session mode and active file context survive reload in
 
   await expect.poll(() => runRequestBodies.length).toBe(1);
   const context = runRequestBodies[0]?.context as { workspaceItems?: Array<{ label?: string; id?: string }> } | undefined;
-  expect(runRequestBodies[0]?.sessionMode).toBe('plan');
+  expect(runRequestBodies[0]?.sessionMode).toBe('design');
   expect(context?.workspaceItems?.some((item) => item.label === uploadedName || item.id?.includes(uploadedName))).toBe(true);
-  await expect(page.getByTestId('msg-session-mode-chip').last()).toContainText('Plan');
+  await expect(page.getByTestId('msg-session-mode-chip')).toHaveCount(0);
   await expect(page.getByTestId('msg-workspace-context-chip').last()).toContainText(uploadedName);
 
   await page.reload();
   await expectWorkspaceReady(page);
-  await expect(page.getByTestId('msg-session-mode-chip').last()).toContainText('Plan');
+  await expect(page.getByTestId('msg-session-mode-chip')).toHaveCount(0);
   await expect(page.getByTestId('msg-workspace-context-chip').last()).toContainText(uploadedName);
 });
 
@@ -4092,23 +4006,6 @@ async function selectAvatarModelOption(
   }
   await expect(option).toBeVisible({ timeout: 10_000 });
   await option.click();
-}
-
-async function selectComposerSessionMode(page: Page, modeTitle: 'Ask mode' | 'Plan mode' | 'Design mode') {
-  // #5517 composer mode picker: Ask maps to the real `chat` session mode.
-  const modeId = modeTitle === 'Ask mode' ? 'chat' : modeTitle === 'Plan mode' ? 'plan' : 'design';
-  const modeName = modeTitle.replace(' mode', '');
-  const trigger = page.getByTestId('chat-composer').getByTestId('composer-mode-trigger');
-  await expect(trigger).toBeVisible();
-  await trigger.click();
-
-  const menu = page.getByTestId('composer-mode-menu');
-  await expect(menu).toBeVisible();
-  await expect(menu.getByTestId('composer-mode-menu-chat')).toBeVisible();
-  await expect(menu.getByTestId('composer-mode-menu-plan')).toBeVisible();
-  await expect(menu.getByTestId('composer-mode-menu-design')).toBeVisible();
-  await menu.getByTestId(`composer-mode-menu-${modeId}`).click();
-  await expect(trigger).toHaveAttribute('aria-label', `Mode: ${modeName}`);
 }
 
 async function routeComposerPlusFixtures(page: Page) {
