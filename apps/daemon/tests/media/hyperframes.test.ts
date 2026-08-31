@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -13,6 +14,13 @@ import {
 } from '../../src/media/index.js';
 
 const execFileAsync = promisify(execFile);
+const require = createRequire(import.meta.url);
+const { JSDOM } = require('jsdom') as {
+  JSDOM: new (
+    html: string,
+    options: { pretendToBeVisual: boolean; runScripts: 'dangerously' },
+  ) => { window: any };
+};
 
 describe('hyperframes-html media renderer preflight', () => {
   let root: string;
@@ -215,5 +223,32 @@ describe('hyperframes-html media renderer preflight', () => {
     expect(injected.indexOf('window.__odFrameRenderer')).toBeGreaterThan(source.indexOf('</script>'));
     expect(injected).toContain('const fake = "</body>";');
     expect(injected).toContain('setTimeout(finish, 100)');
+  });
+
+  it('honors the declared duration when the internal timeline runs longer', async () => {
+    const ready = async (durationAttribute: string) => {
+      const source = `<!doctype html><body>
+<main data-composition-id="main" ${durationAttribute} data-fps="30"></main>
+<script>
+window.__renderReady = true;
+window.__player = { getDuration: () => 22.4, renderSeek: () => {} };
+</script>
+</body>`;
+      const dom = new JSDOM(injectHyperFramesFrameBridge(source, ''), {
+        pretendToBeVisual: true,
+        runScripts: 'dangerously',
+      });
+      try {
+        return await dom.window.__odFrameRenderer.ready();
+      } finally {
+        dom.window.close();
+      }
+    };
+
+    const declared = await ready('data-duration="15"');
+    expect(declared).toEqual({ duration: 15, fps: 30 });
+    expect(Math.ceil(declared.duration * declared.fps)).toBe(450);
+    await expect(ready('data-duration="invalid"')).resolves.toEqual({ duration: 22.4, fps: 30 });
+    await expect(ready('')).resolves.toEqual({ duration: 22.4, fps: 30 });
   });
 });

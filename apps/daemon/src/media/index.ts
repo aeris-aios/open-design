@@ -4035,8 +4035,14 @@ export function injectHyperFramesFrameBridge(sourceHtml: string, runtimeScript: 
     async ready() {
       const runtime = await waitForRuntime();
       const root = document.querySelector('[data-composition-id]');
+      const declaredDuration = Number(root && root.getAttribute('data-duration'));
       const declaredFps = Number(root && root.getAttribute('data-fps'));
-      return { duration: Number(runtime.duration), fps: declaredFps > 0 ? declaredFps : 30 };
+      return {
+        duration: Number.isFinite(declaredDuration) && declaredDuration > 0
+          ? declaredDuration
+          : Number(runtime.duration),
+        fps: declaredFps > 0 ? declaredFps : 30
+      };
     },
     async seek(timeSeconds) {
       const runtime = await waitForRuntime();
