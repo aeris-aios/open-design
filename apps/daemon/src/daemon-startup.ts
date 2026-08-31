@@ -118,8 +118,20 @@ export async function closeHttpServer(
 export async function startDaemonRuntime(options: DaemonRuntimeOptions = {}): Promise<StartedDaemonRuntime> {
   const { openBrowser: shouldOpenBrowser = false, logListening = false, ...serverOptions } = options;
   const { startServer } = await import('./server.js');
+  // Image/PDF export normally requires the Electron desktop shell. On a server
+  // deployment that has a Chromium binary, fall back to a headless renderer
+  // implementing the same contract so those exports still work. Hosts without
+  // Chromium keep the previous behaviour (the route reports unavailable).
+  let { desktopArtifactExporter } = serverOptions;
+  if (!desktopArtifactExporter) {
+    const { exportArtifactHeadless, headlessArtifactExportAvailable } = await import(
+      './headless-artifact-export.js'
+    );
+    if (headlessArtifactExportAvailable()) desktopArtifactExporter = exportArtifactHeadless;
+  }
   const started = await startServer({
     ...serverOptions,
+    ...(desktopArtifactExporter ? { desktopArtifactExporter } : {}),
     returnServer: true,
   }) as string | StartedServer;
   if (typeof started === 'string') {
