@@ -39,9 +39,19 @@ function artifactPreviewFrame(page: Page) {
 }
 
 function stagedAttachmentName(page: Page, name: string): Locator {
-  return page
-    .locator('[data-testid="staged-attachments"], [data-testid="staged-contexts"]')
-    .getByText(name, { exact: true });
+  // Document cards deliberately middle-truncate the rendered basename and
+  // split the extension into a sibling span. The full, stable identity stays
+  // on the card's title attribute, so assert that contract instead of the
+  // presentation text.
+  return page.getByTestId('staged-attachments').getByTitle(name, { exact: true });
+}
+
+async function expectFriendlyGenericRunFailure(page: Page): Promise<void> {
+  const card = runErrorCard(page);
+  await expect(card).toContainText("This one didn't get through");
+  // Raw daemon/provider details belong in exported logs, not on the recovery
+  // card. The surrounding cases still prove the friendly failure survives.
+  await expect(card).not.toContainText('connection refused');
 }
 
 function isDesignFileUploadResponse(response: Response): boolean {
@@ -1167,7 +1177,7 @@ test('[P0] reloading a project keeps the Design Files entry reachable when it wa
   await expectAllProjectFilesActive(page);
 });
 
-test('[P0] @critical daemon error details persist between failed sends', async ({ page }) => {
+test('[P0] @critical friendly daemon failure guidance persists between failed sends', async ({ page }) => {
   const entry = automatedUiScenarios().find((scenario) => scenario.id === 'prototype-basic');
   if (!entry) throw new Error('prototype-basic scenario missing');
 
@@ -1198,7 +1208,7 @@ test('[P0] @critical daemon error details persist between failed sends', async (
   await expectWorkspaceReady(page);
 
   await sendPrompt(page, 'first failing prompt');
-  await expect(runErrorCard(page)).toContainText('connection refused');
+  await expectFriendlyGenericRunFailure(page);
   await expect(page.locator('.msg.user').getByText('first failing prompt', { exact: true })).toBeVisible();
 
   const current = new URL(page.url());
@@ -1216,7 +1226,7 @@ test('[P0] @critical daemon error details persist between failed sends', async (
   // an eventual catalog poll that this external write cannot emit.
   await page.reload({ waitUntil: 'domcontentloaded' });
   await expectWorkspaceReady(page);
-  await expect(runErrorCard(page)).toContainText('connection refused');
+  await expectFriendlyGenericRunFailure(page);
   await openAllProjectFiles(page);
   const crossFileRow = page.locator('[data-testid^="design-file-row-"]', {
     hasText: 'error-cross-tab.html',
@@ -1239,12 +1249,12 @@ test('[P0] @critical daemon error details persist between failed sends', async (
 
   await page.goto(`/projects/${projectId}`);
   await expectWorkspaceReady(page);
-  await expect(runErrorCard(page)).toContainText('connection refused');
+  await expectFriendlyGenericRunFailure(page);
   await expect(page.locator('.msg.user').getByText('first failing prompt', { exact: true })).toBeVisible();
   await expect(page.getByTestId('chat-composer-input')).toBeVisible();
 
   await sendPrompt(page, 'second failing prompt');
-  await expect(runErrorCard(page)).toContainText('connection refused');
+  await expectFriendlyGenericRunFailure(page);
   await expect(page.locator('.msg.user').getByText('first failing prompt', { exact: true })).toBeVisible();
   await expect(page.locator('.msg.user').getByText('second failing prompt', { exact: true })).toBeVisible();
 });
@@ -1268,8 +1278,7 @@ test('[P0] a successful retry after a failed send restores the workspace to a fr
   await expectWorkspaceReady(page);
 
   await sendPrompt(page, 'first failing prompt');
-  await expect(runErrorCard(page)).toContainText('connection refused');
-  await expect(runErrorCard(page)).toContainText('connection refused');
+  await expectFriendlyGenericRunFailure(page);
 
   await sendPrompt(page, 'retry prompt that succeeds');
   await expect(page.getByText('retry-success-artifact.html', { exact: true }).first()).toBeVisible();
@@ -1300,7 +1309,7 @@ test('[P0] retrying a failed run does not duplicate the original user message', 
 
   const prompt = 'retry dedup prompt';
   await sendPrompt(page, prompt);
-  await expect(runErrorCard(page)).toContainText('connection refused');
+  await expectFriendlyGenericRunFailure(page);
   await expect(page.locator('.chat-error-retry')).toBeVisible();
   await expect(page.locator('.msg.user', { hasText: prompt })).toHaveCount(1);
 
@@ -1572,7 +1581,11 @@ test('[P0] editing a queued prompt from an artifact file route keeps the file ed
   await expect(
     artifactPreviewFrame(page).getByRole('heading', { name: 'Original Hero' }),
   ).toBeVisible();
-  await page.getByTestId('manual-edit-mode-toggle').click();
+  const activeEditToggle = page.locator(
+    '[data-testid="file-workspace"] [data-testid="manual-edit-mode-toggle"]:visible',
+  );
+  await expect(activeEditToggle).toHaveCount(1);
+  await activeEditToggle.click();
   await expect(artifactPreviewFrame(page).locator('html[data-od-edit-mode]')).toHaveCount(1);
 
   await sendPrompt(page, 'first artifact file edit prompt');
@@ -2215,8 +2228,7 @@ test('[P1] inline question form submits selected answers into the next run reque
 
   const form = page.locator('.question-form').first();
   await expect(form).toBeVisible();
-  const audienceQuestion = form.locator('.qf-field', { has: page.getByText('Audience') });
-  await audienceQuestion.locator('input.qf-input').fill('Product marketers');
+  await form.getByTestId('qf-input').fill('Product marketers');
 
   const submitButton = form.getByRole('button', { name: 'Next' });
   await expect(submitButton).toBeEnabled();
@@ -2568,22 +2580,24 @@ async function expectWorkspaceReady(page: Page) {
   await waitForLoadingToClear(page);
   await expect(page).toHaveURL(/\/projects\//);
   await expect(page.getByTestId('chat-composer')).toBeVisible();
-  await expect(page.getByTestId('chat-composer-input')).toBeVisible();
+  await expect(page.locator('.chat-loading-state')).toHaveCount(0, { timeout: T.medium });
+  await expect(page.getByTestId('chat-composer-input')).toBeEditable({ timeout: T.medium });
   await expect(page.getByTestId('file-workspace')).toBeVisible();
 }
 
 async function sendPrompt(page: Page, prompt: string) {
   const input = page.getByTestId('chat-composer-input');
   const sendButton = page.getByTestId('chat-send');
-  await expect(input).toBeVisible({ timeout: 3_000 });
+  await expect(input).toBeEditable({ timeout: T.short });
   await input.click();
   await input.fill(prompt);
-  await expect(input).toHaveText(prompt, { timeout: 5_000 });
-  await expect(sendButton).toBeEnabled({ timeout: 5_000 });
-  await Promise.all([
-    page.waitForResponse(isCreateRunResponse, { timeout: 5_000 }),
-    sendButton.evaluate((button: HTMLButtonElement) => button.click()),
-  ]);
+  await expect(input).toHaveText(prompt, { timeout: T.short });
+  await expect(sendButton).toBeEnabled({ timeout: T.medium });
+  const createRunResponse = page.waitForResponse(isCreateRunResponse, {
+    timeout: T.medium,
+  });
+  await sendButton.click();
+  await expect((await createRunResponse).ok()).toBeTruthy();
 }
 
 async function startNewConversation(page: Page) {

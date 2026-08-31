@@ -535,6 +535,7 @@ test('[P1] Settings AMR wallet fallback balance renders from the daemon wallet e
     selectedAgentId: 'amr',
     assistantText: 'AMR wallet refresh smoke',
     accountSummaryAvailable: false,
+    workspaceBalanceAvailable: false,
   });
 
   await gotoEntryHome(page);
@@ -621,7 +622,7 @@ test('[P1] Coding Plan badges follow the dynamic daemon wallet model list after 
     .toBeVisible();
 });
 
-test('[P1] Settings AMR upgrade opens the attributed plans URL for the active profile', async ({ page }) => {
+test('[P1] Settings AMR upgrade opens the attributed Pricing URL', async ({ page }) => {
   await stubCatalogsEmpty(page);
   await stubRuntimeAgents(page);
   const profile = 'test';
@@ -664,8 +665,8 @@ test('[P1] Settings AMR upgrade opens the attributed plans URL for the active pr
 
   await expect.poll(() => openedUrl).toBeTruthy();
   const url = new URL(openedUrl);
-  expect(url.pathname).toBe('/dashboard');
-  expect(url.searchParams.get('billing')).toBe('plan');
+  expect(url.pathname).toBe('/pricing/');
+  expect(url.searchParams.get('billing')).toBeNull();
   expect(url.searchParams.get('od_origin')).toBe('open_design');
   expect(url.searchParams.get('od_entry_source')).toBe('settings_amr_upgrade');
   expect(url.searchParams.get('od_entry_id')).toBeTruthy();
@@ -775,7 +776,7 @@ test('[P0] after an AMR failure the user can switch to Codex and complete a fres
   await gotoProject(page, amr.projectId);
   await sendPrompt(page, 'AMR auth failure before switch smoke');
   await expect(runErrorCard(page)).toContainText(
-    /OpenDesign agent isn't signed in yet|AMR sign-in is required/i,
+    /OpenDesign Cloud agent isn't signed in yet|AMR sign-in is required/i,
     { timeout: T.long },
   );
   const settings = await openExecutionSettingsDialog(page);
@@ -872,7 +873,9 @@ test('[P0] upstream outages keep Retry available without promoting AMR', async (
   await gotoProject(page, projectId);
 
   await expect(page.getByRole('button', { name: /^Retry$|^重试$|^重試$/i }).first()).toBeVisible({ timeout: T.long });
-  await expect(page.getByText(/Generation service unavailable|model provider is temporarily unavailable/i).first()).toBeVisible();
+  await expect(runErrorCard(page)).toContainText(
+    /Service temporarily unavailable|model service is temporarily unavailable/i,
+  );
   await expect(page.getByRole('button', { name: /Switch to OpenDesign Cloud & retry/i })).toHaveCount(0);
   await expect(page.getByText(/Model call failed/i)).toHaveCount(0);
 });
@@ -1066,6 +1069,7 @@ async function setupAmrWorkspace(
     seedLoginConfig?: boolean;
     assistantText?: string;
     accountSummaryAvailable?: boolean;
+    workspaceBalanceAvailable?: boolean;
   },
 ) {
   await stubCatalogsEmpty(page);
@@ -1136,6 +1140,9 @@ async function setupAmrWorkspace(
       accountPlan: 'free',
       ...(options.accountSummaryAvailable !== undefined
         ? { accountSummaryAvailable: options.accountSummaryAvailable }
+        : {}),
+      ...(options.workspaceBalanceAvailable !== undefined
+        ? { workspaceBalanceAvailable: options.workspaceBalanceAvailable }
         : {}),
     },
   );
