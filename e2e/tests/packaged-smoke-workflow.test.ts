@@ -3008,6 +3008,14 @@ process.stdin.on("end", () => {
     expect(workflow).toContain("- prepublish");
     expect(workflow).toContain("- publish");
     expect(workflow).toContain("default: metadata");
+    expect(workflow.match(/stable_smoke_mode:/g)).toHaveLength(2);
+    expect(workflow).toMatch(
+      /stable_smoke_mode:[\s\S]*?options:[\s\S]*?- run[\s\S]*?- skip[\s\S]*?default: run/,
+    );
+    expect(workflow.match(/inputs\.stable_smoke_mode != 'skip'/g)).toHaveLength(7);
+    expect(workflow).toContain(
+      "if: ${{ inputs.stable_smoke_mode != 'skip' && inputs.win_x64_smoke_mode != 'skip' }}",
+    );
     expect(workflow).not.toContain("inputs.channel");
     expect(workflow).toContain("OPEN_DESIGN_RELEASE_DRY_RUN: ${{ inputs.dry_run == 'publish' && 'false' || inputs.dry_run }}");
     expect(workflow).toContain("RELEASE_PUBLIC_ORIGIN: ${{ vars.CLOUDFLARE_R2_RELEASES_PUBLIC_ORIGIN }}");

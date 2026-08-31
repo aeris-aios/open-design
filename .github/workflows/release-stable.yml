@@ -21,6 +21,14 @@ on:
         required: false
         type: string
         default: ""
+      stable_smoke_mode:
+        description: "Packaged stable smoke coverage across platforms. Use skip only for an explicitly accepted release override."
+        required: true
+        type: choice
+        options:
+          - run
+          - skip
+        default: run
       win_x64_smoke_mode:
         description: "Windows x64 smoke coverage."
         required: true
@@ -56,6 +64,11 @@ on:
         required: false
         type: string
         default: ""
+      stable_smoke_mode:
+        description: "Packaged stable smoke coverage across platforms: run or skip."
+        required: false
+        type: string
+        default: "run"
       win_x64_smoke_mode:
         description: "Windows x64 smoke coverage: skip, core, or full."
         required: false
@@ -497,6 +510,7 @@ jobs:
           if-no-files-found: warn
 
       - name: Smoke release mac packaged runtime
+        if: ${{ inputs.stable_smoke_mode != 'skip' }}
         working-directory: e2e
         env:
           OD_PACKAGED_E2E_BUILD_JSON_PATH: ${{ runner.temp }}/mac-tools-pack-build.json
@@ -815,7 +829,7 @@ jobs:
           "deletedFailedCacheKey=$matchedKey count=$($caches.Count)"
 
       - name: Build stable win_x64 update fixture
-        if: ${{ inputs.win_x64_smoke_mode == 'full' && inputs.win_x64_update_metadata_url == '' && inputs.win_x64_update_target_version == '' }}
+        if: ${{ inputs.stable_smoke_mode != 'skip' && inputs.win_x64_smoke_mode == 'full' && inputs.win_x64_update_metadata_url == '' && inputs.win_x64_update_target_version == '' }}
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -830,7 +844,7 @@ jobs:
           pnpm.cmd exec tools-pack win validate-payload --namespace "${{ needs.metadata.outputs.win_namespace }}" --payload-path $updateBuild.payloadPath --expected-version $updateVersion --json
 
       - name: Smoke release windows packaged runtime
-        if: ${{ inputs.win_x64_smoke_mode != 'skip' }}
+        if: ${{ inputs.stable_smoke_mode != 'skip' && inputs.win_x64_smoke_mode != 'skip' }}
         working-directory: e2e
         env:
           OD_PACKAGED_E2E_BUILD_JSON_PATH: ${{ runner.temp }}/windows-tools-pack-build.json
@@ -1007,6 +1021,7 @@ jobs:
           fi
 
       - name: Smoke release linux AppImage runtime
+        if: ${{ inputs.stable_smoke_mode != 'skip' }}
         working-directory: e2e
         env:
           OD_PACKAGED_E2E_LINUX_APPIMAGE: "1"
@@ -1252,13 +1267,14 @@ jobs:
           path: ${{ runner.temp }}/release-assets/linux
 
       - name: Download linux e2e spec report
-        if: ${{ needs.build_linux.result == 'success' }}
+        if: ${{ needs.build_linux.result == 'success' && inputs.stable_smoke_mode != 'skip' }}
         uses: actions/download-artifact@v8
         with:
           name: open-design-release-linux-e2e-report
           path: ${{ runner.temp }}/release-report/linux
 
       - name: Download mac e2e spec report
+        if: ${{ inputs.stable_smoke_mode != 'skip' }}
         uses: actions/download-artifact@v8
         with:
           name: open-design-release-mac-e2e-report
@@ -1272,7 +1288,7 @@ jobs:
       # though the input offers it. Guard it the way the linux report is guarded
       # by its own build result.
       - name: Download windows e2e spec report
-        if: ${{ inputs.win_x64_smoke_mode != 'skip' }}
+        if: ${{ inputs.stable_smoke_mode != 'skip' && inputs.win_x64_smoke_mode != 'skip' }}
         uses: actions/download-artifact@v8
         with:
           name: open-design-release-win-e2e-report
