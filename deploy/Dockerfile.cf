@@ -9,7 +9,10 @@ FROM ${BASE_IMAGE}
 
 USER root
 # libc6-compat: glibc shim so native binaries the CLI may fetch run on Alpine.
-RUN apk add --no-cache libc6-compat ripgrep && \
+# chromium + ffmpeg power image/PDF exports and HyperFrames MP4 rendering
+# (the daemon finds the browser via OD_BROWSER_EXECUTABLE_PATH, set in compose).
+RUN apk add --no-cache libc6-compat ripgrep chromium ffmpeg \
+      font-noto font-noto-emoji ttf-dejavu && \
     npm install -g @anthropic-ai/claude-code && \
     mkdir -p /app/.od/home && chown -R open-design:open-design /app/.od
 

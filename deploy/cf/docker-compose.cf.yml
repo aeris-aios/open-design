@@ -21,6 +21,7 @@ services:
       OD_ALLOWED_ORIGINS: https://studio.commercefountain.com
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:?set in .env}
       HOME: /app/.od/home
+      OD_BROWSER_EXECUTABLE_PATH: /usr/bin/chromium-browser
     volumes:
       - open_design_data:/app/.od
     read_only: true
