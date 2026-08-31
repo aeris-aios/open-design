@@ -119,6 +119,55 @@ a contract is absent on that side.
   each scenario receives, but every one of its scenarios takes the legacy branch,
   so it cannot see an OD Next regression.
 
+## Worked example: PR #7568
+
+This is what going one-sided looks like when the author is careful. Read it
+before assuming your own change is too small to have a second side.
+
+`fix(deck): make legacy thumbnail navigation instant` (#7568, merged 2026-08-29,
+`973e868ce`) introduced deck protocol v1: 18 files, +510/-44. Its stated purpose,
+in its own PR body, was to give newly generated decks "one canonical, versioned
+navigation protocol so future agents do not create more navigation dialects."
+
+**What it got right — the daemon ↔ contracts axis, completely.** It added the
+shared constant `packages/contracts/src/runtime/deck-protocol.ts` (+87) so the
+two prompt copies cannot drift on the protocol, changed both
+`apps/daemon/src/prompts/deck-framework.ts` and
+`packages/contracts/src/prompts/deck-framework.ts` (+10 each), and added a
+guard on each side: `apps/daemon/tests/prompts/system.test.ts` and
+`packages/contracts/tests/system-prompt.test.ts` (+10 each). Validation ran
+`pnpm guard`, `pnpm typecheck`, the full web (7,139 tests) and contracts (500)
+suites, targeted deck suites, and two packaged DMG end-to-end runs against the
+real reported deck. By every convention in this repository it was a thorough PR.
+
+**What it missed — the strategy axis, entirely.** Not one file under
+`plugins/_official/scenarios/`. Every deck generated on the OD Next path still
+ships no protocol at all: the PR whose goal was to stop new navigation dialects
+left one live. The gap was reported two days after merge.
+
+Three things made the miss invisible, and all three are still true:
+
+- **The guards it added cannot reach the other side.** Both new tests call
+  `composeSystemPrompt({ skillMode: 'deck' })` with no `odNextStrategyRecipe`,
+  so they never pass the fork. The daemon one is named
+  `'ships new Agent decks with OD Deck Protocol v1'` — a claim about Agent decks
+  that is false for every OD Next run, asserted by a test that is green. A test
+  name is not coverage; check what its inputs can actually reach.
+- **The snapshot moved and stayed green.**
+  `apps/daemon/tests/prompts/__snapshots__/system-prompt-matrix.test.ts.snap`
+  updated cleanly, because every scenario in that matrix takes the legacy branch.
+- **Sharing a constant fixes the machine-readable half only.** The two copies'
+  surrounding directive prose had already drifted before #7568 and still differs
+  on `origin/main`: the daemon copy advertises "hidden programmatic" chrome,
+  "R reset-to-first-slide", and "half-slide click navigation"; the contracts copy
+  advertises "click-anywhere focus" instead. #7568 inserted the same new clause
+  into both, faithfully — into two sentences that already disagreed. The
+  protocol markers are guarded; the prose around them is not.
+
+The transferable rule: before landing a change to generated-artifact behavior,
+name every path that composes a prompt, then say for each one whether your change
+reaches it. "The tests are green" answers a narrower question than that.
+
 ## Known gaps
 
 Verified on `9130ea94e` (2026-08-31).

@@ -77,3 +77,10 @@ The legacy side ships all of them from one shared constant —
 generated on the OD Next path can therefore fail to be recognized as a v1 deck,
 paged from the host toolbar, or exported to PDF. See the host runtime contract
 table in `apps/daemon/src/prompts/AGENTS.md`.
+
+The gap has a worked example. PR #7568 (merged 2026-08-29) introduced deck
+protocol v1 and handled the daemon/contracts prompt-copy split correctly —
+shared constant, both copies changed, a guard added on each side — while
+touching nothing in this folder, even though its stated goal was to stop new
+navigation dialects appearing. See "Worked example: PR #7568" in
+`apps/daemon/src/prompts/AGENTS.md`.
