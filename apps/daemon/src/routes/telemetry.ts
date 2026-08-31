@@ -13,7 +13,7 @@ import {
 } from '../analytics.js';
 import type { AnalyticsContext } from '../analytics.js';
 import type { readAppConfig, writeAppConfig } from '../app-config.js';
-import { readCurrentAppVersionInfo } from '../app-version.js';
+import { readCurrentAppVersionInfo, UNKNOWN_APP_VERSION } from '../app-version.js';
 import { reportRunFeedbackFromDaemon } from '../langfuse-bridge.js';
 import { observePendingInstallerApplyAttempts } from '../migration/index.js';
 import {
@@ -24,6 +24,7 @@ export interface DaemonTelemetry {
   analyticsService: ReturnType<typeof createAnalyticsService>;
   disposeFatalHandlers: () => void;
   getCachedAppVersion: () => any;
+  resolveAppVersion: () => Promise<any>;
   reportFeedback: (req: {
     runId: string;
     rating: 'positive' | 'negative';
@@ -221,7 +222,7 @@ export function registerTelemetryRoutes(app: Express, deps: RegisterTelemetryRou
     await analyticsService.capture({
       eventName: body.event,
       context,
-      appVersion: cachedAppVersion?.version ?? '0.0.0',
+      appVersion: cachedAppVersion?.version ?? UNKNOWN_APP_VERSION,
       properties,
       insertId: body.eventId,
     });
@@ -241,7 +242,7 @@ export function registerTelemetryRoutes(app: Express, deps: RegisterTelemetryRou
         : {};
     analyticsService.captureSafety({
       eventName,
-      appVersion: cachedAppVersion?.version ?? '0.0.0',
+      appVersion: cachedAppVersion?.version ?? UNKNOWN_APP_VERSION,
       properties,
     });
     res.json({ ok: true });
@@ -252,10 +253,10 @@ export function registerTelemetryRoutes(app: Express, deps: RegisterTelemetryRou
     getAppVersion: () => cachedAppVersion,
   });
 
-  void (async () => {
+  const appVersionPromise = (async () => {
     try {
       cachedAppVersion = await readCurrentAppVersionInfo();
-      await observePendingInstallerApplyAttempts({
+      void observePendingInstallerApplyAttempts({
         analytics: analyticsService,
         appVersion: cachedAppVersion.version,
         currentChannel: cachedAppVersion.channel,
@@ -263,9 +264,13 @@ export function registerTelemetryRoutes(app: Express, deps: RegisterTelemetryRou
         dataRoot: dataDir,
         logger: console,
         namespace: resolveInstallerObservationNamespace(deps.namespace),
+      }).catch(() => {
+        // Update-apply telemetry must not delay daemon version readiness.
       });
+      return cachedAppVersion;
     } catch {
       // Telemetry is best-effort; appVersion is omitted when unavailable.
+      return null;
     }
   })();
 
@@ -273,6 +278,7 @@ export function registerTelemetryRoutes(app: Express, deps: RegisterTelemetryRou
     analyticsService,
     disposeFatalHandlers,
     getCachedAppVersion: () => cachedAppVersion,
+    resolveAppVersion: () => appVersionPromise,
     reportFeedback: (req) =>
       reportRunFeedbackFromDaemon({
         dataDir,
@@ -598,7 +604,7 @@ function installFatalTelemetryHandlers({
       try {
         await analyticsService.captureSafety({
           eventName,
-          appVersion: getAppVersion()?.version ?? '0.0.0',
+          appVersion: getAppVersion()?.version ?? UNKNOWN_APP_VERSION,
           properties,
         });
       } catch {
