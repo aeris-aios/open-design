@@ -10,21 +10,32 @@ const LOCALIZED_PAGE_PATH = new URL(
 );
 const TERMS_PAGE_PATH = new URL('../app/pages/terms/index.astro', import.meta.url);
 const LAYOUT_PATH = new URL('../app/_components/sub-page-layout.astro', import.meta.url);
+const PRICING_PAGE_PATH = new URL('../app/pages/pricing/index.astro', import.meta.url);
 
 describe('refund policy page', () => {
-  it('publishes a localized policy with the seven-day zero-use rule', async () => {
+  it('publishes the regional policy in the selected language', async () => {
     assert.ok(existsSync(PAGE_PATH), 'missing canonical /refund-policy/ page');
     assert.ok(
       existsSync(LOCALIZED_PAGE_PATH),
       'missing localized /:locale/refund-policy/ wrapper',
     );
 
-    const [{ getRefundPolicyContent }, { getHeaderLocaleSwitcher }, page, localizedPage, layout] = await Promise.all([
+    const [
+      { getRefundPolicyContent },
+      { getFaqs },
+      { getHeaderLocaleSwitcher, LANDING_LOCALES },
+      page,
+      localizedPage,
+      layout,
+      pricingPage,
+    ] = await Promise.all([
       import('../app/_lib/refund-policy-content.ts'),
+      import('../app/_lib/pricing-extras-content.ts'),
       import('../app/i18n.ts'),
       readFile(PAGE_PATH, 'utf8'),
       readFile(LOCALIZED_PAGE_PATH, 'utf8'),
       readFile(LAYOUT_PATH, 'utf8'),
+      readFile(PRICING_PAGE_PATH, 'utf8'),
     ]);
     const zh = getRefundPolicyContent('zh');
     const en = getRefundPolicyContent('en');
@@ -37,10 +48,54 @@ describe('refund policy page', () => {
 
     assert.equal(zh.sections.length, 4);
     assert.equal(en.sections.length, 4);
-    assert.match(zhPolicy, /付款成功后 7 个自然日内/);
-    assert.match(zhPolicy, /付费权益.*未使用/);
-    assert.match(zhPolicy, /全额退款/);
-    assert.match(enPolicy, /7 calendar days/i);
+    assert.match(zhPolicy, /欧盟、英国或土耳其.*14 天内/);
+    assert.match(zhPolicy, /韩国.*7 天内/);
+    assert.match(zhPolicy, /所有其他客户.*48 小时内/);
+    assert.match(enPolicy, /EU, UK, or Turkey.*14 days/);
+    assert.match(enPolicy, /South Korea.*7 days/);
+    assert.match(enPolicy, /All other customers.*48 hours/);
+    assert.match(zh.sections[0].intro ?? '', /第一次退款请求获批后.*第二次退款请求/);
+    assert.match(zh.sections[0].closing ?? '', /过度使用.*拒绝/);
+    assert.match(en.sections[0].intro ?? '', /first refund request.*second refund request/);
+    assert.match(en.sections[0].closing ?? '', /excessive use.*declined/);
+    assert.doesNotMatch(zhPolicy, /一旦使用，则不支持退款/);
+    const activeLocaleCodes = LANDING_LOCALES.map((locale) => locale.code);
+    assert.deepEqual(activeLocaleCodes, [
+      'en',
+      'zh',
+      'ja',
+      'ko',
+      'de',
+      'fr',
+      'ru',
+      'es',
+      'pt-br',
+      'it',
+      'tr',
+    ]);
+    for (const locale of activeLocaleCodes) {
+      const policy = getRefundPolicyContent(locale);
+      const policyText = [
+        ...policy.preamble,
+        ...policy.sections.flatMap((section) => [
+          section.title,
+          section.intro ?? '',
+          section.closing ?? '',
+          ...section.items.flatMap((item) => [item.lead, item.detail ?? '']),
+        ]),
+      ].join(' ');
+      assert.equal(policy.locale, locale, `${locale}: fell back to another locale`);
+      assert.equal(policy.sections.length, 4, `${locale}: incomplete policy`);
+      assert.ok(policy.supportSubject.length > 0, `${locale}: missing email subject`);
+      assert.match(policyText, /14/, `${locale}: missing EU/UK/Turkey deadline`);
+      assert.match(policyText, /7/, `${locale}: missing South Korea deadline`);
+      assert.match(policyText, /48/, `${locale}: missing all-other-customers deadline`);
+      assert.match(policyText, /10/, `${locale}: missing processing deadline`);
+
+      const refundFaq = getFaqs(locale).find((item) => item.refundPolicyCta);
+      assert.ok(refundFaq, `${locale}: missing localized pricing refund entry`);
+      assert.ok(refundFaq.a.length > 0, `${locale}: missing pricing refund summary`);
+    }
     assert.match(zhPolicy, /10 个工作日内.*发起退款/);
     assert.match(zhPolicy, /后台记录/);
     assert.equal('faq' in zh, false);
@@ -49,18 +104,19 @@ describe('refund policy page', () => {
 
     assert.match(page, /support@open-design\.ai/);
     assert.match(page, /getRefundPolicyContent/);
-    assert.match(page, /availableLocaleCodes=\{\['en', 'zh'\]\}/);
+    assert.match(page, /availableLocaleCodes=\{LANDING_LOCALES\.map/);
     assert.match(page, /suppressLocaleAutoRedirect/);
     assert.deepEqual(
       getHeaderLocaleSwitcher('en', '/refund-policy/', {
-        availableLocaleCodes: ['en', 'zh'],
+        availableLocaleCodes: activeLocaleCodes,
       }).options.map((option) => option.code),
-      ['en', 'zh'],
+      activeLocaleCodes,
     );
     assert.match(layout, /availableAltEntries\.filter\(\(entry\) => entry\.locale\.code !== locale\)/);
     assert.match(localizedPage, /LANDING_LOCALES/);
-    assert.match(localizedPage, /locale\.code === 'zh'/);
+    assert.match(localizedPage, /locale\.code !== 'en'/);
     assert.match(localizedPage, /<RefundPolicyPage\s*\/>/);
+    assert.match(pricingPage, /const refundPolicyHref = href\('\/refund-policy\/'\)/);
   });
 
   it('tracks the support email click with the refund policy context', async () => {

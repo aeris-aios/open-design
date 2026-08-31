@@ -649,15 +649,14 @@ describe("pricing contract", () => {
     const getFaqs = (pricingExtras as Record<string, unknown>).getFaqs as (
       locale: string,
     ) => Array<{ q: string; a: string; refundPolicyCta?: string }>;
-    const zhRefund = getFaqs("zh").find((faq) => faq.q.includes("退款"));
-    const enRefund = getFaqs("en").find((faq) => /refund/i.test(faq.q));
+    const zhRefund = getFaqs("zh").find((faq) => faq.refundPolicyCta);
+    const enRefund = getFaqs("en").find((faq) => faq.refundPolicyCta);
 
     assert.ok(zhRefund);
-    assert.match(zhRefund.a, /付款成功后 7 个自然日内/);
-    assert.match(zhRefund.a, /付费权益.*未使用/);
+    assert.match(zhRefund.a, /地区、订阅类型和使用情况/);
     assert.equal(zhRefund.refundPolicyCta, "查看完整退款政策");
     assert.ok(enRefund);
-    assert.match(enRefund.a, /7 calendar days/i);
+    assert.match(enRefund.a, /region, subscription type, and usage/i);
     assert.doesNotMatch(`${zhRefund.a} ${enRefund.a}`, /暂不支持退款|currently non-refundable/i);
     assert.doesNotMatch(getFaqs("zh").map((faq) => faq.a).join(" "), /年付.*不支持退款/);
     assert.match(
