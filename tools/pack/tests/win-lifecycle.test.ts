@@ -20,7 +20,7 @@ const matchesStampedProcess = vi.hoisted(() =>
 const spawnBackgroundProcess = vi.hoisted(() => vi.fn(async () => ({ pid: 12345 })));
 const convergeSidecarLaunch = vi.hoisted(() => vi.fn(async (
   request: { stamp: Record<string, string> },
-  _options?: { timeoutMs?: number },
+  _options?: { ownerStamps?: Array<Record<string, string>>; timeoutMs?: number },
 ) => {
   const spawned = await spawnBackgroundProcess();
   return {
@@ -398,7 +398,13 @@ describe("startPackedWinApp", () => {
         pid: 12345,
         status: null,
       });
-      expect(convergeSidecarLaunch).toHaveBeenCalledWith(expect.any(Object), { timeoutMs: 90_000 });
+      expect(convergeSidecarLaunch).toHaveBeenCalledWith(expect.any(Object), {
+        ownerStamps: [
+          expect.objectContaining({ app: "desktop", source: "tools-pack" }),
+          expect.objectContaining({ app: "desktop", source: "packaged" }),
+        ],
+        timeoutMs: 90_000,
+      });
     } finally {
       await rm(root, { force: true, recursive: true });
     }
