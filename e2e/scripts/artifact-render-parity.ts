@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,9 +14,10 @@ import {
   type ParityClassification,
   type PixelComparison,
 } from '../lib/playwright/artifact-render-parity.ts';
+import { createToolsDevSuite, e2eWorkspaceRoot } from '../lib/tools-dev/runtime.ts';
+import type { ToolsDevSuite } from '../lib/tools-dev/types.ts';
 
 type Options = {
-  webUrl: string;
   corpusDir: string;
   outputDir: string;
   limit: number;
@@ -27,8 +28,9 @@ type Options = {
   maxPerceptualDiffRatio: number;
   maxSelfDriftRatio: number;
   headed: boolean;
-  keepProjects: boolean;
 };
+
+type RunOptions = Options & { webUrl: string };
 
 type RuntimeSnapshot = {
   readyState: string;
@@ -110,34 +112,69 @@ async function main(argv: string[]): Promise<void> {
     throw new Error(`No .html files found under ${options.corpusDir}`);
   }
 
-  await mkdir(options.outputDir, { recursive: true });
-  const results: CaseResult[] = [];
-  const startedAt = Date.now();
+  const toolsDev = await createParityToolsDevRuntime();
+  let runError: unknown = null;
+  try {
+    await toolsDev.startWeb({
+      AMR_HOME: path.join(toolsDev.root, 'scratch', 'amr-home'),
+    });
+    const runOptions: RunOptions = { ...options, webUrl: toolsDev.url.web() };
+    await mkdir(options.outputDir, { recursive: true });
+    const results: CaseResult[] = [];
+    const startedAt = Date.now();
 
-  console.log(`Comparing ${files.length} HTML artifacts. Evidence stays local at ${options.outputDir}`);
-  for (const [index, filePath] of files.entries()) {
-    const source = await readFile(filePath);
-    const sampleId = sha256(source).slice(0, 20);
-    process.stdout.write(`[${index + 1}/${files.length}] ${sampleId} (${source.byteLength} bytes) `);
-    if (source.byteLength > options.maxBytes) {
-      const skipped: CaseResult = emptyResult(sampleId, source.byteLength, 'skipped-too-large');
-      results.push(skipped);
-      console.log('skipped: too large');
-      continue;
+    console.log(`Comparing ${files.length} HTML artifacts. Evidence stays local at ${options.outputDir}`);
+    for (const [index, filePath] of files.entries()) {
+      const source = await readFile(filePath);
+      const sampleId = sha256(source).slice(0, 20);
+      process.stdout.write(`[${index + 1}/${files.length}] ${sampleId} (${source.byteLength} bytes) `);
+      if (source.byteLength > options.maxBytes) {
+        const skipped: CaseResult = emptyResult(sampleId, source.byteLength, 'skipped-too-large');
+        results.push(skipped);
+        console.log('skipped: too large');
+        continue;
+      }
+
+      const result = await runIsolatedCase({ options: runOptions, sampleId, source: source.toString('utf8') });
+      results.push(result);
+      console.log(result.status);
+      await writeReport(options, results, startedAt);
     }
 
-    const result = await runIsolatedCase({ options, sampleId, source: source.toString('utf8') });
-    results.push(result);
-    console.log(result.status);
     await writeReport(options, results, startedAt);
+    printSummary(results, options.outputDir);
+  } catch (error) {
+    runError = error;
+    throw error;
+  } finally {
+    let stopError: unknown = null;
+    try {
+      await toolsDev.stopWeb();
+    } catch (error) {
+      stopError = error;
+    }
+    await rm(toolsDev.root, { force: true, recursive: true });
+    if (runError == null && stopError != null) throw stopError;
   }
+}
 
-  await writeReport(options, results, startedAt);
-  printSummary(results, options.outputDir);
+async function createParityToolsDevRuntime(): Promise<ToolsDevSuite> {
+  const namespace = `artifact-parity-${process.pid}-${randomUUID().slice(0, 8)}`;
+  const root = path.join(e2eWorkspaceRoot(), '.tmp', 'e2e', namespace);
+  const scratchDir = path.join(root, 'scratch');
+  await mkdir(scratchDir, { recursive: true });
+  return createToolsDevSuite({
+    codexHomeDir: path.join(scratchDir, 'codex-home'),
+    dataDir: path.join(scratchDir, 'data'),
+    namespace,
+    ownerPid: process.pid,
+    root,
+    toolsDevRoot: path.join(scratchDir, 'tools-dev'),
+  });
 }
 
 async function runIsolatedCase(input: {
-  options: Options;
+  options: RunOptions;
   sampleId: string;
   source: string;
 }): Promise<CaseResult> {
@@ -169,18 +206,16 @@ async function runIsolatedCase(input: {
   } finally {
     if (timeout != null) clearTimeout(timeout);
     await browser.close({ reason: 'artifact parity case complete' }).catch(() => {});
-    if (!options.keepProjects) {
-      await fetch(new URL(`/api/projects/${encodeURIComponent(projectId)}`, options.webUrl), {
-        method: 'DELETE',
-        signal: AbortSignal.timeout(Math.min(options.timeoutMs, 5_000)),
-      }).catch(() => {});
-    }
+    await fetch(new URL(`/api/projects/${encodeURIComponent(projectId)}`, options.webUrl), {
+      method: 'DELETE',
+      signal: AbortSignal.timeout(Math.min(options.timeoutMs, 5_000)),
+    }).catch(() => {});
   }
 }
 
 async function runCase(input: {
   context: BrowserContext;
-  options: Options;
+  options: RunOptions;
   projectId: string;
   sampleId: string;
   source: string;
@@ -648,7 +683,7 @@ function parseOptions(argv: string[]): Options {
     if (token === '--') continue;
     if (token == null || !token.startsWith('--')) throw new Error(usage());
     const key = token.slice(2);
-    if (key === 'headed' || key === 'keep-projects' || key === 'help') {
+    if (key === 'headed' || key === 'help') {
       values.set(key, true);
       continue;
     }
@@ -661,14 +696,15 @@ function parseOptions(argv: string[]): Options {
     console.log(usage());
     process.exit(0);
   }
-  const webUrl = required(values, 'web-url').replace(/\/$/u, '');
+  if (values.has('web-url') || values.has('keep-projects')) {
+    throw new Error('The parity auditor owns an isolated tools-dev runtime; --web-url and --keep-projects are no longer supported.');
+  }
   const corpusDir = path.resolve(required(values, 'corpus-dir'));
   const outputDir = path.resolve(
     optional(values, 'output-dir')
       ?? path.join(tmpdir(), `od-artifact-render-parity-${Date.now()}`),
   );
   return {
-    webUrl,
     corpusDir,
     outputDir,
     limit: positiveInteger(optional(values, 'limit') ?? '50', '--limit'),
@@ -679,7 +715,6 @@ function parseOptions(argv: string[]): Options {
     maxPerceptualDiffRatio: ratioOption(optional(values, 'max-diff-ratio') ?? '0.001', '--max-diff-ratio'),
     maxSelfDriftRatio: ratioOption(optional(values, 'max-self-drift-ratio') ?? '0.001', '--max-self-drift-ratio'),
     headed: values.get('headed') === true,
-    keepProjects: values.get('keep-projects') === true,
   };
 }
 
@@ -731,13 +766,13 @@ function remainingTimeout(startedAt: number, timeoutMs: number): number {
 function usage(): string {
   return `Usage:
   pnpm --filter @open-design/e2e exec tsx scripts/artifact-render-parity.ts \\
-    --web-url http://127.0.0.1:3000 \\
     --corpus-dir /path/to/local/html-corpus \\
     [--output-dir /private/tmp/render-parity] [--limit 50] [--headed]
 
-The script creates temporary managed projects through the product API, captures the
+The script starts a namespace- and data-root-isolated tools-dev runtime, creates
+temporary managed projects through its product API, captures the
 active URL-load iframe, enters Manual Edit to capture the real srcDoc transport,
-then exits Edit and captures URL-load again. Temporary projects are deleted unless
---keep-projects is supplied. Every artifact runs in an isolated browser process
-with a 60-second hard timeout. Reports omit source paths and HTML content.`;
+then exits Edit and captures URL-load again. The runtime and its projects are always
+stopped and removed when the audit completes. Every artifact runs in an isolated
+browser process with a 60-second hard timeout. Reports omit source paths and HTML content.`;
 }
