@@ -4,6 +4,8 @@ import type {
   DesktopExportArtifactResult,
   DesktopExportPdfInput,
   DesktopExportPdfResult,
+  DesktopRenderFramesInput,
+  DesktopRenderFramesResult,
   DesktopRenderSlidesInput,
   DesktopRenderSlidesResult,
 } from '@open-design/sidecar-proto';
@@ -2801,6 +2803,7 @@ export function createSseResponse(
 }
 
 export type DesktopPdfExporter = (input: DesktopExportPdfInput) => Promise<DesktopExportPdfResult>;
+export type DesktopFrameRenderer = (input: DesktopRenderFramesInput) => Promise<DesktopRenderFramesResult>;
 export type DesktopSlideRenderer = (input: DesktopRenderSlidesInput) => Promise<DesktopRenderSlidesResult>;
 export type DesktopArtifactExporter = (input: DesktopExportArtifactInput) => Promise<DesktopExportArtifactResult>;
 
@@ -2817,6 +2820,7 @@ export interface DaemonRuntimeContext {
 
 export interface StartServerOptions {
   desktopArtifactExporter?: DesktopArtifactExporter | null;
+  desktopFrameRenderer?: DesktopFrameRenderer | null;
   desktopPdfExporter?: DesktopPdfExporter | null;
   desktopSlideRenderer?: DesktopSlideRenderer | null;
   host?: string;
@@ -2855,6 +2859,7 @@ export async function startServer({
   host = normalizeDaemonBindHost(process.env.OD_BIND_HOST),
   returnServer = false,
   desktopPdfExporter = null,
+  desktopFrameRenderer = null,
   desktopSlideRenderer = null,
   desktopArtifactExporter = null,
   runtime = null,
@@ -8041,7 +8046,7 @@ export async function startServer({
     AUDIO_DURATIONS_SEC,
     readMaskedConfig,
     writeConfig,
-    generateMedia,
+    generateMedia: (args) => generateMedia({ ...args, desktopFrameRenderer }),
     mediaTasks: mediaTaskStore.mediaTasks,
     createMediaTask: mediaTaskStore.createMediaTask,
     persistMediaTask: mediaTaskStore.persistMediaTask,
