@@ -287,7 +287,7 @@ root `pnpm tools-pr` script without a new explicit maintainer decision.
 
 ## Prompt variants (two implementations, one switch)
 
-A generation run is composed by ONE of two independent prompt implementations. `composeSystemPrompt` returns early at `apps/daemon/src/prompts/system.ts:902` when a run carries an OD Next recipe, so the entire legacy stack below that line — including the deck framework directive at `system.ts:1337` — is skipped. The API/BYOK mirror at `packages/contracts/src/prompts/system.ts:308` forks the same way. The two sides share no floor: a rule added to one holds only for the runs that take that side.
+A generation run is composed by ONE of two independent prompt implementations. `composeSystemPrompt` returns early at `apps/daemon/src/prompts/system.ts:902` when a run carries an OD Next recipe, so the entire legacy stack below that line — including the deck framework directive at `system.ts:1339` — is skipped. The API/BYOK mirror at `packages/contracts/src/prompts/system.ts:308` forks the same way. The two sides share no floor: a rule added to one holds only for the runs that take that side.
 
 - **Legacy side**: `apps/daemon/src/prompts/` (mirrored for API/BYOK in `packages/contracts/src/prompts/`).
 - **OD Next side**: `plugins/_official/scenarios/od-next-strategy/assets/**` (markdown sent to the model verbatim) plus TypeScript stage atoms in `packages/contracts/src/prompts/od-next-strategy.ts`.

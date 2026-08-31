@@ -337,6 +337,8 @@ ${DECK_PROTOCOL_V1_INLINE_RUNTIME}
 </body>
 </html>`;
 
+// ⚠️ Legacy-side only: OD Next runs never receive this directive — their deck rules live in
+// the od-next-strategy plugin's ppt.md. See apps/daemon/src/prompts/AGENTS.md.
 export const DECK_FRAMEWORK_DIRECTIVE = `# Slide deck — fixed framework (this is non-negotiable for deck mode)
 
 Decks regress when each turn re-authors the scale-to-fit logic, the keyboard handler, the slide visibility toggle, the counter, and the print rules. The user has hit this enough times that we now ship a **fixed framework**: 1920×1080 canvas, scale-to-fit, OD Deck Protocol v1 absolute navigation + state events, prev/next + counter, capture-phase keyboard, click-anywhere focus, localStorage position restore, and a print stylesheet that emits a multi-page vertical PDF on Save-as-PDF — all baked in.

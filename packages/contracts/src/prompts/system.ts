@@ -520,6 +520,9 @@ export function composeSystemPrompt({
   const isFreeformProject = !skillMode && (!metadata || metadata.kind === 'other');
   const hasSkillSeed =
     !!skillBody && /assets\/template\.html/.test(skillBody);
+  // ⚠️ Unreachable on the OD Next path: composeSystemPrompt returned early above. A deck rule
+  // added here must also go to the od-next-strategy plugin's ppt.md.
+  // See apps/daemon/src/prompts/AGENTS.md.
   if (!isAskMode && isDeckProject && !hasSkillSeed) {
     parts.push(`\n\n---\n\n${DECK_FRAMEWORK_DIRECTIVE}`);
   } else if (!isAskMode && isFreeformProject && !hasSkillSeed) {

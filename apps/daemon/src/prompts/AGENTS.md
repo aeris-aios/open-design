@@ -17,7 +17,7 @@ return at the top of `composeSystemPrompt`:
   // ↓ everything below — the entire legacy stack — is skipped on the OD Next path
 ```
 
-`DECK_FRAMEWORK_DIRECTIVE` is pushed at `system.ts:1337` / `:1354`, i.e. **after**
+`DECK_FRAMEWORK_DIRECTIVE` is pushed at `system.ts:1339` / `:1356`, i.e. **after**
 that return, so a deck generated on the OD Next path receives none of it. The
 same early return exists in the API/BYOK mirror at
 `packages/contracts/src/prompts/system.ts:308`.
