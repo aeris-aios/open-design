@@ -42,7 +42,7 @@ import { DEEPSEEK_V4_PRO_CAMPAIGN } from '../../_lib/deepseek-v4-pro-campaign';
 
 const locale = localeFromPath(Astro.url.pathname);
 const href = (path: string) => localizedHref(path, locale);
-const refundPolicyHref = locale === 'zh' ? href('/refund-policy/') : '/refund-policy/';
+const refundPolicyHref = href('/refund-policy/');
 const content = getPricingContent(locale);
 const planActionLabels = getPricingPlanActionLabels(locale);
 const teamContent = getTeamPricingContent(locale);

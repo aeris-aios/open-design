@@ -50,7 +50,7 @@ const FAQ_ZH: FaqItem[] =
     { q: "BYOK 是什么？所有套餐都支持吗？", a: "BYOK（Bring Your Own Key）是指填入你自己的 Anthropic、OpenAI、Google 等厂商 API Key，直接调用原厂模型，不消耗 OpenDesign 余额、也不受套餐模型列表限制。所有套餐（包括 Free）均支持 BYOK。" },
     { q: "升级或降级套餐后，额度和扣费怎么处理？", a: "本期仅支持「升级」：提升套餐档位、或由月付转年付，升级立即生效并下发新套餐权益、仅需补差价（按当前套餐未用时长抵扣后的差额计费，无需支付新套餐全价）。降级（降低档位或由年付转月付）暂不支持自助操作，相关入口会置灰；如需降级，请联系人工客服处理。" },
     { q: "可以随时取消订阅吗？", a: "可以。取消订阅表示取消续订，不会立即终止当前权益。当前已付费周期内仍可正常使用，到期后不再续费、不再扣款，账户自动回到 Free。取消订阅不会自动触发退款；符合条件时需按退款政策另行申请。", cancelCta: "取消订阅" },
-    { q: "怎么申请退款？", a: "付款成功后 7 个自然日内，且本笔订单对应的付费权益尚未使用，可申请全额退款。异常扣款及适用法律规定的权利会单独核查。", refundPolicyCta: "查看完整退款政策" },
+    { q: "怎么申请退款？", a: "退款资格因所在地区、订阅类型和使用情况而异，具体请查看完整退款政策。", refundPolicyCta: "查看完整退款政策" },
   ];
 
 const FAQ_ZH_TW: FaqItem[] =
@@ -186,10 +186,72 @@ const FAQ_BY_LOCALE: Partial<Record<LandingLocaleCode, FaqItem[]>> = {
   "ja": FAQ_JA,
 };
 
+const REFUND_FAQ_BY_LOCALE: Partial<Record<LandingLocaleCode, FaqItem>> = {
+  en: {
+    q: 'How do refunds work?',
+    a: 'Refund eligibility varies by region, subscription type, and usage. See the full refund policy for details.',
+    refundPolicyCta: 'View the full refund policy',
+  },
+  zh: {
+    q: '怎么申请退款？',
+    a: '退款资格因所在地区、订阅类型和使用情况而异，具体请查看完整退款政策。',
+    refundPolicyCta: '查看完整退款政策',
+  },
+  ja: {
+    q: '返金はどのように扱われますか？',
+    a: '返金の対象可否は、地域、サブスクリプションの種類、利用状況によって異なります。詳細は返金ポリシー全文をご確認ください。',
+    refundPolicyCta: '返金ポリシー全文を見る',
+  },
+  ko: {
+    q: '환불은 어떻게 처리되나요?',
+    a: '환불 자격은 지역, 구독 유형 및 사용 상황에 따라 달라집니다. 자세한 내용은 전체 환불 정책을 확인해 주세요.',
+    refundPolicyCta: '전체 환불 정책 보기',
+  },
+  de: {
+    q: 'Wie funktionieren Rückerstattungen?',
+    a: 'Der Anspruch auf eine Rückerstattung hängt von Region, Abonnementart und Nutzung ab. Einzelheiten finden Sie in der vollständigen Rückerstattungsrichtlinie.',
+    refundPolicyCta: 'Vollständige Rückerstattungsrichtlinie ansehen',
+  },
+  fr: {
+    q: 'Comment fonctionnent les remboursements ?',
+    a: 'L’éligibilité au remboursement dépend de votre région, du type d’abonnement et de l’utilisation. Consultez la politique de remboursement complète pour plus de détails.',
+    refundPolicyCta: 'Voir la politique de remboursement complète',
+  },
+  ru: {
+    q: 'Как работают возвраты?',
+    a: 'Право на возврат зависит от региона, типа подписки и использования. Подробности приведены в полной политике возврата.',
+    refundPolicyCta: 'Открыть полную политику возврата',
+  },
+  es: {
+    q: '¿Cómo funcionan los reembolsos?',
+    a: 'La elegibilidad para el reembolso varía según la región, el tipo de suscripción y el uso. Consulta la política de reembolso completa para obtener más información.',
+    refundPolicyCta: 'Ver la política de reembolso completa',
+  },
+  'pt-br': {
+    q: 'Como funcionam os reembolsos?',
+    a: 'A elegibilidade para reembolso varia conforme a região, o tipo de assinatura e o uso. Consulte a política de reembolso completa para saber mais.',
+    refundPolicyCta: 'Ver a política de reembolso completa',
+  },
+  it: {
+    q: 'Come funzionano i rimborsi?',
+    a: 'L’idoneità al rimborso varia in base all’area geografica, al tipo di abbonamento e all’utilizzo. Consulta la politica di rimborso completa per i dettagli.',
+    refundPolicyCta: 'Consulta la politica di rimborso completa',
+  },
+  tr: {
+    q: 'Para iadeleri nasıl işliyor?',
+    a: 'Para iadesi uygunluğu bölgeye, abonelik türüne ve kullanıma göre değişir. Ayrıntılar için para iade politikasının tamamını inceleyin.',
+    refundPolicyCta: 'Para iade politikasının tamamını görüntüle',
+  },
+};
+
 /** Pricing FAQ items, falling back to English. Promo-only entries are dropped
  * and trial-mentioning answers swapped while the trial promo is offline. */
 export function getFaqs(locale: LandingLocaleCode): FaqItem[] {
-  const items = FAQ_BY_LOCALE[locale] ?? FAQ_BY_LOCALE.en!;
+  const sourceItems = FAQ_BY_LOCALE[locale] ?? FAQ_BY_LOCALE.en!;
+  const localizedRefund = REFUND_FAQ_BY_LOCALE[locale] ?? REFUND_FAQ_BY_LOCALE.en!;
+  const items = sourceItems.map((item) =>
+    item.refundPolicyCta ? localizedRefund : item,
+  );
   if (TRIAL_CREDIT_PROMO_ENABLED) return items;
   return items
     .filter((item) => !item.trialPromo)

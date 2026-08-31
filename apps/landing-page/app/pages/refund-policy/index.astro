@@ -1,20 +1,19 @@
 ---
 import Layout from '../../_components/sub-page-layout.astro';
 import { getRefundPolicyContent } from '../../_lib/refund-policy-content';
-import { localeFromPath } from '../../i18n';
+import { LANDING_LOCALES, localeFromPath } from '../../i18n';
 
 const locale = localeFromPath(Astro.url.pathname);
 const copy = getRefundPolicyContent(locale);
-const contentLocale = locale === 'zh' ? 'zh' : 'en';
+const localeMeta = LANDING_LOCALES.find((item) => item.code === locale) ?? LANDING_LOCALES[0];
 const canonical = new URL(Astro.url.pathname, Astro.site).toString();
-const supportSubject = locale === 'zh' ? 'OpenDesign 退款申请' : 'OpenDesign refund request';
-const supportHref = `mailto:support@open-design.ai?subject=${encodeURIComponent(supportSubject)}`;
+const supportHref = `mailto:support@open-design.ai?subject=${encodeURIComponent(copy.supportSubject)}`;
 const jsonLd = {
   '@context': 'https://schema.org',
   '@type': 'WebPage',
   name: copy.title,
   description: copy.metaDescription,
-  inLanguage: contentLocale === 'zh' ? 'zh-CN' : 'en',
+  inLanguage: localeMeta.htmlLang,
   url: canonical,
   isPartOf: { '@type': 'WebSite', name: 'OpenDesign', url: Astro.site?.toString() },
 };
@@ -24,17 +23,22 @@ const jsonLd = {
   title={copy.metaTitle}
   description={copy.metaDescription}
   jsonLd={jsonLd}
-  availableLocaleCodes={['en', 'zh']}
+  availableLocaleCodes={LANDING_LOCALES.map((item) => item.code)}
   suppressLocaleAutoRedirect
 >
-  <article class="refund-policy" lang={contentLocale === 'zh' ? 'zh-CN' : 'en'}>
+  <article class="refund-policy" lang={localeMeta.htmlLang}>
     <header class="refund-header">
       <h1>{copy.title}</h1>
     </header>
 
+    <div class="refund-preamble">
+      {copy.preamble.map((paragraph) => <p>{paragraph}</p>)}
+    </div>
+
     {copy.sections.map((section, index) => (
       <section class="refund-section">
         <h2>{index + 1}. {section.title}</h2>
+        {section.intro && <p class="refund-section-copy">{section.intro}</p>}
         <ul>
           {section.items.map((item) => (
             <li>
@@ -43,12 +47,12 @@ const jsonLd = {
             </li>
           ))}
         </ul>
-        {section.note && <p class="refund-note"><strong>{contentLocale === 'zh' ? '注意：' : 'Note: '}</strong>{section.note}</p>}
+        {section.closing && <p class="refund-section-copy refund-section-closing">{section.closing}</p>}
       </section>
     ))}
 
     <footer class="refund-footer">
-      <p>{copy.contact} <a href={supportHref} data-refund-support-link data-refund-locale={contentLocale}>{copy.contactCta}</a></p>
+      <p>{copy.contact} <a href={supportHref} data-refund-support-link data-refund-locale={locale}>{copy.contactCta}</a></p>
     </footer>
   </article>
 
@@ -70,6 +74,12 @@ const jsonLd = {
       color: var(--ink, #262626);
     }
     .refund-header { padding-bottom: 20px; }
+    .refund-preamble {
+      color: var(--ink-soft, #5a5a5a);
+      font-size: 14px;
+      line-height: 1.6;
+    }
+    .refund-preamble p { margin: 0 0 10px; }
     .refund-header h1 {
       margin: 0;
       font-size: clamp(32px, 4vw, 40px);
@@ -89,6 +99,13 @@ const jsonLd = {
       margin: 0;
       padding-left: 1.3em;
     }
+    .refund-section-copy {
+      margin: 0 0 10px;
+      color: var(--ink-soft, #5a5a5a);
+      font-size: 14px;
+      line-height: 1.6;
+    }
+    .refund-section-closing { margin-top: 10px; }
     .refund-section li {
       margin: 0 0 6px;
       padding-left: 0.2em;
@@ -105,15 +122,6 @@ const jsonLd = {
     }
     .refund-section li strong::after { content: " "; }
     .refund-section li span { display: inline; }
-    .refund-note {
-      margin: 10px 0 2px;
-      padding: 5px 0 5px 12px;
-      border-left: 3px solid rgba(38, 38, 38, 0.14);
-      color: var(--ink-soft, #555);
-      font-size: 13px;
-      font-style: italic;
-      line-height: 1.45;
-    }
     .refund-footer {
       padding: 16px 0 4px;
       border-top: 1px solid var(--line, rgba(38, 38, 38, 0.15));

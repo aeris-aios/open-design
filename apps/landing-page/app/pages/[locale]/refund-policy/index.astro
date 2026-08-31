@@ -3,7 +3,7 @@ import RefundPolicyPage from '../../refund-policy/index.astro';
 import { LANDING_LOCALES } from '../../../i18n';
 
 export function getStaticPaths() {
-  return LANDING_LOCALES.filter((locale) => locale.code === 'zh').map(
+  return LANDING_LOCALES.filter((locale) => locale.code !== 'en').map(
     (locale) => ({ params: { locale: locale.code } }),
   );
 }

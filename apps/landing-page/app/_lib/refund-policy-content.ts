@@ -6,7 +6,6 @@ export interface RefundPolicySection {
   intro?: string;
   items: RefundPolicyItem[];
   closing?: string;
-  note?: string;
 }
 export interface RefundPolicyContent {
   locale: LandingLocaleCode;
