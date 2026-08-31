@@ -1,6 +1,17 @@
 import { DECK_PROTOCOL_V1_INLINE_RUNTIME } from '@open-design/contracts/runtime/deck-protocol';
 
 /**
+ * ⚠️ LEGACY-SIDE ONLY. This skeleton reaches the model through
+ * `composeSystemPrompt`, which returns early for OD Next runs
+ * (`./system.ts:902`); both pushes of DECK_FRAMEWORK_DIRECTIVE live below that
+ * return, so decks generated on the OD Next path receive NONE of this — not the
+ * `data-od-deck-protocol` marker, not DECK_PROTOCOL_V1_INLINE_RUNTIME, not the
+ * print stylesheet. The OD Next counterpart is
+ * `plugins/_official/scenarios/od-next-strategy/assets/task-profiles/ppt.md`,
+ * which today pins none of them. Sharing the protocol constant fixed drift
+ * between this file and its API/BYOK mirror; it does not reach the third copy.
+ * Read ./AGENTS.md ("Host runtime contracts") before changing deck rules.
+ *
  * Stable deck framework injected into the system prompt when the active skill
  * mode is `deck`. The whole point: stop regenerating the scale-to-fit JS, the
  * keyboard handler, the slide visibility toggle, the counter, and the print

@@ -167,6 +167,18 @@ function requireText(value: string, field: string): string {
   return trimmed;
 }
 
+/**
+ * OD-NEXT SIDE of the prompt fork. This list is declared TWICE: here, and as
+ * `od.pipeline.stages` in
+ * `plugins/_official/scenarios/od-next-strategy/open-design.json`. Keep them in
+ * step.
+ *
+ * Atoms are where OD Next carries host runtime contracts that the legacy stack
+ * carries in `apps/daemon/src/prompts/*.ts` — `discovery-question-form` is the
+ * OD Next counterpart of the `<question-form>` guidance in `discovery.ts`. So
+ * "does OD Next say X?" has two possible homes: the plugin's markdown assets,
+ * and this list. Check both. See `apps/daemon/src/prompts/AGENTS.md`.
+ */
 export const OD_NEXT_PROMPT_STAGE_CONTRACT_V2 = [
   { id: 'discovery', atoms: ['discovery-question-form'] },
   { id: 'plan', atoms: ['direction-picker', 'todo-write'] },

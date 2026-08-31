@@ -888,6 +888,17 @@ export function composeSystemPrompt({
   mediaHintSignal,
   platformHintSignal,
 }: ComposeInput): string {
+  // ── FORK POINT: two independent prompt implementations ──────────────────
+  // Everything below this early return is the legacy stack. OD Next runs never
+  // reach it — not the designer charter, not the discovery layer, not
+  // DECK_FRAMEWORK_DIRECTIVE and the deck protocol v1 runtime it embeds. Their
+  // content comes from `plugins/_official/scenarios/od-next-strategy/assets/**`
+  // plus the stage atoms in `@open-design/contracts` `od-next-strategy.ts`. The
+  // two sides share no floor, so a rule added below holds only for the runs
+  // that take this branch, and eligibility is re-evaluated per run
+  // (`../strategies/od-next/rollout.ts`). Before changing prompt text on either
+  // side, read ./AGENTS.md — it carries the host runtime contracts each side
+  // must carry and which ones are currently missing.
   if (odNextStrategyRecipe) {
     return composeOdNextStrategyRequestPromptV2(odNextStrategyRecipe, {
       agentId,

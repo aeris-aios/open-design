@@ -299,6 +299,12 @@ export function composeSystemPrompt({
   userInstructions,
   projectInstructions,
 }: ComposeInput): string {
+  // ── FORK POINT (API/BYOK side) ──────────────────────────────────────────
+  // Mirrors the daemon fork in `apps/daemon/src/prompts/system.ts`. Everything
+  // below is the legacy stack; OD Next runs return here and never reach it,
+  // DECK_FRAMEWORK_DIRECTIVE included. Read
+  // `apps/daemon/src/prompts/AGENTS.md` before changing prompt text on either
+  // side of this fork.
   if (odNextStrategyRecipe) {
     return composeOdNextStrategyRequestPromptV2(odNextStrategyRecipe, {
       agentId,

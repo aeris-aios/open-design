@@ -1,6 +1,12 @@
 import { DECK_PROTOCOL_V1_INLINE_RUNTIME } from '../runtime/deck-protocol.js';
 
 /**
+ * ⚠️ LEGACY-SIDE ONLY, and itself the API/BYOK mirror of
+ * `apps/daemon/src/prompts/deck-framework.ts`. `composeSystemPrompt` returns
+ * early for OD Next runs (`./system.ts:308`) and both pushes of
+ * DECK_FRAMEWORK_DIRECTIVE sit below that return, so the OD Next path receives
+ * none of this. Read `apps/daemon/src/prompts/AGENTS.md` before editing.
+ *
  * Stable deck framework injected into the system prompt when the active skill
  * mode is `deck`. The whole point: stop regenerating the scale-to-fit JS, the
  * keyboard handler, the slide visibility toggle, the counter, and the print
