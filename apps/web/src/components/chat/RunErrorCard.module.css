@@ -54,6 +54,12 @@
   margin-top: 9px;
 }
 
+.actionGroup {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 6px;
+}
+
 /* 稿子 `.errb .ops .btn.mod-sm`:这一排的每一颗动作都走同一副壳。
    仍以共享 Button 为底层原语；这里把报错卡自己的固定尺寸和两种分量收口，
    调用方不再分别依赖全局类、共享 CSS Module 或裸 button。 */

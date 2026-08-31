@@ -145,7 +145,11 @@ import { listDesignArtifactCandidates } from './design-files/designArtifacts';
 import type { PluginFolderAgentAction } from './design-files/pluginFolderActions';
 import { Icon, type IconName } from './Icon';
 import { UserActionCard, type UserActionCardTone } from './UserActionCard';
-import { RunErrorCard, RunErrorCardAction } from './chat/RunErrorCard';
+import {
+  RunErrorCard,
+  RunErrorCardAction,
+  RunErrorCardActionGroup,
+} from './chat/RunErrorCard';
 import { UpgradeCard } from './chat/UpgradeCard';
 import { SupportDialog } from './chat/SupportDialog';
 import { supportChannels } from './chat/support-channels';
@@ -3508,7 +3512,7 @@ export function ChatPane({
                           </RunErrorCardAction>
                         ) : null}
                         {retryAssistant && onRetry && runFailureUi ? (
-                          <>
+                          <RunErrorCardActionGroup>
                             {runFailureUi.primaryAction === 'authorize' ? (
                               // Sign in to AMR inline — the pill drives vela login,
                               // surfaces the activation URL/code when the browser
@@ -3709,7 +3713,7 @@ export function ChatPane({
                                 {t('promptTemplates.retry')}
                               </RunErrorCardAction>
                             ) : null}
-                          </>
+                          </RunErrorCardActionGroup>
                         ) : null}
                       </>
                     )}

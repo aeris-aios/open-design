@@ -9,7 +9,7 @@
  * 陈列页也照不出来。这两件事都是抽出来才解决的。
  */
 import { Button } from '@open-design/components';
-import type { ComponentProps, ReactElement, ReactNode } from 'react';
+import type { ComponentProps, PropsWithChildren, ReactElement, ReactNode } from 'react';
 import styles from './RunErrorCard.module.css';
 
 export interface RunErrorCardActionProps
@@ -41,6 +41,16 @@ export function RunErrorCardAction({
       data-run-error-action={variant}
     />
   );
+}
+
+/**
+ * Keep one recovery choice and its retry action together when the card wraps.
+ * The outer footer still decides whether the group fits on the first line;
+ * once it does not, both buttons move as one unit instead of leaving Retry
+ * stranded on a line by itself.
+ */
+export function RunErrorCardActionGroup({ children }: PropsWithChildren): ReactElement {
+  return <div className={styles.actionGroup}>{children}</div>;
 }
 
 export interface RunErrorCardProps {

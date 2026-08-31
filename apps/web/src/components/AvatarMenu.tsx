@@ -472,6 +472,7 @@ export function AvatarMenu({
         ref={triggerRef}
         type="button"
         className="avatar-agent-trigger"
+        data-testid="avatar-agent-trigger"
         onClick={toggleOpen}
         aria-haspopup="menu"
         aria-expanded={open}

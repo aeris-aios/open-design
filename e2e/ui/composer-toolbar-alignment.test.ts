@@ -1,14 +1,10 @@
 // Composer footer toolbar alignment.
 //
-// The composer's bottom row mixes five controls authored in five different
-// components — the + icon (.icon-btn), the working-dir pill
-// (.working-dir-pill-trigger), the agent avatar (.avatar-agent-trigger), the
-// composer mode picker (.composer-mode__trigger) and Send
-// (.composer-send). The composer mounts under `.chat-composer-fixed-layer` (a
-// body-level portal), so the `.app`-scoped "one control system" normalization
-// in chat.css never reached it and the controls drifted to 28/30/32px. Even
-// though the row centers them, the differing heights left the pills and Send
-// visibly misaligned against the left buttons.
+// The composer's bottom row mixes four controls authored across separate
+// components — Add context, design system, agent/model, and Send. The composer
+// mounts under `.chat-composer-fixed-layer` (a body-level portal), so an
+// app-scoped normalization can miss it. Even though the row centers its
+// children, differing control heights then look visibly misaligned.
 //
 // This spec is the regression boundary: the utility controls share the compact
 // 28px geometry, Send keeps its deliberate 36px emphasis, and every control
@@ -80,38 +76,30 @@ test('[P1] composer footer controls keep their size hierarchy on one baseline', 
   await expect(page.getByTestId('chat-composer')).toBeVisible();
   await expect(page.getByTestId('chat-send')).toBeVisible();
 
-  const metrics = await page.evaluate(() => {
-    const row = document.querySelector('.composer-row');
-    if (!row) return { error: 'no .composer-row' as const };
-    const selectors = [
-      '.icon-btn',
-      '.working-dir-pill-trigger',
-      '.avatar-agent-trigger',
-      '.composer-mode__trigger',
-      '.composer-send',
-    ];
-    const controls: Array<{ sel: string; height: number; center: number }> = [];
-    for (const sel of selectors) {
-      const el = row.querySelector(sel);
-      if (!el) continue;
-      const r = el.getBoundingClientRect();
-      controls.push({ sel, height: r.height, center: r.top + r.height / 2 });
-    }
-    return { controls };
-  });
-
-  if ('error' in metrics) throw new Error(metrics.error);
-  const { controls } = metrics;
-
-  // The toolbar should never collapse to a single control; if it does, the
-  // selectors below are stale and the height assertion is meaningless.
-  expect(controls.length).toBeGreaterThanOrEqual(4);
+  const toolbarControls = [
+    ['plus', page.getByTestId('chat-plus-trigger')],
+    ['design-system', page.getByTestId('composer-design-system-trigger')],
+    ['agent', page.getByTestId('avatar-agent-trigger')],
+    ['send', page.getByTestId('chat-send')],
+  ] as const;
+  const controls: Array<{ id: string; height: number; center: number }> = [];
+  for (const [id, control] of toolbarControls) {
+    await expect(control).toBeVisible();
+    controls.push(await control.evaluate((element, controlId) => {
+      const rect = element.getBoundingClientRect();
+      return {
+        id: controlId,
+        height: rect.height,
+        center: rect.top + rect.height / 2,
+      };
+    }, id));
+  }
 
   const centers = controls.map((c) => c.center);
   const spread = (xs: number[]) => Math.max(...xs) - Math.min(...xs);
 
-  const send = controls.find((control) => control.sel === '.composer-send');
-  const utilityControls = controls.filter((control) => control.sel !== '.composer-send');
+  const send = controls.find((control) => control.id === 'send');
+  const utilityControls = controls.filter((control) => control.id !== 'send');
   expect(send?.height, `control heights: ${JSON.stringify(controls)}`).toBe(36);
   for (const control of utilityControls) {
     expect(control.height, `control heights: ${JSON.stringify(controls)}`).toBe(28);

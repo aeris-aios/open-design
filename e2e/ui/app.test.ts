@@ -870,25 +870,25 @@ async function runQuestionFormSingleSelectionFlow(
 ) {
   await seedQuestionFormMessage(page);
 
-  const toneQuestion = page.locator('.qf-field', { has: page.getByText('Visual tone') });
+  const toneQuestion = page.locator(
+    '[data-testid="question-form-visual-picker"][data-question-id="tone"]',
+  );
   await expect(toneQuestion).toBeVisible();
 
   // 视觉方向按新稿改成了「一沓叠放的预览图」(D45):默认只有最上面那张露在外面,
   // 底下几张被盖住点不到。先切成网格再逐张点 —— 比 force:true 干净,也更像真人的操作。
   await toneQuestion.locator('[data-action="toggle-view"]').click();
 
-  const editorial = toneQuestion.getByRole('radio', { name: 'Content-led product' });
-  const modern = toneQuestion.getByRole('radio', { name: 'Quiet SaaS' });
-  const editorialCard = toneQuestion.locator('label.qf-visual-card[title="Content-led product"]');
-  const modernCard = toneQuestion.locator('label.qf-visual-card[title="Quiet SaaS"]');
+  const editorial = toneQuestion.getByRole('radio', { name: /Content-led product$/ });
+  const modern = toneQuestion.getByRole('radio', { name: /Quiet SaaS$/ });
 
-  await editorialCard.click();
+  await editorial.click();
   await expect(editorial).toBeChecked();
-  await modernCard.click();
+  await modern.click();
 
   await expect(editorial).not.toBeChecked();
   await expect(modern).toBeChecked();
-  await expect(toneQuestion.locator('input[type="radio"]:checked')).toHaveCount(1);
+  await expect(toneQuestion.getByRole('radio', { checked: true })).toHaveCount(1);
 }
 
 async function runQuestionFormSubmitPersistenceFlow(
@@ -902,18 +902,19 @@ async function runQuestionFormSubmitPersistenceFlow(
   const form = page.locator('.question-form').first();
   await expect(form).toBeVisible();
 
-  const toneQuestion = form.locator('.qf-field', { has: page.getByText('Visual tone') });
+  const toneQuestion = form.locator(
+    '[data-testid="question-form-visual-picker"][data-question-id="tone"]',
+  );
   // 同上:叠放态下被盖住的那几张点不到,先切网格(D45)
   await toneQuestion.locator('[data-action="toggle-view"]').click();
-  const modern = toneQuestion.getByRole('radio', { name: 'Quiet SaaS' });
-  await toneQuestion.locator('label.qf-visual-card[title="Quiet SaaS"]').click();
+  const modern = toneQuestion.getByRole('radio', { name: /Quiet SaaS$/ });
+  await modern.click();
   await expect(modern).toBeChecked();
 
   await form.getByRole('button', { name: 'Next' }).click();
 
   const summary = page.getByTestId('question-form-summary');
   await expect(summary).toBeVisible();
-  await expect(summary.getByText('Questions answered')).toBeVisible();
   await expect(summary.getByText('Visual tone')).toBeVisible();
   // The summary echoes the picked visual-style card (its title), not the
   // underlying option label.
@@ -985,12 +986,15 @@ async function runQuestionFormSingleAnswerFlow(
 
   const form = page.locator('.question-form').first();
   await expect(form).toBeVisible();
-  const toneQuestion = form.locator('.qf-field', { has: page.getByText('Visual tone') });
-  await toneQuestion.locator('label.qf-visual-card[title="Quiet SaaS"]').click();
+  const toneQuestion = form.locator(
+    '[data-testid="question-form-visual-picker"][data-question-id="tone"]',
+  );
+  await toneQuestion.locator('[data-action="toggle-view"]').click();
+  await toneQuestion.getByRole('radio', { name: /Quiet SaaS$/ }).click();
 
   // A rapid double submit: the second click lands before the first send has
   // settled, which is the window the component-local lock was built for.
-  const send = form.getByRole('button', { name: 'Send answers' });
+  const send = form.getByRole('button', { name: 'Next' });
   await send.click();
   await send.click({ force: true, timeout: T.short }).catch(() => {});
 

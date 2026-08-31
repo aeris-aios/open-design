@@ -1462,7 +1462,13 @@ function VisualDirectionStack({
   const switchLabel = view === 'fan' ? t('qf.visualViewGrid') : t('qf.visualViewFan');
 
   return (
-    <div className="qf-visual-picker" data-artifact-type={artifactType} data-view={view}>
+    <div
+      className="qf-visual-picker"
+      data-artifact-type={artifactType}
+      data-question-id={questionId}
+      data-testid="question-form-visual-picker"
+      data-view={view}
+    >
       {/* 顶部那一条只放视图切换，不放别的 —— 再挂标题或计数就成了卡里的第二个
           卡头。图标画的是【点下去会变成什么】，不是现在是什么。 */}
       <div className="qf-visual-bar">
