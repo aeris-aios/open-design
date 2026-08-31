@@ -50,11 +50,11 @@ export type QuestionType =
  * Rich card metadata for a single `direction-cards` option. The picker
  * renders a swatch row, a serif/sans type sample, a mood blurb, and a
  * "refs" line so users can scan visually instead of squinting at radio
- * labels. The agent emits this metadata inline in the form JSON so the
- * UI can render without additional fetches.
+ * labels. This remains a legacy-compatibility payload: current catalog-backed
+ * forms omit it and let the host supply versioned cards for the project kind.
  */
 export interface DirectionCard {
-  /** The radio value — what comes back in the user's answer. Match a label in `options`. */
+  /** Legacy radio value returned in the answer; matches an option when legacy options exist. */
   id: string;
   /** Short headline on the card (e.g. "Editorial — Monocle / FT magazine"). */
   label: string;
@@ -103,7 +103,7 @@ export interface FormQuestion {
   multiple?: boolean;
   /** File inputs only. Mirrors the native file input accept attribute. */
   accept?: string;
-  /** Only present when `type === 'direction-cards'`. Mapped to options by `id`. */
+  /** Legacy compatibility for `direction-cards`; current host-owned forms omit it. */
   cards?: DirectionCard[];
 }
 

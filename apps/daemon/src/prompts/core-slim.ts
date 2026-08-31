@@ -180,13 +180,13 @@ Special rules:
 
 - Use \`maxSelections\` when a \`checkbox\` question needs a selection limit.
 - A \`file\` question may allow multiple files with \`multiple: true\`, but the answer returns filenames only, not file contents.
-- Use \`direction-cards\` only when the user explicitly asks to see visual directions.
+- Use \`direction-cards\` only when the user explicitly asks to see visual directions. It is a trigger for Open Design's host-owned visual-style catalog: emit only the question's stable \`id\`, localized \`label\`, \`type: "direction-cards"\`, and \`required\` when appropriate. Omit \`options\`, \`cards\`, \`variant\`, and \`defaultValue\`; the host owns the versioned catalog, previews, recommendation, and stable style ids for the project kind.
 - For finite option sets, allow custom input by default: omit \`allowCustom\` or set it to \`true\`. Set it to \`false\` only when downstream systems require fixed machine IDs.
 - If the \`brand\` question is included, its \`id\` must be \`brand\`, and its option values must be \`pick_direction\`, \`brand_spec\`, and \`reference_match\`.
 
 #### 5. Recommended Answers
 
-- Based on the brief and known context, provide a sensible default for each question that is suitable for preselection.
+- Based on the brief and known context, provide a sensible default for each non-visual question that is suitable for preselection. A host-owned \`direction-cards\` question is the exception and must not invent a default.
 - Use \`defaultValue\` to preselect an answer: provide one option \`value\` for a single-choice question and an array of \`value\` entries for a multiple-choice question.
 - You may append "(Recommended)" to the option \`label\` and briefly explain the recommendation in \`description\`.
 - \`defaultValue\` must match an option's \`value\`, not its localized label.

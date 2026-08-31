@@ -372,6 +372,16 @@
 - 聚焦验证：Question Form / scroll-following / stick-to-bottom / Plan Pill / jump / feedback 共 7 个文件 98 条通过；Web typecheck 通过。仅有 jsdom 既有 canvas warning，按用户要求未跑全量测试。
 - 审计剩余 P1：① Question Form Next / Back / 自己填导致的卡片高度切换缺少 first-visible rect 补偿；② `>80` 条消息时虚拟行从估算高度切到实测高度，对 viewport 上方行的 transform-only 重排没有 first-visible anchor。两者需独立红规格和真浏览器几何复验，本次不伪装为已完成。
 
+### 23. `kind=other` 的 direction-cards 只显示空表单
+
+- 状态：**根因修复与 prompt / Design Harness 契约统一已完成，聚焦测试和受影响包 typecheck 均通过；尚未打包真实 Beta 复验。**
+- 现场：Beta `0.21.1-beta.8` 项目《风格选择测试》（project `6ed96025-…`，kind=`other`）中，Codex 三次输出合法的 `direction-cards + options`，均未带 legacy `cards`；表单只显示标题、问题和按钮，没有视觉卡片，提交记录均为 `(skipped)`。
+- 历史对照：旧 `release-beta` 项目 `Prototype · 4/30/2026`（kind=`prototype`）在 2026-04-30 由 Claude 输出过 5 个 options + 5 个完整 cards，用户随后成功选择 `warm-soft`。当时系统 prompt 的 Branch A 要求原样输出 `renderDirectionFormBody()`，所以完整 cards 不是 Claude 临场猜中的。
+- 协议演进：当前 `cards?:` 明确可选；2026-08-26 起 `direction-cards` 在有 `visualStyleContext` 时由 Host 内置真图目录接管，模型不再需要携带 mood / palette / font / preview 数据。本次并非 Codex 漏必填字段，而是 kind=`other` 未映射 catalog，fallback 又只接受 legacy `q.cards`，两路都落空。`variant:"fan"` 不属于协议，会被 parser 丢弃。
+- Harness 结论：该会话虽然 app-config 请求 `odNextStrategyMode=active`，但实际 `effectiveMode=off`、`decisionClass=not_applicable`、`taskType=null`；这次不是新策略 prompt 接管导致。审计同时发现 OD Next 的 `direction-picker` atom 仍要求 Agent 准备 3–5 个方向，与 Host 目录接管语义冲突；现已连同 classic、slim、Ask 和 API/BYOK 路径统一为同一职责边界。
+- 当前修复：`other` 和 `template` 与它们实际共用的 HTML prototype 生成路径一致，映射为 `prototype` visual-style context。模型只决定是否输出 `direction-cards`，Host 按项目类型决定目录、预览、推荐和稳定 ID，用户选择后通过 label + stable value 回传给模型。现场 options-only payload 与正式的无 options / 无 cards 裸触发器均已固化；修前视觉卡数为 0，修后显示 prototype 目录真图且卡片数与 preview 数一致。
+- 聚焦验证：Web 两条 direction-cards 回归、daemon 3 个 prompt 文件 110 条、contracts prompt 23 条全部通过；Web / daemon / contracts / e2e typecheck 和 `pnpm guard` 通过。按用户要求未跑本地全量测试或 Playwright。
+
 ## 已完成 / 已合入本分支
 
 ### 修复批次 `c5b047dfd9 fix(chat): address module feedback regressions`

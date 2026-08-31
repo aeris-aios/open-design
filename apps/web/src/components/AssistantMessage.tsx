@@ -3785,8 +3785,16 @@ function visualStyleContextForProjectKind(
     projectKind === "web_clone" ||
     projectKind === "wireframe" ||
     projectKind === "mobile" ||
-    projectKind === "live_artifact"
+    projectKind === "live_artifact" ||
+    projectKind === "template" ||
+    projectKind === "other"
   ) {
+    // Generic/template projects share the same HTML product surface and
+    // generation rules as prototypes. They must therefore receive the same
+    // host-owned visual catalogue when an agent emits `direction-cards`.
+    // Without this mapping, the protocol-valid options-only form renders no
+    // cards because there is neither a catalogue context nor legacy `cards`
+    // metadata in the model payload.
     return "prototype";
   }
   if (projectKind === "document") return "document";

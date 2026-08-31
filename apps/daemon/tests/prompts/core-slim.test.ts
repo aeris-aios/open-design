@@ -80,10 +80,12 @@ describe('renderSlimCoreCharter — frozen protocol markers', () => {
     expect(charter).toContain('allowCustom');
   });
 
-  it('requires a recommended default prefill on every form question', () => {
-    expect(charter).toContain('provide a sensible default for each question');
+  it('requires recommended defaults except for the host-owned visual catalog', () => {
+    expect(charter).toContain('provide a sensible default for each non-visual question');
     expect(charter).toContain('Use `defaultValue` to preselect an answer');
     expect(charter).toContain("`defaultValue` must match an option's `value`");
+    expect(charter).toContain('A host-owned `direction-cards` question is the exception');
+    expect(charter).toContain('Omit `options`, `cards`, `variant`, and `defaultValue`');
   });
 
   it('localizes user-visible form copy while preserving machine identifiers', () => {
@@ -356,6 +358,8 @@ describe('composeSystemPrompt — promptCoreVariant switch', () => {
     expect(out).toContain(
       'When the user has not explicitly requested\noptions, infer a fitting direction',
     );
+    expect(out).toContain('`direction-cards` is a Host-owned catalog trigger');
+    expect(out).toContain('Omit `options`,\n`cards`, `variant`, and `defaultValue`');
     expect(out).not.toContain(
       'The direction-picker atom asks the agent to draft',
     );

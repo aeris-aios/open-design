@@ -1303,6 +1303,93 @@ describe('AssistantMessage question forms', () => {
     expect(screen.queryByText('prototype-expressive-consumer')).toBeNull();
   });
 
+  it('serves the prototype style catalog for an options-only direction form in an other project', () => {
+    // Regression: beta conversation "风格选择测试" was created as kind=other.
+    // Codex emitted a valid direction-cards question with options but no legacy
+    // cards metadata. The host accepted the form, but rendered an empty body
+    // because `other` had no visual-style context to select a built-in catalog.
+    const form = [
+      '<question-form id="visual-direction" title="选择视觉方向">',
+      JSON.stringify({
+        lang: 'zh-CN',
+        submitLabel: '确认方向',
+        questions: [
+          {
+            id: 'visual_direction',
+            label: '你希望采用哪种视觉方向？',
+            type: 'direction-cards',
+            required: true,
+            defaultValue: 'modern-minimal',
+            options: [
+              { label: '编辑感', value: 'editorial-monocle' },
+              { label: '现代极简', value: 'modern-minimal' },
+              { label: '活泼消费', value: 'playful-consumer' },
+            ],
+          },
+        ],
+      }),
+      '</question-form>',
+    ].join('\n');
+
+    const { container } = render(
+      <AssistantMessage
+        message={baseMessage({
+          content: form,
+          events: [{ kind: 'text', text: form } as ChatMessage['events'][number]],
+        })}
+        streaming={false}
+        projectId="proj-1"
+        projectKind="other"
+      />,
+    );
+
+    const cards = container.querySelectorAll('.qf-visual-card');
+    const previews = container.querySelectorAll('img.qf-visual-preview-image');
+    expect(cards.length).toBeGreaterThan(0);
+    expect(previews).toHaveLength(cards.length);
+    expect((previews[0] as HTMLImageElement).src).toContain(
+      '/style-catalog/v1/prototype-',
+    );
+  });
+
+  it('serves host-owned direction cards when the model emits only the canonical trigger', () => {
+    const form = [
+      '<question-form id="visual-direction" title="选择视觉方向">',
+      JSON.stringify({
+        lang: 'zh-CN',
+        questions: [
+          {
+            id: 'visual_direction',
+            label: '你希望采用哪种视觉方向？',
+            type: 'direction-cards',
+            required: true,
+          },
+        ],
+      }),
+      '</question-form>',
+    ].join('\n');
+
+    const { container } = render(
+      <AssistantMessage
+        message={baseMessage({
+          content: form,
+          events: [{ kind: 'text', text: form } as ChatMessage['events'][number]],
+        })}
+        streaming={false}
+        projectId="proj-1"
+        projectKind="other"
+      />,
+    );
+
+    const cards = container.querySelectorAll('.qf-visual-card');
+    const previews = container.querySelectorAll('img.qf-visual-preview-image');
+    expect(cards.length).toBeGreaterThan(0);
+    expect(previews).toHaveLength(cards.length);
+    expect((previews[0] as HTMLImageElement).src).toContain(
+      '/style-catalog/v1/prototype-',
+    );
+  });
+
   it.each([
     {
       projectKind: 'web_clone' as const,

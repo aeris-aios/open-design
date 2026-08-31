@@ -473,9 +473,19 @@ describe('composeSystemPrompt', () => {
       expect(prompt).toContain('## Structured clarification on any turn');
       expect(prompt).toContain('`<question-form>` is assistant text for the OpenDesign UI, not a native tool call');
       expect(prompt).toContain(
+        'For a `direction-cards` question, emit only its intent fields; omit `options`, `cards`, `variant`, and `defaultValue`',
+      );
+      expect(prompt).toContain(
         'emit the complete `<question-form>...</question-form>` block directly in the assistant message before any TodoWrite, file write/edit, Bash, or other native tool call',
       );
       expect(prompt).toContain('Do not stop after an introductory sentence such as "先确认一下方向："');
+    });
+
+    it('keeps the host-owned direction-card boundary in bare Ask mode', () => {
+      const prompt = composeSystemPrompt({ sessionMode: 'chat' });
+      expect(prompt).toContain(
+        'the OpenDesign host supplies the project-kind visual catalog, previews, recommendation, and stable style ids',
+      );
     });
 
     it('pins filesystem artifact handoff for other CLI agents too', () => {

@@ -63,8 +63,11 @@ Each entry in the top-level `questions` array uses:
 - `type`: one of `radio`, `checkbox`, `select`, `text`, `textarea`,
   `number`, `range`, `date`, `time`, `datetime-local`, `color`, `url`,
   `email`, `tel`, `file`, `switch`, or `direction-cards`.
-- `options`: required for choice controls; strings are allowed, or objects with
-  localized `label` and stable `value`.
+- `options`: required for choice controls except `direction-cards`; strings are
+  allowed, or objects with localized `label` and stable `value`.
+- `direction-cards`: a Host-owned visual-style catalog trigger. Emit only the
+  question's `id`, localized `label`, `type`, and `required` when appropriate;
+  omit `options`, `cards`, `variant`, and `defaultValue`.
 - `allowCustom`: leave unset or set to `true` for finite-choice controls so
   users can type their own answer instead of accepting only generated options.
   Set `allowCustom: false` only when the downstream system needs an exact

@@ -45,6 +45,9 @@ describe('DISCOVERY_AND_PHILOSOPHY (contracts copy) — TodoWrite plan item coun
     // it is what makes Ask cheaper than Design/Plan.
     expect(prompt).not.toContain(DISCOVERY_AND_PHILOSOPHY);
     expect(prompt).not.toContain('# Identity and workflow charter (background)');
+    expect(prompt).toContain(
+      'For a `direction-cards` question, emit only its intent fields; omit `options`, `cards`, `variant`, and `defaultValue`',
+    );
   });
 
   it('uses a top-level Plan mode override that suppresses artifact discovery forms', () => {
@@ -87,6 +90,15 @@ describe('DISCOVERY_AND_PHILOSOPHY (contracts copy) — prompt routing parity', 
       'It owns the conditional `task-type` form',
     );
     expect(DISCOVERY_AND_PHILOSOPHY).not.toContain('<question-form id="task-type"');
+  });
+
+  it('keeps the host-owned direction-cards contract in API/BYOK prompts', () => {
+    const prompt = composeSystemPrompt({ metadata: { kind: 'other' } as any });
+    expect(prompt).toContain(
+      "`direction-cards` is a trigger for Open Design's host-owned visual-style catalog",
+    );
+    expect(prompt).toContain('omit `options`, `cards`, `variant`, and `defaultValue`');
+    expect(prompt).not.toContain('draft 3–5 distinct directions');
   });
 
   it('keeps historical task-type answers compatible with the discovery path', () => {
