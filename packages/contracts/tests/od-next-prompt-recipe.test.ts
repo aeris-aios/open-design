@@ -48,6 +48,48 @@ const recipe: OdNextStrategyRequestRecipeV2 = {
 };
 
 describe('OD Next V2 prompt recipe', () => {
+  it('pins the canonical Deck Protocol v1 framework into PPT requests only', () => {
+    const pptRecipe: OdNextStrategyRequestRecipeV2 = {
+      ...recipe,
+      taskType: 'ppt',
+      taskSkill: '# Presentation\n\nProduce the declared editable HTML deck.',
+    };
+
+    const prompt = composeOdNextStrategyRequestPromptV2(pptRecipe);
+    const bundledTaskSkill = composeOdNextStrategyBundleHeadV2(pptRecipe)
+      .sessionSkills.taskTypeSkill.body;
+
+    for (const text of [prompt, bundledTaskSkill]) {
+      expect(text).toContain('OD Deck Protocol v1');
+      expect(text).toContain('data-od-deck-protocol="1"');
+      expect(text).toContain("type: 'od:deck-ready'");
+      expect(text).toContain("type: 'od:slide-state'");
+    }
+    expect(prompt.match(/^## Task Skill —/gm)).toHaveLength(1);
+
+    const prototypePrompt = composeOdNextStrategyRequestPromptV2(recipe);
+    expect(prototypePrompt).not.toContain('data-od-deck-protocol="1"');
+    expect(prototypePrompt).not.toContain("type: 'od:deck-ready'");
+
+    const prototypeDeckPrompt = composeOdNextStrategyRequestPromptV2(recipe, {
+      deckIntent: true,
+    });
+    expect(prototypeDeckPrompt).toContain('name="deck-framework"');
+    expect(prototypeDeckPrompt).toContain('data-od-deck-protocol="1"');
+    expect(prototypeDeckPrompt).toContain("type: 'od:deck-ready'");
+
+    const stableDeckContext = composeOdNextStrategyStableRequestContextV2({
+      deckIntent: true,
+    });
+    expect(stableDeckContext).toContain('name="deck-framework"');
+    expect(stableDeckContext).toContain('data-od-deck-protocol="1"');
+
+    const pptPromptWithMatchingSignal = composeOdNextStrategyRequestPromptV2(pptRecipe, {
+      deckIntent: true,
+    });
+    expect(pptPromptWithMatchingSignal.match(/data-od-deck-protocol="1"/g)).toHaveLength(1);
+  });
+
   it('states the deliverable rules that only bite once a plan declares more than one', () => {
     // The canonical Plan Contract example carries a single deliverable whose id
     // equals `canonicalDeliverable.id`, so the membership rule reads as a

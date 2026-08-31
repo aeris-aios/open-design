@@ -10087,11 +10087,14 @@ export async function startServer({
     const odNextLayoutPrimitivesCss = odNextStrategyRecipe?.taskType === 'prototype'
       ? selectOdNextLayoutPrimitivesCss(odNextStrategyRecipe.taskResources)
       : null;
+    const odNextDeckIntent = odNextStrategyRecipe?.taskType !== 'ppt'
+      && freeformDeckSignal === true;
     const odNextStableRequestContext = odNextStrategyRecipe
       ? {
           agentId,
           streamFormat,
           executionProfile: executionProfileFromStreamFormat(streamFormat),
+          deckIntent: odNextDeckIntent,
           metadata,
           template,
           exampleReference: odNextExampleReference,
@@ -10131,6 +10134,7 @@ export async function startServer({
           exampleReference: odNextExampleReference,
           deviceFrame: odNextDeviceFrame,
           layoutPrimitivesCss: odNextLayoutPrimitivesCss,
+          deckIntent: odNextDeckIntent,
           designSystemBody,
           designSystemTitle,
           craftBody,

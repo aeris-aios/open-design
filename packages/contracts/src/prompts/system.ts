@@ -261,6 +261,10 @@ export interface ComposeInput {
   // UI locale selected by the client. User-visible generated form copy
   // must follow this locale even when the user's initial prompt is brief.
   locale?: string | undefined;
+  // Host-detected, user-authored deck intent. OD Next uses this only when the
+  // bound task type is not already PPT, so cross-surface deck requests receive
+  // the canonical runtime contract without changing their Task Profile.
+  freeformDeckSignal?: boolean | undefined;
   // Free-form instructions the user set at the global (user-level)
   // settings panel. Injected after personal memory.
   userInstructions?: string | undefined;
@@ -296,6 +300,7 @@ export function composeSystemPrompt({
   streamFormat,
   sessionMode,
   locale,
+  freeformDeckSignal,
   userInstructions,
   projectInstructions,
 }: ComposeInput): string {
@@ -304,6 +309,7 @@ export function composeSystemPrompt({
       agentId,
       sessionMode,
       locale,
+      deckIntent: odNextStrategyRecipe.taskType !== 'ppt' && freeformDeckSignal === true,
       metadata,
       template,
       designSystemBody,

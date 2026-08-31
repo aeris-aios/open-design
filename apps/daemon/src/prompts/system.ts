@@ -823,10 +823,10 @@ export interface ComposeInput {
   // assistant-text <artifact> blocks.
   executionProfile?: ExecutionProfile | undefined;
   // Whether the outgoing request text reads as a slide-deck brief (see
-  // `detectDeckIntentSignal`). Only consulted for the freeform maybe-deck
-  // branch: `false` skips the ~20K conditional framework injection,
-  // `true`/`undefined` keep it. Deck-kind projects ignore this — their
-  // framework is unconditional.
+  // `detectDeckIntentSignal`). Classic uses it for the freeform maybe-deck
+  // branch. OD Next additionally uses an explicit `true` to expose the deck
+  // contract when a non-PPT project receives a cross-surface deck request.
+  // Deck-kind projects ignore this — their framework is unconditional.
   freeformDeckSignal?: boolean | undefined;
   // Which always-on doctrine core to compose. `classic` (default) keeps the
   // legacy DISCOVERY_AND_PHILOSOPHY + designer-charter stack plus its tail
@@ -893,6 +893,7 @@ export function composeSystemPrompt({
       agentId,
       sessionMode,
       locale,
+      deckIntent: odNextStrategyRecipe.taskType !== 'ppt' && freeformDeckSignal === true,
       metadata,
       template,
       designSystemBody,

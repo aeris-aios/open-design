@@ -11,6 +11,7 @@ import {
   type StrategyTaskTypeV2,
 } from '../plugins/strategy-v2.js';
 import type { ChatSessionMode } from '../api/chat.js';
+import { DECK_FRAMEWORK_DIRECTIVE } from './deck-framework.js';
 import type { OdNextDeviceFrameContextV2 } from './od-next-device-frame.js';
 import { serializeOdNextRequestTurnV1 } from './od-next-prompt-bundle.js';
 import type {
@@ -68,6 +69,13 @@ export interface OdNextStrategyStableRequestContextV2 {
   agentId?: string | null | undefined;
   sessionMode?: ChatSessionMode | undefined;
   locale?: string | undefined;
+  /**
+   * The host detected an explicit deck request in the user-authored
+   * conversation even though the project is bound to another Task Profile.
+   * This does not reclassify the task; it only exposes the canonical deck
+   * runtime contract when the Build chooses to produce a deck.
+   */
+  deckIntent?: boolean | undefined;
   metadata?: object | undefined;
   template?: {
     id?: string | undefined;
@@ -165,6 +173,21 @@ function requireText(value: string, field: string): string {
   const trimmed = value.trim();
   if (!trimmed) throw new TypeError(`${field} must not be empty.`);
   return trimmed;
+}
+
+/**
+ * Keep OD Next on its single task-skill path while pinning the same canonical
+ * deck runtime used by the classic prompt. The bundled PPT profile owns deck
+ * content guidance; this host-owned suffix owns only the viewer protocol and
+ * scaffold that generated decks must not re-author.
+ */
+function composeOdNextTaskSkillV2(
+  taskType: OdNextStrategyRequestRecipeV2['taskType'],
+  taskSkill: string,
+): string {
+  return taskType === 'ppt'
+    ? `${taskSkill}\n\n${DECK_FRAMEWORK_DIRECTIVE}`
+    : taskSkill;
 }
 
 export const OD_NEXT_PROMPT_STAGE_CONTRACT_V2 = [
@@ -490,6 +513,14 @@ export function composeOdNextStrategyStableRequestContextV2(
   if (Object.keys(runtimeSelection).length > 0) {
     factualStructured('runtime-selection', runtimeSelection);
   }
+  if (context.deckIntent) {
+    // This is static, host-owned protocol text rather than plugin or user
+    // input. Its verification steps happen inside Build before handoff, so it
+    // deliberately bypasses the guard for untrusted stable instructions.
+    blocks.push(
+      `<od-next-context kind="instruction" name="deck-framework">\n${escaped(DECK_FRAMEWORK_DIRECTIVE)}\n</od-next-context>`,
+    );
+  }
   if (context.metadata) {
     factualStructured('project-metadata', planningMetadata(context.metadata));
   }
@@ -751,16 +782,20 @@ export function composeOdNextStrategyRequestPromptV2(
     'generalOrchestration',
   );
   assertOdNextPlanningBuildOnlyV2(taskSkill, 'taskSkill');
+  const composedTaskSkill = composeOdNextTaskSkillV2(input.taskType, taskSkill);
+  const stableContext = input.taskType === 'ppt' && context.deckIntent
+    ? { ...context, deckIntent: false }
+    : context;
   const stageBlocks = renderOdNextActiveStageBlocksV2(assertOdNextActiveStagesV2(input.activeStages));
   const sections = [
     EXECUTION_AND_SECURITY_SECTION,
     executionSection,
     `## Versioned recipe identity\n\n- recipe: \`${input.recipe}\`\n- strategy: \`${input.strategyId}@${requireText(input.strategyVersion, 'strategyVersion')}\`\n- applied snapshot: \`${snapshotId}\`\n- strategy package: \`${input.packageHash}\`\n- selected Task Skill digest: \`${input.taskProfileDigest}\`\n- stable prompt identity: \`${identity}\``,
     DISCOVERY_AND_PLANNING_SECTION,
-    composeOdNextStrategyStableRequestContextV2(context),
+    composeOdNextStrategyStableRequestContextV2(stableContext),
     `## OD Next core strategy\n\n${coreStrategy}`,
     `## OD Next general orchestration\n\n${generalOrchestration}`,
-    `## Task Skill — ${input.taskType}\n\nExactly this one Task Skill is active for the logical task.\n\n${taskSkill}`,
+    `## Task Skill — ${input.taskType}\n\nExactly this one Task Skill is active for the logical task.\n\n${composedTaskSkill}`,
     ...stageBlocks,
     renderMachineOutputSection(input, context),
   ].filter((section) => section.length > 0);
@@ -797,7 +832,7 @@ function verifyOdNextRecipeV2(input: OdNextStrategyRequestRecipeV2): {
   return {
     coreStrategy,
     generalOrchestration,
-    taskSkill,
+    taskSkill: composeOdNextTaskSkillV2(input.taskType, taskSkill),
     stages: assertOdNextActiveStagesV2(input.activeStages),
     snapshotId: requireText(input.snapshotId, 'snapshotId'),
     strategyVersion: requireText(input.strategyVersion, 'strategyVersion'),

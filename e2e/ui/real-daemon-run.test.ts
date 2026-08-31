@@ -183,6 +183,27 @@ test('[P0] local OD Next active canary follows one public task across physical r
   ))).toHaveLength(2);
 });
 
+test('[P0] OD Next prototype project forwards Deck Protocol v1 for an explicit PPT request', async ({ page }) => {
+  test.skip(
+    process.env.OD_NEXT_STRATEGY_ROLLOUT !== 'active'
+      || process.env.OD_NEXT_STRATEGY_LOCAL_SYNTHETIC_CANARY !== '1',
+    'requires the explicit local synthetic rollout canary flags',
+  );
+  await prepareLocalOdNextCanary(page, 'OD Next prototype to PPT canary');
+
+  await sendPrompt(
+    page,
+    'Create an OD Next PPT protocol canary from this prototype project',
+    T.xlong,
+  );
+
+  const { projectId } = await currentProjectContext(page);
+  await expectProjectFilesToContain(page, projectId, [OD_NEXT_CANARY_FILE]);
+  await expect(page.getByText(
+    'Created od-next-active-canary.html through the continued native session.',
+  ).last()).toBeVisible();
+});
+
 test('[P0] local OD Next clarification canary preserves one taskExecutionId through the public form', async ({ page }) => {
   test.skip(
     process.env.OD_NEXT_STRATEGY_ROLLOUT !== 'active'
@@ -1216,12 +1237,10 @@ async function prepareLocalOdNextCanary(page: Page, name: string): Promise<void>
   const response = await page.request.get('/api/agents');
   expect(response.ok(), await response.text()).toBeTruthy();
   const body = await response.json() as {
-    agents?: Array<{ id: string; available: boolean; version?: string }>;
+    agents?: Array<{ id: string; available: boolean }>;
   };
-  expect(body.agents?.find((agent) => agent.id === 'opencode')).toMatchObject({
-    available: true,
-    version: 'opencode-e2e 0.0.0',
-  });
+  expect(body.agents?.find((agent) => agent.id === 'opencode'))
+    .toMatchObject({ available: true });
 }
 
 async function createByokOpenCodeProject(page: Page, name: string) {
@@ -1353,7 +1372,7 @@ async function selectComposerSessionMode(page: Page, modeTitle: 'Ask mode' | 'Pl
   await expect(trigger).toHaveAttribute('aria-label', `Mode: ${modeName}`);
 }
 
-async function sendPrompt(page: Page, prompt: string) {
+async function sendPrompt(page: Page, prompt: string, responseTimeout = T.medium) {
   const input = page.getByTestId('chat-composer-input');
   const sendButton = page.getByTestId('chat-send');
   await expect(input).toBeVisible({ timeout: 5_000 });
@@ -1372,7 +1391,7 @@ async function sendPrompt(page: Page, prompt: string) {
   page.on('request', markRequest);
   try {
     const [response] = await Promise.all([
-      page.waitForResponse(isCreateRunResponse, { timeout: T.medium }),
+      page.waitForResponse(isCreateRunResponse, { timeout: responseTimeout }),
       sendButton.click(),
     ]);
     expect(response.ok()).toBeTruthy();

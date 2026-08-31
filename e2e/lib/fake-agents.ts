@@ -247,6 +247,28 @@ async function emitRun(promptText) {
     emitOdNextClarificationRequest(promptText);
     return;
   }
+  if (promptText.includes('Create an OD Next PPT protocol canary from this prototype project')) {
+    const requiredDeckProtocolMarkers = [
+      'OD Deck Protocol v1',
+      'data-od-deck-protocol="1"',
+      "type: 'od:deck-ready'",
+      "type: 'od:slide-state'",
+    ];
+    const missingDeckProtocolMarkers = requiredDeckProtocolMarkers.filter(
+      (marker) => !promptText.includes(marker),
+    );
+    if (missingDeckProtocolMarkers.length > 0) {
+      process.stderr.write(
+        'OD Next prototype-to-PPT prompt is missing Deck Protocol v1 markers: '
+          + missingDeckProtocolMarkers.join(', ')
+          + '\\n',
+      );
+      process.exitCode = 1;
+      return;
+    }
+    emitOdNextPlanningRun(promptText);
+    return;
+  }
   if (promptText.includes('Create an OD Next blocked canary')) {
     emitOdNextBlockedRun();
     return;
@@ -368,6 +390,34 @@ function odNextPromptIdentity(promptText) {
       version: strategy[1],
       snapshotId: promptIdentity(promptText, 'applied snapshot'),
       packageHash: promptIdentity(promptText, 'strategy package'),
+      taskProfileVersion: '2.0.0',
+    };
+    writeFileSync(odNextIdentityPath, JSON.stringify(identity), 'utf8');
+    return identity;
+  }
+  const identityStart = promptText.indexOf('<recipe_identity ');
+  const identityEnd = identityStart < 0 ? -1 : promptText.indexOf('/>', identityStart);
+  if (identityStart >= 0 && identityEnd >= 0) {
+    const identityMarker = promptText.slice(identityStart, identityEnd);
+    const attribute = (name) => {
+      const prefix = name + '="';
+      const start = identityMarker.indexOf(prefix);
+      if (start < 0) throw new Error('OD Next fake could not read recipe_identity.' + name);
+      const valueStart = start + prefix.length;
+      const end = identityMarker.indexOf('"', valueStart);
+      if (end < 0) throw new Error('OD Next fake could not finish recipe_identity.' + name);
+      return identityMarker.slice(valueStart, end);
+    };
+    const packageHashPrefix = '"packageHash": "';
+    const packageHashStart = promptText.indexOf(packageHashPrefix);
+    if (packageHashStart < 0) throw new Error('OD Next fake could not read packageHash');
+    const packageHashValueStart = packageHashStart + packageHashPrefix.length;
+    const packageHashEnd = promptText.indexOf('"', packageHashValueStart);
+    const identity = {
+      version: attribute('strategy_version'),
+      snapshotId: attribute('applied_snapshot'),
+      packageHash: promptText.slice(packageHashValueStart, packageHashEnd),
+      taskProfileVersion: attribute('task_profile_version'),
     };
     writeFileSync(odNextIdentityPath, JSON.stringify(identity), 'utf8');
     return identity;
@@ -384,7 +434,7 @@ function emitOdNextPlanningRun(promptText, inputStage = 'request') {
       packageHash: identity.packageHash, snapshotId: identity.snapshotId,
     },
     taskProfile: {
-      schemaVersion: '2', taskType: 'prototype', taskProfileVersion: '2.0.0',
+      schemaVersion: '2', taskType: 'prototype', taskProfileVersion: identity.taskProfileVersion,
       goal: 'Create an OD Next active canary artifact', contextAndAudience: 'Local rollout operators',
       inputsAndReferences: ['user-request'], constraints: [],
       canonicalDeliverable: { id: 'canary', kind: 'prototype', format: 'html' },
