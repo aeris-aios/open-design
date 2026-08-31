@@ -1073,11 +1073,11 @@ async function clickCommentTargetInPreview(page: Page, selector: string) {
   });
   const target = frame.locator(selector);
   await expect(target).toBeVisible();
-  // Wait for the bridge's target broadcast to reach the Host as the final
-  // cross-frame readiness witness. Auto-fit zoom can still keep the target
-  // moving, hence the forced pointer actions after that witness.
-  await target.hover({ force: true });
-  await expect(page.getByTestId('comment-target-overlay').first()).toBeVisible();
+  // The bridge marker above is the readiness witness. Do not use the hover
+  // overlay as another gate: it is a consequence of a mouseover event, and a
+  // forced Playwright hover can legitimately keep the pointer on the same
+  // element without dispatching a new mouseover. Auto-fit zoom can still keep
+  // the target moving, hence the forced click after the bridge witness.
   await target.click({ force: true });
 }
 
