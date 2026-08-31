@@ -74,6 +74,10 @@ export interface FormOption {
   label: string;
   value: string;
   description?: string;
+  /** Host-only context returned to the agent for a catalog-backed visual choice. */
+  foundationDirectionId?: string;
+  /** Host-only refinement text returned with the selected visual choice. */
+  agentGuidance?: string;
 }
 
 export interface FormQuestion {
@@ -860,12 +864,22 @@ export function formatFormAnswers(
 }
 
 function formOptionDisplayForValue(
-  question: Pick<FormQuestion, 'options'>,
+  question: Pick<FormQuestion, 'options' | 'type'>,
   value: string,
 ): string {
   const match = question.options?.find((option) => option.value === value || option.label === value);
   if (!match) return value;
   if (match.value === match.label) return match.label;
+  if (
+    question.type === 'direction-cards' &&
+    match.foundationDirectionId &&
+    match.agentGuidance
+  ) {
+    return (
+      `${match.label} [value: ${match.value}; ` +
+      `foundation: ${match.foundationDirectionId}; guidance: ${match.agentGuidance}]`
+    );
+  }
   return `${match.label} [value: ${match.value}]`;
 }
 

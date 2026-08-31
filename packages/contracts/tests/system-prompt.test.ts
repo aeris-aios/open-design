@@ -98,6 +98,9 @@ describe('DISCOVERY_AND_PHILOSOPHY (contracts copy) — prompt routing parity', 
       "`direction-cards` is a trigger for Open Design's host-owned visual-style catalog",
     );
     expect(prompt).toContain('omit `options`, `cards`, `variant`, and `defaultValue`');
+    expect(prompt).toContain(
+      'the Host value is catalogue identity and must not be passed to `od tools directions`',
+    );
     expect(prompt).not.toContain('draft 3–5 distinct directions');
   });
 

@@ -1353,6 +1353,7 @@
   display: flex;
   align-items: center;
   justify-content: flex-end;
+  margin-inline: 11px;
 }
 /* 稿子 `.vswitch { display:grid; place-items:center; width:24px; height:24px;
    border-radius: var(--radius-sm); color: var(--text-soft) }`。
@@ -1389,6 +1390,10 @@
 /* 叠放态下左右箭头要浮在这一沓上，所以给它们一个共同的定位祖先。 */
 .qf-visual-stage {
   position: relative;
+  /* The reference `.opts.mod-visual` owns an 11px side gutter. The React
+     picker keeps its footer in a separate row, so apply that gutter to the
+     card stage instead of the whole picker (which would double-pad footer). */
+  margin-inline: 11px;
 }
 /* ---- 铺开：按图【本身的画幅】排，不切图 —— 铺开就是为了挨个比构图。 ---- */
 .qf-visual-picker[data-view='grid'] .qf-visual-stack {

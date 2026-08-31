@@ -10,6 +10,29 @@ export type VisualStyleVariant =
   | 'brutalist'
   | 'human';
 
+export type VisualStyleFoundationDirectionId =
+  | 'editorial-monocle'
+  | 'modern-minimal'
+  | 'human-approachable'
+  | 'tech-utility'
+  | 'brutalist-experimental';
+
+/**
+ * The image catalogue offers finer-grained visual bets than the five
+ * CSS-ready direction foundations available to agents. Keep the relationship
+ * explicit so a submitted card can carry both its stable Host id and the
+ * foundation id that `od tools directions --id …` can resolve.
+ */
+export function visualStyleFoundationDirectionId(
+  variant: VisualStyleVariant,
+): VisualStyleFoundationDirectionId {
+  if (variant === 'editorial') return 'editorial-monocle';
+  if (variant === 'minimal' || variant === 'luxury') return 'modern-minimal';
+  if (variant === 'utility') return 'tech-utility';
+  if (variant === 'brutalist') return 'brutalist-experimental';
+  return 'human-approachable';
+}
+
 export interface VisualStylePreviewAsset {
   /** Full-size source kept as the stable catalogue identity and export fallback. */
   src: string;

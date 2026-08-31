@@ -9,8 +9,8 @@
  * 共 96 张,住在 R2),今天只挂在 discovery 简报的 `tone` 那道题上。
  * 同一件事(选视觉方向)不该有真图和占位块两副样子。
  *
- * 换掉模型给的选项**不会让模型和用户说两件事**:答案是按 `formatFormAnswers`
- * 拼成文本行回去的,不是机器 id 契约;`tone` 那条路今天就是这么替换的。
+ * 换掉模型给的选项后，答案会把 Host stable id、可由 agent 拉取的 foundation
+ * id，以及这张卡的视觉 guidance 一起回传，避免 agent 拿 Host id 去查旧方向库。
  */
 
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
@@ -85,7 +85,7 @@ describe('direction-cards 由内置目录接管', () => {
     expect(container.querySelectorAll('.qf-visual-card[aria-pressed="true"]').length).toBeLessThanOrEqual(1);
   });
 
-  it('提交给 agent 的文本使用目录标题并保留稳定 value', () => {
+  it('提交给 agent 的文本同时返回 stable value、foundation 与视觉 guidance', () => {
     const onSubmit = vi.fn();
     const { container } = render(
       <QuestionFormView
@@ -100,9 +100,9 @@ describe('direction-cards 由内置目录接管', () => {
     fireEvent.click(container.querySelector(`[title="${selected.title}"]`)!);
     fireEvent.click(screen.getByRole('button', { name: 'Next' }));
 
-    expect(onSubmit.mock.calls[0]?.[0]).toContain(
-      `${selected.title} [value: ${selected.value}]`,
-    );
+    expect(onSubmit.mock.calls[0]?.[0]).toContain(`${selected.title} [value: ${selected.value};`);
+    expect(onSubmit.mock.calls[0]?.[0]).toContain('foundation: editorial-monocle;');
+    expect(onSubmit.mock.calls[0]?.[0]).toContain(`guidance: ${selected.description}]`);
     expect(onSubmit.mock.calls[0]?.[1]).toEqual({ direction: [selected.value] });
   });
 

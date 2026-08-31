@@ -491,6 +491,7 @@ describe('slim core — direction library becomes a pull layer', () => {
     expect(slim).toContain('tools directions --id <id>');
     expect(slim).toContain('do not probe CLI help or alternate paths first');
     expect(slim).toContain('retry only after materially changing the fix or input');
+    expect(slim).toContain('resolve the `foundation` id with this command, never the Host `value`');
     expect(slim).toContain('- `editorial-monocle` — Editorial — Monocle / FT magazine');
     // No inline palette data under slim — that's the pull payload.
     expect(slim).not.toContain('**Palette (drop into `:root`):**');
@@ -498,6 +499,7 @@ describe('slim core — direction library becomes a pull layer', () => {
     expect(classic).toContain('## Direction library — infer and bind by default');
     expect(classic).toContain('Infer the best match from the brief and known context');
     expect(classic).toContain('If the user explicitly requested direction comparison');
+    expect(classic).toContain('the Host value is catalogue identity and must not be passed to `od tools directions`');
     expect(classic).toContain('**Palette (drop into `:root`):**');
     expect(classic).not.toContain('## Direction library — index');
     // An active design system suppresses both variants.

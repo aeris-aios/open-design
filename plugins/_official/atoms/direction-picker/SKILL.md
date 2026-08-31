@@ -20,6 +20,12 @@ agent to draft cards. Emit only the question's stable `id`, localized `label`,
 `cards`, `variant`, and `defaultValue`: the Host selects the catalog, preview
 images, recommendation, and stable style ids from the project kind.
 
+The submitted answer contains three parts: the stable Host catalogue `value`,
+a resolvable direction-library `foundation`, and the selected card's visual
+`guidance`. Use the foundation for deterministic palette/font tokens and apply
+the guidance as its refinement. Never pass the Host value to
+`od tools directions`.
+
 The presence of this atom or the `plan` stage does not trigger a picker. Do not
 emit direction cards proactively. When the user has not explicitly requested
 options, infer a fitting direction from the brief, active design system, and

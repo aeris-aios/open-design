@@ -19,6 +19,7 @@ import type { DirectionCard, FormOption, QuestionForm } from '../artifacts/quest
 import { formatFormAnswers, formOptionValueForLabel } from '../artifacts/question-form';
 import {
   visualStyleCardsForContext,
+  visualStyleFoundationDirectionId,
   type VisualStyleCard,
   type VisualStyleContext,
   type VisualStyleVariant,
@@ -1925,6 +1926,8 @@ function formWithVisualStyleOptions(
         label: card.title,
         value: card.value,
         description: card.description,
+        foundationDirectionId: visualStyleFoundationDirectionId(card.variant),
+        agentGuidance: card.description,
       })),
     };
   });

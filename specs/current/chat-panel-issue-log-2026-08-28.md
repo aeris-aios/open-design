@@ -374,13 +374,15 @@
 
 ### 23. `kind=other` 的 direction-cards 只显示空表单
 
-- 状态：**根因修复与 prompt / Design Harness 契约统一已完成，聚焦测试和受影响包 typecheck 均通过；尚未打包真实 Beta 复验。**
+- 状态：**根因修复、prompt / Design Harness 契约统一和本地真实 AMR 浏览器复验均已完成；打包 Beta 复验仍跟随下一包进行。**
 - 现场：Beta `0.21.1-beta.8` 项目《风格选择测试》（project `6ed96025-…`，kind=`other`）中，Codex 三次输出合法的 `direction-cards + options`，均未带 legacy `cards`；表单只显示标题、问题和按钮，没有视觉卡片，提交记录均为 `(skipped)`。
 - 历史对照：旧 `release-beta` 项目 `Prototype · 4/30/2026`（kind=`prototype`）在 2026-04-30 由 Claude 输出过 5 个 options + 5 个完整 cards，用户随后成功选择 `warm-soft`。当时系统 prompt 的 Branch A 要求原样输出 `renderDirectionFormBody()`，所以完整 cards 不是 Claude 临场猜中的。
 - 协议演进：当前 `cards?:` 明确可选；2026-08-26 起 `direction-cards` 在有 `visualStyleContext` 时由 Host 内置真图目录接管，模型不再需要携带 mood / palette / font / preview 数据。本次并非 Codex 漏必填字段，而是 kind=`other` 未映射 catalog，fallback 又只接受 legacy `q.cards`，两路都落空。`variant:"fan"` 不属于协议，会被 parser 丢弃。
 - Harness 结论：该会话虽然 app-config 请求 `odNextStrategyMode=active`，但实际 `effectiveMode=off`、`decisionClass=not_applicable`、`taskType=null`；这次不是新策略 prompt 接管导致。审计同时发现 OD Next 的 `direction-picker` atom 仍要求 Agent 准备 3–5 个方向，与 Host 目录接管语义冲突；现已连同 classic、slim、Ask 和 API/BYOK 路径统一为同一职责边界。
-- 当前修复：`other` 和 `template` 与它们实际共用的 HTML prototype 生成路径一致，映射为 `prototype` visual-style context。模型只决定是否输出 `direction-cards`，Host 按项目类型决定目录、预览、推荐和稳定 ID，用户选择后通过 label + stable value 回传给模型。现场 options-only payload 与正式的无 options / 无 cards 裸触发器均已固化；修前视觉卡数为 0，修后显示 prototype 目录真图且卡片数与 preview 数一致。
-- 聚焦验证：Web 两条 direction-cards 回归、daemon 3 个 prompt 文件 110 条、contracts prompt 23 条全部通过；Web / daemon / contracts / e2e typecheck 和 `pnpm guard` 通过。按用户要求未跑本地全量测试或 Playwright。
+- 当前修复：`other` 和 `template` 与它们实际共用的 HTML prototype 生成路径一致，映射为 `prototype` visual-style context。模型只决定是否输出 `direction-cards`，Host 按项目类型决定目录、预览、推荐和稳定 ID。提交答案同时回传 Host `value`、Agent 可用 `od tools directions` 解析的 `foundation` 和该卡的视觉 `guidance`，避免把 `prototype-quiet-saas` 之类的 Host ID 错当成旧方向库 ID。现场 options-only payload 与正式的无 options / 无 cards 裸触发器均已固化；修前视觉卡数为 0，修后显示 prototype 目录真图且卡片数与 preview 数一致。
+- 设计稿对齐补漏：React 版已具备设计稿的 8px 卡片内间距，但漏了 `.opts.mod-visual` 的 11px 左右外边距；现已给视觉切换栏和卡片 stage 补齐 11px gutter，footer 保持自身 11px padding，避免重复加宽。
+- 真实浏览器复验：仅启动 daemon + web（desktop/Electron 保持 `idle`），Chrome 中以 AMR test 对 `kind=other` 项目发送无 `options/cards` 的最小 `direction-cards`。Host 成功展示 prototype 真图目录；选择 Quiet SaaS 后，持久化消息精确包含 `value: prototype-quiet-saas`、`foundation: modern-minimal` 与 guidance；后续 Agent 无工具调用，只确认三项。硬刷新后已确认答复和完成消息仍可恢复。证据截图：`.tmp/e2e-evidence/direction-foundation-reload.png`。
+- 聚焦验证：Web direction-cards / 视觉 gutter 共 7 条、daemon core-slim 46 条、contracts prompt 23 条全部通过；Web / daemon / contracts typecheck 通过。按用户要求未在本机跑全量测试；远端 P0/P1 另行跟踪。
 
 ## 已完成 / 已合入本分支
 
