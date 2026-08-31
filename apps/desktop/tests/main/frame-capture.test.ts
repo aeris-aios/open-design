@@ -19,6 +19,7 @@ vi.mock('../../src/main/pdf-export.js', () => ({
 }));
 
 import {
+  FRAME_CAPTURE_TIMEOUT_MS,
   frameFilePath,
   renderDeterministicFrames,
 } from '../../src/main/frame-capture.js';
@@ -27,6 +28,7 @@ describe('deterministic Electron frame capture', () => {
   const scratch: string[] = [];
 
   afterEach(async () => {
+    vi.useRealTimers();
     vi.clearAllMocks();
     await Promise.all(scratch.splice(0).map((dir) => rm(dir, { force: true, recursive: true })));
   });
@@ -139,5 +141,86 @@ describe('deterministic Electron frame capture', () => {
     });
     expect(attach).not.toHaveBeenCalled();
     expect(window.destroy).toHaveBeenCalledOnce();
+  });
+
+  test('stops capturing and destroys the render window when the desktop deadline expires', async () => {
+    vi.useFakeTimers();
+    const outputDir = await mkdtemp(join(tmpdir(), 'od-frame-capture-timeout-'));
+    scratch.push(outputDir);
+    let releaseStalledSeek: (() => void) | undefined;
+    const stalledSeek = new Promise<void>((resolve) => {
+      releaseStalledSeek = resolve;
+    });
+    let markSecondSeekStarted: (() => void) | undefined;
+    const secondSeekStarted = new Promise<void>((resolve) => {
+      markSecondSeekStarted = resolve;
+    });
+    let seekCount = 0;
+    const debuggerApi = {
+      attach: vi.fn(),
+      detach: vi.fn(),
+      sendCommand: vi.fn(async (command: string) => {
+        if (command === 'Page.captureScreenshot') {
+          return { data: Buffer.from('png-frame').toString('base64') };
+        }
+        return {};
+      }),
+    };
+    const window = {
+      destroy: vi.fn(),
+      isDestroyed: vi.fn(() => false),
+      setContentSize: vi.fn(),
+      setOpacity: vi.fn(),
+      showInactive: vi.fn(),
+      webContents: {
+        debugger: debuggerApi,
+        executeJavaScript: vi.fn(async (expression: string) => {
+          if (expression.includes('bridge.ready')) {
+            return { duration: 1, fps: 30, hasAudio: false };
+          }
+          if (expression.includes('__odFrameRenderer.seek')) {
+            seekCount += 1;
+            if (seekCount === 2) {
+              markSecondSeekStarted?.();
+              await stalledSeek;
+            }
+          }
+          return undefined;
+        }),
+        on: vi.fn(),
+        setWindowOpenHandler: vi.fn(),
+      },
+    };
+    mocks.browserWindow.mockImplementation(function BrowserWindowMock() {
+      return window;
+    });
+
+    const renderPromise = renderDeterministicFrames({
+      height: 180,
+      html: '<main></main>',
+      outputDir,
+      width: 320,
+    });
+    await secondSeekStarted;
+    expect(debuggerApi.sendCommand).toHaveBeenCalledWith(
+      'Page.captureScreenshot',
+      expect.any(Object),
+    );
+
+    await vi.advanceTimersByTimeAsync(FRAME_CAPTURE_TIMEOUT_MS);
+    await expect(renderPromise).resolves.toMatchObject({
+      errorCode: 'RENDER_TIMEOUT',
+      ok: false,
+    });
+    expect(debuggerApi.detach).toHaveBeenCalledOnce();
+    expect(window.destroy).toHaveBeenCalledOnce();
+
+    releaseStalledSeek?.();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(
+      debuggerApi.sendCommand.mock.calls.filter(([command]) => command === 'Page.captureScreenshot'),
+    ).toHaveLength(1);
+    await expect(readFile(frameFilePath(outputDir, 1))).rejects.toThrow();
   });
 });

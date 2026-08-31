@@ -342,7 +342,8 @@ export type DesktopRenderFramesErrorCode =
   | "AUDIO_UNSUPPORTED"
   | "FRAME_RENDERER_NOT_READY"
   | "INVALID_FRAME_METADATA"
-  | "RENDER_FAILED";
+  | "RENDER_FAILED"
+  | "RENDER_TIMEOUT";
 
 export type DesktopRenderFramesResult = {
   duration?: number;

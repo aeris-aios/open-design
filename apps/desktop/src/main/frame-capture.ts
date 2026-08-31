@@ -17,6 +17,34 @@ import { waitForPrintableContent } from "./pdf-export.js";
 
 const DEFAULT_FRAME_RATE = 30;
 const MAX_FRAME_COUNT = 1_000_000;
+export const FRAME_CAPTURE_TIMEOUT_MS = 5 * 60 * 1_000;
+
+class FrameCaptureTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`Electron frame capture timed out after ${Math.round(timeoutMs / 1_000)} seconds`);
+    this.name = "FrameCaptureTimeoutError";
+  }
+}
+
+type FrameCaptureDeadline = {
+  clear(): void;
+  wait<T>(operation: Promise<T>): Promise<T>;
+};
+
+function createFrameCaptureDeadline(timeoutMs: number): FrameCaptureDeadline {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new FrameCaptureTimeoutError(timeoutMs)), timeoutMs);
+  });
+  return {
+    clear() {
+      if (timer !== undefined) clearTimeout(timer);
+    },
+    wait<T>(operation: Promise<T>) {
+      return Promise.race([operation, timeout]);
+    },
+  };
+}
 
 type FrameRendererMetadata = {
   duration?: unknown;
@@ -49,30 +77,35 @@ export async function renderDeterministicFrames(
 
   const framePattern = path.join(input.outputDir, "frame-%08d.png");
   const documentPath = path.join(input.outputDir, "composition.html");
+  const deadline = createFrameCaptureDeadline(FRAME_CAPTURE_TIMEOUT_MS);
   let debuggerAttached = false;
 
   try {
-    await mkdir(input.outputDir, { recursive: true });
-    await writeFile(documentPath, injectBaseHref(input.html, input.baseHref), "utf8");
-    await loadArtifactDocument(window, pathToFileURL(documentPath).href);
-    await waitForPrintableContent(window);
+    await deadline.wait(mkdir(input.outputDir, { recursive: true }));
+    await deadline.wait(
+      writeFile(documentPath, injectBaseHref(input.html, input.baseHref), "utf8"),
+    );
+    await deadline.wait(loadArtifactDocument(window, pathToFileURL(documentPath).href));
+    await deadline.wait(waitForPrintableContent(window));
 
     window.setContentSize(Math.round(input.width), Math.round(input.height));
     window.setOpacity(0);
     window.showInactive();
 
-    const metadata = (await window.webContents.executeJavaScript(
-      `(() => {
-        const bridge = globalThis.__odFrameRenderer;
-        if (!bridge || typeof bridge.ready !== "function" || typeof bridge.seek !== "function") {
-          throw new Error("document did not register window.__odFrameRenderer");
-        }
-        return Promise.resolve(bridge.ready()).then((metadata) => ({
-          ...metadata,
-          hasAudio: document.querySelector("audio") != null,
-        }));
-      })()`,
-      true,
+    const metadata = (await deadline.wait(
+      window.webContents.executeJavaScript(
+        `(() => {
+          const bridge = globalThis.__odFrameRenderer;
+          if (!bridge || typeof bridge.ready !== "function" || typeof bridge.seek !== "function") {
+            throw new Error("document did not register window.__odFrameRenderer");
+          }
+          return Promise.resolve(bridge.ready()).then((metadata) => ({
+            ...metadata,
+            hasAudio: document.querySelector("audio") != null,
+          }));
+        })()`,
+        true,
+      ),
     )) as FrameRendererMetadata;
     if (metadata?.hasAudio === true) {
       return {
@@ -102,33 +135,41 @@ export async function renderDeterministicFrames(
     const dbg = window.webContents.debugger;
     dbg.attach("1.3");
     debuggerAttached = true;
-    await dbg.sendCommand("Page.enable");
-    await dbg.sendCommand("Emulation.setDeviceMetricsOverride", {
-      width: Math.round(input.width),
-      height: Math.round(input.height),
-      deviceScaleFactor: 1,
-      mobile: false,
-    });
+    await deadline.wait(dbg.sendCommand("Page.enable"));
+    await deadline.wait(
+      dbg.sendCommand("Emulation.setDeviceMetricsOverride", {
+        width: Math.round(input.width),
+        height: Math.round(input.height),
+        deviceScaleFactor: 1,
+        mobile: false,
+      }),
+    );
 
     for (let frameIndex = 0; frameIndex < frameCount; frameIndex += 1) {
       const timeSeconds = frameIndex / fps;
-      await window.webContents.executeJavaScript(
-        `globalThis.__odFrameRenderer.seek(${JSON.stringify(timeSeconds)}, ${frameIndex})`,
-        true,
+      await deadline.wait(
+        window.webContents.executeJavaScript(
+          `globalThis.__odFrameRenderer.seek(${JSON.stringify(timeSeconds)}, ${frameIndex})`,
+          true,
+        ),
       );
-      await nextFrames(window);
-      const shot = (await dbg.sendCommand("Page.captureScreenshot", {
-        clip: {
-          x: 0,
-          y: 0,
-          width: Math.round(input.width),
-          height: Math.round(input.height),
-          scale: 1,
-        },
-        format: "png",
-        fromSurface: true,
-      })) as { data: string };
-      await writeFile(frameFilePath(input.outputDir, frameIndex), Buffer.from(shot.data, "base64"));
+      await deadline.wait(nextFrames(window));
+      const shot = (await deadline.wait(
+        dbg.sendCommand("Page.captureScreenshot", {
+          clip: {
+            x: 0,
+            y: 0,
+            width: Math.round(input.width),
+            height: Math.round(input.height),
+            scale: 1,
+          },
+          format: "png",
+          fromSurface: true,
+        }),
+      )) as { data: string };
+      await deadline.wait(
+        writeFile(frameFilePath(input.outputDir, frameIndex), Buffer.from(shot.data, "base64")),
+      );
     }
 
     return {
@@ -142,14 +183,19 @@ export async function renderDeterministicFrames(
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    let errorCode: DesktopRenderFramesResult["errorCode"] = "RENDER_FAILED";
+    if (error instanceof FrameCaptureTimeoutError) {
+      errorCode = "RENDER_TIMEOUT";
+    } else if (message.includes("__odFrameRenderer")) {
+      errorCode = "FRAME_RENDERER_NOT_READY";
+    }
     return {
       ok: false,
       error: message,
-      errorCode: message.includes("__odFrameRenderer")
-        ? "FRAME_RENDERER_NOT_READY"
-        : "RENDER_FAILED",
+      errorCode,
     };
   } finally {
+    deadline.clear();
     if (debuggerAttached) {
       try {
         window.webContents.debugger.detach();
