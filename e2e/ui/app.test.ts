@@ -1073,12 +1073,10 @@ async function clickCommentTargetInPreview(page: Page, selector: string) {
   });
   const target = frame.locator(selector);
   await expect(target).toBeVisible();
-  // The bridge marker above is the readiness witness. Do not use the hover
-  // overlay as another gate: it is a consequence of a mouseover event, and a
-  // forced Playwright hover can legitimately keep the pointer on the same
-  // element without dispatching a new mouseover. Auto-fit zoom can still keep
-  // the target moving, hence the forced click after the bridge witness.
-  await target.click({ force: true });
+  // Keep Playwright's hit testing enabled. The host layout must make the
+  // target's natural center clickable while the floating comments card is
+  // open; a forced or edge-biased click would conceal a product regression.
+  await target.click();
 }
 
 async function enterPreviewCommentMode(page: Page) {
