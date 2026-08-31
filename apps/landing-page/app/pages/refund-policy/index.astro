@@ -1,11 +1,11 @@
 ---
 import Layout from '../../_components/sub-page-layout.astro';
 import { getRefundPolicyContent } from '../../_lib/refund-policy-content';
-import { LANDING_LOCALES, localeFromPath } from '../../i18n';
+import { LANDING_LOCALES, getLocaleDefinition, localeFromPath } from '../../i18n';
 
 const locale = localeFromPath(Astro.url.pathname);
 const copy = getRefundPolicyContent(locale);
-const localeMeta = LANDING_LOCALES.find((item) => item.code === locale) ?? LANDING_LOCALES[0];
+const localeMeta = getLocaleDefinition(locale);
 const canonical = new URL(Astro.url.pathname, Astro.site).toString();
 const supportHref = `mailto:support@open-design.ai?subject=${encodeURIComponent(copy.supportSubject)}`;
 const jsonLd = {
