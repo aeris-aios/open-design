@@ -38,9 +38,19 @@ const jsonLd = {
     {copy.sections.map((section, index) => (
       <section class="refund-section">
         <h2>{index + 1}. {section.title}</h2>
-        {section.intro && <p class="refund-section-copy">{section.intro}</p>}
+        {section.intro && (
+          <p class="refund-section-copy refund-section-intro">
+            <span>{section.intro}</span>
+            {section.inlineItemCount && section.items.slice(0, section.inlineItemCount).map((item) => (
+              <>
+                {' '}<strong class="refund-inline-lead">{item.lead}</strong>
+                {item.detail && <> {' '}<span>{item.detail}</span></>}
+              </>
+            ))}
+          </p>
+        )}
         <ul>
-          {section.items.map((item) => (
+          {section.items.slice(section.inlineItemCount ?? 0).map((item) => (
             <li>
               <strong>{item.lead}</strong>
               {item.detail && <span>{item.detail}</span>}
@@ -104,6 +114,10 @@ const jsonLd = {
       color: var(--ink-soft, #5a5a5a);
       font-size: 14px;
       line-height: 1.6;
+    }
+    .refund-inline-lead {
+      color: var(--ink, #262626);
+      font-weight: 700;
     }
     .refund-section-closing { margin-top: 10px; }
     .refund-section li {

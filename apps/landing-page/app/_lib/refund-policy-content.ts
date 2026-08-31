@@ -4,6 +4,8 @@ export interface RefundPolicyItem { lead: string; detail?: string; }
 export interface RefundPolicySection {
   title: string;
   intro?: string;
+  /** Leading rules rendered as continuous prose with the intro, before the list. */
+  inlineItemCount?: number;
   items: RefundPolicyItem[];
   closing?: string;
 }
@@ -37,6 +39,7 @@ const EN: RefundPolicyContent = {
   sections: [
     {
       title: 'Monthly and annual subscriptions',
+      inlineItemCount: 2,
       intro: 'Our refund policy varies by subscription type, local laws, and account status. Please note that after your first refund request is approved, we cannot process a second refund request.',
       items: [
         {
@@ -95,6 +98,7 @@ const ZH: RefundPolicyContent = {
   sections: [
     {
       title: '月度及年度订阅订单',
+      inlineItemCount: 2,
       intro: '我们的退款政策因订阅类型、当地法律和账户状态而异。请注意，在第一次退款请求获批后，我们无法处理第二次退款请求。',
       items: [
         {
@@ -153,6 +157,7 @@ const JA: RefundPolicyContent = {
   sections: [
     {
       title: '月額および年額サブスクリプション',
+      inlineItemCount: 2,
       intro: '返金ポリシーは、サブスクリプションの種類、現地法、アカウントの状態によって異なります。最初の返金申請が承認された後は、2回目の返金申請を処理できません。',
       items: [
         { lead: 'EU、英国、またはトルコのお客様', detail: '購入後14日以内にサブスクリプションを解約した場合、返金の対象となります。月額および年額サブスクリプションの両方に適用されます。申請時に、EU、英国、またはトルコからの返金申請であることを明記してください。' },
@@ -202,6 +207,7 @@ const KO: RefundPolicyContent = {
   sections: [
     {
       title: '월간 및 연간 구독',
+      inlineItemCount: 2,
       intro: '환불 정책은 구독 유형, 현지 법률 및 계정 상태에 따라 달라집니다. 첫 번째 환불 요청이 승인된 후에는 두 번째 환불 요청을 처리할 수 없습니다.',
       items: [
         { lead: 'EU, 영국 또는 튀르키예 고객', detail: '구매 후 14일 이내에 구독을 취소하면 환불받을 수 있습니다. 월간 및 연간 구독 모두에 적용됩니다. 요청 시 EU, 영국 또는 튀르키예에서 환불을 요청한다는 점을 명시해 주세요.' },
@@ -251,6 +257,7 @@ const DE: RefundPolicyContent = {
   sections: [
     {
       title: 'Monats- und Jahresabonnements',
+      inlineItemCount: 2,
       intro: 'Unsere Rückerstattungsrichtlinie hängt von der Art des Abonnements, den örtlichen Gesetzen und dem Kontostatus ab. Nach Genehmigung des ersten Rückerstattungsantrags können wir keinen zweiten Antrag bearbeiten.',
       items: [
         { lead: 'Kundinnen und Kunden in der EU, im Vereinigten Königreich oder in der Türkei', detail: 'Wenn Sie Ihr Abonnement innerhalb von 14 Tagen nach dem Kauf kündigen, haben Sie Anspruch auf eine Rückerstattung. Dies gilt für Monats- und Jahresabonnements. Geben Sie in Ihrem Antrag an, dass Sie die Rückerstattung aus der EU, dem Vereinigten Königreich oder der Türkei beantragen.' },
@@ -300,6 +307,7 @@ const FR: RefundPolicyContent = {
   sections: [
     {
       title: 'Abonnements mensuels et annuels',
+      inlineItemCount: 2,
       intro: 'Notre politique de remboursement varie selon le type d’abonnement, la législation locale et l’état du compte. Après l’approbation d’une première demande de remboursement, nous ne pouvons pas en traiter une seconde.',
       items: [
         { lead: 'Clients de l’UE, du Royaume-Uni ou de Turquie', detail: 'Si vous annulez votre abonnement dans les 14 jours suivant l’achat, vous pouvez bénéficier d’un remboursement. Cette règle s’applique aux abonnements mensuels et annuels. Précisez dans votre demande que vous sollicitez le remboursement depuis l’UE, le Royaume-Uni ou la Turquie.' },
@@ -349,6 +357,7 @@ const RU: RefundPolicyContent = {
   sections: [
     {
       title: 'Месячные и годовые подписки',
+      inlineItemCount: 2,
       intro: 'Правила возврата зависят от типа подписки, местного законодательства и состояния аккаунта. После одобрения первого запроса на возврат мы не можем обработать второй запрос.',
       items: [
         { lead: 'Клиенты из ЕС, Великобритании или Турции', detail: 'При отмене подписки в течение 14 дней после покупки вы имеете право на возврат. Это относится к месячным и годовым подпискам. Укажите в запросе, что обращаетесь за возвратом из ЕС, Великобритании или Турции.' },
@@ -398,6 +407,7 @@ const ES: RefundPolicyContent = {
   sections: [
     {
       title: 'Suscripciones mensuales y anuales',
+      inlineItemCount: 2,
       intro: 'Nuestra política de reembolso varía según el tipo de suscripción, la legislación local y el estado de la cuenta. Una vez aprobada la primera solicitud de reembolso, no podremos tramitar una segunda.',
       items: [
         { lead: 'Clientes de la UE, el Reino Unido o Turquía', detail: 'Si cancelas la suscripción dentro de los 14 días posteriores a la compra, puedes optar a un reembolso. Se aplica a suscripciones mensuales y anuales. Indica en tu solicitud que pides el reembolso desde la UE, el Reino Unido o Turquía.' },
@@ -447,6 +457,7 @@ const PT_BR: RefundPolicyContent = {
   sections: [
     {
       title: 'Assinaturas mensais e anuais',
+      inlineItemCount: 2,
       intro: 'Nossa política de reembolso varia conforme o tipo de assinatura, as leis locais e o status da conta. Depois que a primeira solicitação de reembolso for aprovada, não poderemos processar uma segunda solicitação.',
       items: [
         { lead: 'Clientes da UE, do Reino Unido ou da Turquia', detail: 'Se você cancelar a assinatura em até 14 dias após a compra, terá direito a um reembolso. Isso se aplica a assinaturas mensais e anuais. Informe na solicitação que está pedindo o reembolso a partir da UE, do Reino Unido ou da Turquia.' },
@@ -496,6 +507,7 @@ const IT: RefundPolicyContent = {
   sections: [
     {
       title: 'Abbonamenti mensili e annuali',
+      inlineItemCount: 2,
       intro: 'La nostra politica di rimborso varia in base al tipo di abbonamento, alle leggi locali e allo stato dell’account. Dopo l’approvazione della prima richiesta di rimborso, non possiamo elaborarne una seconda.',
       items: [
         { lead: 'Clienti dell’UE, del Regno Unito o della Turchia', detail: 'Se annulli l’abbonamento entro 14 giorni dall’acquisto, hai diritto a un rimborso. La regola si applica agli abbonamenti mensili e annuali. Specifica nella richiesta che stai chiedendo il rimborso dall’UE, dal Regno Unito o dalla Turchia.' },
@@ -545,6 +557,7 @@ const TR: RefundPolicyContent = {
   sections: [
     {
       title: 'Aylık ve yıllık abonelikler',
+      inlineItemCount: 2,
       intro: 'Para iade politikamız abonelik türüne, yerel yasalara ve hesap durumuna göre değişir. İlk para iadesi talebiniz onaylandıktan sonra ikinci bir talebi işleme alamayız.',
       items: [
         { lead: 'AB, Birleşik Krallık veya Türkiye’deki müşteriler', detail: 'Aboneliğinizi satın alma tarihinden itibaren 14 gün içinde iptal ederseniz para iadesi almaya hak kazanırsınız. Bu kural aylık ve yıllık abonelikler için geçerlidir. Talebinizde AB, Birleşik Krallık veya Türkiye’den para iadesi istediğinizi belirtin.' },

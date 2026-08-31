@@ -86,6 +86,16 @@ describe('refund policy page', () => {
       ].join(' ');
       assert.equal(policy.locale, locale, `${locale}: fell back to another locale`);
       assert.equal(policy.sections.length, 4, `${locale}: incomplete policy`);
+      assert.equal(
+        policy.sections[0]?.inlineItemCount,
+        2,
+        `${locale}: regional rules must render as prose before the remaining-customer list`,
+      );
+      assert.equal(
+        policy.sections[0]?.items.slice(policy.sections[0].inlineItemCount).length,
+        1,
+        `${locale}: only the all-other-customers rule should remain in the list`,
+      );
       assert.ok(policy.supportSubject.length > 0, `${locale}: missing email subject`);
       assert.match(policyText, /14/, `${locale}: missing EU/UK/Turkey deadline`);
       assert.match(policyText, /7/, `${locale}: missing South Korea deadline`);
@@ -106,6 +116,8 @@ describe('refund policy page', () => {
     assert.match(page, /getRefundPolicyContent/);
     assert.match(page, /availableLocaleCodes=\{LANDING_LOCALES\.map/);
     assert.match(page, /suppressLocaleAutoRedirect/);
+    assert.match(page, /section\.items\.slice\(0, section\.inlineItemCount\)/);
+    assert.match(page, /section\.items\.slice\(section\.inlineItemCount \?\? 0\)/);
     assert.deepEqual(
       getHeaderLocaleSwitcher('en', '/refund-policy/', {
         availableLocaleCodes: activeLocaleCodes,
