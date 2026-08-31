@@ -3,6 +3,7 @@ import {
   catalogIdentityKey,
   catalogPublicRoute,
   type CatalogDocument,
+  type CatalogProvenance,
   type CatalogRecord,
 } from "./schema.ts";
 
@@ -196,5 +197,74 @@ export function assertValidCatalog(catalog: unknown): asserts catalog is Catalog
   const result = validateCatalog(catalog);
   if (!result.ok) {
     throw new Error(`catalog validation failed:\n- ${result.errors.join("\n- ")}`);
+  }
+}
+
+export type ExpectedCatalogProvenance = {
+  sourceCommit: string;
+  generatedAt: string;
+  bundleSha256: string;
+};
+
+export function validateCatalogProvenance(
+  provenance: unknown,
+  expected: ExpectedCatalogProvenance,
+): ValidateCatalogResult {
+  const errors: string[] = [];
+  if (!provenance || typeof provenance !== "object" || Array.isArray(provenance)) {
+    return { ok: false, errors: ["provenance must be an object"] };
+  }
+
+  const doc = provenance as CatalogProvenance;
+  if (doc.schemaVersion !== CATALOG_SCHEMA_VERSION) {
+    errors.push(`schemaVersion must be ${CATALOG_SCHEMA_VERSION}`);
+  }
+  if (!isNonEmptyString(doc.sourceCommit) || !/^[0-9a-f]{40}$/i.test(doc.sourceCommit)) {
+    errors.push("sourceCommit must be a full 40-char hex sha");
+  } else if (doc.sourceCommit.toLowerCase() !== expected.sourceCommit.toLowerCase()) {
+    errors.push(
+      `sourceCommit ${doc.sourceCommit} does not match publish sourceCommit ${expected.sourceCommit}`,
+    );
+  }
+  if (!isNonEmptyString(doc.generatedAt)) {
+    errors.push("generatedAt must be a non-empty ISO timestamp string");
+  } else if (Number.isNaN(Date.parse(doc.generatedAt))) {
+    errors.push("generatedAt must be a valid ISO timestamp string");
+  } else if (doc.generatedAt !== expected.generatedAt) {
+    errors.push(
+      `generatedAt ${doc.generatedAt} does not match catalog generatedAt ${expected.generatedAt}`,
+    );
+  }
+  if (!isNonEmptyString(doc.exporterVersion)) {
+    errors.push("exporterVersion must be a non-empty string");
+  }
+  if (!isNonEmptyString(doc.bundleSha256) || !/^[0-9a-f]{64}$/.test(doc.bundleSha256)) {
+    errors.push("bundleSha256 must be a 64-char lowercase hex digest");
+  } else if (doc.bundleSha256 !== expected.bundleSha256) {
+    errors.push(
+      `bundleSha256 ${doc.bundleSha256} does not match packed bundle ${expected.bundleSha256}`,
+    );
+  }
+  if (!doc.recordCounts || typeof doc.recordCounts !== "object" || Array.isArray(doc.recordCounts)) {
+    errors.push("recordCounts must be an object");
+  } else {
+    for (const [type, count] of Object.entries(doc.recordCounts)) {
+      if (!Number.isInteger(count) || (count as number) < 0) {
+        errors.push(`recordCounts.${type} must be a non-negative integer`);
+      }
+    }
+  }
+
+  if (errors.length > 0) return { ok: false, errors };
+  return { ok: true };
+}
+
+export function assertValidCatalogProvenance(
+  provenance: unknown,
+  expected: ExpectedCatalogProvenance,
+): asserts provenance is CatalogProvenance {
+  const result = validateCatalogProvenance(provenance, expected);
+  if (!result.ok) {
+    throw new Error(`catalog provenance validation failed:\n- ${result.errors.join("\n- ")}`);
   }
 }

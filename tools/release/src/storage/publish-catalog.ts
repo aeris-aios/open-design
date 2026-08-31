@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { appendFileSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 
@@ -10,6 +11,7 @@ import {
 import { verifyCatalogChecksums } from "../catalog/pack.ts";
 import { commitGeneration } from "../catalog/git-meta.ts";
 import { resolveRepoRoot } from "../catalog/export-catalog.ts";
+import { assertValidCatalogProvenance } from "../catalog/validate.ts";
 import { contentType, githubInfo, optional, publicUrl, required, storageConfigFromEnv } from "./common.ts";
 import {
   getStorageObject,
@@ -235,6 +237,16 @@ export async function publishCatalogSnapshot(options: PublishCatalogOptions): Pr
     }
   }
 
+  const localBundleDigest = createHash("sha256")
+    .update(readFileSync(join(stagingDir, "bundle.tar.zst")))
+    .digest("hex");
+  const provenance: unknown = JSON.parse(readFileSync(join(stagingDir, "provenance.json"), "utf8"));
+  assertValidCatalogProvenance(provenance, {
+    sourceCommit,
+    generatedAt: catalog.generatedAt,
+    bundleSha256: localBundleDigest,
+  });
+
   const files = walkFiles(stagingDir);
   const uploaded: string[] = [];
   const reused: string[] = [];
@@ -263,15 +275,11 @@ export async function publishCatalogSnapshot(options: PublishCatalogOptions): Pr
     }
   }
 
-  const bundleSha256 = (
+  const publishedBundle = (
     await getStorageObject({ ...options.storage, objectKey: `${prefix}/bundle.tar.zst` })
   )!.bytes;
-  const digest = (await import("node:crypto")).createHash("sha256").update(bundleSha256).digest("hex");
-
-  const provenance = JSON.parse(readFileSync(join(stagingDir, "provenance.json"), "utf8")) as {
-    bundleSha256?: string;
-  };
-  if (provenance.bundleSha256 && provenance.bundleSha256 !== digest) {
+  const digest = createHash("sha256").update(publishedBundle).digest("hex");
+  if (digest !== provenance.bundleSha256) {
     throw new Error(
       `provenance bundleSha256 ${provenance.bundleSha256} does not match published bundle ${digest}`,
     );

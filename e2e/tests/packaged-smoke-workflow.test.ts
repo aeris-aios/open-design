@@ -1438,6 +1438,8 @@ process.stdin.on("end", () => {
     expect(trigger).toContain('"tools/release/resources/dsh-bootstrap/**"');
     expect(trigger).toContain('"tools/release/src/storage/dsh-bootstrap-*.ts"');
     expect(trigger).toContain('"tools/release/src/storage/publish-dsh-bootstrap.ts"');
+    expect(trigger).toContain('"tools/release/src/storage/common.ts"');
+    expect(trigger).toContain('"tools/release/src/storage/s3-upload.ts"');
   });
 
   it("[P1] serializes both DSH latest-pointer publishers", async () => {

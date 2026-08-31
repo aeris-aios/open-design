@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -210,6 +210,32 @@ describe("catalog publish", () => {
       expect(server.maxActivePutRequests()).toBe(3);
       expect(rerun.reused.length).toBeGreaterThan(3);
       expect(rerun.latestUpdated).toBe(false);
+    } finally {
+      await server.close();
+      await rm(stagingDir, { force: true, recursive: true });
+    }
+  });
+
+  it("rejects incomplete provenance before uploading immutable objects", async () => {
+    const server = await startFixtureServer();
+    const stagingDir = await stagePackedCatalog(SOURCE_COMMIT);
+    try {
+      await writeFile(
+        join(stagingDir, "provenance.json"),
+        `${JSON.stringify({ schemaVersion: 1, sourceCommit: SOURCE_COMMIT })}\n`,
+      );
+
+      await expect(
+        publishCatalogSnapshot({
+          stagingDir,
+          sourceCommit: SOURCE_COMMIT,
+          sourceCommitGeneration: 42,
+          publicOrigin: "https://releases.example.test",
+          storage: server.storage,
+        }),
+      ).rejects.toThrow(/catalog provenance validation failed/);
+
+      expect(server.listObjectKeys()).toEqual([]);
     } finally {
       await server.close();
       await rm(stagingDir, { force: true, recursive: true });

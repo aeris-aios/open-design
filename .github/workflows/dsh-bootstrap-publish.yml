@@ -17,6 +17,8 @@ on:
       - "tools/release/resources/dsh-bootstrap/**"
       - "tools/release/src/storage/dsh-bootstrap-*.ts"
       - "tools/release/src/storage/publish-dsh-bootstrap.ts"
+      - "tools/release/src/storage/common.ts"
+      - "tools/release/src/storage/s3-upload.ts"
       - ".github/workflows/dsh-bootstrap-publish.yml"
 
 permissions:
