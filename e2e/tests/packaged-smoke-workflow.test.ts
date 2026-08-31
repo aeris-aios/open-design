@@ -1484,6 +1484,15 @@ process.stdin.on("end", () => {
     expect(guardedJobs).toHaveLength(2);
   });
 
+  it("[P1] preserves checksummed hidden files in the catalog handoff artifact", async () => {
+    const workflow = await readFile(catalogPublishWorkflowPath, "utf8");
+    const upload = sectionBetween(workflow, "- name: Upload snapshot artifact", "\n\n  publish:");
+
+    expect(upload).toContain("uses: actions/upload-artifact@v4");
+    expect(upload).toContain("path: .tmp/catalog-snapshot");
+    expect(upload).toContain("include-hidden-files: true");
+  });
+
   it("[P1] renders immutable catalog previews in a digest-pinned environment", async () => {
     const [workflow, packageJsonText] = await Promise.all([
       readFile(catalogPublishWorkflowPath, "utf8"),
