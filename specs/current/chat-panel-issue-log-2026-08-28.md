@@ -8,6 +8,37 @@
 >
 > 验证约束：用户明确要求不要跑全量测试；只运行与改动对应的聚焦测试。
 
+## 2026-08-31 提测前内部收尾清单（不向测试同学转嫁）
+
+> 口径：以下事项由研发侧在提测前私下修复或复验。未完成前只留在本地滚动日志，不写入飞书提测文档的“已知风险”；飞书只保留真正需要测试知情、外部环境配合或产品决策的事项。
+
+### A. 立即修复
+
+- [x] 滚动 intent：用户下滚但未真正到底时继续保持 `escaped`，布局收缩不得重新挂回自动跟随；已补 `clientHeight↑`、`scrollHeight↓` 和两阶段收缩红测。
+- [x] PlanPill：已确认当前 HEAD 使用聊天 viewport 内真悬浮层，不参与 chat-log 高度；jump 出现时上移，Queue / Composer / tray 保持 viewport 外布局。
+- [x] Question Form：Next / Back / 非末步 Skip / “自己填”高度变化已加入 DOM element anchor，恢复 footer / own-row 的 viewport offset。
+- [x] 长历史虚拟列表：大于 80 条时已用 first-visible key + offset 补偿估算高度到实测高度的变化，会话切换会废弃旧锚点。
+
+聚焦验证：上述滚动收尾共 8 个 Web 测试文件 89 / 89 通过，Web typecheck 与 `git diff --check` 通过；仍需在合并 main 和新 beta 后做一次真机手势复验。
+
+### B. 立即复验
+
+- [x] 当前 HEAD `77859f01f7` 已消费 `main@a8ec5784` 与 `v0.21.0@dbbd3b42` 两份 immutable producer DB；首次打开 / 展开 / 硬刷新 / 再展开断言一致，图片 2、结论 1、DSML / marker 0，producer DB hash 前后不变。
+- [x] Agent runtime / host protocol 聚焦矩阵已完成：首轮 18 文件中 16 文件 / 223 条直接通过；stderr 单文件 2 / 2 通过；media routes 暴露 watcher 生命周期 bug，补 `collabPublishWatcher.dispose()` 后单文件 6 / 6 通过。覆盖 Codex 默认与 fallback、Claude stream-json / Todo、steer、取消 / 重试、marker、media、stderr 与重启恢复。
+- [ ] `0.21.1-beta.7` macOS cold Home → Run：发送约 551ms 内出现用户消息和 Agent 正文、AMR test profile / `$19.89` 余额与文件打开已通过；首次 Cmd+Shift+R 曾白屏，随后 beta.7 与当前 HEAD 隔离副本均刷新通过。新 beta 必须连续刷新复验后才能关闭。
+- [ ] `0.21.1-beta.7` production CSS：Question Form、错误卡三按钮、分享 / 导出、disabled / hover，以及至少一个非 Chat 共享 Button。
+- [ ] 真实 Team Beta cold path：直接深链、Home → Team、硬刷新、catalog 短断与权限错误。
+- [ ] 单 worker 聚焦浏览器证据：受影响的 4 个现有 E2E 文件，并补顺序生图与 Queue witness；不跑全量套件。
+- [ ] beta.7 新发现：新项目在 Cmd+Shift+R 后出现过一次白屏且不自愈，renderer 记录 `Minified React error #185`；随后同 beta.7 remote debugging 和当前 HEAD + beta 数据隔离副本均无法复现。补精确 StrictMode 组合回归，新 beta 对 project / history / file route 连续硬刷新后再关闭。
+- [x] beta.7 `od_next_protocol_runtime_state_missing` 已完成归因：QA 探针要求“只回复一句”，但 Home 固定 `sessionMode=design` 并自动进入 OD Next full-plan；run / transport 实际 succeeded，失败卡来自策略协议 fail-closed。此探针不用于证明 cold send；不隐藏失败卡、不做关键词猜测。未来若要支持 Design 模式纯问答，需显式 structured intent，作为独立产品设计而非本次尾项。
+- [x] beta.7 次级日志已排除当前链路影响：`update-store-invalid-shape` 来自 release-beta 历史非空 update store 缺 metadata，可通过现有 Clear update cache 恢复；test Vela `/api/v1/resources` TLS timeout 属 catalog 外部网络波动。两者均未阻塞 cold first output、AMR test 余额或文件打开。
+
+### C. 工程收口
+
+- [ ] 同步最新 `origin/main`，解决冲突后只重跑受影响聚焦测试，并重新构建 beta 包。
+- [ ] 汇总上述结果：已关闭项写回本地日志；飞书提测文档删除研发内部待办，仅保留外部依赖和真实产品决策。
+- [x] OPEND-2410 按当前产品契约关闭：Claude 启动环境已显式开启 `CLAUDE_CODE_ENABLE_TODO_TOOLS=1`，TaskCreate / TaskUpdate 会归一为 `TodoWrite`，本轮聚焦矩阵通过；模型仍可能选择不发计划，此时执行记录按既定 flat 模式诚实渲染。不新增 `plan_missing`，不伪造 Todo，也不继续堆提示词。
+
 ## 当前优先级
 
 1. 修复 Design Harness 路径漏掉 Chat Panel host 协议，导致最终三行下一步建议不出现。
@@ -361,14 +392,14 @@
 - 用户已确认该 PR 合并。
 - 本分支需要持续确认已集成对应提交，避免首页选择的模板进入会话后被错误替换为“克制的 COO 经营复盘”，或顶部“正在使用”插件消失 / 显示错误。
 
-## 已确认但本轮未修改
+## 已确认的边界与非本轮问题
 
 ### OPEND-2410：Agent 没有 Todo
 
+- 状态：**按当前产品契约关闭，不再作为本次未完成项。**
 - 诊断确认：目标 Claude Run 没有发出 TodoWrite / TaskCreate / TaskUpdate / update_plan / write_todos；不是 UI 丢数据。
-- beta.4 已包含 Claude todo tool enablement 和前端识别链。
-- 不应在客户端伪造 Todo；可另设计 `plan_missing` 状态，诚实显示“Agent 尚未发布计划，正在无计划执行”。
-- 提示词改动必须谨慎；用户明确要求 question-form / Todo 等提示词先斟酌，不能继续机械堆提示词。
+- 当前分支已显式设置 `CLAUDE_CODE_ENABLE_TODO_TOOLS=1`，并将 Claude TaskCreate / TaskUpdate 归一为 TodoWrite；本轮 Agent runtime 聚焦矩阵通过。
+- Agent 即使拥有工具仍可能选择不发计划；现行规格明确“有 Todo 则分段、无 Todo 则 flat”，因此无清单不是异常状态。客户端不伪造 Todo，不新增 `plan_missing`，也不继续堆提示词。
 
 ### Strategy 长时间运行 / 超时
 

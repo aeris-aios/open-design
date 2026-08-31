@@ -17037,6 +17037,7 @@ export async function startServer({
       workspaceDirectoryRefreshes.dispose();
       workspaceBillingRuntime.dispose();
       proactiveContentPull.dispose();
+      collabPublishWatcher.dispose();
       collabCloud?.dispose();
     };
     const shutdownDaemonRuns = async () => {

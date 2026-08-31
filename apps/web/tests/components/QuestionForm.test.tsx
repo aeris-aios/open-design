@@ -643,7 +643,12 @@ describe('QuestionFormView', () => {
 
     // 原意不变:卡内的宿主文案跟着表单声明的语言走,不跟 UI locale。
     // 文案本身按交付稿从「其他」改成了「自己填」。
-    expect(screen.getByRole('button', { name: '自己填' })).toBeTruthy();
+    const own = screen.getByRole('button', { name: '自己填' });
+    expect(own).toBeTruthy();
+    expect(own.getAttribute('data-chat-scroll-anchor')).toBe('question-own:platform');
+    expect(own.getAttribute('data-chat-preserve-scroll-anchor')).toBe(
+      'question-own:platform',
+    );
     expect(screen.queryByRole('button', { name: 'Write your own' })).toBeNull();
   });
 
@@ -827,6 +832,10 @@ describe('QuestionFormView', () => {
     const nextStep = screen.getByRole('button', { name: 'Next step' }) as HTMLButtonElement;
     expect(nextStep.disabled).toBe(true);
     expect(nextStep.title).toBe('Fill in the required fields first');
+    expect(nextStep.dataset.chatPreserveScrollAnchor).toBe('question-footer');
+    expect(
+      nextStep.closest('.question-form-foot')?.getAttribute('data-chat-scroll-anchor'),
+    ).toBe('question-footer');
     // The delivered first-step footer is Skip | spacer | Next. A disabled
     // Back action here both invents a fourth state and looks actionable once
     // the footer's ghost-button styling removes disabled chrome.
@@ -846,6 +855,11 @@ describe('QuestionFormView', () => {
     expect(screen.getByText('2/3')).toBeTruthy();
     expect(screen.queryByText('Who will see this deck?')).toBeNull();
     expect(screen.getByRole('button', { name: 'Back' })).toBeTruthy();
+    expect(
+      screen.getByRole('button', { name: 'Back' }).getAttribute(
+        'data-chat-preserve-scroll-anchor',
+      ),
+    ).toBe('question-footer');
     expect(
       Array.from(document.querySelectorAll('.question-form-foot button')).map((button) =>
         button.textContent?.trim(),

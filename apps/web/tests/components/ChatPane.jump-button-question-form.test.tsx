@@ -13,7 +13,7 @@ if (typeof HTMLElement.prototype.scrollTo !== 'function') {
   };
 }
 
-import { act, cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ChatPane } from '../../src/components/ChatPane';
 import type { ChatMessage } from '../../src/types';
@@ -117,7 +117,34 @@ function questionFormMessages(): ChatMessage[] {
   ];
 }
 
-function chatPaneEl(messages: ChatMessage[]) {
+function steppedQuestionFormMessages(): ChatMessage[] {
+  const formContent = [
+    '<question-form id="stepped" title="Quick check">',
+    JSON.stringify({
+      questions: [
+        { id: 'a', label: 'What are we building?', type: 'text', required: true },
+        { id: 'b', label: 'Anything else?', type: 'textarea' },
+      ],
+    }),
+    '</question-form>',
+  ].join('\n');
+  return [
+    {
+      id: 'assistant-stepped',
+      role: 'assistant',
+      content: formContent,
+      createdAt: 1_700_000_000_000,
+      startedAt: 1_700_000_000_000,
+      endedAt: 1_700_000_003_000,
+      runStatus: 'succeeded',
+    },
+  ];
+}
+
+function chatPaneEl(
+  messages: ChatMessage[],
+  options: { interactiveQuestionForm?: boolean } = {},
+) {
   return (
     <ChatPane
       messages={messages}
@@ -132,6 +159,7 @@ function chatPaneEl(messages: ChatMessage[]) {
       activeConversationId={null}
       onSelectConversation={() => {}}
       onDeleteConversation={() => {}}
+      onSubmitQuestionForm={options.interactiveQuestionForm ? () => {} : undefined}
     />
   );
 }
@@ -169,5 +197,41 @@ describe('jump-to-latest button after landing on a question form (recvqajMdAnfmd
     const btn = screen.getByTestId('chat-jump-btn');
     expect(btn.getAttribute('aria-hidden')).toBe('false');
     expect(btn.getAttribute('tabindex')).toBe('0');
+  });
+
+  it('keeps the clicked step footer at the same viewport coordinate after Next relayout', async () => {
+    geom = { scrollHeight: 2000, clientHeight: 400, scrollTop: 0 };
+    const { container } = render(chatPaneEl(steppedQuestionFormMessages(), {
+      interactiveQuestionForm: true,
+    }));
+    await flushFrames();
+
+    const footer = container.querySelector<HTMLElement>('.question-form-foot');
+    if (!footer) throw new Error('expected stepped question footer');
+    footer.getBoundingClientRect = () => {
+      const top = screen.queryByText('2/2') ? 480 : 300;
+      return {
+        top,
+        bottom: top + 36,
+        left: 0,
+        right: 300,
+        width: 300,
+        height: 36,
+        x: 0,
+        y: top,
+        toJSON: () => ({}),
+      } as DOMRect;
+    };
+
+    // Ignore frames left by initial form landing; this assertion starts from
+    // an explicit reading position inside the already-settled transcript.
+    rafCallbacks = [];
+    geom.scrollTop = 900;
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'A dashboard' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Next step' }));
+    expect(screen.getByText('2/2')).toBeTruthy();
+
+    await flushFrames();
+    expect(geom.scrollTop).toBe(1080);
   });
 });

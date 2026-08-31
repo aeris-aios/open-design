@@ -35,4 +35,28 @@ describe('chat stick-to-bottom intent', () => {
       escaped,
     );
   });
+
+  it('does not rearm when scrollHeight shrink erases the final 30px', () => {
+    const escaped = { following: false, escaped: true };
+    const previous = { scrollTop: 1000, scrollHeight: 2000, clientHeight: 400 };
+    const thirtyPixelsAboveBottom = {
+      scrollTop: 1570,
+      scrollHeight: 2000,
+      clientHeight: 400,
+    };
+
+    const nearBottom = nextFollowIntent(escaped, previous, thirtyPixelsAboveBottom);
+    expect(nearBottom).toEqual(escaped);
+
+    // An in-log card/media row becoming 30px shorter puts this same scrollTop
+    // at the mathematical bottom. There was no user scroll, so escaped stays.
+    const bottomAfterLayout = {
+      scrollTop: 1570,
+      scrollHeight: 1970,
+      clientHeight: 400,
+    };
+    expect(nextFollowIntent(nearBottom, thirtyPixelsAboveBottom, bottomAfterLayout)).toEqual(
+      escaped,
+    );
+  });
 });

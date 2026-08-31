@@ -449,6 +449,37 @@ describe('流式输出时的滚动跟随(用户 2026-08-27)', () => {
     // 这是用户选的阅读位置,不是“回到最新”。只有真的到底或点按钮才重新跟随。
     expect(geom.scrollTop).toBe(maxScrollTop() - 30);
   });
+
+  it.each(['client-height-growth', 'content-height-shrink'] as const)(
+    '距底 30px 后的 %s 只改变布局,不得恢复流式跟随',
+    async (layoutChange) => {
+      geom = { contentHeight: 5000, clientHeight: 400, scrollTop: 0 };
+      let text = 'chunk';
+      const { rerender } = render(chatPaneEl(longConversation(text), { streaming: true }));
+      await flushFrames();
+
+      await userScrollTo(3000);
+      await userScrollTo(maxScrollTop() - 30);
+      expect(geom.scrollTop).toBe(4570);
+
+      if (layoutChange === 'client-height-growth') geom.clientHeight += 30;
+      else geom.contentHeight -= 30;
+      await triggerResize();
+      await flushFrames();
+      expect(geom.scrollTop).toBe(maxScrollTop());
+
+      // If the layout-only arrival at bottom cleared escaped, this next
+      // streamed chunk would immediately write the new bottom (4690).
+      text += ' more';
+      geom.contentHeight += 120;
+      await act(async () => {
+        rerender(chatPaneEl(longConversation(text), { streaming: true }));
+      });
+      await triggerResize();
+      await flushFrames();
+      expect(geom.scrollTop).toBe(4570);
+    },
+  );
 });
 
 describe('「回到最新」什么时候该在(用户 2026-08-27:「总是在不该出现的时候出现」)', () => {

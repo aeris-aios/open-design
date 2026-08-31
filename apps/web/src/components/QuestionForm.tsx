@@ -288,6 +288,8 @@ export const QuestionFormView = forwardRef<QuestionFormHandle, Props>(function Q
         <button
           type="button"
           className="qf-chip qf-chip-other"
+          data-chat-scroll-anchor={`question-own:${q.id}`}
+          data-chat-preserve-scroll-anchor={`question-own:${q.id}`}
           aria-pressed={false}
           disabled={locked}
           onClick={() => toggleOther(q)}
@@ -299,10 +301,14 @@ export const QuestionFormView = forwardRef<QuestionFormHandle, Props>(function Q
     }
     // 展开态:稿子换成 `<div class="opt mod-own is-on is-open">`,输入框内嵌在这一项里
     return (
-      <div className="qf-chip qf-chip-other qf-chip-on qf-chip-open">
+      <div
+        className="qf-chip qf-chip-other qf-chip-on qf-chip-open"
+        data-chat-scroll-anchor={`question-own:${q.id}`}
+      >
         <button
           type="button"
           className="qf-chip-own-box"
+          data-chat-preserve-scroll-anchor={`question-own:${q.id}`}
           aria-pressed
           aria-label={label}
           disabled={locked}
@@ -850,7 +856,7 @@ export const QuestionFormView = forwardRef<QuestionFormHandle, Props>(function Q
         {/* 「下一步」已经交给视觉方向那一行时,这里整段不出 ——
             稿子第 21 / 22 格的底栏就那一行,再留一条空的底栏会多撑出 8px + 一行高。 */}
         {hideInternalSubmit || visualFootDelegated ? null : (
-          <div className="question-form-foot">
+          <div className="question-form-foot" data-chat-scroll-anchor="question-footer">
             {locked ? (
               <span className="qf-locked-note">
                 {submittedAnswers ? t('qf.lockedSubmitted') : t('qf.lockedPrev')}
@@ -870,6 +876,9 @@ export const QuestionFormView = forwardRef<QuestionFormHandle, Props>(function Q
                   type="button"
                   size="sm"
                   variant="ghost"
+                  data-chat-preserve-scroll-anchor={
+                    !isLastQuestion ? 'question-footer' : undefined
+                  }
                   onClick={handleSkipCurrent}
                   disabled={submitDisabled}
                 >
@@ -881,6 +890,7 @@ export const QuestionFormView = forwardRef<QuestionFormHandle, Props>(function Q
                       type="button"
                       size="sm"
                       variant="ghost"
+                      data-chat-preserve-scroll-anchor="question-footer"
                       onClick={handlePreviousQuestion}
                       disabled={submitDisabled}
                     >
@@ -892,6 +902,9 @@ export const QuestionFormView = forwardRef<QuestionFormHandle, Props>(function Q
                     size="sm"
                     variant="primary"
                     className="qf-primary-action"
+                    data-chat-preserve-scroll-anchor={
+                      !isLastQuestion ? 'question-footer' : undefined
+                    }
                     onClick={
                       isLastQuestion
                         ? handleSubmit

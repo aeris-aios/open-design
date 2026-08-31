@@ -8,6 +8,15 @@ import {
 } from '../runtime/chat/stick-to-bottom';
 import { appendQuote, type ChatQuote } from '../runtime/chat/quote-selection';
 import {
+  captureElementScrollAnchor,
+  scrollTopForElementScrollAnchor,
+} from '../runtime/chat/element-scroll-anchor';
+import {
+  captureVirtualScrollAnchor,
+  scrollTopForVirtualScrollAnchor,
+  type VirtualScrollAnchor,
+} from '../runtime/chat/virtual-scroll-anchor';
+import {
   Fragment,
   memo,
   useCallback,
@@ -3296,6 +3305,30 @@ export function ChatPane({
                 data-balanced={shouldBalanceFinishedTranscript ? 'true' : 'false'}
                 aria-busy={loading}
                 onClickCapture={(e) => {
+                  const target = e.target as HTMLElement;
+                  const log = logRef.current;
+                  const scrollAnchor = log
+                    ? captureElementScrollAnchor(log, target)
+                    : null;
+                  if (scrollAnchor && log) {
+                    // QuestionForm swaps the active step / custom-answer row
+                    // after this capture phase. Stop tail following before
+                    // that layout change, then put the same visible control
+                    // back at its previous viewport coordinate after commit.
+                    releaseFollow();
+                    anchorActiveRef.current = false;
+                    requestAnimationFrame(() => {
+                      const currentLog = logRef.current;
+                      if (!currentLog) return;
+                      const nextTop = scrollTopForElementScrollAnchor(currentLog, scrollAnchor);
+                      if (nextTop !== null && Math.abs(nextTop - currentLog.scrollTop) >= 0.5) {
+                        writeLogScrollTop(currentLog, nextTop);
+                      } else {
+                        rememberScrollSample(currentLog);
+                      }
+                      syncFollowState();
+                    });
+                  }
                   // Expanding an accordion (tool card / thinking block) should
                   // grow downward with the clicked header staying put. While a
                   // run is glued to the bottom, the ResizeObserver would re-pin
@@ -3303,10 +3336,10 @@ export function ChatPane({
                   // so unpin the moment the user toggles one open.
                   // `summary` covers the execution record and everything folded
                   // inside it — those disclosures are <details>, not buttons.
-                  const toggle = (e.target as HTMLElement).closest(
+                  const toggle = target.closest(
                     'summary, .thinking-toggle, .action-card-toggle, button.op-card-head, [aria-expanded]',
                   );
-                  if (toggle && logRef.current?.contains(toggle)) {
+                  if (toggle && log?.contains(toggle) && !scrollAnchor) {
                     releaseFollow();
                     anchorActiveRef.current = false;
                     // 浮标交给几何判 —— 老写法在这里无条件点亮它,于是在一屏装得下、
@@ -3415,6 +3448,10 @@ export function ChatPane({
                   onSubmitQuestionForm={onSubmitQuestionForm}
                   questionFormSubmitDisabled={questionFormSubmitDisabled}
                   scrollContainerRef={logRef}
+                  onVirtualScrollTopWrite={(element, top) => {
+                    writeLogScrollTop(element, top);
+                    syncFollowState();
+                  }}
                   highlightedUserMessageId={chatRailHighlightedMessageId}
                 />
                 {displayError ? (
@@ -4274,6 +4311,7 @@ function ChatRows({
   onSubmitQuestionForm,
   questionFormSubmitDisabled,
   scrollContainerRef,
+  onVirtualScrollTopWrite,
   highlightedUserMessageId,
 }: {
   messages: ChatMessage[];
@@ -4343,6 +4381,7 @@ function ChatRows({
   onSubmitQuestionForm?: QuestionFormSubmitHandler;
   questionFormSubmitDisabled: boolean;
   scrollContainerRef: MutableRefObject<HTMLDivElement | null>;
+  onVirtualScrollTopWrite: (element: HTMLDivElement, top: number) => void;
   highlightedUserMessageId?: string | null;
 }) {
   const items = useMemo(
@@ -4440,6 +4479,7 @@ function ChatRows({
     overscanPx: CHAT_MESSAGE_OVERSCAN_PX,
     resetKey: activeConversationKey,
     initialTailRows: CHAT_VIRTUAL_INITIAL_TAIL_ROWS,
+    onScrollTopWrite: onVirtualScrollTopWrite,
   });
 
   const renderItem = (item: ChatRenderItem) => {
@@ -4693,6 +4733,7 @@ function useMeasuredVirtualWindow<T extends { key: string }>(
     resetKey,
     initialTailRows,
     alwaysIncludeKey,
+    onScrollTopWrite,
   }: {
     enabled: boolean;
     containerRef: MutableRefObject<HTMLDivElement | null>;
@@ -4701,13 +4742,20 @@ function useMeasuredVirtualWindow<T extends { key: string }>(
     resetKey: string;
     initialTailRows: number;
     alwaysIncludeKey?: string;
+    onScrollTopWrite?: (element: HTMLDivElement, top: number) => void;
   },
 ) {
   const measuredHeightsRef = useRef<Map<string, number>>(new Map());
+  const pendingAnchorRef = useRef<{ anchor: VirtualScrollAnchor; resetKey: string } | null>(null);
+  const resetKeyRef = useRef(resetKey);
+  const scrollTopWriterRef = useRef(onScrollTopWrite);
+  resetKeyRef.current = resetKey;
+  scrollTopWriterRef.current = onScrollTopWrite;
   const [measureVersion, setMeasureVersion] = useState(0);
   const [viewport, setViewport] = useState({ scrollTop: 0, height: 0 });
 
   useEffect(() => {
+    pendingAnchorRef.current = null;
     measuredHeightsRef.current.clear();
     setMeasureVersion((version) => version + 1);
     setViewport({ scrollTop: 0, height: 0 });
@@ -4765,6 +4813,32 @@ function useMeasuredVirtualWindow<T extends { key: string }>(
     return { offsets, sizes, totalHeight: cursor };
   }, [estimateSize, items, measureVersion]);
 
+  const virtualLayoutRef = useRef({ items, offsets: layout.offsets, sizes: layout.sizes });
+  virtualLayoutRef.current = { items, offsets: layout.offsets, sizes: layout.sizes };
+
+  useLayoutEffect(() => {
+    const pending = pendingAnchorRef.current;
+    if (!pending) return;
+    pendingAnchorRef.current = null;
+    if (!enabled || pending.resetKey !== resetKey) return;
+    const element = containerRef.current;
+    if (!element) return;
+    const nextTop = scrollTopForVirtualScrollAnchor(
+      pending.anchor,
+      items,
+      layout.offsets,
+      Math.max(0, element.scrollHeight - element.clientHeight),
+    );
+    if (nextTop === null || Math.abs(nextTop - element.scrollTop) < 0.5) return;
+    const writer = scrollTopWriterRef.current;
+    if (writer) writer(element, nextTop);
+    else element.scrollTop = nextTop;
+    const actualScrollTop = element.scrollTop;
+    setViewport((current) => current.scrollTop === actualScrollTop
+      ? current
+      : { ...current, scrollTop: actualScrollTop });
+  }, [containerRef, enabled, items, layout.offsets, resetKey]);
+
   const rows = useMemo(() => {
     if (!enabled || items.length === 0) return [];
     const height = viewport.height || CHAT_VIRTUAL_DEFAULT_VIEWPORT_PX;
@@ -4811,9 +4885,20 @@ function useMeasuredVirtualWindow<T extends { key: string }>(
     const next = Math.max(CHAT_VIRTUAL_MIN_ROW_HEIGHT, Math.ceil(height));
     const previous = measuredHeightsRef.current.get(key);
     if (previous !== undefined && Math.abs(previous - next) < 2) return;
+    const element = containerRef.current;
+    if (element && !pendingAnchorRef.current) {
+      const currentLayout = virtualLayoutRef.current;
+      const anchor = captureVirtualScrollAnchor(
+        currentLayout.items,
+        currentLayout.offsets,
+        currentLayout.sizes,
+        element.scrollTop,
+      );
+      if (anchor) pendingAnchorRef.current = { anchor, resetKey: resetKeyRef.current };
+    }
     measuredHeightsRef.current.set(key, next);
     setMeasureVersion((version) => version + 1);
-  }, []);
+  }, [containerRef]);
 
   return {
     rows,
