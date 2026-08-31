@@ -8,7 +8,7 @@
  *  ③ 拿**真实录制**喂进去不炸 —— 接入最怕的不是写不出来,是真数据里有没想到的形状
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render } from '@testing-library/react';
+import { cleanup, fireEvent, render } from '@testing-library/react';
 import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -34,6 +34,14 @@ const show = (message: ChatMessage): ReactElement => (
   </I18nProvider>
 );
 
+function activateExecutionRecord(container: HTMLElement): HTMLDetailsElement {
+  const shell = container.querySelector<HTMLDetailsElement>('.assistant-flow > details');
+  const summary = shell?.querySelector<HTMLElement>(':scope > summary');
+  if (!shell || !summary) throw new Error('执行记录壳没有渲染出来');
+  fireEvent.click(summary);
+  return shell;
+}
+
 const SAMPLE: PersistedAgentEvent[] = [
   { kind: 'thinking', text: '先看一眼规格。' },
   { kind: 'tool_use', id: 't1', name: 'Read', input: { file_path: 'tokens.css' }, startedAt: 0 },
@@ -50,6 +58,7 @@ describe('新执行记录接入', () => {
 
   it('新壳真的渲染出来了', () => {
     const { container } = render(show(msg(SAMPLE)));
+    activateExecutionRecord(container);
     const details = [...container.querySelectorAll('details')];
     expect(details.length).toBeGreaterThan(0);
     expect(container.textContent).toContain('读取');
@@ -64,12 +73,12 @@ describe('新执行记录接入', () => {
       { kind: 'text', text: '<done/>栅格对得上,可以直接复刻。' },  // done 之后 → 壳外结论
     ];
     const { container } = render(show(msg(events)));
+    const shell = activateExecutionRecord(container);
     const all = container.textContent ?? '';
     const count = (needle: string) => all.split(needle).length - 1;
     expect(count('我先读一下 tokens。'), '过程叙述出现了不止一次').toBe(1);
     expect(count('栅格对得上,可以直接复刻。'), '结论出现了不止一次').toBe(1);
     // 结论必须在壳【外】
-    const shell = container.querySelector('details');
     expect(shell?.textContent ?? '').not.toContain('栅格对得上');
   });
 

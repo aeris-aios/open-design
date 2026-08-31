@@ -50,7 +50,9 @@ function shellOf(items: ShellItem[], over: Partial<Shell> = {}): Shell {
 }
 
 const show = (shell: Shell): ReactElement => (
-  <I18nProvider initial="zh-CN"><ExecutionShell shell={shell} /></I18nProvider>
+  <I18nProvider initial="zh-CN">
+    <ExecutionShell shell={shell} deferCollapsedBodies={false} />
+  </I18nProvider>
 );
 
 const think = (text: string): ShellItem => ({ kind: 'text', text, thinking: true });

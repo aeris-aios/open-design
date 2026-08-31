@@ -32,7 +32,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { cleanup, render as rtlRender, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render as rtlRender, screen } from '@testing-library/react';
 import type { ReactElement } from 'react';
 import { I18nProvider } from '../../../src/i18n';
 import { AssistantMessage } from '../../../src/components/AssistantMessage';
@@ -41,6 +41,12 @@ import type { AgentEvent, ChatMessage } from '../../../src/types';
 afterEach(() => { cleanup(); });
 
 const render = (ui: ReactElement) => rtlRender(<I18nProvider initial="zh-CN">{ui}</I18nProvider>);
+
+function activateExecutionRecord(container: HTMLElement): void {
+  const summary = container.querySelector<HTMLElement>('.assistant-flow > details > summary');
+  if (!summary) throw new Error('执行记录壳没有渲染出来');
+  fireEvent.click(summary);
+}
 
 /** 文件正文里塞一句只会出现在源码里的话,用它判断「源码有没有被摊出来」 */
 const SOURCE_MARKER = 'PARCHMENT_SOURCE_LEAKED';
@@ -104,6 +110,7 @@ describe('Write 只落一行(N4 / D3)', () => {
       />,
     );
 
+    activateExecutionRecord(container);
     const body = container.querySelector<HTMLElement>('.assistant-flow > details > div');
     expect(body).not.toBeNull();
     /* 一行,不是一行 + 一块代码 */
@@ -184,6 +191,8 @@ describe('Write 只落一行(N4 / D3)', () => {
       />,
     );
 
+    activateExecutionRecord(container);
+    fireEvent.click(screen.getByText('跑一遍 guard').closest('summary')!);
     const body = container.querySelector<HTMLElement>('.assistant-flow > details > div');
     expect(body?.textContent ?? '').toContain('pnpm guard');
     expect(body?.textContent ?? '').toContain('guard passed');

@@ -321,8 +321,8 @@ describe('tool_input_delta 是心跳,不是界面', () => {
     expect(later, '壳头秒数冻住了 —— 那才是真的「没有任何反应」').not.toBe(first);
     expect(later).toMatch(/\d+m \d+s/);
 
-    // 跑完的那一对落了行(对照组:这个 harness 确实会画工具行)
-    expect(container.textContent ?? '').toContain('ls docs');
+    // 跑完的那一对落了语义化的搜索行(对照组:这个 harness 确实会画工具行)
+    expect(container.textContent ?? '').toContain('搜索 docs');
     // 在途那一个一行都不落(D3 / B8)
     expect(container.textContent ?? '').not.toContain('login.html');
     expect(screen.queryByText(/ODEOF/)).toBeNull();

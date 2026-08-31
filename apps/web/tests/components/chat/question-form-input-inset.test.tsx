@@ -42,7 +42,7 @@
  *    (`next-step-cascade.test.ts`、`record-cascade.test.ts`)。
  */
 import { describe, expect, it, beforeAll } from 'vitest';
-import { render } from '@testing-library/react';
+import { fireEvent, render, within } from '@testing-library/react';
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -169,7 +169,7 @@ describe('意图澄清卡 · 自由填写的左右内距与底下的余量', () 
     expect(cs.width).toBe('100%');
   });
 
-  it('折叠的「自己填」也不受影响 —— 它跟的是选项的文字缩进,不是 11', () => {
+  it('「自己填」收起时不挂输入框,展开后输入框沿用选项行内距', () => {
     const root = mount({
       ...FORM,
       id: 'brief-custom',
@@ -181,13 +181,10 @@ describe('意图澄清卡 · 自由填写的左右内距与底下的余量', () 
         options: [{ label: '产品发布宣言', value: 'a' }, { label: '季度业绩分析', value: 'b' }],
       }],
     });
-    const custom = root.querySelector<HTMLElement>('.qf-custom');
-    expect(custom, '折叠的「自己填」没渲染出来 —— 这条测试会变成空转').toBeTruthy();
-    // 稿子里它跟着选项的**文字**缩进(11 的竖线 + 15 的控件 + 8 的间距 = 34),不是 11
-    expect(getComputedStyle(custom!).marginLeft).toBe('34px');
-    expect(getComputedStyle(custom!).marginRight).toBe(RAIL);
-    const inner = custom!.querySelector<HTMLElement>('.qf-input');
-    expect(inner, '折叠框里的输入没渲染出来').toBeTruthy();
+    expect(root.querySelector('.qf-own-input')).toBeNull();
+    fireEvent.click(within(root).getByRole('button', { name: '自己填' }));
+    const inner = root.querySelector<HTMLElement>('.qf-own-input');
+    expect(inner, '展开后的「自己填」输入没渲染出来').toBeTruthy();
     expect(getComputedStyle(inner!).marginLeft).toBe('0');
     expect(getComputedStyle(inner!).width).toBe('100%');
   });

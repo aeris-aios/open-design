@@ -35,7 +35,13 @@ function shellWithFailedImage(): ShellData {
 describe('生图重试', () => {
   it('给了回调就能点,点了把「砸了几张」交出去', () => {
     const onRetryImage = vi.fn();
-    render(<ExecutionShell shell={shellWithFailedImage()} onRetryImage={onRetryImage} />);
+    render(
+      <ExecutionShell
+        shell={shellWithFailedImage()}
+        onRetryImage={onRetryImage}
+        deferCollapsedBodies={false}
+      />,
+    );
 
     const retry = screen.getByRole('button', { name: '重试' });
     fireEvent.click(retry);
@@ -45,7 +51,7 @@ describe('生图重试', () => {
   });
 
   it('没有回调时只画不点 —— 不摆一颗按不动的按钮', () => {
-    render(<ExecutionShell shell={shellWithFailedImage()} />);
+    render(<ExecutionShell shell={shellWithFailedImage()} deferCollapsedBodies={false} />);
     expect(screen.queryByRole('button', { name: '重试' })).toBeNull();
     // 「重试」这两个字还在,只是不可点(稿子那一格也允许只画)
     expect(screen.getByText('重试')).toBeTruthy();

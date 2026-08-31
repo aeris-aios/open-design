@@ -278,7 +278,9 @@ describe('N8-d 壳里确实是「步骤 / 思考 / 步骤 / 工具行」几个�
 
   it('四格全是壳 body 的直接子代,且混着 details 和 div', () => {
     const { container } = render(
-      <I18nProvider initial="zh-CN"><ExecutionShell shell={shell} /></I18nProvider>,
+      <I18nProvider initial="zh-CN">
+        <ExecutionShell shell={shell} deferCollapsedBodies={false} />
+      </I18nProvider>,
     );
     const body = container.querySelector('details[class*="flat"] > div[class*="body"]');
     expect(body).not.toBeNull();

@@ -45,6 +45,13 @@ const recordHead = (container: HTMLElement): string =>
 const recordBody = (container: HTMLElement): HTMLElement | null =>
   record(container).querySelector<HTMLElement>(':scope > div');
 
+function activateExecutionRecord(container: HTMLElement): void {
+  const shell = record(container);
+  const summary = shell.querySelector<HTMLElement>(':scope > summary');
+  if (!summary) throw new Error('执行记录壳标题没有渲染出来');
+  fireEvent.click(summary);
+}
+
 const bodyText = (container: HTMLElement): string => recordBody(container)?.textContent ?? '';
 
 /** 壳里的行数:工具行、清单行、过程叙述各算一行 */
@@ -145,6 +152,7 @@ describe('AssistantMessage 执行记录', () => {
     );
 
     expect(recordHead(container)).toContain('Done');
+    activateExecutionRecord(container);
     expect(bodyText(container)).toContain('missing.ts');
     expect(bodyText(container)).toContain('Failed');
     expect(bodyText(container)).toContain('source.ts');
@@ -194,6 +202,7 @@ describe('AssistantMessage 执行记录', () => {
       />,
     );
 
+    activateExecutionRecord(container);
     expect(rowCount(container)).toBe(1);
     // HTML 产物走卡片形态(组件 14),产物只应出现一次
     expect(container.querySelectorAll('[data-artifact-card]')).toHaveLength(1);
@@ -215,6 +224,7 @@ describe('AssistantMessage 执行记录', () => {
       />,
     );
 
+    activateExecutionRecord(container);
     expect(bodyText(container)).toContain('source.ts');
     expect(screen.queryByTestId('file-ops-summary')).toBeNull();
   });
@@ -237,6 +247,7 @@ describe('AssistantMessage 执行记录', () => {
       />,
     );
 
+    activateExecutionRecord(container);
     expect(container.querySelectorAll('[data-testid="assistant-flow"] > details')).toHaveLength(1);
     expect(rowCount(container)).toBe(3);
     const body = bodyText(container);
@@ -603,11 +614,14 @@ describe('AssistantMessage 执行记录', () => {
       />,
     );
 
+    activateExecutionRecord(container);
     const flow = container.querySelector('[data-testid="assistant-flow"]');
     expect(flow?.firstElementChild).toBe(record(container));
     expect(recordHead(container)).toContain('Done');
     expect(flow?.textContent).toContain('Here is the finished answer.');
 
+    expect(bodyText(container)).toContain('Thoughts');
+    fireEvent.click(screen.getByText('Thoughts').closest('summary')!);
     const body = bodyText(container);
     expect(body).toContain('Reviewing the request.');
     expect(body).toContain('source.ts');

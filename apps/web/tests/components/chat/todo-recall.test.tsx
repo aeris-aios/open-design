@@ -55,6 +55,12 @@ const show = (
   </I18nProvider>
 );
 
+function activateExecutionRecord(root: ParentNode): void {
+  const summary = root.querySelector<HTMLElement>('.assistant-flow > details > summary');
+  if (!summary) throw new Error('执行记录壳没有渲染出来');
+  fireEvent.click(summary);
+}
+
 describe('本轮清单里认出「上一轮那条」', () => {
   it('agent 重发了那条 → 标成召回并划线', () => {
     const message = msg([
@@ -66,6 +72,7 @@ describe('本轮清单里认出「上一轮那条」', () => {
       // 上一轮**开了工**没做完 —— 这才是欠账(判据见文件头的 2026-08-27 裁决)
       show(message, { previousTodos: [{ content: '补 FAQ', status: 'in_progress' }] }),
     );
+    activateExecutionRecord(container);
     const struck = [...container.querySelectorAll('summary span[class*="struck"]')];
     expect(struck.map((el) => el.textContent)).toContain('补 FAQ');
   });
@@ -84,6 +91,7 @@ describe('本轮清单里认出「上一轮那条」', () => {
     const { container } = render(
       show(message, { previousTodos: [{ content: '补 FAQ', status: 'pending' }] }),
     );
+    activateExecutionRecord(container);
     const struck = [...container.querySelectorAll('summary span[class*="struck"]')];
     expect(struck.map((el) => el.textContent)).not.toContain('补 FAQ');
   });
@@ -102,6 +110,7 @@ describe('本轮清单里认出「上一轮那条」', () => {
     const { container } = render(
       show(message, { previousTodos: [{ content: '补 FAQ', status: 'pending' }] }),
     );
+    activateExecutionRecord(container);
     const struck = [...container.querySelectorAll('summary span[class*="struck"]')];
     expect(struck.map((el) => el.textContent)).not.toContain('做别的');
   });
@@ -192,6 +201,7 @@ describe('ChatPane 真的把 previousTodos 递下去了', () => {
      */
     const secondTurn = container.querySelector('#assistant-message-a2');
     expect(secondTurn).not.toBeNull();
+    activateExecutionRecord(secondTurn!);
     const struck = [...secondTurn!.querySelectorAll('summary span[class*="struck"]')];
     expect(struck.map((el) => el.textContent)).toContain('补 FAQ');
   });

@@ -37,7 +37,9 @@ function show(over: Partial<Shell>): HTMLElement {
     ...over,
   } as unknown as Shell;
   return render(
-    <I18nProvider initial="zh-CN"><ExecutionShell shell={shell} /></I18nProvider>,
+    <I18nProvider initial="zh-CN">
+      <ExecutionShell shell={shell} deferCollapsedBodies={false} />
+    </I18nProvider>,
   ).container;
 }
 

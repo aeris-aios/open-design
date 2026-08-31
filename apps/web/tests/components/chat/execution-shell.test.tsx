@@ -20,6 +20,10 @@ afterEach(() => { cleanup(); });
 
 const render = (ui: ReactElement) => rtlRender(<I18nProvider initial="zh-CN">{ui}</I18nProvider>);
 
+const shellView = (shell: ShellData): ReactElement => (
+  <ExecutionShell shell={shell} deferCollapsedBodies={false} />
+);
+
 function shellsOf(events: PersistedAgentEvent[], runStatus?: 'succeeded' | 'failed' | 'canceled' | 'running'): ShellData[] {
   return buildTurnBlocks({ events, runStatus, nowMs: 60_000 })
     .filter((b): b is ShellData => b.kind === 'shell');
@@ -123,13 +127,13 @@ describe('有清单:按 todo 分段', () => {
 
   it('清单卡先出「执行计划 · N 步」', () => {
     const shells = shellsOf(events, 'succeeded');
-    render(<ExecutionShell shell={nth(shells, shells.length - 1)} />);
+    render(shellView(nth(shells, shells.length - 1)));
     expect(screen.getByText('执行计划 · 3 步')).toBeTruthy();
   });
 
   it('做过事的那条可展开;一次性关掉、名下没内容的那条划线且没有箭头(D35)', () => {
     const shells = shellsOf(events, 'succeeded');
-    render(<ExecutionShell shell={nth(shells, shells.length - 1)} />);
+    render(shellView(nth(shells, shells.length - 1)));
     const drawers = [...document.querySelectorAll('details details')];
     const byName = (name: string) => drawers.find((d) => d.querySelector('summary')?.textContent?.includes(name));
 
@@ -158,7 +162,7 @@ describe('没有清单:平铺', () => {
       ...call('t1', 'Bash', { command: 'cat 规格.md' }),
       ...call('t2', 'Bash', { command: 'grep -n gap a.css' }, { content: 'a.css:1: gap' }),
     ], 'succeeded');
-    render(<ExecutionShell shell={shell as ShellData} />);
+    render(shellView(shell as ShellData));
     expect(document.querySelectorAll('details details')).toHaveLength(0);
     expect(screen.getByText('读取')).toBeTruthy();
     expect(screen.getByText('搜索')).toBeTruthy();

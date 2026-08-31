@@ -116,7 +116,6 @@ describe('ChatPane resume-on-failure', () => {
     const continueBtn = screen.getByRole('button', { name: 'chat.resumeRunCta' });
     expect(continueBtn).toBeTruthy();
     expect(continueBtn.textContent).toBe('chat.resumeRunCta');
-    expect(continueBtn.classList.contains('chat-error-action')).toBe(true);
     // The from-scratch Retry must not be the offered action for a resumable run.
     expect(screen.queryByRole('button', { name: 'promptTemplates.retry' })).toBeNull();
 

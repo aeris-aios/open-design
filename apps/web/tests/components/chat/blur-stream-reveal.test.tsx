@@ -19,10 +19,11 @@
  *   思考流            → `.rv` span **0 个**(从来没接过)
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render } from '@testing-library/react';
+import { act, cleanup, render } from '@testing-library/react';
 import { useRef, type ReactElement } from 'react';
 import { I18nProvider } from '../../../src/i18n';
 import { ExecutionShell } from '../../../src/components/chat/ExecutionShell';
+import { THINKING_MARKDOWN_COMMIT_MS } from '../../../src/components/chat/ThinkingMarkdown';
 import { useCharReveal, planReveal, REVEAL_BUDGET_MS, CHAR_MS, STAGGER_MS, MAX_UNITS } from '../../../src/components/chat/useCharReveal';
 import type { ExecutionShell as Shell, ShellItem } from '../../../src/runtime/chat/contract';
 
@@ -110,21 +111,31 @@ function shellOf(items: ShellItem[], over: Partial<Shell> = {}): Shell {
   } as Shell;
 }
 const showShell = (shell: Shell): ReactElement => (
-  <I18nProvider initial="zh-CN"><ExecutionShell shell={shell} /></I18nProvider>
+  <I18nProvider initial="zh-CN">
+    <ExecutionShell shell={shell} deferCollapsedBodies={false} />
+  </I18nProvider>
 );
 
 describe('思考流也逐字化开', () => {
-  it('还在想的那一格里有字在化开 —— 修前这里是 0 个 span', () => {
-    const { container, rerender } = render(showShell(
-      shellOf([think('两张图的栅格看着是同一套。')], { status: 'running', thinking: true }),
-    ));
-    rerender(showShell(
-      shellOf([think('两张图的栅格看着是同一套。先量一下列宽和沟槽。')], { status: 'running', thinking: true }),
-    ));
-    const inStream = container.querySelectorAll('[class*="stream"] .rv');
-    /* 正向对照:这一格真的渲染出来了、文字真的在 —— 少了它,组件整个没渲染时下面也会「通过」 */
-    expect(container.querySelector('[class*="stream"]')?.textContent).toContain('先量一下列宽');
-    expect(inStream.length).toBeGreaterThan(0);
+  it('还在想的那一格里有字在化开 —— 修前这里是 0 个 span', async () => {
+    vi.useFakeTimers();
+    try {
+      const { container, rerender } = render(showShell(
+        shellOf([think('两张图的栅格看着是同一套。')], { status: 'running', thinking: true }),
+      ));
+      rerender(showShell(
+        shellOf([think('两张图的栅格看着是同一套。先量一下列宽和沟槽。')], { status: 'running', thinking: true }),
+      ));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(THINKING_MARKDOWN_COMMIT_MS);
+      });
+      const inStream = container.querySelectorAll('[class*="stream"] .rv');
+      /* 正向对照:这一格真的渲染出来了、文字真的在 —— 少了它,组件整个没渲染时下面也会「通过」 */
+      expect(container.querySelector('[class*="stream"]')?.textContent).toContain('先量一下列宽');
+      expect(inStream.length).toBeGreaterThan(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('反向对照:想完了(不在流)的那一格不化开', () => {

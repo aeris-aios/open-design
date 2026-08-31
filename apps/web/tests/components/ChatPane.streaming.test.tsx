@@ -32,6 +32,8 @@ const translations: Record<string, string> = {
   'chat.queuedEdit': 'Edit',
   'chat.queuedMore': 'more queued',
   'chat.queuedFollowUpFallback': 'Queued follow-up',
+  'chat.designToolbox.kind.plugin': 'Plugin',
+  'chat.plus.designSystem': 'Design system',
   'avatar.useLocal': 'Use Local CLI',
   'chat.copyDone': 'Copied!',
 };
@@ -286,11 +288,11 @@ describe('ChatPane streaming state', () => {
     expect(css).toContain('.chat-queued-send-drag-handle');
     expect(css).toContain('align-self: auto;');
     expect(css).toContain('.pane {');
-    expect(css).toContain('--chat-composer-inline-inset: 12px;');
-    expect(css).toContain('.app .split-chat-slot > .pane');
+    expect(css).toContain('--chat-composer-inline-inset: 16px;');
+    expect(css).toContain('.split-chat-slot > .pane');
     expect(css).toContain('--chat-composer-inline-inset: 10px;');
-    expect(css).toContain('width: calc(100% - (var(--chat-composer-inline-inset, 12px) * 2));');
-    expect(css).toContain('margin: 0 var(--chat-composer-inline-inset, 12px) 2px;');
+    expect(css).toContain('width: calc(100% - (var(--chat-composer-inline-inset, 16px) * 2));');
+    expect(css).toContain('margin: 0 var(--chat-composer-inline-inset, 16px) 2px;');
     expect(css).toContain('max-width: none;');
     expect(css).toContain('.chat-queued-send-action');
     expect(css).toContain('width: 24px;');
@@ -875,7 +877,7 @@ describe('ChatPane streaming state', () => {
     fireEvent.click(within(context).getByRole('button', { name: /Using/ }));
     fireEvent.click(within(context).getByRole('button', { name: /Plugin.*A Decade of Refinement Glow-Up/ }));
     expect(onRequestPluginDetails).toHaveBeenCalledWith('refinement-plugin');
-    fireEvent.click(within(context).getByRole('button', { name: /Design System.*Neutral Modern/ }));
+    fireEvent.click(within(context).getByRole('button', { name: /Design system.*Neutral Modern/ }));
     expect(onRequestDesignSystemDetails).toHaveBeenCalledWith(activeDesignSystem);
     // The plugin's resolved context is now collapsed into the single
     // plugin chip — the per-category (asset/design/skill) fan-out is no
