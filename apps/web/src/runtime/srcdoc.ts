@@ -27,6 +27,10 @@ import {
   buildPreviewObservabilityBridge,
 } from '@open-design/contracts/runtime/preview-observability';
 import {
+  PREVIEW_RUNTIME_STATE_LIMITS,
+  PREVIEW_RUNTIME_STATE_VERSION,
+} from '@open-design/contracts/runtime/preview-runtime-state';
+import {
   PREVIEW_REDIRECT_GUARD_MAX_HOPS,
   PREVIEW_REDIRECT_GUARD_SELF_REFRESH_MIN_DELAY_MS,
   PREVIEW_REDIRECT_GUARD_WINDOW_MS,
@@ -2386,11 +2390,11 @@ function meaningfulDomFallbackTarget(el) {
         try { el.removeAttribute(currentName); } catch (_) {}
       }
     }
-    var names = Object.keys(attrs).slice(0, 64);
+    var names = Object.keys(attrs).slice(0, ${PREVIEW_RUNTIME_STATE_LIMITS.maxAttributes});
     for (var a = 0; a < names.length; a++) {
       var name = names[a];
       var value = attrs[name];
-      if (!runtimeStateAttributeAllowed(name) || typeof value !== 'string' || value.length > 20000) continue;
+      if (!runtimeStateAttributeAllowed(name) || name.length > ${PREVIEW_RUNTIME_STATE_LIMITS.maxAttributeNameLength} || typeof value !== 'string' || value.length > ${PREVIEW_RUNTIME_STATE_LIMITS.maxAttributeValueLength}) continue;
       try { el.setAttribute(name, value); } catch (_) {}
     }
   }
@@ -2399,30 +2403,30 @@ function meaningfulDomFallbackTarget(el) {
     var node = el;
     while (node && node !== document.body) {
       var parent = node.parentElement;
-      if (!parent || path.length >= 64) return null;
+      if (!parent || path.length >= ${PREVIEW_RUNTIME_STATE_LIMITS.maxPathLength}) return null;
       var index = Array.prototype.indexOf.call(parent.children, node);
-      if (index < 0 || index > 100000) return null;
+      if (index < 0 || index > ${PREVIEW_RUNTIME_STATE_LIMITS.maxPathIndex}) return null;
       path.unshift(index);
       node = parent;
     }
     return node === document.body ? path : null;
   }
   function runtimeStateElementAtPath(path){
-    if (!Array.isArray(path) || path.length > 64) return null;
+    if (!Array.isArray(path) || path.length > ${PREVIEW_RUNTIME_STATE_LIMITS.maxPathLength}) return null;
     var node = document.body;
     for (var i = 0; node && i < path.length; i++) {
       var index = Number(path[i]);
-      if (!Number.isInteger(index) || index < 0 || index > 100000) return null;
+      if (!Number.isInteger(index) || index < 0 || index > ${PREVIEW_RUNTIME_STATE_LIMITS.maxPathIndex}) return null;
       node = node.children && node.children[index];
     }
     return node || null;
   }
   function runtimeStateElement(entry){
     var el = null;
-    if (entry && typeof entry.id === 'string' && entry.id.length <= 4096) {
+    if (entry && typeof entry.id === 'string' && entry.id.length <= ${PREVIEW_RUNTIME_STATE_LIMITS.maxIdentityLength}) {
       try { el = document.getElementById(entry.id); } catch (_) { el = null; }
     }
-    if (!el && entry && typeof entry.odId === 'string' && entry.odId.length <= 4096) {
+    if (!el && entry && typeof entry.odId === 'string' && entry.odId.length <= ${PREVIEW_RUNTIME_STATE_LIMITS.maxIdentityLength}) {
       try { el = document.querySelector('[data-od-id="' + esc(entry.odId) + '"]'); } catch (_) { el = null; }
     }
     if (!el) el = runtimeStateElementAtPath(entry && entry.path);
@@ -2432,12 +2436,12 @@ function meaningfulDomFallbackTarget(el) {
   function runtimeStateAnnotationElement(annotation){
     var el = null;
     var hasStableIdentity = false;
-    if (annotation && typeof annotation.id === 'string' && annotation.id.length <= 4096) {
+    if (annotation && typeof annotation.id === 'string' && annotation.id.length <= ${PREVIEW_RUNTIME_STATE_LIMITS.maxIdentityLength}) {
       hasStableIdentity = true;
       try { el = document.getElementById(annotation.id); } catch (_) { el = null; }
       if (!el) return null;
     }
-    if (annotation && typeof annotation.odId === 'string' && annotation.odId.length <= 4096) {
+    if (annotation && typeof annotation.odId === 'string' && annotation.odId.length <= ${PREVIEW_RUNTIME_STATE_LIMITS.maxIdentityLength}) {
       var sourcePath = annotation.attrs && annotation.attrs['data-od-source-path'];
       var generatedOdId = annotation.odId === sourcePath && /^path(?:-[0-9]+)+$/.test(annotation.odId);
       if (!generatedOdId) hasStableIdentity = true;
@@ -2465,7 +2469,7 @@ function meaningfulDomFallbackTarget(el) {
       '[data-od-source-path], [data-od-id], [data-od-edit], [data-od-label]'
     );
     var annotations = [];
-    var count = Math.min(nodes.length, 3500);
+    var count = Math.min(nodes.length, ${PREVIEW_RUNTIME_STATE_LIMITS.maxElements});
     for (var i = 0; i < count; i++) {
       var el = nodes[i];
       var path = runtimeStatePath(el);
@@ -2512,14 +2516,14 @@ function meaningfulDomFallbackTarget(el) {
   function restoreRuntimeState(state){
     if (
       !state ||
-      state.version !== 1 ||
+      state.version !== ${PREVIEW_RUNTIME_STATE_VERSION} ||
       !Array.isArray(state.entries) ||
-      state.entries.length > 3500
+      state.entries.length > ${PREVIEW_RUNTIME_STATE_LIMITS.maxElements}
     ) return;
     if (
       document.body &&
       typeof state.bodyHtml === 'string' &&
-      state.bodyHtml.length <= 2097152
+      state.bodyHtml.length <= ${PREVIEW_RUNTIME_STATE_LIMITS.maxBodyHtmlLength}
     ) {
       // Source annotations describe where an edit must be persisted in the
       // authored file. The URL document does not carry these srcDoc-only
@@ -2527,13 +2531,13 @@ function meaningfulDomFallbackTarget(el) {
       var sourceAnnotations = captureRuntimeStateAnnotations();
       document.body.innerHTML = state.bodyHtml;
       restoreRuntimeStateAnnotations(sourceAnnotations);
-    } else if (Array.isArray(state.roots) && state.roots.length <= 64) {
+    } else if (Array.isArray(state.roots) && state.roots.length <= ${PREVIEW_RUNTIME_STATE_LIMITS.maxRoots}) {
       var rootHtmlLength = 0;
       for (var r = 0; r < state.roots.length; r++) {
         var root = state.roots[r];
         if (!root || typeof root !== 'object' || typeof root.html !== 'string') continue;
         rootHtmlLength += root.html.length;
-        if (rootHtmlLength > 2097152) break;
+        if (rootHtmlLength > ${PREVIEW_RUNTIME_STATE_LIMITS.maxRootHtmlLength}) break;
         var currentRoot = runtimeStateElement(root);
         if (!currentRoot) continue;
         // Preserve the root node itself: application closures and delegated
@@ -2553,7 +2557,7 @@ function meaningfulDomFallbackTarget(el) {
       if (
         (tag === 'input' || tag === 'textarea' || tag === 'select') &&
         typeof entry.value === 'string' &&
-        entry.value.length <= 100000
+        entry.value.length <= ${PREVIEW_RUNTIME_STATE_LIMITS.maxValueLength}
       ) {
         try { el.value = entry.value; } catch (_) {}
       }

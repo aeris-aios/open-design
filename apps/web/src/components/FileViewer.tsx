@@ -28,6 +28,10 @@ import {
 import { PREVIEW_OBSERVABILITY_HOST_STATE_MESSAGE_TYPE } from '@open-design/contracts/runtime/preview-observability';
 import { PREVIEW_URL_GUARD_MAX_HTML_BYTES } from '@open-design/contracts/runtime/preview-guards';
 import {
+  isPreviewRuntimeState,
+  type PreviewRuntimeState,
+} from '@open-design/contracts/runtime/preview-runtime-state';
+import {
   appendResourceQuery,
   workspaceIdentityCacheKey,
   workspaceProjectHeaders,
@@ -384,114 +388,11 @@ const POWERED_PREVIEW_SANDBOX =
 const POWERED_PREVIEW_ALLOW =
   'accelerometer; autoplay; camera; cross-origin-isolated; fullscreen; gamepad; gyroscope; microphone; xr-spatial-tracking';
 const BASE_PREVIEW_BRIDGE_QUERY = 'odPreviewBridge=scroll&odPreviewBridge=selection&odPreviewBridge=snapshot&odPreviewBridge=observability';
-// Frozen DOM state carried across the URL-load -> srcDoc transport switch.
-// The rendered body covers arbitrary app shells; bounded entries retain DOM
-// properties that innerHTML cannot serialize (form values and scroll offsets).
-const PREVIEW_RUNTIME_STATE_MAX_ELEMENTS = 3500;
-const PREVIEW_RUNTIME_STATE_MAX_ROOTS = 64;
-const PREVIEW_RUNTIME_STATE_MAX_ROOT_HTML = 2 * 1024 * 1024;
-const PREVIEW_RUNTIME_STATE_MAX_BODY_HTML = 2 * 1024 * 1024;
-type PreviewRuntimeStateEntry = {
-  path: number[];
-  tag: string;
-  id?: string;
-  odId?: string;
-  attrs: Record<string, string>;
-  value?: string;
-  checked?: boolean;
-  selectedIndex?: number;
-  scrollLeft?: number;
-  scrollTop?: number;
-};
-type PreviewRuntimeStateRoot = {
-  path: number[];
-  tag: string;
-  id?: string;
-  odId?: string;
-  html: string;
-};
-type PreviewRuntimeState = {
-  version: 1;
-  hash: string;
-  bodyHtml?: string | null;
-  roots?: PreviewRuntimeStateRoot[];
-  htmlAttrs: Record<string, string>;
-  bodyAttrs: Record<string, string>;
-  entries: PreviewRuntimeStateEntry[];
-};
 const HTML_PASSIVE_PREVIEW_FULL_TEXT_LIMIT = 2 * 1024 * 1024;
 const HTML_ROUTING_TEXT_PREVIEW_LIMIT = 96 * 1024;
 const HTML_PREVIEW_ASSET_PREFLIGHT_LIMIT = 32;
 type HtmlSourceLoadMode = 'full' | 'routing-preview';
 type PreviewAssetWarning = { filePath: string };
-
-function isPreviewRuntimeAttributeMap(value: unknown): value is Record<string, string> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const entries = Object.entries(value);
-  return entries.length <= 64 && entries.every(([name, attrValue]) => (
-    name.length <= 128 &&
-    typeof attrValue === 'string' &&
-    attrValue.length <= 20_000
-  ));
-}
-
-function isPreviewRuntimeState(value: unknown): value is PreviewRuntimeState {
-  if (!value || typeof value !== 'object') return false;
-  const state = value as Partial<PreviewRuntimeState>;
-  if (
-    state.version !== 1 ||
-    typeof state.hash !== 'string' ||
-    state.hash.length > 4096 ||
-    (state.bodyHtml !== undefined && state.bodyHtml !== null && (
-      typeof state.bodyHtml !== 'string' ||
-      state.bodyHtml.length > PREVIEW_RUNTIME_STATE_MAX_BODY_HTML
-    )) ||
-    (state.roots !== undefined && (
-      !Array.isArray(state.roots) ||
-      state.roots.length > PREVIEW_RUNTIME_STATE_MAX_ROOTS ||
-      state.roots.reduce((total, root) => total + (
-        root && typeof root === 'object' && typeof root.html === 'string'
-          ? root.html.length
-          : PREVIEW_RUNTIME_STATE_MAX_ROOT_HTML + 1
-      ), 0) > PREVIEW_RUNTIME_STATE_MAX_ROOT_HTML ||
-      !state.roots.every((root) => (
-        !!root &&
-        typeof root === 'object' &&
-        typeof root.tag === 'string' &&
-        root.tag.length <= 32 &&
-        Array.isArray(root.path) &&
-        root.path.length <= 64 &&
-        root.path.every((index) => Number.isInteger(index) && index >= 0 && index <= 100_000) &&
-        (root.id === undefined || (typeof root.id === 'string' && root.id.length <= 4096)) &&
-        (root.odId === undefined || (typeof root.odId === 'string' && root.odId.length <= 4096)) &&
-        typeof root.html === 'string'
-      ))
-    )) ||
-    !isPreviewRuntimeAttributeMap(state.htmlAttrs) ||
-    !isPreviewRuntimeAttributeMap(state.bodyAttrs) ||
-    !Array.isArray(state.entries) ||
-    state.entries.length > PREVIEW_RUNTIME_STATE_MAX_ELEMENTS
-  ) {
-    return false;
-  }
-  return state.entries.every((entry) => (
-    !!entry &&
-    typeof entry === 'object' &&
-    typeof entry.tag === 'string' &&
-    entry.tag.length <= 32 &&
-    Array.isArray(entry.path) &&
-    entry.path.length <= 64 &&
-    entry.path.every((index) => Number.isInteger(index) && index >= 0 && index <= 100_000) &&
-    (entry.id === undefined || (typeof entry.id === 'string' && entry.id.length <= 4096)) &&
-    (entry.odId === undefined || (typeof entry.odId === 'string' && entry.odId.length <= 4096)) &&
-    isPreviewRuntimeAttributeMap(entry.attrs) &&
-    (entry.value === undefined || (typeof entry.value === 'string' && entry.value.length <= 100_000)) &&
-    (entry.checked === undefined || typeof entry.checked === 'boolean') &&
-    (entry.selectedIndex === undefined || Number.isInteger(entry.selectedIndex)) &&
-    (entry.scrollLeft === undefined || Number.isFinite(entry.scrollLeft)) &&
-    (entry.scrollTop === undefined || Number.isFinite(entry.scrollTop))
-  ));
-}
 
 function previewTextNeedsFullSourceForSafeInline(source: string | null): boolean {
   if (!source) return false;

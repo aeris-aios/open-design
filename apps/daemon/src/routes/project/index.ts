@@ -25,6 +25,10 @@ import {
   prependAfterDoctype,
 } from '@open-design/contracts/runtime/html-injection-points';
 import {
+  PREVIEW_RUNTIME_STATE_LIMITS,
+  PREVIEW_RUNTIME_STATE_VERSION,
+} from '@open-design/contracts/runtime/preview-runtime-state';
+import {
   automaticStrategyTaskProfileForProjectMetadata,
   defaultScenarioPluginIdForProjectMetadata,
   type ChatSessionMode,
@@ -1058,10 +1062,13 @@ const URL_PREVIEW_SELECTION_BRIDGE = `<script data-od-url-selection-bridge>
   function runtimeStateAttributes(el){
     var attrs = Object.create(null);
     if (!el || !el.attributes) return attrs;
-    for (var i = 0; i < el.attributes.length; i++) {
+    for (var i = 0; i < el.attributes.length && Object.keys(attrs).length < ${PREVIEW_RUNTIME_STATE_LIMITS.maxAttributes}; i++) {
       var attr = el.attributes[i];
       if (!attr || !runtimeStateAttributeAllowed(attr.name)) continue;
-      attrs[attr.name] = String(attr.value || '');
+      var attrName = String(attr.name || '');
+      var attrValue = String(attr.value || '');
+      if (attrName.length > ${PREVIEW_RUNTIME_STATE_LIMITS.maxAttributeNameLength} || attrValue.length > ${PREVIEW_RUNTIME_STATE_LIMITS.maxAttributeValueLength}) continue;
+      attrs[attrName] = attrValue;
     }
     return attrs;
   }
@@ -1070,9 +1077,9 @@ const URL_PREVIEW_SELECTION_BRIDGE = `<script data-od-url-selection-bridge>
     var node = el;
     while (node && node !== document.body) {
       var parent = node.parentElement;
-      if (!parent) return null;
+      if (!parent || path.length >= ${PREVIEW_RUNTIME_STATE_LIMITS.maxPathLength}) return null;
       var index = Array.prototype.indexOf.call(parent.children, node);
-      if (index < 0) return null;
+      if (index < 0 || index > ${PREVIEW_RUNTIME_STATE_LIMITS.maxPathIndex}) return null;
       path.unshift(index);
       node = parent;
     }
@@ -1082,7 +1089,7 @@ const URL_PREVIEW_SELECTION_BRIDGE = `<script data-od-url-selection-bridge>
     if (!document.body) return [];
     var roots = [];
     var canonical = document.body.querySelectorAll('#app, #root, [data-reactroot]');
-    for (var c = 0; c < canonical.length && roots.length < 64; c++) {
+    for (var c = 0; c < canonical.length && roots.length < ${PREVIEW_RUNTIME_STATE_LIMITS.maxRoots}; c++) {
       roots.push(canonical[c]);
     }
     // Stateful overlays and detail panes are often siblings of #app/#root.
@@ -1092,7 +1099,7 @@ const URL_PREVIEW_SELECTION_BRIDGE = `<script data-od-url-selection-bridge>
     // descendant of a canonical root, so framework-owned trees keep their
     // existing single snapshot boundary.
     var identified = document.body.querySelectorAll('[id]');
-    for (var i = 0; i < identified.length && roots.length < 64; i++) {
+    for (var i = 0; i < identified.length && roots.length < ${PREVIEW_RUNTIME_STATE_LIMITS.maxRoots}; i++) {
       var candidate = identified[i];
       var overlaps = false;
       for (var r = 0; r < roots.length; r++) {
@@ -1147,7 +1154,7 @@ const URL_PREVIEW_SELECTION_BRIDGE = `<script data-od-url-selection-bridge>
         if (hostScript) scriptNode.remove();
       }
       var html = String(clone.innerHTML || '');
-      return html.length <= 2097152 ? html : null;
+      return html.length <= ${PREVIEW_RUNTIME_STATE_LIMITS.maxBodyHtmlLength} ? html : null;
     } catch (_) {
       return null;
     }
@@ -1162,27 +1169,27 @@ const URL_PREVIEW_SELECTION_BRIDGE = `<script data-od-url-selection-bridge>
     // markup instead of duplicating the entire body plus its app roots.
     if (bodyHtml === null) {
       var runtimeRoots = runtimeStateRoots();
-      for (var rootIndex = 0; rootIndex < runtimeRoots.length && roots.length < 64; rootIndex++) {
+      for (var rootIndex = 0; rootIndex < runtimeRoots.length && roots.length < ${PREVIEW_RUNTIME_STATE_LIMITS.maxRoots}; rootIndex++) {
         var root = runtimeRoots[rootIndex];
         var rootTag = String(root.tagName || '').toLowerCase();
         var rootPath = runtimeStatePath(root);
         if (!rootPath) continue;
         var rootHtml = String(root.innerHTML || '');
-        if (rootHtmlLength + rootHtml.length > 2097152) break;
+        if (rootHtmlLength + rootHtml.length > ${PREVIEW_RUNTIME_STATE_LIMITS.maxRootHtmlLength}) break;
         var rootEntry = {
           path: rootPath,
           tag: rootTag,
           html: rootHtml
         };
-        if (root.id) rootEntry.id = String(root.id);
+        if (root.id && String(root.id).length <= ${PREVIEW_RUNTIME_STATE_LIMITS.maxIdentityLength}) rootEntry.id = String(root.id);
         var rootOdId = root.getAttribute && root.getAttribute('data-od-id');
-        if (rootOdId) rootEntry.odId = String(rootOdId);
+        if (rootOdId && String(rootOdId).length <= ${PREVIEW_RUNTIME_STATE_LIMITS.maxIdentityLength}) rootEntry.odId = String(rootOdId);
         roots.push(rootEntry);
         rootHtmlLength += rootHtml.length;
       }
     }
     var nodes = document.body ? document.body.querySelectorAll('*') : [];
-    var count = Math.min(nodes.length, 3500);
+    var count = Math.min(nodes.length, ${PREVIEW_RUNTIME_STATE_LIMITS.maxElements});
     for (var i = 0; i < count; i++) {
       var el = nodes[i];
       var path = runtimeStatePath(el);
@@ -1192,12 +1199,13 @@ const URL_PREVIEW_SELECTION_BRIDGE = `<script data-od-url-selection-bridge>
         tag: String(el.tagName || '').toLowerCase(),
         attrs: runtimeStateAttributes(el)
       };
-      if (el.id) entry.id = String(el.id);
+      if (el.id && String(el.id).length <= ${PREVIEW_RUNTIME_STATE_LIMITS.maxIdentityLength}) entry.id = String(el.id);
       var odId = el.getAttribute && el.getAttribute('data-od-id');
-      if (odId) entry.odId = String(odId);
+      if (odId && String(odId).length <= ${PREVIEW_RUNTIME_STATE_LIMITS.maxIdentityLength}) entry.odId = String(odId);
       var tag = entry.tag;
       if (tag === 'input' || tag === 'textarea' || tag === 'select') {
-        entry.value = String(el.value == null ? '' : el.value);
+        var value = String(el.value == null ? '' : el.value);
+        if (value.length <= ${PREVIEW_RUNTIME_STATE_LIMITS.maxValueLength}) entry.value = value;
       }
       if (tag === 'input' && (el.type === 'checkbox' || el.type === 'radio')) {
         entry.checked = !!el.checked;
@@ -1208,8 +1216,8 @@ const URL_PREVIEW_SELECTION_BRIDGE = `<script data-od-url-selection-bridge>
       entries.push(entry);
     }
     return {
-      version: 1,
-      hash: String(window.location.hash || ''),
+      version: ${PREVIEW_RUNTIME_STATE_VERSION},
+      hash: String(window.location.hash || '').slice(0, ${PREVIEW_RUNTIME_STATE_LIMITS.maxHashLength}),
       bodyHtml: bodyHtml,
       roots: roots,
       htmlAttrs: runtimeStateAttributes(document.documentElement),
