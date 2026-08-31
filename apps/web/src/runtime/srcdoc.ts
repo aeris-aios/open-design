@@ -3392,6 +3392,13 @@ function injectDeckBridge(
     return ['x', 'y'];
   }
   function scrollDeckTarget(list){
+    // A responsive class-toggle deck can make its one visible slide taller
+    // than the iframe while hiding every inactive sibling. That root overflow
+    // belongs to the current page; it is not evidence of a multi-page scroll
+    // track. Treating it as one bypasses the artifact's keyboard navigation
+    // and can leave fallback thumbnails painted on slide one while the bridge
+    // reports the requested index.
+    if (canSetActive(list)) return null;
     var axes = deckAxisOrder(list);
     var nested = nestedScrollTargets(list);
     for (var n=0; n<nested.length; n++) {
