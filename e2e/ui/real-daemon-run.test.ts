@@ -586,7 +586,7 @@ test('[P1] real daemon run treats an in-place artifact edit as produced work', a
   await expect.poll(
     () => editedHeading.evaluate((element) => getComputedStyle(element).fontSize),
   ).toBe('52px');
-  await page.locator('.manual-edit-modal').getByRole('button', { name: /^Save$/ }).click({ force: true });
+  await page.locator('.manual-edit-modal').getByRole('button', { name: /^Save$/ }).click();
   await expectProjectFileToContain(page, projectId, GENERATED_FILE, 'font-size: 52px');
   await clickPreviewToolbarAction(page, 'manual-edit-mode-toggle', /^Edit$/i);
   await expect(artifactPreviewFrame(page).locator('[data-od-id="smoke-title"]')).toHaveCSS('font-size', '52px');
@@ -870,7 +870,12 @@ test('[P1] real daemon run survives reload before the create response reaches th
 
   const { projectId, conversationId } = await currentProjectContext(page);
   await expectProjectFilesToContain(page, projectId, [DELAYED_FILE], 20_000);
-  await expect(page.getByText('I recovered the delayed reasoning path and will persist the artifact now.')).toBeVisible();
+  await expectPersistedAssistantContent(
+    page,
+    projectId,
+    conversationId,
+    'I recovered the delayed reasoning path and will persist the artifact now.',
+  );
 
   await expectRestoredDelayedAssistantMessage(page, projectId, conversationId, {
     requireRunId: true,
@@ -912,10 +917,14 @@ test('[P1] plain stdout daemon runtime surfaces stderr-only failures without gho
 
   await sendPrompt(page, 'Return a stderr-only daemon smoke failure');
 
-  const expectedError = 'stderr-only daemon smoke failure from fake qwen';
-  await expect(runErrorCard(page)).toContainText(expectedError, { timeout: 15_000 });
+  const rawError = 'stderr-only daemon smoke failure from fake qwen';
+  const card = runErrorCard(page);
+  await expect(card).toContainText('Agent exited unexpectedly', { timeout: 15_000 });
+  await expect(card).toContainText("Qwen exited unexpectedly and didn't say why");
+  await expect(card).not.toContainText(rawError);
 
   const { projectId, conversationId } = await currentProjectContext(page);
+  await expectPersistedAssistantErrorDetail(page, projectId, conversationId, rawError);
   await expect.poll(async () => {
     const messages = await listConversationMessages(page, projectId, conversationId);
     return messages.find((message) => message.role === 'assistant')?.runStatus ?? 'missing';
@@ -924,7 +933,9 @@ test('[P1] plain stdout daemon runtime surfaces stderr-only failures without gho
 
   await page.reload({ waitUntil: 'domcontentloaded' });
   await expectWorkspaceReady(page);
-  await expect(runErrorCard(page)).toContainText(expectedError);
+  await expect(runErrorCard(page)).toContainText('Agent exited unexpectedly');
+  await expect(runErrorCard(page)).toContainText("Qwen exited unexpectedly and didn't say why");
+  await expect(runErrorCard(page)).not.toContainText(rawError);
   expect(await listProjectFiles(page, projectId)).toEqual([]);
 });
 
