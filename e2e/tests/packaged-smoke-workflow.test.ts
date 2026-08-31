@@ -1643,13 +1643,22 @@ process.stdin.on("end", () => {
     })).resolves.toBe(false);
   });
 
-  it("[P1] includes launcher protocol in the Nix daemon workspace build", async () => {
+  it("[P1] includes runtime workspace dependencies in the Nix builds", async () => {
     const flake = await readFile(flakePath, "utf8");
     const daemonWorkspaces = sectionBetween(flake, "      daemonWorkspacePaths = [", "      ];");
+    const webWorkspaces = sectionBetween(flake, "      webWorkspacePaths = [", "      ];");
 
     expect(daemonWorkspaces).toContain('"packages/launcher-proto"');
     expect(daemonWorkspaces.indexOf('"packages/launcher-proto"')).toBeLessThan(
       daemonWorkspaces.indexOf('"apps/daemon"'),
+    );
+    expect(daemonWorkspaces).toContain('"packages/preview-runtime"');
+    expect(daemonWorkspaces.indexOf('"packages/contracts"')).toBeLessThan(
+      daemonWorkspaces.indexOf('"packages/preview-runtime"'),
+    );
+    expect(webWorkspaces).toContain('"packages/preview-runtime"');
+    expect(webWorkspaces.indexOf('"packages/contracts"')).toBeLessThan(
+      webWorkspaces.indexOf('"packages/preview-runtime"'),
     );
   });
 

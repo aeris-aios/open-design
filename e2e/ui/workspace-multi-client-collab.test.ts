@@ -6,6 +6,7 @@ import {
   createCollabCluster,
   type CollabCluster,
 } from '@/playwright/collab-cluster';
+import { activeArtifactPreviewFrame } from '@/playwright/artifact-preview';
 import { startFakeCollabHub } from '@/playwright/fake-collab-hub';
 import { applyStandardMocks } from '@/playwright/mock-factory';
 import { ensureRailOpen } from '@/playwright/rail';
@@ -14,10 +15,6 @@ import { T } from '@/timeouts';
 
 const WORKSPACE_ID = 'ws-multi-client';
 const PROJECT_NAME = 'Realtime shared workspace';
-// A freshly pulled read-only mirror uses the compact design-file iframe before
-// the richer FileViewer test-id variants mount. There is exactly one visible
-// artifact iframe in this flow.
-const PREVIEW_SELECTOR = 'iframe:visible';
 const COLLAB_COMMENT_NOTE = 'Member asks for a clearer shared headline.';
 const COLLAB_COMMENT_TARGET = {
   filePath: 'index.html',
@@ -419,7 +416,7 @@ test('[P0] two isolated clients converge live content, presence, and owner unsha
     await expect(memberPage).toHaveURL(new RegExp(`/projects/${projectId}`), {
       timeout: T.long,
     });
-    const memberPreview = memberPage.frameLocator(PREVIEW_SELECTOR);
+    const memberPreview = activeArtifactPreviewFrame(memberPage);
     const initialMemberPull = await hub.waitForCommand(
       (entry) =>
         entry.memberId === MEMBER.memberId &&

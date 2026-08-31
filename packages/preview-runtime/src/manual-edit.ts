@@ -1087,20 +1087,32 @@ export function buildManualEditBridge(enabled: boolean): string {
       var fileRoot = null;
       var projectMarker = '/api/projects/';
       var projectIndex = baseUrl.pathname.indexOf(projectMarker);
-      if (projectIndex < 0) return null;
-      var projectIdStart = projectIndex + projectMarker.length;
-      var routeMarkerStart = baseUrl.pathname.indexOf('/', projectIdStart);
-      if (routeMarkerStart < 0 || routeMarkerStart === projectIdStart) return null;
-      var rawMarker = '/raw/';
-      if (baseUrl.pathname.slice(routeMarkerStart, routeMarkerStart + rawMarker.length) === rawMarker) {
-        fileRoot = baseUrl.pathname.slice(0, routeMarkerStart + rawMarker.length);
+      if (projectIndex >= 0) {
+        var projectIdStart = projectIndex + projectMarker.length;
+        var routeMarkerStart = baseUrl.pathname.indexOf('/', projectIdStart);
+        if (routeMarkerStart < 0 || routeMarkerStart === projectIdStart) return null;
+        var rawMarker = '/raw/';
+        var poweredMarker = '/powered/';
+        if (baseUrl.pathname.slice(routeMarkerStart, routeMarkerStart + rawMarker.length) === rawMarker) {
+          fileRoot = baseUrl.pathname.slice(0, routeMarkerStart + rawMarker.length);
+        } else if (baseUrl.pathname.slice(routeMarkerStart, routeMarkerStart + poweredMarker.length) === poweredMarker) {
+          fileRoot = baseUrl.pathname.slice(0, routeMarkerStart + poweredMarker.length);
+        } else {
+          var previewMarker = '/preview/';
+          if (baseUrl.pathname.slice(routeMarkerStart, routeMarkerStart + previewMarker.length) !== previewMarker) return null;
+          var scopeStart = routeMarkerStart + previewMarker.length;
+          var scopeEnd = baseUrl.pathname.indexOf('/', scopeStart);
+          if (scopeEnd < 0 || scopeEnd === scopeStart) return null;
+          fileRoot = baseUrl.pathname.slice(0, scopeEnd + 1);
+        }
+      } else if (/^[np]-[A-Za-z0-9_-]{8,128}\\.localhost\\.?$/i.test(baseUrl.hostname)) {
+        // The terminal real-URL runtime carries the authorized project scope
+        // in its dedicated hostname, so every path on that origin is already
+        // rooted at the project. Keep same-project links in the host workspace
+        // without replacing the retained iframe document.
+        fileRoot = '/';
       } else {
-        var previewMarker = '/preview/';
-        if (baseUrl.pathname.slice(routeMarkerStart, routeMarkerStart + previewMarker.length) !== previewMarker) return null;
-        var scopeStart = routeMarkerStart + previewMarker.length;
-        var scopeEnd = baseUrl.pathname.indexOf('/', scopeStart);
-        if (scopeEnd < 0 || scopeEnd === scopeStart) return null;
-        fileRoot = baseUrl.pathname.slice(0, scopeEnd + 1);
+        return null;
       }
       if (nextUrl.pathname.indexOf(fileRoot) !== 0) return null;
       var fileName = decodeURIComponent(nextUrl.pathname.slice(fileRoot.length));
@@ -1115,10 +1127,9 @@ export function buildManualEditBridge(enabled: boolean): string {
       return null;
     }
   }
-  // Once Manual Edit has activated srcDoc, keep same-project HTML navigation
-  // in the host workspace. Letting the iframe navigate itself replaces this
-  // document (and therefore this bridge) with a raw URL response; a later Edit
-  // toggle then looks active in the toolbar but cannot draw/select anything.
+  // Once Manual Edit has activated, keep same-project HTML navigation in the
+  // host workspace. Letting the iframe navigate itself would desynchronise the
+  // selected file tab from the retained real-URL document.
   document.addEventListener('click', function(ev){
     if (enabled || ev.defaultPrevented || ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
     var origin = ev.target;
