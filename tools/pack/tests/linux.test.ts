@@ -6,50 +6,22 @@ import { dirname, join, resolve } from "node:path";
 import { posix } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { findSidecarProcesses, getSidecarStatus, invokeSidecar, stopSidecar } from "@open-design/sidecar";
+import { requestJsonIpc, resolveAppIpcPath } from "@open-design/sidecar";
 import {
   APP_KEYS,
   OPEN_DESIGN_SIDECAR_CONTRACT,
-  SIDECAR_MESSAGES,
   SIDECAR_MODES,
   SIDECAR_SOURCES,
 } from "@open-design/sidecar-proto";
 import { describe, expect, it, vi } from "vitest";
 
-const stopSidecarMock = vi.hoisted(() => vi.fn(async (_stamp?: unknown, _options?: unknown) => ({
-  alreadyStopped: true,
-  forcedPids: [],
-  gracefulAccepted: false,
-  matchedPids: [],
-  remainingPids: [],
-  stoppedPids: [],
-})));
-const stopSidecarsMock = vi.hoisted(() => vi.fn(async (requests: Array<{ options?: unknown; stamp: unknown }>) => {
-  const results = await Promise.all(requests.map(async ({ options, stamp }) => ({
-    result: await stopSidecarMock(stamp, options),
-    stamp,
-  })));
-  const stopped = results.map(({ result }) => result);
-  return {
-    alreadyStopped: stopped.every(({ alreadyStopped }) => alreadyStopped),
-    forcedPids: [],
-    gracefulAccepted: stopped.some(({ gracefulAccepted }) => gracefulAccepted),
-    matchedPids: [...new Set(stopped.flatMap(({ matchedPids }) => matchedPids))],
-    remainingPids: [...new Set(stopped.flatMap(({ remainingPids }) => remainingPids))],
-    results,
-    stoppedPids: [...new Set(stopped.flatMap(({ stoppedPids }) => stoppedPids))],
-  };
-}));
-
 vi.mock("@open-design/sidecar", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@open-design/sidecar")>();
   return {
     ...actual,
-    findSidecarProcesses: vi.fn(async () => []),
-    getSidecarStatus: vi.fn(async () => { throw new Error("status unavailable"); }),
-    invokeSidecar: vi.fn(async () => { throw new Error("invoke unavailable"); }),
-    stopSidecar: stopSidecarMock,
-    stopSidecars: stopSidecarsMock,
+    requestJsonIpc: vi.fn(async () => {
+      throw new Error("requestJsonIpc should not be called for invalid headless inspect options");
+    }),
   };
 });
 
@@ -371,7 +343,11 @@ describe("stopPackedLinuxHeadless", () => {
     const markerPath = join(namespaceRoot, "runtime", "desktop-root.json");
     const stamp = {
       app: APP_KEYS.DESKTOP,
-      ipc: "/deprecated-derived-identity",
+      ipc: resolveAppIpcPath({
+        app: APP_KEYS.DESKTOP,
+        contract: OPEN_DESIGN_SIDECAR_CONTRACT,
+        namespace,
+      }),
       mode: SIDECAR_MODES.RUNTIME,
       namespace,
       source: SIDECAR_SOURCES.PACKAGED,
@@ -399,7 +375,8 @@ describe("stopPackedLinuxHeadless", () => {
       const result = await stopPackedLinuxHeadless(config);
 
       expect(result.status).toBe("not-running");
-      expect(result.fallback).toBeUndefined();
+      expect(result.fallback?.reason).toBe("marker-not-found");
+      expect(result.fallback?.markerPath).toBe(join(namespaceRoot, "runtime", "headless-root.json"));
     } finally {
       await rm(root, { force: true, recursive: true });
     }
@@ -427,7 +404,11 @@ describe("stopPackedLinuxHeadless", () => {
     const markerPath = join(namespaceRoot, "runtime", "desktop-root.json");
     const stamp = {
       app: APP_KEYS.DESKTOP,
-      ipc: "/deprecated-derived-identity",
+      ipc: resolveAppIpcPath({
+        app: APP_KEYS.DESKTOP,
+        contract: OPEN_DESIGN_SIDECAR_CONTRACT,
+        namespace,
+      }),
       mode: SIDECAR_MODES.RUNTIME,
       namespace,
       source: SIDECAR_SOURCES.PACKAGED,
@@ -485,11 +466,41 @@ describe("stopPackedLinuxHeadless", () => {
         },
       },
     };
+    const markerPath = join(namespaceRoot, "runtime", "desktop-root.json");
+    const stamp = {
+      app: APP_KEYS.DESKTOP,
+      ipc: resolveAppIpcPath({
+        app: APP_KEYS.DESKTOP,
+        contract: OPEN_DESIGN_SIDECAR_CONTRACT,
+        namespace,
+      }),
+      mode: SIDECAR_MODES.RUNTIME,
+      namespace,
+      source: SIDECAR_SOURCES.PACKAGED,
+    };
+
     try {
-      vi.mocked(findSidecarProcesses).mockImplementation(async (stamp) =>
-        stamp.mode === SIDECAR_MODES.RUNTIME ? [{ command: "desktop", pid: process.pid, ppid: 1 }] : [],
+      await mkdir(dirname(markerPath), { recursive: true });
+      // Use the test runner's own PID -- guaranteed to be in the live snapshot
+      // table returned by listProcessSnapshots, so validateDesktopAppImageMarker
+      // returns a non-"not-running" status. The cleanup defense skips on any
+      // status other than "not-running", regardless of whether stamp/exe match.
+      await writeFile(
+        markerPath,
+        `${JSON.stringify({
+          appPath: "/tmp/Open-Design.AppImage",
+          executablePath: "/tmp/.mount_od/AppRun",
+          logPath: join(namespaceRoot, "logs", "desktop", "latest.log"),
+          namespaceRoot,
+          pid: process.pid,
+          ppid: 1,
+          stamp,
+          startedAt: new Date(0).toISOString(),
+          updatedAt: new Date(0).toISOString(),
+          version: 1,
+        })}\n`,
+        "utf8",
       );
-      await mkdir(namespaceRoot, { recursive: true });
       await mkdir(config.roots.output.namespaceRoot, { recursive: true });
 
       const result = await cleanupPackedLinuxNamespace(config, { headless: true });
@@ -497,37 +508,109 @@ describe("stopPackedLinuxHeadless", () => {
       expect(result.skipped).toBe(true);
       expect(result.removedOutputRoot).toBe(false);
       expect(result.removedRuntimeNamespaceRoot).toBe(false);
+      expect(await pathExists(markerPath)).toBe(true);
       expect(await pathExists(namespaceRoot)).toBe(true);
       expect(await pathExists(config.roots.output.namespaceRoot)).toBe(true);
     } finally {
-      vi.mocked(findSidecarProcesses).mockResolvedValue([]);
       await rm(root, { force: true, recursive: true });
     }
   });
 });
 
 describe("stopPackedLinuxApp", () => {
-  it("stops both exact launch sources without consulting derived files", async () => {
-    const stop = vi.mocked(stopSidecar);
-    stop.mockClear();
-    stop.mockResolvedValue({
-      alreadyStopped: true,
-      forcedPids: [],
-      gracefulAccepted: false,
-      matchedPids: [],
-      remainingPids: [],
-      stoppedPids: [],
-    });
-    await expect(stopPackedLinuxApp(makeConfig())).resolves.toMatchObject({ status: "not-running" });
-    expect(stop).toHaveBeenCalledTimes(8);
-    expect(stop).toHaveBeenCalledWith(
-      expect.objectContaining({ source: SIDECAR_SOURCES.TOOLS_PACK }),
-      undefined,
-    );
-    expect(stop).toHaveBeenCalledWith(
-      expect.objectContaining({ source: SIDECAR_SOURCES.PACKAGED }),
-      undefined,
-    );
+  linuxOnlyIt("treats a direct AppRun-launched Electron process as owned", async () => {
+    const root = await mkdtemp(join(tmpdir(), "od-linux-direct-apprun-"));
+    const namespace = "direct-apprun";
+    const outputNamespaceRoot = join(root, "out", "linux", "namespaces", namespace);
+    const runtimeNamespaceBaseRoot = join(root, "runtime", "linux", "namespaces");
+    const runtimeNamespaceRoot = join(runtimeNamespaceBaseRoot, namespace);
+    const config: ToolPackConfig = {
+      ...makeConfig(),
+      namespace,
+      roots: {
+        ...makeConfig().roots,
+        output: {
+          ...makeConfig().roots.output,
+          appBuilderRoot: join(outputNamespaceRoot, "builder"),
+          namespaceRoot: outputNamespaceRoot,
+        },
+        runtime: {
+          namespaceBaseRoot: runtimeNamespaceBaseRoot,
+          namespaceRoot: runtimeNamespaceRoot,
+        },
+      },
+    };
+    const appDir = join(root, "AppDir");
+    const executablePath = join(appDir, "Open Design");
+    const appRunPath = join(appDir, "AppRun");
+    const markerPath = join(runtimeNamespaceRoot, "runtime", "desktop-root.json");
+    const stamp = {
+      app: APP_KEYS.DESKTOP,
+      ipc: resolveAppIpcPath({
+        app: APP_KEYS.DESKTOP,
+        contract: OPEN_DESIGN_SIDECAR_CONTRACT,
+        namespace,
+      }),
+      mode: SIDECAR_MODES.RUNTIME,
+      namespace,
+      source: SIDECAR_SOURCES.PACKAGED,
+    };
+    let child: ChildProcess | null = null;
+
+    try {
+      await mkdir(appDir, { recursive: true });
+      await copyFile(process.execPath, executablePath);
+      await chmod(executablePath, 0o755);
+      await writeFile(appRunPath, "#!/bin/sh\n", "utf8");
+      await mkdir(config.roots.output.appBuilderRoot, { recursive: true });
+      await writeFile(join(config.roots.output.appBuilderRoot, "Open-Design.direct-apprun.AppImage"), "", "utf8");
+
+      child = spawn(executablePath, ["-e", "setInterval(() => {}, 1000)"], {
+        env: { ...process.env, APPIMAGE: appRunPath },
+        stdio: "ignore",
+      });
+      await new Promise<void>((resolve, reject) => {
+        child?.once("spawn", resolve);
+        child?.once("error", reject);
+      });
+      expect(child.pid).toEqual(expect.any(Number));
+      await access(`/proc/${child.pid}/exe`);
+
+      await mkdir(dirname(markerPath), { recursive: true });
+      await writeFile(
+        markerPath,
+        `${JSON.stringify({
+          appPath: "/",
+          executablePath,
+          logPath: join(runtimeNamespaceRoot, "logs", "desktop", "latest.log"),
+          namespaceRoot: runtimeNamespaceRoot,
+          pid: child.pid,
+          ppid: process.pid,
+          stamp,
+          startedAt: new Date(0).toISOString(),
+          updatedAt: new Date(0).toISOString(),
+          version: 1,
+        })}\n`,
+        "utf8",
+      );
+
+      vi.mocked(requestJsonIpc).mockRejectedValue(new Error("shutdown unavailable in test"));
+      const result = await stopPackedLinuxApp(config);
+
+      expect(result.status).toBe("stopped");
+      expect(result.stoppedPids).toContain(child.pid);
+      expect(result.remainingPids).toEqual([]);
+    } finally {
+      if (child?.pid != null && child.exitCode == null && child.signalCode == null) {
+        try {
+          process.kill(child.pid, "SIGKILL");
+        } catch {
+          // Already gone.
+        }
+        await waitForChildExit(child, 1000);
+      }
+      await rm(root, { force: true, recursive: true });
+    }
   });
 });
 
@@ -740,7 +823,7 @@ describe("createLinuxDesktopLaunchEnv", () => {
     const config = makeConfig();
     const stamp = {
       app: APP_KEYS.DESKTOP,
-      channel: "stable",
+      ipc: "/tmp/open-design/ipc/default/desktop.sock",
       mode: SIDECAR_MODES.RUNTIME,
       namespace: "default",
       source: SIDECAR_SOURCES.TOOLS_PACK,
@@ -753,7 +836,7 @@ describe("createLinuxDesktopLaunchEnv", () => {
 
     expect(env.ELECTRON_RUN_AS_NODE).toBeUndefined();
     expect(env.KEEP_ME).toBe("yes");
-    expect(env.OD_SIDECAR_BASE).toBeUndefined();
+    expect(env.OD_SIDECAR_BASE).toBe(resolve(config.roots.runtime.namespaceRoot, "runtime"));
   });
 });
 
@@ -800,8 +883,8 @@ describe("shouldRejectLinuxHeadlessInspectOptions", () => {
 
 describe("inspectPackedLinuxApp", () => {
   it("rejects unsupported headless inspect options before opening IPC", async () => {
-    const getStatus = vi.mocked(getSidecarStatus);
-    getStatus.mockClear();
+    const requestJsonIpcMock = vi.mocked(requestJsonIpc);
+    requestJsonIpcMock.mockClear();
 
     await expect(
       inspectPackedLinuxApp(makeConfig(), {
@@ -809,15 +892,14 @@ describe("inspectPackedLinuxApp", () => {
         headless: true,
       }),
     ).rejects.toThrow("linux inspect --headless supports status only; omit --expr and --path");
-    expect(getStatus).not.toHaveBeenCalled();
+    expect(requestJsonIpcMock).not.toHaveBeenCalled();
   });
 
   it("allows desktop inspect eval and screenshot options when headless is omitted", async () => {
-    vi.mocked(getSidecarStatus).mockImplementation(async (stamp) => {
-      if (stamp.source === SIDECAR_SOURCES.TOOLS_PACK) return { state: "running", url: "od://app/" };
-      throw new Error("packaged status unavailable");
-    });
-    vi.mocked(invokeSidecar)
+    const requestJsonIpcMock = vi.mocked(requestJsonIpc);
+    requestJsonIpcMock.mockReset();
+    requestJsonIpcMock
+      .mockResolvedValueOnce({ state: "running", url: "od://app/" })
       .mockResolvedValueOnce({ ok: true, value: "Open Design" })
       .mockResolvedValueOnce({ path: "/tmp/open-design-linux.png" });
 
@@ -831,29 +913,7 @@ describe("inspectPackedLinuxApp", () => {
       screenshot: { path: "/tmp/open-design-linux.png" },
       status: { state: "running", url: "od://app/" },
     });
-    expect(getSidecarStatus).toHaveBeenCalledTimes(2);
-    expect(invokeSidecar).toHaveBeenCalledTimes(2);
-  });
-
-  it("targets packaged IPC when a tools-pack process marker is stale", async () => {
-    vi.mocked(findSidecarProcesses).mockImplementation(async (stamp) =>
-      stamp.source === SIDECAR_SOURCES.TOOLS_PACK ? [{ command: "desktop", pid: 42, ppid: 1 }] : [],
-    );
-    vi.mocked(getSidecarStatus).mockImplementation(async (stamp) => {
-      if (stamp.source === SIDECAR_SOURCES.PACKAGED) return { state: "running", url: "od://app/" };
-      throw new Error("stale tools-pack endpoint");
-    });
-    vi.mocked(invokeSidecar).mockResolvedValueOnce({ ok: true, value: "Open Design" });
-
-    const result = await inspectPackedLinuxApp(makeConfig(), { expr: "document.title" });
-
-    expect(result.status).toEqual({ state: "running", url: "od://app/" });
-    expect(invokeSidecar).toHaveBeenCalledWith(
-      expect.objectContaining({ source: SIDECAR_SOURCES.PACKAGED }),
-      SIDECAR_MESSAGES.EVAL,
-      { expression: "document.title" },
-      { timeoutMs: 5000 },
-    );
+    expect(requestJsonIpcMock).toHaveBeenCalledTimes(3);
   });
 });
 

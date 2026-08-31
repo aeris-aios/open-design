@@ -9,6 +9,7 @@ import {
   SIDECAR_SOURCES,
 } from "@open-design/sidecar-proto";
 import {
+  resolveAppIpcPath,
   resolveAppRuntimePath,
   resolveLogFilePath,
   resolveNamespace,
@@ -39,6 +40,7 @@ export type ToolDevOptions = {
 
 export type ToolDevAppConfig = {
   app: ToolDevAppName;
+  ipcPath: string;
   latestLogPath: string;
   logDir: string;
 };
@@ -87,6 +89,11 @@ function resolveAppConfig(options: {
 }): ToolDevAppConfig {
   return {
     app: options.app,
+    ipcPath: resolveAppIpcPath({
+      app: options.app,
+      contract: OPEN_DESIGN_SIDECAR_CONTRACT,
+      namespace: options.namespace,
+    }),
     latestLogPath: resolveLogFilePath({ runtimeRoot: options.namespaceRoot, app: options.app, contract: OPEN_DESIGN_SIDECAR_CONTRACT }),
     logDir: path.dirname(resolveLogFilePath({ runtimeRoot: options.namespaceRoot, app: options.app, contract: OPEN_DESIGN_SIDECAR_CONTRACT })),
   };

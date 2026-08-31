@@ -7,58 +7,73 @@ import { fileURLToPath } from 'node:url';
 
 import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
 import ffprobeInstaller from '@ffprobe-installer/ffprobe';
+import { PNG } from 'pngjs';
 import {
-  getSidecarStatus,
-  spawnSidecar,
+  createJsonIpcServer,
+  resolveAppIpcPath,
 } from '@open-design/sidecar';
 import {
   APP_KEYS,
-  SIDECAR_MODES,
-  SIDECAR_SOURCES,
+  OPEN_DESIGN_SIDECAR_CONTRACT,
+  SIDECAR_MESSAGES,
+  normalizeDesktopSidecarMessage,
+  type DesktopRenderFramesInput,
 } from '@open-design/sidecar-proto';
-import { describe, expect, test, vi } from 'vitest';
+import { describe, expect, test } from 'vitest';
 
 import { createSmokeSuite } from '@/vitest/suite';
 
 const odBin = fileURLToPath(new URL('../../apps/daemon/bin/od.mjs', import.meta.url));
-const desktopSidecarFixture = fileURLToPath(
-  new URL('../lib/vitest/fixtures/hyperframes-desktop.ts', import.meta.url),
-);
 
 describe('HyperFrames bundled runtime end-to-end', () => {
   test('[P0] real od media generate renders MP4 through the daemon-owned HyperFrames runtime', async () => {
     const suite = await createSmokeSuite('hyperframes-runtime-render');
-    const documentWitnessPath = join(suite.scratchDir, 'received-frame-document.html');
-    const desktopStamp = {
+    const desktopIpc = resolveAppIpcPath({
       app: APP_KEYS.DESKTOP,
-      channel: 'local',
-      mode: SIDECAR_MODES.DEV,
+      contract: OPEN_DESIGN_SIDECAR_CONTRACT,
       namespace: suite.namespace,
-      source: SIDECAR_SOURCES.TOOLS_DEV,
-    };
-    const desktop = await spawnSidecar({
-      args: ['--import', 'tsx', desktopSidecarFixture],
-      command: process.execPath,
-      env: {
-        ...process.env,
-        OD_E2E_HYPERFRAMES_DOCUMENT_WITNESS: documentWitnessPath,
+    });
+    let receivedFrameDocument = '';
+    const framePng = solidPng(320, 180);
+    const desktop = await createJsonIpcServer({
+      socketPath: desktopIpc,
+      handler: async (message) => {
+        const request = normalizeDesktopSidecarMessage(message);
+        if (request.type === SIDECAR_MESSAGES.STATUS) {
+          return {
+            capabilities: { frameRenderer: true },
+            pid: process.pid,
+            state: 'running',
+            updatedAt: new Date().toISOString(),
+            url: null,
+            windowVisible: false,
+          };
+        }
+        if (request.type === SIDECAR_MESSAGES.RENDER_FRAMES) {
+          const input = request.input as DesktopRenderFramesInput;
+          receivedFrameDocument = input.html;
+          await mkdir(input.outputDir, { recursive: true });
+          for (let frame = 0; frame < 3; frame += 1) {
+            await writeFile(
+              join(input.outputDir, `frame-${String(frame).padStart(8, '0')}.png`),
+              framePng,
+            );
+          }
+          return {
+            duration: 0.1,
+            fps: 30,
+            frameCount: 3,
+            framePattern: join(input.outputDir, 'frame-%08d.png'),
+            height: 180,
+            ok: true,
+            width: 320,
+          };
+        }
+        throw new Error(`unexpected desktop request: ${request.type}`);
       },
-      resources: {
-        dataRoot: suite.dataDir,
-        ownerPid: process.pid,
-        port: 0,
-        runtimeRoot: join(suite.scratchDir, 'fake-desktop-runtime'),
-      },
-      stamp: desktopStamp,
     });
 
     try {
-      await vi.waitFor(async () => {
-        await expect(getSidecarStatus(desktopStamp, { timeoutMs: 1_000 })).resolves.toMatchObject({
-          capabilities: { frameRenderer: true },
-          state: 'running',
-        });
-      }, { interval: 100, timeout: 10_000 });
       await suite.with.env(
         {
           HYPERFRAMES_FFMPEG_PATH: ffmpegInstaller.path,
@@ -133,17 +148,26 @@ window.__timelines.main={duration:function(){return .1},seek:function(){}};
             ]);
             expect(outputStat.size).toBe(payload.file?.size);
             expect(bytes.subarray(4, 8).toString('ascii')).toBe('ftyp');
-            await expect(readFile(documentWitnessPath, 'utf8')).resolves.toContain(
-              'window.__odFrameRenderer',
-            );
+            expect(receivedFrameDocument).toContain('window.__odFrameRenderer');
           });
         },
       );
     } finally {
-      await desktop.stop({ killGraceMs: 2_000, termGraceMs: 2_000 });
+      await desktop.close();
     }
   }, 180_000);
 });
+
+function solidPng(width: number, height: number): Buffer {
+  const image = new PNG({ width, height });
+  for (let offset = 0; offset < image.data.length; offset += 4) {
+    image.data[offset] = 16;
+    image.data[offset + 1] = 37;
+    image.data[offset + 2] = 63;
+    image.data[offset + 3] = 255;
+  }
+  return PNG.sync.write(image);
+}
 
 async function runOd(
   daemonUrl: string,

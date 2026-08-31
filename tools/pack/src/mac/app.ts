@@ -1,4 +1,4 @@
-import { cp, mkdir, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, join, relative } from "node:path";
 
@@ -41,12 +41,8 @@ function toPosixPath(value: string): string {
   return value.replaceAll("\\", "/");
 }
 
-export async function toRelativeImportSpecifier(fromDirectory: string, targetPath: string): Promise<string> {
-  const [canonicalFrom, canonicalTarget] = await Promise.all([
-    realpath(fromDirectory),
-    realpath(targetPath),
-  ]);
-  const specifier = toPosixPath(relative(canonicalFrom, canonicalTarget));
+function toRelativeImportSpecifier(fromDirectory: string, targetPath: string): string {
+  const specifier = toPosixPath(relative(fromDirectory, targetPath));
   return specifier.startsWith(".") ? specifier : `./${specifier}`;
 }
 
@@ -70,6 +66,7 @@ async function buildPrebundledStandaloneRuntime(
     metafilePath: paths.packagedMainPrebundleMetaPath,
     policyName: "packagedMain",
   });
+
   await runEsbuild(config, [
     join(config.workspaceRoot, "apps", "web", "dist", "sidecar", "index.js"),
     "--bundle",
@@ -89,7 +86,7 @@ async function buildPrebundledStandaloneRuntime(
   await writeFile(
     paths.daemonSidecarPrebundleEntrypointPath,
     `import ${JSON.stringify(
-      await toRelativeImportSpecifier(
+      toRelativeImportSpecifier(
         dirname(paths.daemonSidecarPrebundleEntrypointPath),
         join(config.workspaceRoot, "apps", "daemon", "dist", "sidecar", "index.js"),
       ),
@@ -104,7 +101,7 @@ async function buildPrebundledStandaloneRuntime(
       "process.env.OD_BIN ??= selfPath;",
       "process.env.OD_DAEMON_CLI_PATH ??= selfPath;",
       `await import(${JSON.stringify(
-        await toRelativeImportSpecifier(
+        toRelativeImportSpecifier(
           dirname(paths.daemonCliPrebundleEntrypointPath),
           join(config.workspaceRoot, "apps", "daemon", "dist", "cli.js"),
         ),

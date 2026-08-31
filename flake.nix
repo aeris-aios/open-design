@@ -52,8 +52,8 @@
         "packages/plugin-runtime"
         "packages/sidecar-proto"
         "packages/launcher-proto"
-        "packages/platform"
         "packages/sidecar"
+        "packages/platform"
         "packages/diagnostics"
         "apps/daemon"
       ];
@@ -65,8 +65,8 @@
         "packages/contracts"
         "packages/host"
         "packages/platform"
-        "packages/sidecar-proto"
         "packages/sidecar"
+        "packages/sidecar-proto"
         "apps/web"
       ];
       daemonSrc = filterProjectSource ([

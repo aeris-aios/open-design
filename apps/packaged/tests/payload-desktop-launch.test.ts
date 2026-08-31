@@ -4,11 +4,13 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { parseLauncherAfterQuitArgs, parseLauncherDelegatedArgs } from "@open-design/launcher-proto";
-import type { SidecarStamp } from "@open-design/sidecar";
+import { readProcessStamp } from "@open-design/platform";
 import {
   APP_KEYS,
+  OPEN_DESIGN_SIDECAR_CONTRACT,
   SIDECAR_MODES,
   SIDECAR_SOURCES,
+  type SidecarStamp,
 } from "@open-design/sidecar-proto";
 import { describe, expect, it, vi } from "vitest";
 
@@ -21,7 +23,7 @@ import {
 
 const stamp: SidecarStamp = {
   app: APP_KEYS.DESKTOP,
-  channel: "beta",
+  ipc: "/tmp/open-design/ipc/release-beta/desktop.sock",
   mode: SIDECAR_MODES.RUNTIME,
   namespace: "release-beta",
   source: SIDECAR_SOURCES.PACKAGED,
@@ -35,7 +37,7 @@ function fakeRuntime(payloadDesktopProcess: boolean): PackagedLauncherRuntime {
     electronNodeCommand: null,
     installedLaunchPath: "/Applications/Open Design Beta.app",
     launcherPaths: {} as PackagedLauncherRuntime["launcherPaths"],
-    paths: { dataRoot: "/tmp/data", runtimeRoot: "/tmp/runtime" } as PackagedLauncherRuntime["paths"],
+    paths: {} as PackagedLauncherRuntime["paths"],
     payloadDesktopProcess,
     selection: {
       pointer: { generation: 1, version: "1.2.3-beta.5" },
@@ -48,7 +50,7 @@ function fakeRuntime(payloadDesktopProcess: boolean): PackagedLauncherRuntime {
 }
 
 describe("payload desktop delegation", () => {
-  it("plans the launcher handoff while leaving stamp serialization to sidecar", () => {
+  it("plans an early outer-to-payload handoff with stable after-quit and stamp args", () => {
     const runtime = fakeRuntime(false);
     const plan = planPackagedPayloadDesktopDelegation(runtime, stamp, {
       currentPid: 4321,
@@ -63,7 +65,7 @@ describe("payload desktop delegation", () => {
       targetPid: 4321,
       timeoutMs: 60_000,
     });
-    expect(plan?.args.some((arg) => arg.startsWith("--od-sidecar-"))).toBe(false);
+    expect(readProcessStamp(plan?.args ?? [], OPEN_DESIGN_SIDECAR_CONTRACT)).toEqual(stamp);
   });
 
   it("carries the delegated pointer for a normal active delegation", () => {
@@ -128,12 +130,19 @@ describe("payload desktop delegation", () => {
         } as PackagedLauncherRuntime["launcherPaths"],
       };
       let spawnSawAttempt: boolean | null = null;
-      const launch = vi.fn(async () => {
+      const child = {
+        once: vi.fn((event: string, callback: (...args: unknown[]) => void) => {
+          if (event === "spawn") queueMicrotask(callback);
+          return child;
+        }),
+        unref: vi.fn(),
+      };
+      const spawnFake = vi.fn(() => {
         spawnSawAttempt = existsSync(attemptsPath);
-        return { pid: 1234 };
+        return child as never;
       });
 
-      const launched = await launchPackagedPayloadDesktop(runtime, stamp, { launch });
+      const launched = await launchPackagedPayloadDesktop(runtime, stamp, { spawn: spawnFake as never });
 
       expect(launched).toBe(true);
       expect(spawnSawAttempt).toBe(true);
@@ -166,7 +175,15 @@ describe("payload desktop delegation", () => {
           selected: true,
         },
       };
-      await launchPackagedPayloadDesktop(runtime, stamp, { launch: vi.fn(async () => ({ pid: 1234 })) });
+      const child = {
+        once: vi.fn((event: string, callback: (...args: unknown[]) => void) => {
+          if (event === "spawn") queueMicrotask(callback);
+          return child;
+        }),
+        unref: vi.fn(),
+      };
+
+      await launchPackagedPayloadDesktop(runtime, stamp, { spawn: vi.fn(() => child as never) as never });
 
       expect(existsSync(attemptsPath)).toBe(false);
     } finally {
@@ -181,10 +198,18 @@ describe("payload desktop delegation", () => {
     })).toBeNull();
   });
 
-  it("delegates process creation and private resources to sidecar", async () => {
+  it("waits for spawn acceptance and detaches the payload child", async () => {
     const root = await mkdtemp(join(tmpdir(), "od-delegated-spawn-"));
     try {
-      const launch = vi.fn(async () => ({ pid: 1234 }));
+      const once = vi.fn((event: string, callback: (...args: unknown[]) => void) => {
+        if (event === "spawn") queueMicrotask(callback);
+        return child;
+      });
+      const child = {
+        once,
+        unref: vi.fn(),
+      };
+      const spawn = vi.fn(() => child);
       const runtime: PackagedLauncherRuntime = {
         ...fakeRuntime(false),
         launcherPaths: {
@@ -196,15 +221,13 @@ describe("payload desktop delegation", () => {
 
       const delegated = await launchPackagedPayloadDesktop(runtime, stamp, {
         currentPid: 4321,
-        launch,
+        spawn: spawn as never,
         timeoutMs: 60_000,
       });
 
       expect(delegated).toBe(true);
-      expect(launch).toHaveBeenCalledWith(expect.objectContaining({
-        resources: { dataRoot: "/tmp/data", ownerPid: null, port: 0, runtimeRoot: "/tmp/runtime" },
-        stamp,
-      }));
+      expect(spawn).toHaveBeenCalledOnce();
+      expect(child.unref).toHaveBeenCalledOnce();
     } finally {
       await rm(root, { force: true, recursive: true });
     }
@@ -218,9 +241,17 @@ describe("payload desktop delegation", () => {
       channel: "beta",
       namespace: "release-beta",
     } as PackagedLauncherRuntime["launcherPaths"];
+    const spawnError = new Error("spawn EACCES");
+    const child = {
+      once: vi.fn((event: string, callback: (...args: unknown[]) => void) => {
+        if (event === "error") queueMicrotask(() => callback(spawnError));
+        return child;
+      }),
+      unref: vi.fn(),
+    };
     try {
       await expect(launchPackagedPayloadDesktop(runtime, stamp, {
-        launch: vi.fn(async () => { throw new Error("spawn EACCES"); }),
+        spawn: vi.fn(() => child) as never,
       })).rejects.toThrow("spawn EACCES");
 
       expect(JSON.parse(await readFile(runtime.launcherPaths.attemptsPath, "utf8"))).toMatchObject({
@@ -230,6 +261,7 @@ describe("payload desktop delegation", () => {
         schemaVersion: 1,
         version: "1.2.3-beta.5",
       });
+      expect(child.unref).not.toHaveBeenCalled();
     } finally {
       await rm(root, { force: true, recursive: true });
     }

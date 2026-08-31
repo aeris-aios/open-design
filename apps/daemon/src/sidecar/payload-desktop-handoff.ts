@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { lstat, mkdir, readFile, readdir, realpath, rename, rm, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, resolve, sep } from "node:path";
+import { spawn } from "node:child_process";
+import { lstat, rm } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import {
@@ -19,15 +20,24 @@ import {
   type LauncherRuntimeDescriptor,
   type LauncherVersionPointer,
 } from "@open-design/launcher-proto";
+import { createProcessStampArgs } from "@open-design/platform";
 import { releaseChannelFromNamespace, releaseChannelFromVersion } from "@open-design/release";
-import { spawnSidecar } from "@open-design/sidecar";
+import {
+  readJsonFile,
+  requestJsonIpc,
+  resolveAppIpcPath,
+  writeJsonFile,
+} from "@open-design/sidecar";
 import {
   APP_KEYS,
+  OPEN_DESIGN_SIDECAR_CONTRACT,
   SIDECAR_ENV,
+  SIDECAR_MESSAGES,
   SIDECAR_MODES,
   SIDECAR_SOURCES,
   type DesktopStatusSnapshot,
   type SidecarSource,
+  type SidecarStamp,
 } from "@open-design/sidecar-proto";
 
 import { holdParentMonitorExit } from "./parent-monitor-gate.js";
@@ -42,8 +52,18 @@ const SIDECAR_ONLY_ENV_KEYS = [
   "OD_SIDECAR_IPC_PATH",
   "OD_SIDECAR_NAMESPACE",
   "OD_SIDECAR_SOURCE",
+  // Packaged daemon/web now inherit OD_TOOLS_DEV_PARENT_PID so they exit with
+  // the outer Electron. The replacement payload desktop waits for that same
+  // PID to die, then must not treat it as its own lifecycle owner.
   SIDECAR_ENV.TOOLS_DEV_PARENT_PID,
 ] as const;
+
+type DesktopRootIdentity = {
+  executablePath: string;
+  pid: number;
+  stamp: SidecarStamp;
+  version: number;
+};
 
 type LauncherPayloadManifest = {
   channel: string;
@@ -63,29 +83,11 @@ type LauncherInstallDescriptor = {
   schemaVersion: typeof LAUNCHER_SCHEMA_VERSION;
 };
 
-async function readJsonFile<T>(filePath: string): Promise<T | null> {
-  try {
-    return JSON.parse(await readFile(filePath, "utf8")) as T;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT" || error instanceof SyntaxError) return null;
-    throw error;
-  }
-}
-
-async function writeJsonFile(filePath: string, value: unknown): Promise<void> {
-  await mkdir(dirname(filePath), { recursive: true });
-  const temporaryPath = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
-  await writeFile(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
-  await rename(temporaryPath, filePath);
-}
-
 export type PreparedLegacyPayloadDesktopHandoff = {
-  dataRoot: string;
   descriptor: LauncherDesktopHandoffDescriptor;
   kind: "prepared";
   launcherPaths: LauncherPaths;
   runtimeRoot: string;
-  source: SidecarSource;
 };
 
 export type LegacyPayloadDesktopHandoffPreparation =
@@ -119,15 +121,9 @@ function samePointer(
     left.version === right.version;
 }
 
-async function canonicalPath(value: string): Promise<string> {
-  return await realpath(value).catch(() => resolve(value));
-}
-
-async function samePath(left: string, right: string, platform: NodeJS.Platform): Promise<boolean> {
-  const [normalizedLeft, normalizedRight] = await Promise.all([
-    canonicalPath(left),
-    canonicalPath(right),
-  ]);
+function samePath(left: string, right: string, platform: NodeJS.Platform): boolean {
+  const normalizedLeft = resolve(left);
+  const normalizedRight = resolve(right);
   return platform === "win32"
     ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
     : normalizedLeft === normalizedRight;
@@ -178,6 +174,28 @@ async function resolvePayloadExecutable(options: {
     : null;
 }
 
+async function readDesktopIdentity(
+  runtimeRoot: string,
+  namespace: string,
+): Promise<DesktopRootIdentity | null> {
+  const identity = await readJsonFile<DesktopRootIdentity>(join(runtimeRoot, "desktop-root.json"));
+  if (
+    identity == null ||
+    identity.version !== 1 ||
+    !Number.isSafeInteger(identity.pid) ||
+    identity.pid <= 0 ||
+    typeof identity.executablePath !== "string" ||
+    !isAbsolute(identity.executablePath) ||
+    identity.stamp?.app !== APP_KEYS.DESKTOP ||
+    identity.stamp.namespace !== namespace ||
+    (
+      identity.stamp.source !== SIDECAR_SOURCES.PACKAGED &&
+      identity.stamp.source !== SIDECAR_SOURCES.TOOLS_PACK
+    )
+  ) return null;
+  return identity;
+}
+
 async function readRuntime(
   launcherPaths: LauncherPaths,
 ): Promise<LauncherRuntimeDescriptor | null> {
@@ -204,10 +222,10 @@ async function readAttempt(
 
 async function resolveInstalledOuterIdentity(options: {
   launcherPaths: LauncherPaths;
-  outerPid: number;
+  parentPid: number;
   platform: NodeJS.Platform;
 }): Promise<LauncherDesktopHandoffDescriptor["outer"] | null> {
-  if (!Number.isSafeInteger(options.outerPid) || options.outerPid <= 0) return null;
+  if (!Number.isSafeInteger(options.parentPid) || options.parentPid <= 0) return null;
   const install = await readJsonFile<LauncherInstallDescriptor>(options.launcherPaths.installPath);
   if (
     install == null ||
@@ -218,31 +236,25 @@ async function resolveInstalledOuterIdentity(options: {
     !isAbsolute(install.launchPath)
   ) return null;
   const executablePath = options.platform === "darwin" && install.launchPath.endsWith(".app")
-    ? await resolveMacBundleExecutable(install.launchPath)
+    ? join(
+      install.launchPath,
+      "Contents",
+      "MacOS",
+      basename(install.launchPath, ".app"),
+    )
     : install.launchPath;
-  if (executablePath == null) return null;
   const entry = await lstat(executablePath).catch(() => null);
   if (entry == null || !entry.isFile() || entry.isSymbolicLink()) return null;
-  return { executablePath, pid: options.outerPid };
-}
-
-async function resolveMacBundleExecutable(bundlePath: string): Promise<string | null> {
-  const executableRoot = join(bundlePath, "Contents", "MacOS");
-  const entries = await readdir(executableRoot, { withFileTypes: true }).catch(() => []);
-  const executables = entries.filter((entry) => entry.isFile() && !entry.isSymbolicLink());
-  const executable = executables.length === 1 ? executables[0] : null;
-  return executable == null ? null : join(executableRoot, executable.name);
+  return { executablePath, pid: options.parentPid };
 }
 
 export async function prepareLegacyPayloadDesktopHandoff(options: {
-  dataRoot: string;
   env?: NodeJS.ProcessEnv;
   namespace: string;
   now?: () => Date;
-  outerPid: number | null;
+  parentPid?: number;
   platform?: NodeJS.Platform;
   randomId?: () => string;
-  requestDesktopStatus?: () => Promise<DesktopStatusSnapshot>;
   runtimeRoot: string;
   source: SidecarSource;
 }): Promise<LegacyPayloadDesktopHandoffPreparation> {
@@ -279,12 +291,13 @@ export async function prepareLegacyPayloadDesktopHandoff(options: {
     namespace: options.namespace,
     root: installationRoot,
   });
-  const [runtime, attempt, outer, payloadExecutablePath, desktopStatus] = await Promise.all([
+  const [runtime, attempt, identity, outer, payloadExecutablePath] = await Promise.all([
     readRuntime(launcherPaths),
     readAttempt(launcherPaths),
+    readDesktopIdentity(options.runtimeRoot, options.namespace),
     resolveInstalledOuterIdentity({
       launcherPaths,
-      outerPid: options.outerPid ?? 0,
+      parentPid: options.parentPid ?? process.ppid,
       platform,
     }),
     resolvePayloadExecutable({
@@ -293,20 +306,16 @@ export async function prepareLegacyPayloadDesktopHandoff(options: {
       namespace: options.namespace,
       platform,
     }),
-    options.requestDesktopStatus?.().catch(() => null) ?? null,
   ]);
   if (runtime == null) return { kind: "none", reason: "invalid-runtime" };
   if (outer == null) return { kind: "none", reason: "invalid-install-anchor" };
   if (payloadExecutablePath == null) return { kind: "none", reason: "invalid-payload" };
-  if (desktopStatus != null && desktopStatus.pid === outer.pid &&
-      typeof desktopStatus.executablePath === "string" &&
-      await samePath(desktopStatus.executablePath, payloadExecutablePath, platform)) {
+  if (identity != null && samePath(identity.executablePath, payloadExecutablePath, platform)) {
     return { kind: "none", reason: "payload-desktop-active" };
   }
-  if (desktopStatus != null && (
-    desktopStatus.pid !== outer.pid ||
-    typeof desktopStatus.executablePath !== "string" ||
-    !(await samePath(desktopStatus.executablePath, outer.executablePath, platform))
+  if (identity != null && (
+    identity.pid !== outer.pid ||
+    !samePath(identity.executablePath, outer.executablePath, platform)
   )) return { kind: "none", reason: "desktop-identity-mismatch" };
 
   const existingRaw = await readJsonFile<LauncherDesktopHandoffDescriptor>(launcherPaths.handoffPath);
@@ -372,12 +381,10 @@ export async function prepareLegacyPayloadDesktopHandoff(options: {
       };
   await writeJsonFile(launcherPaths.handoffPath, descriptor);
   return {
-    dataRoot: options.dataRoot,
     descriptor,
     kind: "prepared",
     launcherPaths,
     runtimeRoot: options.runtimeRoot,
-    source: options.source,
   };
 }
 
@@ -391,25 +398,25 @@ async function waitForOuterConfirm(
 ): Promise<"confirmed" | "outer-not-confirmed" | "payload-desktop-active"> {
   const deadline = Date.now() + options.confirmTimeoutMs;
   while (Date.now() < deadline) {
-    const [runtime, attempt, status] = await Promise.all([
+    const [runtime, attempt, identity, status] = await Promise.all([
       readRuntime(prepared.launcherPaths),
       readAttempt(prepared.launcherPaths),
+      readDesktopIdentity(prepared.runtimeRoot, prepared.descriptor.namespace),
       options.requestDesktop("status").catch(() => null) as Promise<DesktopStatusSnapshot | null>,
     ]);
     if (
-      status?.pid === prepared.descriptor.outer.pid &&
-      typeof status.executablePath === "string" &&
-      await samePath(status.executablePath, prepared.descriptor.payloadExecutablePath, process.platform)
+      identity?.pid === prepared.descriptor.outer.pid &&
+      samePath(identity.executablePath, prepared.descriptor.payloadExecutablePath, process.platform)
     ) return "payload-desktop-active";
     if (
       runtime != null &&
       attempt == null &&
       samePointer(runtime.active, prepared.descriptor.source) &&
       samePointer(runtime.lastSuccessful, prepared.descriptor.source) &&
+      identity?.pid === prepared.descriptor.outer.pid &&
+      samePath(identity.executablePath, prepared.descriptor.outer.executablePath, process.platform) &&
       status?.state === "running" &&
-      status.pid === prepared.descriptor.outer.pid &&
-      typeof status.executablePath === "string" &&
-      await samePath(status.executablePath, prepared.descriptor.outer.executablePath, process.platform)
+      status.pid === prepared.descriptor.outer.pid
     ) return "confirmed";
     await options.sleep(HANDOFF_POLL_INTERVAL_MS);
   }
@@ -424,12 +431,20 @@ export async function executeLegacyPayloadDesktopHandoff(
     now?: () => Date;
     requestDesktop?: (message: "shutdown" | "status") => Promise<unknown>;
     sleep?: (durationMs: number) => Promise<unknown>;
-    spawn?: typeof spawnSidecar;
+    spawn?: typeof spawn;
     writeJsonFile?: typeof writeJsonFile;
   } = {},
 ): Promise<LegacyPayloadDesktopHandoffResult> {
-  if (options.requestDesktop == null) throw new Error("desktop sidecar client is required");
-  const requestDesktop = options.requestDesktop;
+  const desktopIpcPath = resolveAppIpcPath({
+    app: APP_KEYS.DESKTOP,
+    contract: OPEN_DESIGN_SIDECAR_CONTRACT,
+    namespace: prepared.descriptor.namespace,
+  });
+  const requestDesktop = options.requestDesktop ?? (async (message) => await requestJsonIpc(
+    desktopIpcPath,
+    { type: message === "status" ? SIDECAR_MESSAGES.STATUS : SIDECAR_MESSAGES.SHUTDOWN },
+    { timeoutMs: 800 },
+  ));
   const confirmation = await waitForOuterConfirm(prepared, {
     confirmTimeoutMs: options.confirmTimeoutMs ?? HANDOFF_CONFIRM_TIMEOUT_MS,
     requestDesktop,
@@ -472,12 +487,12 @@ export async function executeLegacyPayloadDesktopHandoff(
     updatedAt: now,
   };
 
-  const desktopStamp = {
+  const desktopStamp: SidecarStamp = {
     app: APP_KEYS.DESKTOP,
-    channel: prepared.launcherPaths.channel,
+    ipc: desktopIpcPath,
     mode: SIDECAR_MODES.RUNTIME,
     namespace: prepared.descriptor.namespace,
-    source: prepared.source,
+    source: SIDECAR_SOURCES.PACKAGED,
   };
   const args = [
     ...buildLauncherAfterQuitArgs({
@@ -485,47 +500,50 @@ export async function executeLegacyPayloadDesktopHandoff(
       timeoutMs: HANDOFF_PAYLOAD_WAIT_TIMEOUT_MS,
     }),
     ...buildLauncherHandoffResumeArgs({ handoffId: prepared.descriptor.handoffId }),
+    ...createProcessStampArgs(desktopStamp, OPEN_DESIGN_SIDECAR_CONTRACT),
   ];
+  // Packaged daemons now monitor OD_TOOLS_DEV_PARENT_PID and exit when the
+  // outer Electron dies. Hold before spawn: a crash after the child emits
+  // `spawn` but before the hold would let the parent monitor stop the daemon
+  // while the journal is still `prepared`, and the detached replacement then
+  // rejects resume. Desktop SHUTDOWN also acks before asynchronously exiting,
+  // then beforeShutdown -> sidecars.close() sends daemon SHUTDOWN. Keep the
+  // hold through the three commits so the replacement can still resume.
   const persist = options.writeJsonFile ?? writeJsonFile;
   const releaseParentMonitor = holdParentMonitorExit();
   try {
-    let generation: Awaited<ReturnType<typeof spawnSidecar>>;
+    let child: ReturnType<typeof spawn>;
     try {
-      generation = await (options.spawn ?? spawnSidecar)({
-        args,
-        command: prepared.descriptor.payloadExecutablePath,
+      child = (options.spawn ?? spawn)(prepared.descriptor.payloadExecutablePath, args, {
         cwd: dirname(prepared.descriptor.payloadExecutablePath),
+        detached: true,
         env: desktopProcessEnv(options.env ?? process.env, prepared.runtimeRoot),
-        logFd: null,
-        resources: {
-          dataRoot: prepared.dataRoot,
-          ownerPid: null,
-          port: 0,
-          runtimeRoot: prepared.runtimeRoot,
-        },
-        stamp: desktopStamp,
+        stdio: "ignore",
+        windowsHide: true,
       });
+      await new Promise<void>((resolveSpawn, rejectSpawn) => {
+        child.once("spawn", () => resolveSpawn());
+        child.once("error", rejectSpawn);
+      });
+      child.unref();
     } catch {
       return { kind: "aborted", reason: "spawn-failed" };
     }
+
     try {
       await requestDesktop("shutdown");
     } catch {
-      const cleanup = await generation.stop({ termGraceMs: 0 });
-      if (cleanup.remainingPids.length > 0) {
-        throw new Error(`payload desktop handoff rollback left generation: ${cleanup.remainingPids.join(", ")}`);
-      }
       return { kind: "aborted", reason: "shutdown-failed" };
     }
 
-  // Commit the armed journal and rewritten runtime/attempt state only after both
-  // the payload child has actually spawned and the old desktop has accepted the
-  // shutdown. Writing earlier would strand an "armed" journal on disk when
-  // `spawn()` throws or the shutdown request fails: the next cold start bails out
-  // of prepareLegacyPayloadDesktopHandoff() with reason "already-armed" and the
-  // install stays pinned to the old desktop generation. The old desktop is still
-  // alive while it acks the shutdown, and the payload waits for its pid to exit
-  // before resuming, so these writes still land before the payload reads them.
+    // Commit the armed journal and rewritten runtime/attempt state only after both
+    // the payload child has actually spawned and the old desktop has accepted the
+    // shutdown. Writing earlier would strand an "armed" journal on disk when
+    // `spawn()` throws or the shutdown request fails: the next cold start bails out
+    // of prepareLegacyPayloadDesktopHandoff() with reason "already-armed" and the
+    // install stays pinned to the old desktop generation. The old desktop is still
+    // alive while it acks the shutdown, and the payload waits for its pid to exit
+    // before resuming, so these writes still land before the payload reads them.
     await persist(prepared.launcherPaths.handoffPath, armed);
     await persist(prepared.launcherPaths.attemptsPath, attempt);
     await persist(prepared.launcherPaths.runtimePath, runtime);

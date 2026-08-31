@@ -1,7 +1,9 @@
+import { spawn } from "node:child_process";
 import { dirname } from "node:path";
 
 import { buildLauncherAfterQuitArgs, buildLauncherDelegatedArgs } from "@open-design/launcher-proto";
-import { launchSidecar, type SidecarStamp } from "@open-design/sidecar";
+import { createProcessStampArgs } from "@open-design/platform";
+import { OPEN_DESIGN_SIDECAR_CONTRACT, type SidecarStamp } from "@open-design/sidecar-proto";
 
 import {
   armPackagedLauncherRuntimeAttempt,
@@ -54,6 +56,7 @@ export function planPackagedPayloadDesktopDelegation(
       ...(options.forwardedArgs ?? process.argv).filter((arg) =>
         arg.startsWith("opendesign://")
       ),
+      ...createProcessStampArgs(stamp, OPEN_DESIGN_SIDECAR_CONTRACT),
     ],
     command: runtime.desktopExecutablePath,
     cwd: dirname(runtime.desktopExecutablePath),
@@ -67,7 +70,7 @@ export async function launchPackagedPayloadDesktop(
     currentPid?: number;
     forwardedArgs?: readonly string[];
     recordFailedAttempt?: (runtime: PackagedLauncherRuntime) => Promise<void>;
-    launch?: typeof launchSidecar;
+    spawn?: typeof spawn;
     timeoutMs?: number;
   } = {},
 ): Promise<boolean> {
@@ -79,20 +82,17 @@ export async function launchPackagedPayloadDesktop(
   // evidence, and every later cold start would retry the same broken payload.
   await armPackagedLauncherRuntimeAttempt(runtime);
   try {
-    await (options.launch ?? launchSidecar)({
-      args: plan.args,
-      command: plan.command,
+    const child = (options.spawn ?? spawn)(plan.command, plan.args, {
       cwd: plan.cwd,
-      env: process.env,
-      logFd: null,
-      resources: {
-        dataRoot: runtime.paths.dataRoot,
-        ownerPid: null,
-        port: 0,
-        runtimeRoot: runtime.paths.runtimeRoot,
-      },
-      stamp,
+      detached: true,
+      stdio: "ignore",
+      windowsHide: true,
     });
+    await new Promise<void>((resolveSpawn, rejectSpawn) => {
+      child.once("spawn", () => resolveSpawn());
+      child.once("error", rejectSpawn);
+    });
+    child.unref();
   } catch (error) {
     await (options.recordFailedAttempt ?? recordPackagedLauncherRuntimeFailedAttempt)(runtime);
     throw error;

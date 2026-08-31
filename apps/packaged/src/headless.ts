@@ -3,13 +3,9 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
-  APP_KEYS,
   OPEN_DESIGN_SIDECAR_CONTRACT,
   SIDECAR_DEFAULTS,
-  SIDECAR_SOURCES,
 } from "@open-design/sidecar-proto";
-import { bootstrapSidecarProcess, readCurrentSidecarStamp } from "@open-design/sidecar";
-import { releaseChannelFromNamespace } from "@open-design/release";
 
 import {
   PACKAGED_NAMESPACE_ENV,
@@ -20,7 +16,6 @@ import {
   parsePackagedHeadlessRequest,
   runPackagedHeadless,
 } from "./headless-runtime.js";
-import { resolvePackagedNamespacePaths } from "./paths.js";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 
@@ -87,34 +82,16 @@ const headlessRequest = parsePackagedHeadlessRequest([
   ...process.argv.slice(2),
 ]);
 
-async function main(): Promise<void> {
-  const config = resolveHeadlessConfig();
-  const paths = resolvePackagedNamespacePaths(config, config.namespace, process.env);
-  const currentStamp = (() => {
-    try { return readCurrentSidecarStamp(); } catch { return null; }
-  })();
-  const stamp = currentStamp ?? {
-    app: APP_KEYS.DESKTOP,
-    channel: releaseChannelFromNamespace(config.namespace, "default") ?? "stable",
-    mode: "headless",
-    namespace: config.namespace,
-    source: SIDECAR_SOURCES.PACKAGED,
-  };
-  if (await bootstrapSidecarProcess(stamp, {
-    dataRoot: paths.dataRoot,
-    ownerPid: null,
-    port: 0,
-    runtimeRoot: paths.runtimeRoot,
-  })) return;
-  await runPackagedHeadless(config, headlessRequest, {
+void runPackagedHeadless(
+  resolveHeadlessConfig(),
+  headlessRequest,
+  {
     mcpBootstrapLaunch: {
       command: process.execPath,
       args: [fileURLToPath(import.meta.url), "--headless"],
     },
-  });
-}
-
-void main().catch((error: unknown) => {
+  },
+).catch((error: unknown) => {
   process.stderr.write(
     `open-design headless failed: ${
       error instanceof Error ? error.message : String(error)

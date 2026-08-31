@@ -13,7 +13,7 @@ import type {
   BootstrapSidecarRuntimeOptions,
   SidecarLaunchEnvRequest,
   SidecarRuntimeContext,
-  RuntimeLayoutStampShape,
+  SidecarStampShape,
 } from "./types.js";
 
 /**
@@ -21,7 +21,7 @@ import type {
  * the stamp's ipc path, namespace, and source, layered over `extraEnv`.
  * @returns The launch environment.
  */
-export function createSidecarLaunchEnv<TStamp extends RuntimeLayoutStampShape>({
+export function createSidecarLaunchEnv<TStamp extends SidecarStampShape>({
   base,
   contract,
   extraEnv = process.env,
@@ -54,7 +54,7 @@ function assertMatchingEnv(env: NodeJS.ProcessEnv, key: string, expected: string
  * the resolved live runtime context.
  * @returns The resolved {@link SidecarRuntimeContext}.
  */
-export function bootstrapSidecarRuntime<TStamp extends RuntimeLayoutStampShape>(
+export function bootstrapSidecarRuntime<TStamp extends SidecarStampShape>(
   stampInput: unknown,
   env: NodeJS.ProcessEnv,
   options: BootstrapSidecarRuntimeOptions<TStamp>,
@@ -88,6 +88,7 @@ export function bootstrapSidecarRuntime<TStamp extends RuntimeLayoutStampShape>(
   return {
     app: stamp.app,
     base,
+    ipc,
     mode: stamp.mode,
     namespace: stamp.namespace,
     source: stamp.source,
