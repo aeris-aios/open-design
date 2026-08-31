@@ -12,7 +12,7 @@ import {
   createFakeAgentRuntimes,
   FAKE_AGENT_RUNTIME_IDS,
 } from '@/playwright/fake-agents';
-import { trackRunRequests } from '@/playwright/mock-factory';
+import { suppressWhatsNew, trackRunRequests } from '@/playwright/mock-factory';
 import type { FakeAcpHandshakeRuntime, FakeAgentId } from '@/playwright/fake-agents';
 import { T } from '@/timeouts';
 
@@ -73,6 +73,13 @@ test.beforeAll(async ({ toolsDev }) => {
 
 test.beforeEach(async ({ page }) => {
   test.setTimeout(T.xlong);
+
+  // The What's New highlight dialog resolves on the Home surface from
+  // /api/whats-new and, when the daemon has real content, renders a modal
+  // backdrop that intercepts pointer events on the entry rail. Keep this
+  // file's Settings flow deterministic by suppressing it, matching the other
+  // settings specs (e.g. settings-api-protocol.test.ts).
+  await suppressWhatsNew(page);
 
   await resetDaemonAppConfig(page);
 
