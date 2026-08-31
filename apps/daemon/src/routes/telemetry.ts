@@ -1,5 +1,5 @@
 import express, { type Express } from 'express';
-import { SIDECAR_DEFAULTS, SIDECAR_ENV } from '@open-design/sidecar-proto';
+import { SIDECAR_DEFAULTS } from '@open-design/sidecar-proto';
 import { randomUUID } from 'node:crypto';
 import {
   type McpAnalyticsEventRequest,
@@ -36,8 +36,13 @@ export interface DaemonTelemetry {
 
 export interface RegisterTelemetryRoutesDeps {
   dataDir: string;
+  namespace?: string;
   readAppConfig: typeof readAppConfig;
   writeAppConfig: typeof writeAppConfig;
+}
+
+export function resolveInstallerObservationNamespace(namespace: string | undefined): string {
+  return namespace ?? SIDECAR_DEFAULTS.namespace;
 }
 
 export async function resolveMcpAnalyticsContext(
@@ -257,7 +262,7 @@ export function registerTelemetryRoutes(app: Express, deps: RegisterTelemetryRou
         currentVersion: cachedAppVersion.version,
         dataRoot: dataDir,
         logger: console,
-        namespace: process.env[SIDECAR_ENV.NAMESPACE] ?? SIDECAR_DEFAULTS.namespace,
+        namespace: resolveInstallerObservationNamespace(deps.namespace),
       });
     } catch {
       // Telemetry is best-effort; appVersion is omitted when unavailable.

@@ -164,7 +164,6 @@ describe('diagnostics export handler — packaged (runtime) layout', () => {
         app: APP_KEYS.DAEMON,
         // packaged launches children with base == <namespaceRoot>/runtime
         base: join(namespaceRoot, 'runtime'),
-        ipc: '/tmp/od-diag-test-daemon.sock',
         mode: SIDECAR_MODES.RUNTIME,
         namespace: 'release-stable',
         source: SIDECAR_SOURCES.PACKAGED,
@@ -213,7 +212,6 @@ describe('diagnostics export handler — packaged (runtime) layout', () => {
       const runtime: SidecarRuntimeContext<SidecarStamp> = {
         app: APP_KEYS.DAEMON,
         base: join(namespaceRoot, 'runtime'),
-        ipc: '/tmp/od-diag-prev.sock',
         mode: SIDECAR_MODES.RUNTIME,
         namespace: 'release-stable',
         source: SIDECAR_SOURCES.PACKAGED,
@@ -257,7 +255,6 @@ describe('diagnostics export handler — packaged (runtime) layout', () => {
       const runtime: SidecarRuntimeContext<SidecarStamp> = {
         app: APP_KEYS.DAEMON,
         base: join(namespaceRoot, 'runtime'),
-        ipc: '/tmp/od-diag-noprev.sock',
         mode: SIDECAR_MODES.RUNTIME,
         namespace: 'release-stable',
         source: SIDECAR_SOURCES.PACKAGED,
@@ -305,7 +302,6 @@ describe('diagnostics export handler — packaged (runtime) layout', () => {
         const runtime: SidecarRuntimeContext<SidecarStamp> = {
           app: APP_KEYS.DAEMON,
           base: join(namespaceRoot, 'runtime'),
-          ipc: '/tmp/od-diag-prevdenied.sock',
           mode: SIDECAR_MODES.RUNTIME,
           namespace: 'release-stable',
           source: SIDECAR_SOURCES.PACKAGED,
@@ -345,7 +341,6 @@ describe('diagnostics export handler — packaged (runtime) layout', () => {
       const runtime: SidecarRuntimeContext<SidecarStamp> = {
         app: APP_KEYS.DAEMON,
         base: join(namespaceRoot, 'runtime'),
-        ipc: '/tmp/od-diag-missing.sock',
         mode: SIDECAR_MODES.RUNTIME,
         namespace: 'release-beta',
         source: SIDECAR_SOURCES.PACKAGED,
