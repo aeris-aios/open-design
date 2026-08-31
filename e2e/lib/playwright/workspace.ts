@@ -56,7 +56,7 @@ export async function clickPreviewToolbarAction(
 ): Promise<void> {
   const workspace = page.locator('[data-testid="file-workspace"]:visible').first();
   await expect(workspace).toBeVisible();
-  const inlineAction = workspace.getByTestId(inlineTestId);
+  const inlineAction = workspace.locator(`[data-testid="${inlineTestId}"]:visible`).first();
   if (await inlineAction.isVisible()) {
     await inlineAction.click();
     return;

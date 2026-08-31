@@ -1061,9 +1061,13 @@ async function runGenerationDoesNotCreateExtraFileFlow(
 async function clickCommentTargetInPreview(page: Page, selector: string) {
   const target = artifactPreviewFrame(page).locator(selector);
   await expect(target).toBeVisible();
-  // Auto-fit zoom + comment-bridge injection can keep the iframe target
-  // moving for long enough that Playwright's stability check never settles
-  // (CI: "element is not stable" until test timeout). Force once visible.
+  // Activating comments can swap the URL iframe for the retained srcDoc
+  // iframe. The DOM target becomes visible before the comment bridge has
+  // replayed its mode and published targets, so use the hover overlay as the
+  // bridge-ready witness before clicking. Auto-fit zoom can still keep the
+  // target moving, hence the forced pointer actions after that witness.
+  await target.hover({ force: true });
+  await expect(page.getByTestId('comment-target-overlay').first()).toBeVisible();
   await target.click({ force: true });
 }
 
