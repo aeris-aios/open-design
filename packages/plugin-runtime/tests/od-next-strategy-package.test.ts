@@ -38,7 +38,7 @@ describe('bundled OD Next Strategy V2 package', () => {
   it('declares the inactive versioned asset set and exact planning recipe identity', () => {
     expect(manifest).toMatchObject({
       name: 'od-next-strategy',
-      version: '2.0.0',
+      version: '2.0.1',
       od: {
         kind: 'scenario',
         hidden: true,
@@ -58,6 +58,7 @@ describe('bundled OD Next Strategy V2 package', () => {
       ['ppt', 'active', ['deck']],
       ['marketing', 'active', ['image']],
       ['hyperframes', 'active', ['video']],
+      ['image', 'reserved', ['image']],
     ]);
   });
 
@@ -79,9 +80,17 @@ describe('bundled OD Next Strategy V2 package', () => {
       declaration.assets.taskProfileMapping.path,
     ];
     expect(new Set(assetPaths).size).toBe(assetPaths.length);
+    const imageProfile = declaration.assets.taskProfiles.find((profile) => profile.taskType === 'image');
 
     for (const assetPath of assetPaths) {
       const content = readFileSync(`${pluginRoot}/${assetPath.slice(2)}`, 'utf8');
+      // Image intentionally has no authored rule card; Core and Orchestration
+      // still apply. Every other declared resource must remain substantive.
+      if (assetPath === imageProfile?.path) {
+        expect(imageProfile).toMatchObject({ rollout: 'reserved', version: '0.0.0' });
+        expect(content).toBe('');
+        continue;
+      }
       expect(content.length, assetPath).toBeGreaterThan(100);
       // Resources (shells, stylesheets) are quoted as facts, never as
       // instructions, so the pre-Build vocabulary rule applies to prose only.
