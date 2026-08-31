@@ -15,6 +15,7 @@ on:
       - main
     paths:
       - "tools/release/resources/dsh-bootstrap/**"
+      - "tools/release/src/storage/dsh-bootstrap-*.ts"
       - "tools/release/src/storage/publish-dsh-bootstrap.ts"
       - ".github/workflows/dsh-bootstrap-publish.yml"
 

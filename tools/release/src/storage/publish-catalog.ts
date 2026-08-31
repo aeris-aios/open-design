@@ -19,6 +19,7 @@ import {
 
 const IMMUTABLE_CACHE_CONTROL = "public, max-age=31536000, immutable";
 const POINTER_CACHE_CONTROL = "public, max-age=60";
+const DEFAULT_IMMUTABLE_PUBLISH_CONCURRENCY = 16;
 
 export type PublishCatalogOptions = {
   stagingDir: string;
@@ -27,6 +28,8 @@ export type PublishCatalogOptions = {
   storage: StorageConfig;
   sourceCommitGeneration: number;
   github?: Record<string, unknown>;
+  /** Test/operations seam. Defaults to bounded parallel immutable uploads. */
+  immutablePublishConcurrency?: number;
 };
 
 export type PublishCatalogResult = {
@@ -165,6 +168,34 @@ async function publishImmutableObject(
   return "reused";
 }
 
+async function mapWithConcurrency<T, R>(
+  values: readonly T[],
+  concurrency: number,
+  mapper: (value: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(values.length);
+  let nextIndex = 0;
+  let failure: { error: unknown } | undefined;
+
+  async function worker(): Promise<void> {
+    while (failure == null) {
+      const index = nextIndex;
+      nextIndex += 1;
+      if (index >= values.length) return;
+      try {
+        results[index] = await mapper(values[index]!, index);
+      } catch (error) {
+        failure ??= { error };
+      }
+    }
+  }
+
+  const workerCount = Math.min(concurrency, values.length);
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
+  if (failure != null) throw failure.error;
+  return results;
+}
+
 /**
  * Publish a packed catalog snapshot under catalog/v1/<full-commit>/.
  * Updates catalog/v1/latest.json ONLY after every immutable object verifies.
@@ -176,6 +207,13 @@ export async function publishCatalogSnapshot(options: PublishCatalogOptions): Pr
   const prefix = catalogSnapshotPrefix(sourceCommit);
   if (!Number.isSafeInteger(options.sourceCommitGeneration) || options.sourceCommitGeneration < 1) {
     throw new Error(`sourceCommitGeneration must be a positive integer; got ${options.sourceCommitGeneration}`);
+  }
+  const immutablePublishConcurrency =
+    options.immutablePublishConcurrency ?? DEFAULT_IMMUTABLE_PUBLISH_CONCURRENCY;
+  if (!Number.isSafeInteger(immutablePublishConcurrency) || immutablePublishConcurrency < 1) {
+    throw new Error(
+      `immutablePublishConcurrency must be a positive integer; got ${immutablePublishConcurrency}`,
+    );
   }
 
   verifyCatalogChecksums(stagingDir);
@@ -202,11 +240,15 @@ export async function publishCatalogSnapshot(options: PublishCatalogOptions): Pr
   const reused: string[] = [];
 
   // Publish every file under the immutable prefix first; never touch latest yet.
-  for (const full of files) {
+  // Bounded concurrency keeps same-commit reruns practical without flooding R2.
+  const outcomes = await mapWithConcurrency(files, immutablePublishConcurrency, async (full) => {
     const rel = relative(stagingDir, full).split("\\").join("/");
     const body = readFileSync(full);
     const objectKey = `${prefix}/${rel}`;
     const outcome = await publishImmutableObject(options.storage, objectKey, body, rel);
+    return { outcome, rel };
+  });
+  for (const { outcome, rel } of outcomes) {
     if (outcome === "uploaded") uploaded.push(rel);
     else reused.push(rel);
   }

@@ -1433,6 +1433,15 @@ process.stdin.on("end", () => {
     expect(publishIndex).toBeGreaterThan(buildIndex);
   });
 
+  it("[P2] triggers the standalone DSH publisher for its bundle helpers", async () => {
+    const workflow = await readFile(dshBootstrapPublishWorkflowPath, "utf8");
+    const trigger = sectionBetween(workflow, "on:", "\npermissions:");
+
+    expect(trigger).toContain('"tools/release/resources/dsh-bootstrap/**"');
+    expect(trigger).toContain('"tools/release/src/storage/dsh-bootstrap-*.ts"');
+    expect(trigger).toContain('"tools/release/src/storage/publish-dsh-bootstrap.ts"');
+  });
+
   it("[P1] serializes both DSH latest-pointer publishers", async () => {
     const [standaloneWorkflow, productionWorkflow] = await Promise.all([
       readFile(dshBootstrapPublishWorkflowPath, "utf8"),

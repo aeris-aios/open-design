@@ -24,14 +24,18 @@ function etag(body: Buffer): string {
   return `"${createHash("sha256").update(body).digest("hex")}"`;
 }
 
-async function startFixtureServer(): Promise<{
+async function startFixtureServer(options: { putDelayMs?: number } = {}): Promise<{
   close(): Promise<void>;
   getObject(key: string): Buffer | null;
   listObjectKeys(): string[];
+  maxActivePutRequests(): number;
+  resetPutMetrics(): void;
   info: { bucket: string; endpointUrl: string };
   storage: StorageConfig;
 }> {
   const objects = new Map<string, StoredObject>();
+  let activePutRequests = 0;
+  let maxActivePutRequests = 0;
 
   function objectKeyFromRequest(request: IncomingMessage, response: ServerResponse): string | null {
     const url = new URL(request.url ?? "/", "http://fixture.local");
@@ -62,27 +66,36 @@ async function startFixtureServer(): Promise<{
       if (key == null) return;
 
       if (request.method === "PUT") {
-        const current = objects.get(key);
-        if (request.headers["if-none-match"] === "*" && current != null) {
-          response.statusCode = 412;
-          response.end("precondition failed");
+        activePutRequests += 1;
+        maxActivePutRequests = Math.max(maxActivePutRequests, activePutRequests);
+        try {
+          if ((options.putDelayMs ?? 0) > 0) {
+            await new Promise((resolveDelay) => setTimeout(resolveDelay, options.putDelayMs));
+          }
+          const current = objects.get(key);
+          if (request.headers["if-none-match"] === "*" && current != null) {
+            response.statusCode = 412;
+            response.end("precondition failed");
+            return;
+          }
+          if (
+            typeof request.headers["if-match"] === "string" &&
+            current?.etag !== request.headers["if-match"]
+          ) {
+            response.statusCode = 412;
+            response.end("precondition failed");
+            return;
+          }
+          const body = await readBody(request);
+          const stored = { body, etag: etag(body) };
+          objects.set(key, stored);
+          response.statusCode = 200;
+          response.setHeader("etag", stored.etag);
+          response.end("ok");
           return;
+        } finally {
+          activePutRequests -= 1;
         }
-        if (
-          typeof request.headers["if-match"] === "string" &&
-          current?.etag !== request.headers["if-match"]
-        ) {
-          response.statusCode = 412;
-          response.end("precondition failed");
-          return;
-        }
-        const body = await readBody(request);
-        const stored = { body, etag: etag(body) };
-        objects.set(key, stored);
-        response.statusCode = 200;
-        response.setHeader("etag", stored.etag);
-        response.end("ok");
-        return;
       }
 
       if (request.method === "GET") {
@@ -130,6 +143,13 @@ async function startFixtureServer(): Promise<{
     listObjectKeys() {
       return [...objects.keys()].sort();
     },
+    maxActivePutRequests() {
+      return maxActivePutRequests;
+    },
+    resetPutMetrics() {
+      activePutRequests = 0;
+      maxActivePutRequests = 0;
+    },
     close() {
       return new Promise((resolveClose, rejectClose) => {
         server.close((error) => (error == null ? resolveClose() : rejectClose(error)));
@@ -164,6 +184,38 @@ async function stagePackedCatalog(
 }
 
 describe("catalog publish", () => {
+  it("reuses immutable snapshot objects with bounded concurrency on a workflow rerun", async () => {
+    const server = await startFixtureServer({ putDelayMs: 15 });
+    const stagingDir = await stagePackedCatalog(SOURCE_COMMIT);
+    try {
+      await publishCatalogSnapshot({
+        stagingDir,
+        sourceCommit: SOURCE_COMMIT,
+        sourceCommitGeneration: 42,
+        publicOrigin: "https://releases.example.test",
+        storage: server.storage,
+        immutablePublishConcurrency: 3,
+      });
+      server.resetPutMetrics();
+
+      const rerun = await publishCatalogSnapshot({
+        stagingDir,
+        sourceCommit: SOURCE_COMMIT,
+        sourceCommitGeneration: 42,
+        publicOrigin: "https://releases.example.test",
+        storage: server.storage,
+        immutablePublishConcurrency: 3,
+      });
+
+      expect(server.maxActivePutRequests()).toBe(3);
+      expect(rerun.reused.length).toBeGreaterThan(3);
+      expect(rerun.latestUpdated).toBe(false);
+    } finally {
+      await server.close();
+      await rm(stagingDir, { force: true, recursive: true });
+    }
+  });
+
   it("publishes immutable objects and latest.json", async () => {
     const server = await startFixtureServer();
     const stagingDir = await stagePackedCatalog(SOURCE_COMMIT);
