@@ -183,7 +183,7 @@ test('[P0] local OD Next active canary follows one public task across physical r
   ))).toHaveLength(2);
 });
 
-test('[P0] OD Next prototype project forwards Deck Protocol v1 for an explicit PPT request', async ({ page }) => {
+test('[P0] OD Next active + Blank prototype generates a directly navigable Deck Protocol v1 deck', async ({ page }) => {
   test.skip(
     process.env.OD_NEXT_STRATEGY_ROLLOUT !== 'active'
       || process.env.OD_NEXT_STRATEGY_LOCAL_SYNTHETIC_CANARY !== '1',
@@ -191,18 +191,87 @@ test('[P0] OD Next prototype project forwards Deck Protocol v1 for an explicit P
   );
   await prepareLocalOdNextCanary(page, 'OD Next prototype to PPT canary');
 
-  await sendPrompt(
+  const response = await sendPrompt(
     page,
     'Create an OD Next PPT protocol canary from this prototype project',
     T.xlong,
   );
+  const created = await response.json() as { strategyTask?: { inputStage: string } };
+  expect(created.strategyTask).toMatchObject({ inputStage: 'request' });
 
   const { projectId } = await currentProjectContext(page);
   await expectProjectFilesToContain(page, projectId, [OD_NEXT_CANARY_FILE]);
   await expect(page.getByText(
     'Created od-next-active-canary.html through the continued native session.',
   ).last()).toBeVisible();
+  await expectProjectFileToContain(page, projectId, OD_NEXT_CANARY_FILE, 'data-od-deck-protocol="1"');
+  await expectDeckThumbnailNavigationUnderBudget(page);
 });
+
+test('[P0] OD Next off + Blank prototype keeps explicit PPT turns on Deck Protocol v1', async ({ page }) => {
+  test.skip(
+    process.env.OD_NEXT_STRATEGY_ROLLOUT !== 'off',
+    'requires a daemon started with the rollout env explicitly off',
+  );
+  await prepareLocalOdNextCanary(page, 'Classic prototype to PPT canary', 'off');
+
+  const response = await sendPrompt(
+    page,
+    'Create an OD Next PPT protocol canary from this prototype project',
+    T.xlong,
+  );
+  const created = await response.json() as { strategyTask?: unknown };
+  expect(created.strategyTask).toBeUndefined();
+
+  const { projectId } = await currentProjectContext(page);
+  await expectProjectFilesToContain(page, projectId, [OD_NEXT_CANARY_FILE]);
+  await expect(page.getByText(
+    'Created the classic/off-rollout Deck Protocol canary.',
+  ).last()).toBeVisible();
+  await expectProjectFileToContain(page, projectId, OD_NEXT_CANARY_FILE, 'data-od-deck-protocol="1"');
+  await expectDeckThumbnailNavigationUnderBudget(page);
+});
+
+for (const strategyMode of ['active', 'off'] as const) {
+  test(`[P0] OD Next ${strategyMode} + selected legacy deck template remains directly navigable`, async ({ page }) => {
+    test.skip(
+      !isDeckMatrixStrategyModeEnabled(strategyMode),
+      `requires a daemon started with the rollout env explicitly ${strategyMode}`,
+    );
+    await prepareSelectedDeckTemplateCanary(
+      page,
+      `Selected template ${strategyMode} canary`,
+      strategyMode,
+    );
+
+    const response = await sendPrompt(
+      page,
+      'Create a selected-template deck navigation canary',
+      T.xlong,
+    );
+    const created = await response.json() as { strategyTask?: { inputStage: string } };
+    if (strategyMode === 'active') {
+      expect(created.strategyTask).toMatchObject({ inputStage: 'request' });
+    } else {
+      expect(created.strategyTask).toBeUndefined();
+    }
+
+    const { projectId } = await currentProjectContext(page);
+    await expectProjectFilesToContain(page, projectId, [OD_NEXT_CANARY_FILE]);
+    await expect(page.getByText(
+      strategyMode === 'active'
+        ? 'Created od-next-active-canary.html through the continued native session.'
+        : 'Created the selected-template legacy deck canary.',
+    ).last()).toBeVisible();
+    const source = await readProjectFile(page, projectId, OD_NEXT_CANARY_FILE);
+    if (strategyMode === 'active') {
+      expect(source).toContain('data-od-deck-protocol="1"');
+    } else {
+      expect(source).not.toContain('data-od-deck-protocol="1"');
+    }
+    await expectDeckThumbnailNavigationUnderBudget(page);
+  });
+}
 
 test('[P0] local OD Next clarification canary preserves one taskExecutionId through the public form', async ({ page }) => {
   test.skip(
@@ -1213,12 +1282,17 @@ async function createHandshakeRefusingKimiProject(page: Page, name: string) {
   await dismissPrivacyDialog(page);
 }
 
-async function prepareLocalOdNextCanary(page: Page, name: string): Promise<void> {
+async function prepareLocalOdNextCanary(
+  page: Page,
+  name: string,
+  strategyMode: 'active' | 'off' = 'active',
+): Promise<void> {
   // Exercise the shipped Design-mode New Project flow, rather than hand-
   // constructing the create payload. EntryShell leaves the silently selected
   // default out of explicit plugin authority; the daemon derives and stamps
   // its exact snapshot, so rollout can replace only that automatic pin.
   await configureFakeAgent(page, 'opencode');
+  await setOdNextStrategyMode(page, strategyMode);
   await installBrowserAgentConfig(page, 'opencode');
   await gotoEntryHome(page);
   await setBrowserAgentConfig(page, 'opencode');
@@ -1226,6 +1300,7 @@ async function prepareLocalOdNextCanary(page: Page, name: string): Promise<void>
   await waitForLoadingToClear(page);
   await setBrowserAgentConfig(page, 'opencode');
   await configureFakeAgent(page, 'opencode');
+  await setOdNextStrategyMode(page, strategyMode);
   await expectBrowserAgentConfig(page, 'opencode');
   await dismissPrivacyDialog(page);
   await openNewProjectModalFromProjects(page);
@@ -1234,6 +1309,7 @@ async function prepareLocalOdNextCanary(page: Page, name: string): Promise<void>
   await page.getByTestId('create-project').click();
   await expectWorkspaceReady(page);
   await configureFakeAgent(page, 'opencode');
+  await setOdNextStrategyMode(page, strategyMode);
   const response = await page.request.get('/api/agents');
   expect(response.ok(), await response.text()).toBeTruthy();
   const body = await response.json() as {
@@ -1241,6 +1317,69 @@ async function prepareLocalOdNextCanary(page: Page, name: string): Promise<void>
   };
   expect(body.agents?.find((agent) => agent.id === 'opencode'))
     .toMatchObject({ available: true });
+}
+
+async function prepareSelectedDeckTemplateCanary(
+  page: Page,
+  name: string,
+  strategyMode: 'active' | 'off',
+): Promise<void> {
+  await configureFakeAgent(page, 'opencode');
+  await setOdNextStrategyMode(page, strategyMode);
+  await installBrowserAgentConfig(page, 'opencode');
+  await gotoEntryHome(page);
+  await setBrowserAgentConfig(page, 'opencode');
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await waitForLoadingToClear(page);
+  await setBrowserAgentConfig(page, 'opencode');
+  await configureFakeAgent(page, 'opencode');
+  await setOdNextStrategyMode(page, strategyMode);
+  await expectBrowserAgentConfig(page, 'opencode');
+  await dismissPrivacyDialog(page);
+  await openNewProjectModalFromProjects(page);
+  await page.getByTestId('new-project-tab-deck').click();
+  const selectedTemplate = page.getByRole('radio', { name: 'Example Helix', exact: true });
+  await expect(selectedTemplate).toBeVisible({ timeout: T.medium });
+  await selectedTemplate.click();
+  await expect(selectedTemplate).toHaveAttribute('aria-checked', 'true');
+  await page.getByTestId('new-project-name').fill(name);
+  const createRequestPromise = page.waitForRequest(isCreateProjectRequest);
+  await page.getByTestId('create-project').click();
+  const createRequest = await createRequestPromise;
+  expect(createRequest.postDataJSON()).toMatchObject({
+    skillId: 'replit-deck:example-helix',
+    metadata: { kind: 'deck' },
+  });
+  await expectWorkspaceReady(page);
+  await configureFakeAgent(page, 'opencode');
+  await setOdNextStrategyMode(page, strategyMode);
+}
+
+async function setOdNextStrategyMode(page: Page, mode: 'active' | 'off'): Promise<void> {
+  const response = await page.request.put('/api/app-config', {
+    data: { odNextStrategyMode: mode },
+  });
+  expect(response.ok(), await response.text()).toBeTruthy();
+}
+
+function isDeckMatrixStrategyModeEnabled(mode: 'active' | 'off'): boolean {
+  if (process.env.OD_NEXT_STRATEGY_ROLLOUT !== mode) return false;
+  return mode === 'off' || process.env.OD_NEXT_STRATEGY_LOCAL_SYNTHETIC_CANARY === '1';
+}
+
+async function expectDeckThumbnailNavigationUnderBudget(page: Page): Promise<void> {
+  const thumbnails = page.locator('.deck-thumbnail-button');
+  await expect(thumbnails).toHaveCount(3, { timeout: T.medium });
+  await expect(thumbnails.nth(0)).toHaveAttribute('aria-current', 'true');
+
+  const startedAt = Date.now();
+  await thumbnails.nth(2).click();
+  await expect(thumbnails.nth(2)).toHaveAttribute('aria-current', 'true', { timeout: T.short });
+  expect(
+    Date.now() - startedAt,
+    'thumbnail navigation must complete before the old ~3 second fallback delay',
+  ).toBeLessThan(T.short);
+  await expect(artifactPreviewFrame(page).getByText('Matrix Slide Three')).toBeVisible();
 }
 
 async function createByokOpenCodeProject(page: Page, name: string) {
@@ -1692,6 +1831,7 @@ async function resetDaemonAppConfig(page: Page) {
       agentCliEnv: {},
       skillId: null,
       designSystemId: null,
+      odNextStrategyMode: 'off',
     },
   });
   expect(response.ok()).toBeTruthy();
@@ -1754,6 +1894,12 @@ async function expectProjectFileToContain(
       return response.text();
     }, { timeout: 15_000 })
     .toContain(expected);
+}
+
+async function readProjectFile(page: Page, projectId: string, fileName: string): Promise<string> {
+  const response = await page.request.get(`/api/projects/${projectId}/files/${fileName}`);
+  expect(response.ok(), await response.text()).toBeTruthy();
+  return response.text();
 }
 
 async function expectProjectFilesToContain(

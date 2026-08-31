@@ -1321,25 +1321,23 @@ export function composeSystemPrompt({
   // skill seed is on offer.
   const isDeckProject = resolvedExclusiveSurface === 'deck';
   const isFreeformProject = activeSkillModes.size === 0 && (!metadata || metadata.kind === 'other');
-  const hasSkillSeed =
-    !!skillBody && /assets\/template\.html/.test(skillBody);
-  if (!isAskMode && isDeckProject && !hasSkillSeed) {
+  const hasDeckSkillSeed =
+    activeSkillModes.has('deck') && !!skillBody && /assets\/template\.html/.test(skillBody);
+  if (!isAskMode && isDeckProject && !hasDeckSkillSeed) {
     parts.push(`\n\n---\n\n${DECK_FRAMEWORK_DIRECTIVE}`);
   } else if (
     !isAskMode &&
-    isFreeformProject &&
-    !hasSkillSeed &&
-    (freeformDeckSignal ?? true)
+    !isDeckProject &&
+    !isMediaSurfaceEarly &&
+    !hasDeckSkillSeed &&
+    (freeformDeckSignal === true || (isFreeformProject && freeformDeckSignal === undefined))
   ) {
-    // Freeform / kind=other projects skip the kind picker entirely and
-    // land here. If the user's brief is a deck/keynote/slides ("讲解",
-    // "presentation", "make a deck"), the agent used to invent its own
-    // scale-to-fit + slide visibility + nav script from scratch and
-    // shipped subtle CSS specificity bugs (per-slide layout classes
-    // overriding `.slide { display:none }`). Inject the same framework
-    // here, prefixed with a one-line conditional so the agent only
-    // adopts it when the brief actually is a deck — otherwise the
-    // directive is read as background reference and ignored.
+    // A deck request may arrive after a project was created under another
+    // surface (most commonly Home's default prototype). The turn-latched
+    // signal is stronger than that creation-time kind, so give the agent the
+    // same framework instead of leaving classic/off-rollout runs to invent a
+    // third navigation runtime. Preserve the legacy absent-signal default for
+    // kind=other projects only.
     (isSlimCore ? slimTurnVariableParts : parts).push(
       `\n\n---\n\n## If this brief is a slide deck / keynote / presentation\n\nThe user did not pre-select a "Slide deck" surface, but their request may still call for one. **If — and only if — the brief reads as slides, keynote, presentation, deck, PPT, or 讲解, follow the framework below.** Otherwise ignore everything in this section and continue with the freeform output you would have written anyway.\n\n${DECK_FRAMEWORK_DIRECTIVE}`,
     );

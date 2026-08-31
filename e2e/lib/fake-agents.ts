@@ -2,6 +2,53 @@ import { chmod, copyFile, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { DECK_SKELETON_HTML } from '@open-design/contracts';
+
+const PROTOCOL_DECK_CANARY_HTML = DECK_SKELETON_HTML
+  .replace('<!-- SLOT: deck title -->', 'Deck protocol matrix canary')
+  .replace('<!-- SLOT: slide 1 content -->', '<h1>Matrix Slide One</h1>')
+  .replace('<!-- SLOT: slide 2 content -->', '<h1>Matrix Slide Two</h1>')
+  .replace(
+    '<!-- ... add as many <section class="slide"> blocks as the brief asks\n           for. The first one is .active; the rest are not. -->',
+    '<section class="slide" data-screen-label="03"><h1>Matrix Slide Three</h1></section>',
+  );
+
+const LEGACY_TEMPLATE_DECK_CANARY_HTML = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Legacy template matrix canary</title>
+  <style>
+    html, body { margin: 0; width: 100%; height: 100%; }
+    body { display: flex; overflow-x: auto; overflow-y: hidden; scroll-snap-type: x mandatory; }
+    .slide { flex: 0 0 100vw; width: 100vw; height: 100vh; scroll-snap-align: start; display: grid; place-items: center; }
+  </style>
+</head>
+<body>
+  <section class="slide" data-screen-label="01"><h1>Matrix Slide One</h1></section>
+  <section class="slide" data-screen-label="02"><h1>Matrix Slide Two</h1></section>
+  <section class="slide" data-screen-label="03"><h1>Matrix Slide Three</h1></section>
+  <script>
+    (function () {
+      var slides = Array.prototype.slice.call(document.querySelectorAll('.slide'));
+      var active = 0;
+      function go(index) {
+        active = Math.max(0, Math.min(slides.length - 1, index));
+        window.scrollTo({ left: active * window.innerWidth, behavior: 'smooth' });
+      }
+      function onKey(event) {
+        if (event.key === 'ArrowRight') { event.preventDefault(); go(active + 1); }
+        if (event.key === 'ArrowLeft') { event.preventDefault(); go(active - 1); }
+      }
+      window.addEventListener('keydown', onKey, true);
+      document.addEventListener('keydown', onKey, true);
+      document.body.setAttribute('tabindex', '-1');
+      document.body.focus({ preventScroll: true });
+    })();
+  </script>
+</body>
+</html>`;
 
 export type FakeAgentId =
   | 'claude'
@@ -155,6 +202,8 @@ const args = process.argv.slice(2);
 const { mkdir, writeFile: writeFileFs } = require('node:fs/promises');
 const { readFileSync, writeFileSync } = require('node:fs');
 const { join } = require('node:path');
+const protocolDeckCanaryHtml = ${JSON.stringify(PROTOCOL_DECK_CANARY_HTML)};
+const legacyTemplateDeckCanaryHtml = ${JSON.stringify(LEGACY_TEMPLATE_DECK_CANARY_HTML)};
 
 if (args.includes('--version')) {
   process.stdout.write(agentId + '-e2e 0.0.0\\n');
@@ -266,7 +315,53 @@ async function emitRun(promptText) {
       process.exitCode = 1;
       return;
     }
-    emitOdNextPlanningRun(promptText);
+    if (promptText.includes('<recipe_identity ')) {
+      emitOdNextPlanningRun(promptText);
+    } else {
+      await emitDeckProtocolCanaryRun(protocolDeckCanaryHtml, 'Created the classic/off-rollout Deck Protocol canary.');
+    }
+    return;
+  }
+  if (promptText.includes('Create a selected-template deck navigation canary')) {
+    const requiredTemplateMarkers = ['assets/template.html'];
+    const missingTemplateMarkers = requiredTemplateMarkers.filter(
+      (marker) => !promptText.includes(marker),
+    );
+    if (missingTemplateMarkers.length > 0) {
+      process.stderr.write(
+        'Selected deck template prompt is missing markers: '
+          + missingTemplateMarkers.join(', ')
+          + '\\n',
+      );
+      process.exitCode = 1;
+      return;
+    }
+    if (promptText.includes('<recipe_identity ')) {
+      const requiredDeckProtocolMarkers = [
+        'OD Deck Protocol v1',
+        'data-od-deck-protocol="1"',
+        "type: 'od:deck-ready'",
+        "type: 'od:slide-state'",
+      ];
+      const missingDeckProtocolMarkers = requiredDeckProtocolMarkers.filter(
+        (marker) => !promptText.includes(marker),
+      );
+      if (missingDeckProtocolMarkers.length > 0) {
+        process.stderr.write(
+          'OD Next selected-template prompt is missing Deck Protocol v1 markers: '
+            + missingDeckProtocolMarkers.join(', ')
+            + '\\n',
+        );
+        process.exitCode = 1;
+        return;
+      }
+      emitOdNextPlanningRun(promptText, 'request', 'ppt');
+    } else {
+      await emitDeckProtocolCanaryRun(
+        legacyTemplateDeckCanaryHtml,
+        'Created the selected-template legacy deck canary.',
+      );
+    }
     return;
   }
   if (promptText.includes('Create an OD Next blocked canary')) {
@@ -384,17 +479,6 @@ function promptIdentity(promptText, label) {
 const odNextIdentityPath = join(__dirname, 'od-next-' + agentId + '-identity.json');
 
 function odNextPromptIdentity(promptText) {
-  if (promptText.includes('- strategy: ')) {
-    const strategy = promptIdentity(promptText, 'strategy').split('@');
-    const identity = {
-      version: strategy[1],
-      snapshotId: promptIdentity(promptText, 'applied snapshot'),
-      packageHash: promptIdentity(promptText, 'strategy package'),
-      taskProfileVersion: '2.0.0',
-    };
-    writeFileSync(odNextIdentityPath, JSON.stringify(identity), 'utf8');
-    return identity;
-  }
   const identityStart = promptText.indexOf('<recipe_identity ');
   const identityEnd = identityStart < 0 ? -1 : promptText.indexOf('/>', identityStart);
   if (identityStart >= 0 && identityEnd >= 0) {
@@ -413,11 +497,25 @@ function odNextPromptIdentity(promptText) {
     if (packageHashStart < 0) throw new Error('OD Next fake could not read packageHash');
     const packageHashValueStart = packageHashStart + packageHashPrefix.length;
     const packageHashEnd = promptText.indexOf('"', packageHashValueStart);
+    const taskTypeMatch = /<task_type>\\s*([^<]+?)\\s*<\\/task_type>/.exec(promptText);
     const identity = {
       version: attribute('strategy_version'),
       snapshotId: attribute('applied_snapshot'),
       packageHash: promptText.slice(packageHashValueStart, packageHashEnd),
       taskProfileVersion: attribute('task_profile_version'),
+      taskType: taskTypeMatch ? taskTypeMatch[1].trim() : 'prototype',
+    };
+    writeFileSync(odNextIdentityPath, JSON.stringify(identity), 'utf8');
+    return identity;
+  }
+  if (promptText.includes('- strategy: ')) {
+    const strategy = promptIdentity(promptText, 'strategy').split('@');
+    const identity = {
+      version: strategy[1],
+      snapshotId: promptIdentity(promptText, 'applied snapshot'),
+      packageHash: promptIdentity(promptText, 'strategy package'),
+      taskProfileVersion: '2.0.0',
+      taskType: 'prototype',
     };
     writeFileSync(odNextIdentityPath, JSON.stringify(identity), 'utf8');
     return identity;
@@ -425,8 +523,13 @@ function odNextPromptIdentity(promptText) {
   return JSON.parse(readFileSync(odNextIdentityPath, 'utf8'));
 }
 
-function emitOdNextPlanningRun(promptText, inputStage = 'request') {
+function emitOdNextPlanningRun(promptText, inputStage = 'request', taskTypeOverride) {
   const identity = odNextPromptIdentity(promptText);
+  if (taskTypeOverride) {
+    identity.taskType = taskTypeOverride;
+    writeFileSync(odNextIdentityPath, JSON.stringify(identity), 'utf8');
+  }
+  const deliverableKind = identity.taskType === 'ppt' ? 'deck' : 'prototype';
   const plan = {
     schema: 'open-design.plan-contract/v2',
     strategy: {
@@ -434,11 +537,11 @@ function emitOdNextPlanningRun(promptText, inputStage = 'request') {
       packageHash: identity.packageHash, snapshotId: identity.snapshotId,
     },
     taskProfile: {
-      schemaVersion: '2', taskType: 'prototype', taskProfileVersion: identity.taskProfileVersion,
+      schemaVersion: '2', taskType: identity.taskType, taskProfileVersion: identity.taskProfileVersion,
       goal: 'Create an OD Next active canary artifact', contextAndAudience: 'Local rollout operators',
       inputsAndReferences: ['user-request'], constraints: [],
-      canonicalDeliverable: { id: 'canary', kind: 'prototype', format: 'html' },
-      requiredDeliverables: [{ id: 'canary', kind: 'prototype' }],
+      canonicalDeliverable: { id: 'canary', kind: deliverableKind, format: 'html' },
+      requiredDeliverables: [{ id: 'canary', kind: deliverableKind }],
       designSpec: { source: 'resolved-baseline', version: '1', decisions: { palette: 'neutral' } },
       buildRequirements: [{ id: 'build', text: 'Build the local canary artifact.' }],
       assumptions: [], risks: [], taskSpecific: {},
@@ -518,8 +621,7 @@ function emitOdNextBlockedRun() {
 }
 
 async function emitOdNextProductionRun() {
-  const html = '<!doctype html><html><body><main><h1>OD Next Active Canary</h1><p>Two physical runs reached one terminal task.</p></main></body></html>';
-  await writeFileFs(join(projectDir(), 'od-next-active-canary.html'), html, 'utf8');
+  await writeFileFs(join(projectDir(), 'od-next-active-canary.html'), protocolDeckCanaryHtml, 'utf8');
   const state = {
     schema: 'open-design.strategy-state/v2', route: 'full_plan', inputStage: 'production',
     outcome: 'completed', executionMode: 'simple', reasonCodes: [],
@@ -531,6 +633,13 @@ async function emitOdNextProductionRun() {
     false,
     false,
   );
+  process.exitCode = 0;
+  exitSoon(0);
+}
+
+async function emitDeckProtocolCanaryRun(html, message) {
+  await writeFileFs(join(projectDir(), 'od-next-active-canary.html'), html, 'utf8');
+  emitSuccess(message + '\\n', false, false);
   process.exitCode = 0;
   exitSoon(0);
 }
