@@ -135,4 +135,19 @@ describe("DeepSeek Harness bootstrap latest pointer", () => {
 
     await expect(resolveDshBootstrapVersion(storage, checksums)).resolves.toBe("v3");
   });
+
+  it("compares candidate-specific checksums for version-materialized installers", async () => {
+    storageMocks.getStorageObject.mockImplementation(async ({ objectKey }) => {
+      if (objectKey === "bootstrap/dsh/latest.json") return storedPointer("v2");
+      if (objectKey === "bootstrap/dsh/v2/SHA256SUMS") {
+        const checksums = Buffer.from("materialized-v2");
+        return { bytes: checksums, etag: "v2-etag", text: checksums.toString("utf8") };
+      }
+      throw new Error(`unexpected object key ${objectKey}`);
+    });
+
+    await expect(
+      resolveDshBootstrapVersion(storage, (version) => Buffer.from(`materialized-${version}`)),
+    ).resolves.toBe("v2");
+  });
 });

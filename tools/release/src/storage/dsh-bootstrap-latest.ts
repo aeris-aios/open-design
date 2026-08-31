@@ -12,6 +12,15 @@ export type DshBootstrapLatestPointer = {
   version: string;
 };
 
+export type DshBootstrapChecksumsForVersion = Buffer | ((version: string) => Buffer);
+
+function checksumsForVersion(
+  checksums: DshBootstrapChecksumsForVersion,
+  version: string,
+): Buffer {
+  return typeof checksums === "function" ? checksums(version) : checksums;
+}
+
 function versionNumber(version: string): number {
   const match = /^v([1-9]\d*)$/.exec(version);
   if (match == null) {
@@ -49,7 +58,7 @@ function parseLatestPointer(text: string): DshBootstrapLatestPointer {
  */
 export async function resolveDshBootstrapVersion(
   storage: StorageConfig,
-  checksums: Buffer,
+  checksums: DshBootstrapChecksumsForVersion,
 ): Promise<string> {
   const latestObject = await getStorageObject({
     ...storage,
@@ -69,7 +78,7 @@ export async function resolveDshBootstrapVersion(
         `DeepSeek Harness bootstrap latest pointer references missing ${latest.version}/SHA256SUMS`,
       );
     }
-    if (latestChecksums.bytes.equals(checksums)) {
+    if (latestChecksums.bytes.equals(checksumsForVersion(checksums, latest.version))) {
       console.log(`reusing current immutable bootstrap version ${latest.version}`);
       return latest.version;
     }
@@ -90,7 +99,7 @@ export async function resolveDshBootstrapVersion(
       console.log(`minting new immutable bootstrap version ${version}`);
       return version;
     }
-    if (published.bytes.equals(checksums)) {
+    if (published.bytes.equals(checksumsForVersion(checksums, version))) {
       console.log(`reusing unpublished immutable bootstrap version ${version}`);
       return version;
     }

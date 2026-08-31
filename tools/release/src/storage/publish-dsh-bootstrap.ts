@@ -1,25 +1,21 @@
-import { createHash } from "node:crypto";
 import { appendFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { contentType, githubInfo, optional, publicUrl, required, storageConfigFromEnv } from "./common.ts";
+import {
+  DSH_BOOTSTRAP_FILES,
+  dshBootstrapChecksums,
+  dshBootstrapFileHashes,
+  materializeDshBootstrapInstallers,
+  type DshBootstrapObject,
+} from "./dsh-bootstrap-bundle.ts";
 import {
   resolveDshBootstrapVersion,
   updateDshBootstrapLatestPointer,
 } from "./dsh-bootstrap-latest.ts";
 import { getStorageObject, putStorageObjectWithStatus, type StorageConfig } from "./s3-upload.ts";
 
-const BOOTSTRAP_FILES = ["install-dsh.cmd", "install-dsh.ps1", "install-dsh.sh"] as const;
 const IMMUTABLE_CACHE_CONTROL = "public, max-age=31536000, immutable";
-
-type BootstrapObject = {
-  body: Buffer;
-  name: string;
-};
-
-function sha256(body: Buffer): string {
-  return createHash("sha256").update(body).digest("hex");
-}
 
 function versionPrefix(version: string): string {
   return `bootstrap/dsh/${version}`;
@@ -28,7 +24,7 @@ function versionPrefix(version: string): string {
 async function publishImmutableBootstrapObject(
   storage: StorageConfig,
   prefix: string,
-  object: BootstrapObject,
+  object: { body: Buffer; name: string },
 ): Promise<void> {
   const objectKey = `${prefix}/${object.name}`;
   const result = await putStorageObjectWithStatus({
@@ -62,21 +58,23 @@ if (pinnedVersion.length > 0 && !/^v[1-9]\d*$/.test(pinnedVersion)) {
 const sourceDir = required("DSH_BOOTSTRAP_SOURCE_DIR");
 const publicOrigin = required("RELEASE_PUBLIC_ORIGIN");
 const storage = storageConfigFromEnv();
-const installers = BOOTSTRAP_FILES.map((name) => ({
+const sourceInstallers: DshBootstrapObject[] = DSH_BOOTSTRAP_FILES.map((name) => ({
   body: readFileSync(join(sourceDir, name)),
   name,
 }));
-const checksums = Buffer.from(
-  installers.map(({ body, name }) => `${sha256(body)}  ${name}`).join("\n") + "\n",
-  "utf8",
-);
-const objects: BootstrapObject[] = [...installers, { body: checksums, name: "SHA256SUMS" }];
+const installersForVersion = (version: string): DshBootstrapObject[] =>
+  materializeDshBootstrapInstallers(sourceInstallers, version, publicOrigin);
+const checksumsForVersion = (version: string): Buffer =>
+  dshBootstrapChecksums(installersForVersion(version));
 
 // An explicit pin stays fail-closed: it is the escape hatch for forcing a
 // specific version, and it must never silently overwrite different bytes.
 const version = pinnedVersion.length > 0
   ? pinnedVersion
-  : await resolveDshBootstrapVersion(storage, checksums);
+  : await resolveDshBootstrapVersion(storage, checksumsForVersion);
+const installers = installersForVersion(version);
+const checksums = dshBootstrapChecksums(installers);
+const objects = [...installers, { body: checksums, name: "SHA256SUMS" }];
 const prefix = versionPrefix(version);
 
 for (const object of objects) {
@@ -96,7 +94,7 @@ for (const object of objects) {
 // version without hard-coding it. Only move it forward: an older workflow
 // rerun can reuse an earlier immutable version but must never rewind latest.
 await updateDshBootstrapLatestPointer(storage, {
-  files: Object.fromEntries(installers.map(({ body, name }) => [name, sha256(body)])),
+  files: dshBootstrapFileHashes(installers),
   github: githubInfo(),
   publishedAt: new Date().toISOString(),
   version,

@@ -1,7 +1,8 @@
 // Canonical DSH bootstrap installers live under tools/release/resources/.
 // Landing still ships temporary public/ copies until extraction; those copies
-// must stay byte-identical so short open-design.ai URLs and product R2
-// snapshots cannot drift apart.
+// must stay byte-identical so the short open-design.ai URLs cannot drift from
+// the product source. The R2 publisher only rewrites the CMD's documented PS1
+// URL marker to the matching immutable version path.
 
 import { readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";

@@ -1445,6 +1445,27 @@ process.stdin.on("end", () => {
     expect(productionWorkflow).toContain("cancel-in-progress: false");
   });
 
+  it("[P1] rejects stale reruns before either DSH publisher can update latest", async () => {
+    const [standaloneWorkflow, productionWorkflow] = await Promise.all([
+      readFile(dshBootstrapPublishWorkflowPath, "utf8"),
+      readFile(landingPageProductionWorkflowPath, "utf8"),
+    ]);
+
+    for (const workflow of [standaloneWorkflow, productionWorkflow]) {
+      const freshnessIndex = workflow.indexOf(
+        'main_sha="$(git ls-remote origin refs/heads/main | awk \'{print $1}\')"',
+      );
+      const staleGuardIndex = workflow.indexOf('$GITHUB_SHA" != "$main_sha');
+      const publishIndex = workflow.indexOf("pnpm exec tools-release publish-dsh-bootstrap");
+
+      expect(freshnessIndex).toBeGreaterThanOrEqual(0);
+      expect(staleGuardIndex).toBeGreaterThan(freshnessIndex);
+      expect(publishIndex).toBeGreaterThan(staleGuardIndex);
+      expect(workflow).toContain("refusing");
+      expect(workflow).toContain("stale workflow SHA");
+    }
+  });
+
   it("[P1] publishes catalog snapshots only from main", async () => {
     const workflow = await readFile(catalogPublishWorkflowPath, "utf8");
     const guardedJobs = workflow.match(

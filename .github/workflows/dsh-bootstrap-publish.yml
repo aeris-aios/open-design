@@ -57,6 +57,21 @@ jobs:
       - name: Build tools-release
         run: pnpm --filter @open-design/tools-release build
 
+      - name: Verify publisher checkout is current main
+        run: |
+          set -euo pipefail
+          published_sha="$(git rev-parse HEAD)"
+          if [ "$published_sha" != "$GITHUB_SHA" ]; then
+            echo "::error::publisher checkout resolved $published_sha but workflow dispatch SHA is $GITHUB_SHA"
+            exit 1
+          fi
+          main_sha="$(git ls-remote origin refs/heads/main | awk '{print $1}')"
+          if [ "$GITHUB_SHA" != "$main_sha" ]; then
+            echo "::error::refusing DSH bootstrap publish for stale workflow SHA $GITHUB_SHA; current origin/main is $main_sha"
+            echo "::error::dispatch a fresh workflow from current main instead of rerunning an old publish."
+            exit 1
+          fi
+
       # Canonical installer bytes. Version is derived from content: unchanged
       # installers reuse the published version; edits mint the next one.
       # `DSH_BOOTSTRAP_VERSION` remains an escape hatch that forces one version
