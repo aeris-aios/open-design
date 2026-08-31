@@ -7,6 +7,7 @@ import {
   APP_KEYS,
   SIDECAR_MESSAGES,
   SIDECAR_MODES,
+  SIDECAR_SOURCES,
   type AppKey,
   type DesktopStatusSnapshot,
 } from "@open-design/sidecar-proto";
@@ -21,6 +22,11 @@ import type { PackagedNamespacePaths } from "./paths.js";
 
 type LauncherAfterQuitLogger = Pick<Console, "warn"> & Partial<Pick<Console, "info">>;
 const HEADLESS_SIDECAR_MODE = "headless";
+const PACKAGED_SIDECAR_SOURCES = [SIDECAR_SOURCES.TOOLS_PACK, SIDECAR_SOURCES.PACKAGED] as const;
+
+function packagedSidecarSourcesFor(stamp: SidecarStamp): readonly SidecarStamp["source"][] {
+  return [stamp.source, ...PACKAGED_SIDECAR_SOURCES.filter((source) => source !== stamp.source)];
+}
 
 export type LauncherExistingDesktopGateResult =
   | { action: "continue"; reason: "headless-owner" | "inspect-failed" | "not-running" | "stale-sidecar" | "superseded-version" }
@@ -35,12 +41,15 @@ type ExistingDesktopOwnerInspection = {
 async function inspectExistingDesktopOwnerCandidates(
   stamp: SidecarStamp,
   modes: readonly SidecarStamp["mode"][],
+  sources: readonly SidecarStamp["source"][],
   getStatus: typeof getSidecarStatus,
 ): Promise<ExistingDesktopOwnerInspection> {
   let lastError: unknown = null;
   let observedNotRunning: DesktopStatusSnapshot | null = null;
-  for (const mode of [...new Set(modes)]) {
-    const candidate = { ...stamp, mode };
+  const candidates = [...new Set(modes)].flatMap((mode) =>
+    [...new Set(sources)].map((source) => ({ ...stamp, mode, source })),
+  );
+  for (const candidate of candidates) {
     try {
       const status = await getStatus<DesktopStatusSnapshot>(candidate, { timeoutMs: 350 });
       if (status.state === "running") {
@@ -59,11 +68,13 @@ export async function findExistingPackagedDesktopOwner(
   options: {
     getStatus?: typeof getSidecarStatus;
     modes?: readonly SidecarStamp["mode"][];
+    sources?: readonly SidecarStamp["source"][];
   } = {},
 ): Promise<{ stamp: SidecarStamp; status: DesktopStatusSnapshot } | null> {
   const getStatus = options.getStatus ?? getSidecarStatus;
   const modes = options.modes ?? [stamp.mode];
-  return (await inspectExistingDesktopOwnerCandidates(stamp, modes, getStatus)).running;
+  const sources = options.sources ?? packagedSidecarSourcesFor(stamp);
+  return (await inspectExistingDesktopOwnerCandidates(stamp, modes, sources, getStatus)).running;
 }
 
 /**
@@ -204,6 +215,7 @@ export async function inspectExistingDesktopForLauncher(
     getStatus?: typeof getSidecarStatus;
     invoke?: typeof invokeSidecar;
     modes?: readonly SidecarStamp["mode"][];
+    sources?: readonly SidecarStamp["source"][];
     stopSidecar?: typeof stopSidecar;
   },
 ): Promise<LauncherExistingDesktopGateResult> {
@@ -216,7 +228,8 @@ export async function inspectExistingDesktopForLauncher(
     stamp.mode,
     stamp.mode === HEADLESS_SIDECAR_MODE ? SIDECAR_MODES.RUNTIME : HEADLESS_SIDECAR_MODE,
   ];
-  const ownerInspection = await inspectExistingDesktopOwnerCandidates(stamp, modes, getStatus);
+  const sources = options.sources ?? packagedSidecarSourcesFor(stamp);
+  const ownerInspection = await inspectExistingDesktopOwnerCandidates(stamp, modes, sources, getStatus);
   if (ownerInspection.running == null) {
     const { lastError, observedNotRunning } = ownerInspection;
     if (observedNotRunning != null) {

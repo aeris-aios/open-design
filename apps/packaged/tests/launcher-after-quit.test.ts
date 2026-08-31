@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { SidecarStamp, SidecarStopResult } from "@open-design/sidecar";
-import { APP_KEYS } from "@open-design/sidecar-proto";
+import { APP_KEYS, SIDECAR_SOURCES } from "@open-design/sidecar-proto";
 import type { StopProcessesResult, stopProcesses, waitForProcessExit } from "@open-design/platform";
 import { describe, expect, it, vi } from "vitest";
 
@@ -148,6 +148,56 @@ describe("inspectExistingDesktopForLauncher", () => {
         stopSidecar: stop,
       })).resolves.toEqual({ action: "exit", reason: "existing-headless" });
       expect(stop).not.toHaveBeenCalled();
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+
+  it("finds and reuses a packaged headless owner for a tools-pack headless request", async () => {
+    const root = await mkdtemp(join(tmpdir(), "od-launcher-cross-source-headless-"));
+    const requestedStamp = { ...stamp(), mode: "headless", source: SIDECAR_SOURCES.TOOLS_PACK } satisfies SidecarStamp;
+    const ownerStamp = { ...requestedStamp, source: SIDECAR_SOURCES.PACKAGED };
+    const getStatus = vi.fn(async (target: SidecarStamp) => {
+      if (target.source === SIDECAR_SOURCES.TOOLS_PACK) throw new Error("tools-pack owner absent");
+      return target.app === APP_KEYS.DESKTOP
+        ? { pid: 4321, state: "running", updatedAt: new Date().toISOString(), windowVisible: false }
+        : { state: "running", url: "http://127.0.0.1:1234" };
+    });
+    const stop = vi.fn(async () => sidecarStop(4321));
+    try {
+      await expect(inspectExistingDesktopForLauncher(requestedStamp, {
+        getStatus: getStatus as never,
+        modes: ["headless"],
+        paths: fakePaths(root),
+        stopSidecar: stop,
+      })).resolves.toEqual({ action: "exit", reason: "existing-headless" });
+      expect(getStatus).toHaveBeenCalledWith(ownerStamp, { timeoutMs: 350 });
+      expect(getStatus).toHaveBeenCalledWith({ ...ownerStamp, app: APP_KEYS.DAEMON, mode: "runtime" }, { timeoutMs: 350 });
+      expect(getStatus).toHaveBeenCalledWith({ ...ownerStamp, app: APP_KEYS.WEB, mode: "runtime" }, { timeoutMs: 350 });
+      expect(stop).not.toHaveBeenCalled();
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+
+  it("finds and focuses a packaged GUI owner for a tools-pack GUI request", async () => {
+    const root = await mkdtemp(join(tmpdir(), "od-launcher-cross-source-gui-"));
+    const requestedStamp = { ...stamp(), source: SIDECAR_SOURCES.TOOLS_PACK } satisfies SidecarStamp;
+    const ownerStamp = { ...requestedStamp, source: SIDECAR_SOURCES.PACKAGED };
+    const invoke = vi.fn(async () => ({ accepted: true }));
+    try {
+      await expect(inspectExistingDesktopForLauncher(requestedStamp, {
+        getStatus: vi.fn(async (target: SidecarStamp) => {
+          if (target.source === SIDECAR_SOURCES.TOOLS_PACK) throw new Error("tools-pack owner absent");
+          return target.app === APP_KEYS.DESKTOP
+            ? { pid: 1234, state: "running", updatedAt: new Date().toISOString(), windowVisible: true }
+            : { state: "running", url: "http://127.0.0.1:1234" };
+        }) as never,
+        invoke: invoke as never,
+        modes: ["runtime"],
+        paths: fakePaths(root),
+      })).resolves.toEqual({ action: "exit", reason: "existing-focused" });
+      expect(invoke).toHaveBeenCalledWith(ownerStamp, "show", {}, { timeoutMs: 800 });
     } finally {
       await rm(root, { force: true, recursive: true });
     }
