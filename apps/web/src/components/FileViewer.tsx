@@ -8404,6 +8404,7 @@ function HtmlViewer({
   } | null>(null);
   const handledPreviewRuntimeNavigationFailureRef = useRef<string | null>(null);
   const [previewRuntimeNavigationRetryToken, setPreviewRuntimeNavigationRetryToken] = useState(0);
+  const [previewRuntimeScopeRetryToken, setPreviewRuntimeScopeRetryToken] = useState(0);
   const [previewRuntimeCurrentFrame, setPreviewRuntimeCurrentFrame] =
     useState<HTMLIFrameElement | null>(null);
   const [previewRuntimeTimedOutGeneration, setPreviewRuntimeTimedOutGeneration] =
@@ -9511,11 +9512,13 @@ function HtmlViewer({
     previewRuntimeConvergence
     && sourceAuthorizationScopeKey !== null
     && liveHtml === undefined;
-  // Match the daemon's exact HTML document identity. filesRefreshKey is a
+  // Match the daemon's exact HTML document identity. UI reloads replace the
+  // browsing context behind last-good via navigationRetryToken; they do not
+  // mint another credential for the same document. filesRefreshKey is a
   // catalog/SSE reconciliation generation and may advance several times for
-  // one unchanged file; including it here minted redundant scopes and staged
-  // byte-identical iframes. reloadKey remains an explicit user navigation.
-  const previewRuntimeRevisionKey = `${file.size}:${file.mtime}:${reloadKey}`;
+  // one unchanged file, so it is deliberately excluded as well.
+  const previewRuntimeRevisionKey =
+    `${file.size}:${file.mtime}:scope-retry:${previewRuntimeScopeRetryToken}`;
   const previewRuntimeScopedNavigation = useProjectScopedPreviewNavigation({
     projectId,
     fileName: file.name,
@@ -14847,6 +14850,13 @@ function HtmlViewer({
     void capturePreviewScrollPosition();
     imageExportSnapshotDataUrlRef.current = null;
     setInlinedSource(null);
+    if (previewRuntimeConvergence) {
+      // Reload the real URL in a fresh standby browsing context even when the
+      // daemon's exact documentVersion is unchanged (for example, when only a
+      // relative support.js or stylesheet changed). The promoted last-good
+      // frame remains painted until this attempt reports visible-paint.
+      setPreviewRuntimeNavigationRetryToken((current) => current + 1);
+    }
     // The Edit path already navigated the hidden URL through its standby
     // revision. Bumping reloadKey after the visual handoff would immediately
     // navigate the now-visible frame a second time and reintroduce the flash.
@@ -17796,7 +17806,12 @@ function HtmlViewer({
                             <Button
                               variant="ghost"
                               data-testid="preview-runtime-navigation-retry"
-                              onClick={reloadHtmlPreview}
+                              onClick={() => {
+                                // No URL exists yet, so an iframe retry cannot
+                                // recover. Invalidate only the scoped-URL mint;
+                                // normal Reload keeps reusing a valid scope.
+                                setPreviewRuntimeScopeRetryToken((current) => current + 1);
+                              }}
                             >
                               {`${t('fileViewer.reload')} ${t('fileViewer.preview')}`}
                             </Button>

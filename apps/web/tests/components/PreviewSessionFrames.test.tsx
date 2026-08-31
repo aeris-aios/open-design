@@ -217,6 +217,37 @@ describe('PreviewSessionFrames', () => {
     expect(retry.getAttribute('src')).toBe(url);
   });
 
+  it('reloads a promoted same-version document behind the retained last-good frame', () => {
+    const first = navigation('v1');
+    const view = (navigationRetryToken: number) => (
+      <IframeKeepAliveProvider>
+        <PreviewSessionFrames
+          projectId="project-1"
+          fileName="index.html"
+          navigation={first}
+          navigationRetryToken={navigationRetryToken}
+          active
+        />
+      </IframeKeepAliveProvider>
+    );
+    const { rerender } = render(view(0));
+    const retained = screen.getByTestId('preview-runtime-frame-standby') as HTMLIFrameElement;
+    settle(retained, first);
+    const url = retained.getAttribute('src');
+
+    rerender(view(1));
+
+    expect(screen.getByTestId('preview-runtime-frame-current')).toBe(retained);
+    const replacement = screen.getByTestId('preview-runtime-frame-standby') as HTMLIFrameElement;
+    expect(replacement).not.toBe(retained);
+    expect(replacement.getAttribute('src')).toBe(url);
+
+    settle(replacement, first);
+    expect(screen.getByTestId('preview-runtime-frame-current')).toBe(replacement);
+    expect(retained).toHaveAttribute('data-od-active', 'false');
+    expect(screen.queryByTestId('preview-runtime-frame-standby')).toBeNull();
+  });
+
   it('ends an initial unpainted attempt and allows an explicit same-URL retry', () => {
     vi.useFakeTimers();
     const first = navigation('v1');

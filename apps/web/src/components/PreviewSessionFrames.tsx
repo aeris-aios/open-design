@@ -61,6 +61,7 @@ export interface PreviewSessionFramesProps extends Omit<
 interface RenderedPreviewDocument extends PreviewSessionNavigation {
   frame: HTMLIFrameElement;
   target: PreviewRuntimeMessageTarget;
+  navigationAttempt: number;
 }
 
 const EMPTY_CAPABILITIES: readonly PreviewRuntimeCapability[] = [];
@@ -85,8 +86,9 @@ function documentKeepAliveKey(
   projectId: string,
   fileName: string,
   identity: PreviewRuntimeDocumentIdentity,
+  navigationAttempt: number,
 ): string {
-  return `${previewIframeKeepAliveKey(projectId, fileName)}\0${identityKey(identity)}`;
+  return `${previewIframeKeepAliveKey(projectId, fileName)}\0${identityKey(identity)}\0attempt:${navigationAttempt}`;
 }
 
 /**
@@ -141,6 +143,7 @@ function PreviewSessionFramesForFile({
     onStandbyTimedOut,
   });
   const frameByTargetRef = useRef(new Map<PreviewRuntimeMessageTarget, HTMLIFrameElement>());
+  const attemptByTargetRef = useRef(new Map<PreviewRuntimeMessageTarget, number>());
   const standbyTargetRef = useRef<PreviewRuntimeMessageTarget | null>(null);
   callbacksRef.current = {
     onCurrentFrameChange,
@@ -167,15 +170,21 @@ function PreviewSessionFramesForFile({
       },
       onPromoted(document, previous) {
         const frame = frameByTargetRef.current.get(document.target);
-        if (!frame) return;
-        const next = { ...document, frame };
+        const navigationAttempt = attemptByTargetRef.current.get(document.target);
+        if (!frame || navigationAttempt === undefined) return;
+        const next = { ...document, frame, navigationAttempt };
         setCurrent(next);
         callbacksRef.current.onPromoted?.(
           navigationOf(document),
           previous ? navigationOf(previous) : null,
         );
         if (previous) {
-          stalePoolKeysRef.current.push(documentKeepAliveKey(projectId, fileName, previous));
+          const previousAttempt = attemptByTargetRef.current.get(previous.target);
+          if (previousAttempt !== undefined) {
+            stalePoolKeysRef.current.push(
+              documentKeepAliveKey(projectId, fileName, previous, previousAttempt),
+            );
+          }
         }
       },
     },
@@ -209,7 +218,9 @@ function PreviewSessionFramesForFile({
     callbacksRef.current.onCurrentFrameChange?.(null);
   }, []);
 
-  const requestedIsCurrent = sameIdentity(current, navigation);
+  const requestedIsCurrent =
+    sameIdentity(current, navigation)
+    && current?.navigationAttempt === navigationRetryToken;
   const requestedStandby = requestedIsCurrent ? null : navigation;
   const standbyAttemptKey = requestedStandby
     ? `${identityKey(requestedStandby)}\0retry:${navigationRetryToken}`
@@ -217,8 +228,6 @@ function PreviewSessionFramesForFile({
   const standby = standbyAttemptKey !== null && failedAttemptKey === standbyAttemptKey
     ? null
     : requestedStandby;
-  const previousNavigationRetryTokenRef = useRef(navigationRetryToken);
-
   useEffect(() => {
     if (
       !active
@@ -248,21 +257,14 @@ function PreviewSessionFramesForFile({
     standbyTimeoutMs,
   ]);
 
-  useEffect(() => {
-    if (previousNavigationRetryTokenRef.current === navigationRetryToken) return;
-    previousNavigationRetryTokenRef.current = navigationRetryToken;
-    if (!standby) return;
-    // Evicting the exact pooled key replaces only the unpromoted browsing
-    // context. The PreviewSession ref callback discards its old message target
-    // before the fresh frame stages the same document identity again.
-    pool.evict(documentKeepAliveKey(projectId, fileName, standby));
-  }, [fileName, navigationRetryToken, pool, projectId, standby]);
-
   const stageFrame = useCallback((frame: HTMLIFrameElement | null) => {
     setStandbyFrame(frame);
     if (!frame) {
       const previousTarget = standbyTargetRef.current;
-      if (previousTarget) frameByTargetRef.current.delete(previousTarget);
+      if (previousTarget) {
+        frameByTargetRef.current.delete(previousTarget);
+        attemptByTargetRef.current.delete(previousTarget);
+      }
       standbyTargetRef.current = null;
       if (standby) session.discardStandby(standby);
       callbacksRef.current.onStandbyFrameChange?.(null);
@@ -273,17 +275,24 @@ function PreviewSessionFramesForFile({
     if (!target) return;
     standbyTargetRef.current = target;
     frameByTargetRef.current.set(target, frame);
+    attemptByTargetRef.current.set(target, navigationRetryToken);
     session.stageDocument({ ...standby, target });
     callbacksRef.current.onStandbyFrameChange?.(frame);
-  }, [session, standby]);
+  }, [navigationRetryToken, session, standby]);
 
   const retainCurrentFrame = useCallback((frame: HTMLIFrameElement | null) => {
     if (!current) return;
     if (!frame) {
       frameByTargetRef.current.delete(current.target);
+      attemptByTargetRef.current.delete(current.target);
       return;
     }
     frameByTargetRef.current.set(current.target, frame);
+    // Promotion reuses the same pooled iframe component but swaps its ref
+    // from stageFrame to retainCurrentFrame. stageFrame(null) deliberately
+    // clears the standby bookkeeping during that handoff, so restore the
+    // attempt associated with the now-current message target here.
+    attemptByTargetRef.current.set(current.target, current.navigationAttempt);
   }, [current]);
 
   const commonProps = {
@@ -296,10 +305,20 @@ function PreviewSessionFramesForFile({
     <>
       {current ? (
         <PooledIframe
-          key={documentKeepAliveKey(projectId, fileName, current)}
+          key={documentKeepAliveKey(
+            projectId,
+            fileName,
+            current,
+            current.navigationAttempt,
+          )}
           {...commonProps}
           ref={retainCurrentFrame}
-          cacheKey={documentKeepAliveKey(projectId, fileName, current)}
+          cacheKey={documentKeepAliveKey(
+            projectId,
+            fileName,
+            current,
+            current.navigationAttempt,
+          )}
           src={current.url}
           sandbox={previewSessionFramePolicy(current.sandboxProfile).sandbox}
           allow={previewSessionFramePolicy(current.sandboxProfile).allow}
@@ -314,10 +333,10 @@ function PreviewSessionFramesForFile({
       ) : null}
       {standby ? (
         <PooledIframe
-          key={documentKeepAliveKey(projectId, fileName, standby)}
+          key={documentKeepAliveKey(projectId, fileName, standby, navigationRetryToken)}
           {...commonProps}
           ref={stageFrame}
-          cacheKey={documentKeepAliveKey(projectId, fileName, standby)}
+          cacheKey={documentKeepAliveKey(projectId, fileName, standby, navigationRetryToken)}
           src={standby.url}
           sandbox={previewSessionFramePolicy(standby.sandboxProfile).sandbox}
           allow={previewSessionFramePolicy(standby.sandboxProfile).allow}

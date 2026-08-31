@@ -9324,6 +9324,22 @@ describe('FileViewer tweaks toolbar', () => {
     expect(fetchMock.mock.calls.filter(([input]) => (
       String(input).includes('/api/projects/project-1/preview-url')
     ))).toHaveLength(mintCount);
+
+    fireEvent.click(screen.getByRole('button', { name: /Reload.*Preview/i }));
+    const explicitReload = await waitFor(() => {
+      const candidate = screen.getByTestId('preview-runtime-frame-standby') as HTMLIFrameElement;
+      expect(candidate).not.toBe(recoveredFrame);
+      expect(screen.getByTestId('preview-runtime-frame-current')).toBe(recoveredFrame);
+      return candidate;
+    });
+    signal('od:preview:hello', [...baseCapabilities, 'comment', 'edit'], explicitReload);
+    signal('od:preview:capabilities-applied', [...baseCapabilities, 'edit'], explicitReload);
+    signal('od:preview:visible-paint', [...baseCapabilities, 'edit'], explicitReload);
+    expect(screen.getByTestId('preview-runtime-frame-current')).toBe(explicitReload);
+    expect(explicitReload.getAttribute('src')).toBe(initialSrc);
+    expect(fetchMock.mock.calls.filter(([input]) => (
+      String(input).includes('/api/projects/project-1/preview-url')
+    ))).toHaveLength(mintCount);
   });
 
   it('keeps the converged real-URL frame while Draw opens and closes', async () => {
