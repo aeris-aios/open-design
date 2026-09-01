@@ -174,7 +174,26 @@ export function subChipsForChip(
   plugins: InstalledPluginRecord[],
 ): HomeHeroSubChip[] {
   if (!isSubChipParent(chipId)) return [];
-  if (chipId === 'prototype') return PROTOTYPE_SUB_CHIPS.map((item) => ({ ...item }));
+  if (chipId === 'prototype') {
+    // Prototype's sub-chips are declared rather than derived, so unlike the
+    // branch below they showed whether or not anything matched - which under
+    // the gallery allow-list left pills that lead to an empty rail. Keep only
+    // the ones with content. `wireframe` is exempt: it is a generation
+    // constraint rather than a taxonomy, so it deliberately keeps the whole
+    // Prototype pool (see filteredExamplePlugins in HomeHero).
+    const populated = new Set(
+      (buildSubcategoryCatalog(plugins).prototype ?? [])
+        .filter((option) => option.count > 0)
+        .map((option) => option.slug),
+    );
+    return PROTOTYPE_SUB_CHIPS
+      .filter((item) =>
+        item.slug === 'wireframe'
+        || populated.has(item.slug)
+        // Mobile shares the Apps facet, mirroring the mapping in HomeHero.
+        || (item.slug === 'mobile' && populated.has('app-prototypes')))
+      .map((item) => ({ ...item }));
+  }
   const catalog = buildSubcategoryCatalog(plugins);
   const options: FacetOption[] = catalog[chipId] ?? [];
   return options
