@@ -3912,9 +3912,6 @@ export function homeHeroExamplePluginsForChip(
     ))
     .sort((a, b) => comparePluginPresetOrder(a, b, chipId))
     .slice(0, showcaseLimit);
-  if (chipId === 'image') {
-    return movePluginPresetToEnd(presets, 'example-hatch-pet');
-  }
   return presets;
 }
 
@@ -3940,20 +3937,6 @@ function comparePluginPresetOrder(
   const rankDelta = pluginPresetRank(b, chipId) - pluginPresetRank(a, chipId);
   if (rankDelta !== 0) return rankDelta;
   return (a.title || a.id).localeCompare(b.title || b.id);
-}
-
-function movePluginPresetToEnd(
-  records: InstalledPluginRecord[],
-  pluginId: string,
-): InstalledPluginRecord[] {
-  const index = records.findIndex((record) => record.id === pluginId);
-  if (index < 0 || index === records.length - 1) return records;
-  const record = records[index]!;
-  return [
-    ...records.slice(0, index),
-    ...records.slice(index + 1),
-    record,
-  ];
 }
 
 export function pluginMatchesExampleChip(record: InstalledPluginRecord, chipId: string): boolean {
