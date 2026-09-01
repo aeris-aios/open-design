@@ -4,14 +4,20 @@
 // in-repo workflow; this module is the hand-written ordering logic the gallery
 // sort sites import so they stay small and testable.
 
+import { CHAMBER_PLUGIN_IDS } from './chamberCuration';
 import { PLUGIN_POPULARITY, PLUGIN_NO_PREVIEW } from './pluginPopularity.generated';
 
 export { PLUGIN_POPULARITY_META, PLUGIN_NO_PREVIEW } from './pluginPopularity.generated';
 
 // Curator force-front allowlist — ids here ALWAYS lead their facet in the listed
 // order, regardless of usage (the cold-start valve for freshly launched or
-// strategically promoted templates). Empty by default; keep it short.
-export const ALWAYS_PINNED: readonly string[] = [];
+// strategically promoted templates). Keep it short.
+//
+// This fork pins the first-party chamber templates. They ship with zero usage
+// history, so the blended-popularity ordering below would bury them under
+// upstream examples on the one surface they exist to lead. See
+// ./chamberCuration.ts for the ordered list and the hidden-id counterpart.
+export const ALWAYS_PINNED: readonly string[] = CHAMBER_PLUGIN_IDS;
 const ALWAYS_PINNED_INDEX = new Map(ALWAYS_PINNED.map((id, i) => [id, i]));
 
 // Manually sunk templates — dropped to the bottom of their facet (and the All

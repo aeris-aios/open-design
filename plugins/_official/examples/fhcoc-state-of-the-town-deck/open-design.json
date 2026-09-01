@@ -1,0 +1,98 @@
+{
+  "$schema": "https://open-design.ai/schemas/plugin.v1.json",
+  "specVersion": "1.0.0",
+  "name": "example-fhcoc-state-of-the-town-deck",
+  "title": "State of the Town Deck",
+  "title_i18n": {
+    "en": "State of the Town Deck"
+  },
+  "version": "0.1.0",
+  "publishedAt": "2026-09-01T00:00:00Z",
+  "description": "The chamber annual community address deck: cover, the year in one page, the business climate, where visitors come from, the three community pillars, the year ahead, partners, and a membership close. Trigger keywords: \"state of the town\", \"community address\", \"annual meeting deck\".",
+  "description_i18n": {
+    "en": "The chamber annual community address deck: cover, the year in one page, the business climate, where visitors come from, the three community pillars, the year ahead, partners, and a membership close. Trigger keywords: \"state of the town\", \"community address\", \"annual meeting deck\"."
+  },
+  "license": "MIT",
+  "author": {
+    "name": "Fountain Hills Chamber of Commerce",
+    "url": "https://fhchamber.com"
+  },
+  "homepage": "https://fhchamber.com",
+  "tags": [
+    "example",
+    "first-party",
+    "deck",
+    "slides",
+    "strategy",
+    "community",
+    "address",
+    "economic-development",
+    "annual-meeting",
+    "fountain-hills-chamber",
+    "chamber"
+  ],
+  "compat": {
+    "agentSkills": [
+      {
+        "path": "./SKILL.md"
+      }
+    ]
+  },
+  "od": {
+    "kind": "scenario",
+    "taskKind": "new-generation",
+    "mode": "deck",
+    "platform": "desktop",
+    "scenario": "strategy",
+    "surface": "web",
+    "preview": {
+      "type": "html",
+      "entry": "./example.html"
+    },
+    "useCase": {
+      "query": {
+        "en": "Build the State of the Town deck: the year in one page, business climate, where visitors come from, our three community pillars, and what is ahead in 2027."
+      },
+      "exampleOutputs": [
+        {
+          "path": "./example.html",
+          "title": "State of the Town Deck"
+        }
+      ]
+    },
+    "context": {
+      "skills": [
+        {
+          "path": "./SKILL.md"
+        }
+      ],
+      "designSystem": {
+        "primary": true,
+        "ref": "fountain-hills-chamber"
+      },
+      "craft": [
+        "typography",
+        "color",
+        "anti-ai-slop"
+      ],
+      "assets": [
+        "./example.html"
+      ]
+    },
+    "pipeline": {
+      "stages": [
+        {
+          "id": "generate",
+          "atoms": [
+            "file-write",
+            "live-artifact"
+          ]
+        }
+      ]
+    },
+    "capabilities": [
+      "prompt:inject",
+      "fs:write"
+    ]
+  }
+}

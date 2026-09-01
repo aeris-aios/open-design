@@ -1,0 +1,1024 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Chamber board meeting deck example</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg: #ffffff;
+        --surface: #faf7f4;
+        --surface-warm: #fdeadd;
+        --fg: #0f172a;
+        --fg-2: #334155;
+        --muted: #64748b;
+        --meta: #054d87;
+        --meta-deep: #032f54;
+        --border: #dbe4ee;
+        --border-soft: #e3eef7;
+        --accent: #ed7d36;
+        --accent-hover: #d96a26;
+        --font: Poppins, ui-sans-serif, system-ui, -apple-system, sans-serif;
+        --radius-sm: 10px;
+        --radius-md: 12px;
+        --radius-lg: 16px;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; padding: 0; }
+      body {
+        background: var(--surface);
+        color: var(--fg-2);
+        font-family: var(--font);
+        padding: 40px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 28px;
+      }
+
+      /* ── slide frame ──────────────────────────────────────────── */
+      .slide {
+        position: relative;
+        width: min(1120px, 100%);
+        aspect-ratio: 16 / 9;
+        background: var(--bg);
+        border-radius: 16px;
+        overflow: hidden;
+        box-shadow: 0 8px 24px rgba(5, 77, 135, 0.1);
+        container-type: inline-size;
+        /* one design pixel at the 1120px reference width */
+        --s: 0.0892857cqw;
+        color: var(--fg-2);
+      }
+      .slide.is-dark {
+        background: var(--meta);
+        color: rgba(255, 255, 255, 0.86);
+        --border: rgba(255, 255, 255, 0.22);
+        --border-soft: rgba(255, 255, 255, 0.16);
+        --muted: rgba(255, 255, 255, 0.66);
+        --fg: #ffffff;
+        --fg-2: rgba(255, 255, 255, 0.86);
+        --meta: #ffffff;
+      }
+      .pad {
+        position: absolute;
+        inset: 0;
+        padding: calc(46 * var(--s)) calc(56 * var(--s)) calc(78 * var(--s));
+        display: flex;
+        flex-direction: column;
+      }
+      .foot {
+        position: absolute;
+        left: calc(56 * var(--s));
+        right: calc(56 * var(--s));
+        bottom: calc(24 * var(--s));
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: calc(16 * var(--s));
+        padding-top: calc(13 * var(--s));
+        border-top: 1px solid var(--border);
+        font-size: max(12px, calc(12 * var(--s)));
+        font-weight: 500;
+        color: var(--muted);
+        letter-spacing: 0.02em;
+      }
+      .foot .fnum { font-variant-numeric: tabular-nums; }
+
+      /* ── shared type ──────────────────────────────────────────── */
+      .eyebrow {
+        margin: 0;
+        font-size: max(12px, calc(11.5 * var(--s)));
+        font-weight: 600;
+        letter-spacing: 0.22em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      .stitle {
+        margin: calc(10 * var(--s)) 0 0;
+        font-size: calc(40 * var(--s));
+        font-weight: 600;
+        line-height: 1.1;
+        letter-spacing: -0.02em;
+        color: var(--meta);
+      }
+      .rule {
+        width: calc(72 * var(--s));
+        height: calc(5 * var(--s));
+        border-radius: 999px;
+        background: var(--accent);
+        margin-top: calc(16 * var(--s));
+        flex: none;
+      }
+      .lede {
+        margin: calc(14 * var(--s)) 0 0;
+        font-size: max(12px, calc(15.5 * var(--s)));
+        line-height: 1.6;
+        color: var(--fg-2);
+        max-width: 62ch;
+      }
+
+      /* ── chamber mark ─────────────────────────────────────────── */
+      .mark { display: flex; align-items: center; gap: calc(13 * var(--s)); }
+      .mark svg { display: block; }
+      .wordmark { line-height: 1.1; }
+      .wordmark b {
+        display: block;
+        font-size: calc(19 * var(--s));
+        font-weight: 600;
+        letter-spacing: -0.01em;
+        color: #fff;
+      }
+      .wordmark span {
+        display: block;
+        font-size: max(12px, calc(11 * var(--s)));
+        font-weight: 400;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: rgba(255, 255, 255, 0.7);
+        margin-top: calc(3 * var(--s));
+      }
+
+      /* ── slide 1, cover ───────────────────────────────────────── */
+      .slide.cover {
+        background: linear-gradient(135deg, #032f54 0%, #054d87 100%);
+      }
+      .cover .pad { justify-content: space-between; }
+      .cover-orb {
+        position: absolute;
+        width: calc(520 * var(--s));
+        height: calc(520 * var(--s));
+        right: calc(-130 * var(--s));
+        bottom: calc(-190 * var(--s));
+        border-radius: 999px;
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        background: rgba(255, 255, 255, 0.045);
+      }
+      .cover-orb.two {
+        width: calc(330 * var(--s));
+        height: calc(330 * var(--s));
+        right: calc(-35 * var(--s));
+        bottom: calc(-95 * var(--s));
+        background: rgba(237, 125, 54, 0.1);
+        border-color: rgba(237, 125, 54, 0.3);
+      }
+      .cover-main { position: relative; }
+      .cover-kicker {
+        font-size: max(12px, calc(12 * var(--s)));
+        font-weight: 600;
+        letter-spacing: 0.24em;
+        text-transform: uppercase;
+        color: rgba(255, 255, 255, 0.62);
+      }
+      .cover h1 {
+        margin: calc(14 * var(--s)) 0 0;
+        font-size: calc(76 * var(--s));
+        font-weight: 600;
+        line-height: 1.02;
+        letter-spacing: -0.03em;
+        color: #fff;
+      }
+      .cover h1 em { font-style: normal; color: var(--accent); }
+      .cover .rule { margin-top: calc(22 * var(--s)); width: calc(96 * var(--s)); height: calc(6 * var(--s)); }
+      .cover-when {
+        margin: calc(22 * var(--s)) 0 0;
+        font-size: calc(21 * var(--s));
+        font-weight: 500;
+        color: rgba(255, 255, 255, 0.92);
+      }
+      .cover-foot {
+        position: relative;
+        display: flex;
+        align-items: flex-end;
+        justify-content: space-between;
+        gap: calc(24 * var(--s));
+      }
+      .presenter {
+        border-left: calc(3 * var(--s)) solid var(--accent);
+        padding-left: calc(16 * var(--s));
+      }
+      .presenter b {
+        display: block;
+        font-size: calc(19 * var(--s));
+        font-weight: 600;
+        color: #fff;
+      }
+      .presenter span {
+        display: block;
+        margin-top: calc(3 * var(--s));
+        font-size: max(12px, calc(13.5 * var(--s)));
+        color: rgba(255, 255, 255, 0.68);
+      }
+      .cover-badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        border-radius: 9999px;
+        border: 1px solid rgba(255, 255, 255, 0.28);
+        background: rgba(255, 255, 255, 0.07);
+        padding: calc(10 * var(--s)) calc(22 * var(--s));
+        font-size: max(12px, calc(12.5 * var(--s)));
+        font-weight: 500;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: rgba(255, 255, 255, 0.85);
+      }
+
+      /* ── slide 2, agenda ──────────────────────────────────────── */
+      .agenda {
+        margin-top: calc(26 * var(--s));
+        flex: 1;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        grid-template-rows: repeat(3, 1fr);
+        gap: 0 calc(40 * var(--s));
+      }
+      .ag-item {
+        display: grid;
+        grid-template-columns: calc(46 * var(--s)) 1fr;
+        align-items: start;
+        align-content: center;
+        gap: calc(4 * var(--s));
+        padding: calc(13 * var(--s)) 0;
+        border-top: 1px solid var(--border);
+      }
+      .ag-num {
+        font-size: calc(22 * var(--s));
+        font-weight: 600;
+        color: var(--accent);
+        letter-spacing: -0.02em;
+        line-height: 1.2;
+      }
+      .ag-body b {
+        display: block;
+        font-size: calc(17 * var(--s));
+        font-weight: 600;
+        color: var(--fg);
+        line-height: 1.3;
+      }
+      .ag-body span {
+        display: block;
+        margin-top: calc(4 * var(--s));
+        font-size: max(12px, calc(13.5 * var(--s)));
+        color: var(--muted);
+      }
+
+      /* ── slide 3, stats ───────────────────────────────────────── */
+      .stat-row {
+        margin-top: calc(34 * var(--s));
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: calc(16 * var(--s));
+      }
+      .stat {
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+        padding: calc(24 * var(--s)) calc(20 * var(--s)) calc(26 * var(--s));
+        background: var(--bg);
+        min-height: calc(216 * var(--s));
+        display: flex;
+        flex-direction: column;
+      }
+      .stat.is-warm { background: var(--surface-warm); border-color: #f6cfae; }
+      .stat .k {
+        font-size: max(12px, calc(11.5 * var(--s)));
+        font-weight: 600;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      .stat.is-warm .k { color: var(--accent-hover); }
+      .stat .v {
+        margin-top: calc(14 * var(--s));
+        font-size: calc(50 * var(--s));
+        font-weight: 600;
+        line-height: 1;
+        letter-spacing: -0.03em;
+        color: var(--meta);
+      }
+      .stat .n {
+        margin: calc(14 * var(--s)) 0 0;
+        font-size: max(12px, calc(13 * var(--s)));
+        line-height: 1.5;
+        color: var(--fg-2);
+      }
+      .takeaway {
+        margin-top: auto;
+        padding-top: calc(20 * var(--s));
+        border-top: 1px solid var(--border);
+        display: flex;
+        align-items: baseline;
+        gap: calc(14 * var(--s));
+        font-size: calc(17 * var(--s));
+        line-height: 1.5;
+        color: var(--fg);
+      }
+      .takeaway .tag {
+        flex: none;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        border-radius: 9999px;
+        background: var(--border-soft);
+        color: var(--meta);
+        font-size: max(12px, calc(11.5 * var(--s)));
+        font-weight: 600;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        padding: calc(7 * var(--s)) calc(14 * var(--s));
+      }
+
+      /* ── slide 4, column chart ────────────────────────────────── */
+      .chart-split {
+        margin-top: calc(26 * var(--s));
+        display: grid;
+        grid-template-columns: 1.35fr 1fr;
+        gap: calc(40 * var(--s));
+        flex: 1;
+        min-height: 0;
+      }
+      .chart-col { display: flex; flex-direction: column; min-height: 0; }
+      .vchart {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: calc(28 * var(--s));
+        align-items: end;
+        border-bottom: 1px solid var(--border);
+        padding-bottom: calc(2 * var(--s));
+        flex: 1;
+        min-height: calc(240 * var(--s));
+      }
+      .vcol { display: flex; flex-direction: column; justify-content: flex-end; height: 100%; align-items: center; }
+      .vval {
+        font-size: calc(24 * var(--s));
+        font-weight: 600;
+        color: var(--meta);
+        letter-spacing: -0.02em;
+        margin-bottom: calc(8 * var(--s));
+      }
+      .vcol.is-peak .vval { color: var(--accent-hover); }
+      .vbar {
+        width: 100%;
+        max-width: calc(112 * var(--s));
+        background: var(--meta);
+        border-radius: calc(10 * var(--s)) calc(10 * var(--s)) 0 0;
+      }
+      .vcol.is-peak .vbar { background: var(--accent); }
+      .vlabels {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: calc(28 * var(--s));
+        margin-top: calc(12 * var(--s));
+      }
+      .vlabels span {
+        text-align: center;
+        font-size: max(12px, calc(13.5 * var(--s)));
+        font-weight: 500;
+        color: var(--fg-2);
+      }
+      .readout {
+        background: var(--surface-warm);
+        border: 1px solid #f6cfae;
+        border-radius: var(--radius-lg);
+        padding: calc(26 * var(--s));
+        align-self: center;
+      }
+      .readout h3 {
+        margin: 0;
+        font-size: max(12px, calc(11.5 * var(--s)));
+        font-weight: 600;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: var(--accent-hover);
+      }
+      .readout p {
+        margin: calc(12 * var(--s)) 0 0;
+        font-size: max(12px, calc(15 * var(--s)));
+        line-height: 1.6;
+        color: var(--fg-2);
+      }
+
+      /* ── slide 5, table ───────────────────────────────────────── */
+      table.grid {
+        margin-top: calc(26 * var(--s));
+        width: 100%;
+        border-collapse: collapse;
+      }
+      table.grid th {
+        text-align: left;
+        font-size: max(12px, calc(11.5 * var(--s)));
+        font-weight: 600;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: var(--muted);
+        padding: 0 calc(14 * var(--s)) calc(12 * var(--s));
+        border-bottom: 1px solid var(--border);
+      }
+      table.grid td {
+        font-size: calc(16 * var(--s));
+        color: var(--fg-2);
+        padding: calc(17 * var(--s)) calc(14 * var(--s));
+        border-bottom: 1px solid var(--border-soft);
+      }
+      table.grid th:first-child, table.grid td:first-child { padding-left: 0; }
+      table.grid th:last-child, table.grid td:last-child { padding-right: 0; }
+      table.grid td.name { font-weight: 600; color: var(--fg); }
+      table.grid .num { text-align: right; font-variant-numeric: tabular-nums; }
+      table.grid tr.total td {
+        border-bottom: none;
+        border-top: 2px solid var(--meta);
+        font-weight: 600;
+        color: var(--meta);
+        font-size: calc(17 * var(--s));
+      }
+
+      /* ── slide 6, financials ──────────────────────────────────── */
+      .fin-split {
+        margin-top: calc(26 * var(--s));
+        display: grid;
+        grid-template-columns: 1.55fr 1fr;
+        gap: calc(36 * var(--s));
+        align-items: start;
+      }
+      .sublabel {
+        font-size: max(12px, calc(11.5 * var(--s)));
+        font-weight: 600;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      table.mini { width: 100%; border-collapse: collapse; margin-top: calc(12 * var(--s)); }
+      table.mini th {
+        text-align: right;
+        font-size: max(12px, calc(11.5 * var(--s)));
+        font-weight: 600;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--muted);
+        padding: 0 0 calc(10 * var(--s));
+        border-bottom: 1px solid var(--border);
+      }
+      table.mini th:first-child { text-align: left; }
+      table.mini td {
+        font-size: calc(16 * var(--s));
+        padding: calc(18 * var(--s)) 0;
+        border-bottom: 1px solid var(--border-soft);
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+        color: var(--fg-2);
+      }
+      table.mini td:first-child { text-align: left; font-weight: 500; color: var(--fg); }
+      table.mini td.good { color: var(--meta); font-weight: 600; }
+      .callout {
+        background: var(--surface-warm);
+        border: 1px solid #f6cfae;
+        border-radius: var(--radius-lg);
+        padding: calc(30 * var(--s)) calc(26 * var(--s)) calc(32 * var(--s));
+        margin-top: calc(28 * var(--s));
+      }
+      .callout .k {
+        font-size: max(12px, calc(11.5 * var(--s)));
+        font-weight: 600;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: var(--accent-hover);
+      }
+      .callout .v {
+        margin-top: calc(12 * var(--s));
+        font-size: calc(54 * var(--s));
+        font-weight: 600;
+        line-height: 1;
+        letter-spacing: -0.03em;
+        color: var(--meta);
+      }
+      .callout p {
+        margin: calc(14 * var(--s)) 0 0;
+        font-size: max(12px, calc(14 * var(--s)));
+        line-height: 1.55;
+        color: var(--fg-2);
+      }
+      .callout .pill {
+        margin-top: calc(18 * var(--s));
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        border-radius: 9999px;
+        background: var(--bg);
+        border: 1px solid #f6cfae;
+        color: var(--accent-hover);
+        font-size: max(12px, calc(12.5 * var(--s)));
+        font-weight: 600;
+        padding: calc(9 * var(--s)) calc(18 * var(--s));
+      }
+
+      /* ── slide 7, quote ───────────────────────────────────────── */
+      .slide.quote-slide { background: linear-gradient(140deg, #054d87 0%, #032f54 100%); }
+      .quote-slide .pad { justify-content: center; }
+      .qmark {
+        font-size: calc(90 * var(--s));
+        line-height: 0.7;
+        font-weight: 600;
+        color: var(--accent);
+        height: calc(50 * var(--s));
+      }
+      blockquote {
+        margin: calc(14 * var(--s)) 0 0;
+        font-size: calc(35 * var(--s));
+        font-weight: 500;
+        line-height: 1.32;
+        letter-spacing: -0.02em;
+        color: #fff;
+        max-width: 26ch;
+      }
+      .attrib {
+        margin-top: calc(30 * var(--s));
+        padding-top: calc(20 * var(--s));
+        border-top: 1px solid rgba(255, 255, 255, 0.22);
+        display: flex;
+        align-items: center;
+        gap: calc(14 * var(--s));
+      }
+      .attrib .who b {
+        display: block;
+        font-size: calc(18 * var(--s));
+        font-weight: 600;
+        color: #fff;
+      }
+      .attrib .who span {
+        display: block;
+        margin-top: calc(2 * var(--s));
+        font-size: max(12px, calc(13.5 * var(--s)));
+        color: rgba(255, 255, 255, 0.68);
+      }
+      .attrib .chip {
+        margin-left: auto;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        border-radius: 9999px;
+        border: 1px solid rgba(255, 255, 255, 0.28);
+        padding: calc(9 * var(--s)) calc(18 * var(--s));
+        font-size: max(12px, calc(12.5 * var(--s)));
+        font-weight: 500;
+        color: rgba(255, 255, 255, 0.85);
+      }
+
+      /* ── slide 8, closing ─────────────────────────────────────── */
+      .asks {
+        margin-top: calc(22 * var(--s));
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+      }
+      .ask {
+        display: grid;
+        grid-template-columns: calc(52 * var(--s)) 1fr;
+        gap: calc(6 * var(--s));
+        align-items: baseline;
+        padding: calc(17 * var(--s)) 0;
+        border-top: 1px solid var(--border);
+      }
+      .ask .n {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: calc(34 * var(--s));
+        height: calc(34 * var(--s));
+        border-radius: 9999px;
+        background: var(--border-soft);
+        color: var(--meta);
+        font-size: calc(15 * var(--s));
+        font-weight: 600;
+      }
+      .ask b {
+        display: block;
+        font-size: calc(18 * var(--s));
+        font-weight: 600;
+        color: var(--fg);
+        line-height: 1.3;
+      }
+      .ask p {
+        margin: calc(5 * var(--s)) 0 0;
+        font-size: max(12px, calc(14 * var(--s)));
+        line-height: 1.5;
+        color: var(--fg-2);
+      }
+      .motion {
+        margin-top: auto;
+        background: var(--accent);
+        border-radius: var(--radius-md);
+        padding: calc(18 * var(--s)) calc(26 * var(--s));
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: calc(20 * var(--s));
+      }
+      .motion b {
+        font-size: calc(21 * var(--s));
+        font-weight: 600;
+        color: #fff;
+        letter-spacing: -0.01em;
+      }
+      .motion span {
+        font-size: max(12px, calc(13.5 * var(--s)));
+        font-weight: 500;
+        color: rgba(255, 255, 255, 0.88);
+        white-space: nowrap;
+      }
+    </style>
+  </head>
+  <body>
+
+    <!-- ═══ 01 cover ═══════════════════════════════════════════ -->
+    <section class="slide is-dark cover" data-od-id="slide-cover">
+      <div class="cover-orb"></div>
+      <div class="cover-orb two"></div>
+      <div class="pad">
+        <div class="mark" data-od-id="cover-mark">
+          <svg width="42" height="42" viewBox="0 0 34 34" aria-hidden="true">
+            <circle cx="17" cy="17" r="16" fill="rgba(255,255,255,0.10)" />
+            <circle cx="17" cy="17" r="16" fill="none" stroke="rgba(255,255,255,0.45)" stroke-width="1" />
+            <rect x="15.7" y="6.5" width="2.6" height="15" rx="1.3" fill="#ed7d36" />
+            <path d="M11 21 C11 14.5, 13.5 11.5, 15.6 10" fill="none" stroke="#ed7d36" stroke-width="1.8" stroke-linecap="round" opacity="0.75" />
+            <path d="M23 21 C23 14.5, 20.5 11.5, 18.4 10" fill="none" stroke="#ed7d36" stroke-width="1.8" stroke-linecap="round" opacity="0.75" />
+            <path d="M8.5 23.5 h17 a8.5 8.5 0 0 1 -17 0 Z" fill="rgba(255,255,255,0.85)" />
+          </svg>
+          <span class="wordmark">
+            <b>Fountain Hills Chamber</b>
+            <span>of Commerce</span>
+          </span>
+        </div>
+
+        <div class="cover-main" data-od-id="cover-title">
+          <div class="cover-kicker">Board of Directors &middot; 2027 session one</div>
+          <h1>Q1 Board<br /><em>Meeting</em></h1>
+          <div class="rule"></div>
+          <p class="cover-when">February 11, 2027 &middot; Chamber Boardroom</p>
+        </div>
+
+        <div class="cover-foot" data-od-id="cover-presenter">
+          <div class="presenter">
+            <b>Marco Alvarez</b>
+            <span>President &amp; CEO, Fountain Hills Chamber of Commerce</span>
+          </div>
+          <span class="cover-badge">Quorum required</span>
+        </div>
+      </div>
+      <div class="foot">
+        <span>Fountain Hills Chamber of Commerce</span>
+        <span class="fnum">01 / 08</span>
+      </div>
+    </section>
+
+    <!-- ═══ 02 agenda ══════════════════════════════════════════ -->
+    <section class="slide" data-od-id="slide-agenda">
+      <div class="pad">
+        <p class="eyebrow">Ninety minutes</p>
+        <h2 class="stitle">Agenda</h2>
+        <div class="rule"></div>
+
+        <div class="agenda" data-od-id="agenda-list">
+          <div class="ag-item">
+            <span class="ag-num">01</span>
+            <div class="ag-body">
+              <b>Call to order, December minutes</b>
+              <span>Marco Alvarez &middot; 5 minutes</span>
+            </div>
+          </div>
+          <div class="ag-item">
+            <span class="ag-num">02</span>
+            <div class="ag-body">
+              <b>Membership health and renewals</b>
+              <span>Dana Whitfield &middot; 12 minutes</span>
+            </div>
+          </div>
+          <div class="ag-item">
+            <span class="ag-num">03</span>
+            <div class="ag-body">
+              <b>Q1 financial review</b>
+              <span>Priya Raman, treasurer &middot; 15 minutes</span>
+            </div>
+          </div>
+          <div class="ag-item">
+            <span class="ag-num">04</span>
+            <div class="ag-body">
+              <b>Events scorecard, Q2 calendar</b>
+              <span>Nora Castellanos &middot; 18 minutes</span>
+            </div>
+          </div>
+          <div class="ag-item">
+            <span class="ag-num">05</span>
+            <div class="ag-body">
+              <b>Town partnership and Avenue work</b>
+              <span>Grant Feeley &middot; 12 minutes</span>
+            </div>
+          </div>
+          <div class="ag-item">
+            <span class="ag-num">06</span>
+            <div class="ag-body">
+              <b>Executive session, adjournment</b>
+              <span>Board only &middot; 15 minutes</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="foot">
+        <span>Fountain Hills Chamber of Commerce</span>
+        <span class="fnum">02 / 08</span>
+      </div>
+    </section>
+
+    <!-- ═══ 03 membership health ═══════════════════════════════ -->
+    <section class="slide" data-od-id="slide-membership">
+      <div class="pad">
+        <p class="eyebrow">November 2026 through January 2027</p>
+        <h2 class="stitle">Membership health</h2>
+        <div class="rule"></div>
+
+        <div class="stat-row" data-od-id="stat-row">
+          <div class="stat">
+            <div class="k">Total members</div>
+            <div class="v">1,050</div>
+            <p class="n">Active businesses in good standing on February 1.</p>
+          </div>
+          <div class="stat is-warm">
+            <div class="k">New this quarter</div>
+            <div class="v">78</div>
+            <p class="n">Highest quarterly intake since the 2019 fiscal year.</p>
+          </div>
+          <div class="stat">
+            <div class="k">Renewal rate</div>
+            <div class="v">96%</div>
+            <p class="n">Measured on the 412 memberships that came due.</p>
+          </div>
+          <div class="stat">
+            <div class="k">Dues run rate</div>
+            <div class="v">$612K</div>
+            <p class="n">Annualized from January billing, net of discounts.</p>
+          </div>
+        </div>
+
+        <p class="takeaway" data-od-id="takeaway">
+          <span class="tag">Takeaway</span>
+          Growth is coming from retail and trades on the Avenue, not from renewals of
+          existing accounts, so the Q2 push should stay on first-year onboarding.
+        </p>
+      </div>
+      <div class="foot">
+        <span>Fountain Hills Chamber of Commerce</span>
+        <span class="fnum">03 / 08</span>
+      </div>
+    </section>
+
+    <!-- ═══ 04 chart ═══════════════════════════════════════════ -->
+    <section class="slide" data-od-id="slide-chart">
+      <div class="pad">
+        <p class="eyebrow">New members by month</p>
+        <h2 class="stitle">Where the 78 came from</h2>
+        <div class="rule"></div>
+
+        <div class="chart-split">
+          <div class="chart-col" data-od-id="column-chart">
+            <div class="vchart">
+              <div class="vcol">
+                <span class="vval">19</span>
+                <div class="vbar" style="height: 43%"></div>
+              </div>
+              <div class="vcol">
+                <span class="vval">22</span>
+                <div class="vbar" style="height: 50%"></div>
+              </div>
+              <div class="vcol is-peak">
+                <span class="vval">37</span>
+                <div class="vbar" style="height: 84%"></div>
+              </div>
+            </div>
+            <div class="vlabels">
+              <span>November 2026</span>
+              <span>December 2026</span>
+              <span>January 2027</span>
+            </div>
+          </div>
+
+          <div class="readout" data-od-id="chart-readout">
+            <h3>Read-out</h3>
+            <p>
+              January closed with 37 new members, a 68 percent lift over November and
+              the strongest single month on record for the chamber. The jump follows
+              the Golf Classic and the shorter join form, which now takes an applicant
+              about six minutes end to end.
+            </p>
+          </div>
+        </div>
+      </div>
+      <div class="foot">
+        <span>Fountain Hills Chamber of Commerce</span>
+        <span class="fnum">04 / 08</span>
+      </div>
+    </section>
+
+    <!-- ═══ 05 events scorecard ════════════════════════════════ -->
+    <section class="slide" data-od-id="slide-events">
+      <div class="pad">
+        <p class="eyebrow">Five programs, one quarter</p>
+        <h2 class="stitle">Events scorecard</h2>
+        <div class="rule"></div>
+
+        <table class="grid" data-od-id="events-table">
+          <thead>
+            <tr>
+              <th>Event</th>
+              <th>Date</th>
+              <th class="num">Attendance</th>
+              <th class="num">Net revenue</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="name">Business After Hours</td>
+              <td>November 19, 2026</td>
+              <td class="num">148</td>
+              <td class="num">$3,120</td>
+            </tr>
+            <tr>
+              <td class="name">Holiday Merchant Stroll</td>
+              <td>December 5, 2026</td>
+              <td class="num">2,400</td>
+              <td class="num">$9,480</td>
+            </tr>
+            <tr>
+              <td class="name">New Year Member Breakfast</td>
+              <td>January 14, 2027</td>
+              <td class="num">96</td>
+              <td class="num">$1,740</td>
+            </tr>
+            <tr>
+              <td class="name">Chamber Golf Classic</td>
+              <td>January 29, 2027</td>
+              <td class="num">132</td>
+              <td class="num">$18,600</td>
+            </tr>
+            <tr>
+              <td class="name">Ribbon cuttings, seven held</td>
+              <td>November to January</td>
+              <td class="num">310</td>
+              <td class="num">$1,050</td>
+            </tr>
+            <tr class="total">
+              <td>Quarter total</td>
+              <td>Five programs</td>
+              <td class="num">3,086</td>
+              <td class="num">$33,990</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="foot">
+        <span>Fountain Hills Chamber of Commerce</span>
+        <span class="fnum">05 / 08</span>
+      </div>
+    </section>
+
+    <!-- ═══ 06 financials ══════════════════════════════════════ -->
+    <section class="slide" data-od-id="slide-financials">
+      <div class="pad">
+        <p class="eyebrow">Quarter ended January 31, 2027</p>
+        <h2 class="stitle">Financials</h2>
+        <div class="rule"></div>
+
+        <div class="fin-split">
+          <div data-od-id="budget-table">
+            <div class="sublabel">Budget vs actual</div>
+            <table class="mini">
+              <thead>
+                <tr>
+                  <th>Line</th>
+                  <th>Budget</th>
+                  <th>Actual</th>
+                  <th>Variance</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Dues revenue</td>
+                  <td>$153,000</td>
+                  <td>$158,400</td>
+                  <td class="good">+$5,400</td>
+                </tr>
+                <tr>
+                  <td>Event revenue</td>
+                  <td>$112,000</td>
+                  <td>$124,900</td>
+                  <td class="good">+$12,900</td>
+                </tr>
+                <tr>
+                  <td>Program costs</td>
+                  <td>$86,500</td>
+                  <td>$81,200</td>
+                  <td class="good">+$5,300</td>
+                </tr>
+                <tr>
+                  <td>Payroll and admin</td>
+                  <td>$148,000</td>
+                  <td>$153,800</td>
+                  <td>&minus;$5,800</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="callout" data-od-id="surplus-callout">
+            <div class="k">Operating surplus</div>
+            <div class="v">$48,300</div>
+            <p>
+              Against a budgeted $30,500. The Golf Classic and a lighter print spend
+              carried the difference, and the reserve now covers 5.4 months.
+            </p>
+            <span class="pill">Reserve at $268,000</span>
+          </div>
+        </div>
+      </div>
+      <div class="foot">
+        <span>Fountain Hills Chamber of Commerce</span>
+        <span class="fnum">06 / 08</span>
+      </div>
+    </section>
+
+    <!-- ═══ 07 quote ═══════════════════════════════════════════ -->
+    <section class="slide is-dark quote-slide" data-od-id="slide-quote">
+      <div class="pad">
+        <div class="qmark">&ldquo;</div>
+        <blockquote data-od-id="quote-text">
+          Two years ago we were a folding table at a street fair. The chamber put us in
+          front of this town, and now we have a storefront on Palisades and six people
+          on payroll.
+        </blockquote>
+        <div class="attrib" data-od-id="quote-attrib">
+          <div class="who">
+            <b>Ren&eacute;e Okafor</b>
+            <span>Owner, Copper Kettle Provisions &middot; member since 2024</span>
+          </div>
+          <span class="chip">Member survey, January 2027</span>
+        </div>
+      </div>
+      <div class="foot">
+        <span>Fountain Hills Chamber of Commerce</span>
+        <span class="fnum">07 / 08</span>
+      </div>
+    </section>
+
+    <!-- ═══ 08 closing ═════════════════════════════════════════ -->
+    <section class="slide" data-od-id="slide-closing">
+      <div class="pad">
+        <p class="eyebrow">Board action</p>
+        <h2 class="stitle">Decisions we need today</h2>
+        <div class="rule"></div>
+
+        <div class="asks" data-od-id="asks">
+          <div class="ask">
+            <span class="n">1</span>
+            <div>
+              <b>Approve the Q2 event calendar as presented</b>
+              <p>Includes moving the Spring Market to April 17 so it clears the town triathlon.</p>
+            </div>
+          </div>
+          <div class="ask">
+            <span class="n">2</span>
+            <div>
+              <b>Authorize $18,000 for the visitor center refresh</b>
+              <p>Funded from the operating surplus, with work scheduled for the June slow season.</p>
+            </div>
+          </div>
+          <div class="ask">
+            <span class="n">3</span>
+            <div>
+              <b>Confirm Dana Whitfield as membership committee chair</b>
+              <p>Two-year term through January 2029, filling the seat Alan Reyes vacated.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="motion" data-od-id="motion">
+          <b>Motion to approve the Q2 event calendar</b>
+          <span>Second, discussion, vote</span>
+        </div>
+      </div>
+      <div class="foot">
+        <span>Fountain Hills Chamber of Commerce</span>
+        <span class="fnum">08 / 08</span>
+      </div>
+    </section>
+
+  </body>
+</html>

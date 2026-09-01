@@ -1,0 +1,98 @@
+{
+  "$schema": "https://open-design.ai/schemas/plugin.v1.json",
+  "specVersion": "1.0.0",
+  "name": "example-fhcoc-event-poster",
+  "title": "Chamber Event Poster",
+  "title_i18n": {
+    "en": "Chamber Event Poster"
+  },
+  "version": "0.1.0",
+  "publishedAt": "2026-09-01T00:00:00Z",
+  "description": "A bold portrait event poster on the chamber navy, with a large CSS fountain motif, an enormous display title, the date, time, and venue block, one orange call to action, and a presenting-partner strip. Trigger keywords: \"event poster\", \"poster\", \"window poster\", \"key art\".",
+  "description_i18n": {
+    "en": "A bold portrait event poster on the chamber navy, with a large CSS fountain motif, an enormous display title, the date, time, and venue block, one orange call to action, and a presenting-partner strip. Trigger keywords: \"event poster\", \"poster\", \"window poster\", \"key art\"."
+  },
+  "license": "MIT",
+  "author": {
+    "name": "Fountain Hills Chamber of Commerce",
+    "url": "https://fhchamber.com"
+  },
+  "homepage": "https://fhchamber.com",
+  "tags": [
+    "example",
+    "first-party",
+    "image",
+    "design",
+    "poster",
+    "key-art",
+    "brand",
+    "event",
+    "print",
+    "fountain-hills-chamber",
+    "chamber"
+  ],
+  "compat": {
+    "agentSkills": [
+      {
+        "path": "./SKILL.md"
+      }
+    ]
+  },
+  "od": {
+    "kind": "scenario",
+    "taskKind": "new-generation",
+    "mode": "image",
+    "platform": "desktop",
+    "scenario": "design",
+    "surface": "image",
+    "preview": {
+      "type": "html",
+      "entry": "./example.html"
+    },
+    "useCase": {
+      "query": {
+        "en": "Design a portrait poster for the State of the Town breakfast, with the date, time, venue, member and guest pricing, and the presenting partners."
+      },
+      "exampleOutputs": [
+        {
+          "path": "./example.html",
+          "title": "Chamber Event Poster"
+        }
+      ]
+    },
+    "context": {
+      "skills": [
+        {
+          "path": "./SKILL.md"
+        }
+      ],
+      "designSystem": {
+        "primary": true,
+        "ref": "fountain-hills-chamber"
+      },
+      "craft": [
+        "typography",
+        "color",
+        "anti-ai-slop"
+      ],
+      "assets": [
+        "./example.html"
+      ]
+    },
+    "pipeline": {
+      "stages": [
+        {
+          "id": "generate",
+          "atoms": [
+            "file-write",
+            "live-artifact"
+          ]
+        }
+      ]
+    },
+    "capabilities": [
+      "prompt:inject",
+      "fs:write"
+    ]
+  }
+}

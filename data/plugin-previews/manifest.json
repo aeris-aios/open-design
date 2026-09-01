@@ -29,13 +29,6 @@
       "holdMs": 2500,
       "hash": "96efd2e30c163551"
     },
-    "example-codex-interactive-capability-map": {
-      "video": "example-codex-interactive-capability-map/63bae288ac10e88c/preview.mp4",
-      "poster": "example-codex-interactive-capability-map/63bae288ac10e88c/poster.jpg",
-      "durationMs": 2767,
-      "holdMs": 2500,
-      "hash": "63bae288ac10e88c"
-    },
     "example-critique": {
       "video": "example-critique/9b71917d072ce689/preview.mp4",
       "poster": "example-critique/9b71917d072ce689/poster.jpg",
@@ -526,20 +519,6 @@
       "holdMs": 2500,
       "hash": "9b83665a2938bd58"
     },
-    "example-webgl-aurora-veil": {
-      "video": "example-webgl-aurora-veil/660b3af0c2f1054a/preview.mp4",
-      "poster": "example-webgl-aurora-veil/660b3af0c2f1054a/poster.jpg",
-      "durationMs": 5167,
-      "holdMs": 2500,
-      "hash": "660b3af0c2f1054a"
-    },
-    "example-webgl-caustic-pool": {
-      "video": "example-webgl-caustic-pool/68be0b21f73fd5ca/preview.mp4",
-      "poster": "example-webgl-caustic-pool/68be0b21f73fd5ca/poster.jpg",
-      "durationMs": 5000,
-      "holdMs": 2500,
-      "hash": "68be0b21f73fd5ca"
-    },
     "example-dashboard": {
       "video": "example-dashboard/69e332de613dce3d/preview.mp4",
       "poster": "example-dashboard/69e332de613dce3d/poster.jpg",
@@ -547,33 +526,12 @@
       "holdMs": 1267,
       "hash": "69e332de613dce3d"
     },
-    "example-webgl-depth-gallery": {
-      "video": "example-webgl-depth-gallery/7d480c131bb4697a/preview.mp4",
-      "poster": "example-webgl-depth-gallery/7d480c131bb4697a/poster.jpg",
-      "durationMs": 1267,
-      "holdMs": 1267,
-      "hash": "7d480c131bb4697a"
-    },
-    "example-mockup-device-3d": {
-      "video": "example-mockup-device-3d/f18bc197a821f80a/preview.mp4",
-      "poster": "example-mockup-device-3d/f18bc197a821f80a/poster.jpg",
-      "durationMs": 1267,
-      "holdMs": 1267,
-      "hash": "f18bc197a821f80a"
-    },
     "example-digital-eguide": {
       "video": "example-digital-eguide/f37d6f772a3fcccb/preview.mp4",
       "poster": "example-digital-eguide/f37d6f772a3fcccb/poster.jpg",
       "durationMs": 1267,
       "holdMs": 1267,
       "hash": "f37d6f772a3fcccb"
-    },
-    "example-webgl-distortion-grain": {
-      "video": "example-webgl-distortion-grain/c063256872f8a50d/preview.mp4",
-      "poster": "example-webgl-distortion-grain/c063256872f8a50d/poster.jpg",
-      "durationMs": 10367,
-      "holdMs": 2500,
-      "hash": "c063256872f8a50d"
     },
     "od-figma-migration": {
       "video": "od-figma-migration/d91113d74728dbb7/preview.mp4",
@@ -595,27 +553,6 @@
       "durationMs": 1267,
       "holdMs": 1267,
       "hash": "6289e3344d0f6ebb"
-    },
-    "example-webgl-halftone-drift": {
-      "video": "example-webgl-halftone-drift/c2ef3819afd68066/preview.mp4",
-      "poster": "example-webgl-halftone-drift/c2ef3819afd68066/poster.jpg",
-      "durationMs": 5433,
-      "holdMs": 2500,
-      "hash": "c2ef3819afd68066"
-    },
-    "example-webgl-holographic-foil": {
-      "video": "example-webgl-holographic-foil/4a74994d6842263f/preview.mp4",
-      "poster": "example-webgl-holographic-foil/4a74994d6842263f/poster.jpg",
-      "durationMs": 4967,
-      "holdMs": 2500,
-      "hash": "4a74994d6842263f"
-    },
-    "example-webgl-horizontal-parallax": {
-      "video": "example-webgl-horizontal-parallax/1d7b6a25cc0af2a6/preview.mp4",
-      "poster": "example-webgl-horizontal-parallax/1d7b6a25cc0af2a6/poster.jpg",
-      "durationMs": 1267,
-      "holdMs": 1267,
-      "hash": "1d7b6a25cc0af2a6"
     },
     "example-ib-pitch-book": {
       "video": "example-ib-pitch-book/8bca422b2430247e/preview.mp4",
@@ -645,20 +582,6 @@
       "holdMs": 1267,
       "hash": "667ede46a5579f4a"
     },
-    "example-webgl-liquid-iridescence": {
-      "video": "example-webgl-liquid-iridescence/b053f098ba31161f/preview.mp4",
-      "poster": "example-webgl-liquid-iridescence/b053f098ba31161f/poster.jpg",
-      "durationMs": 4567,
-      "holdMs": 2500,
-      "hash": "b053f098ba31161f"
-    },
-    "example-webgl-liquid-metal": {
-      "video": "example-webgl-liquid-metal/7a4439597daffcf0/preview.mp4",
-      "poster": "example-webgl-liquid-metal/7a4439597daffcf0/poster.jpg",
-      "durationMs": 4800,
-      "holdMs": 2500,
-      "hash": "7a4439597daffcf0"
-    },
     "example-mobile-app": {
       "video": "example-mobile-app/c933a4813cdd1ea7/preview.mp4",
       "poster": "example-mobile-app/c933a4813cdd1ea7/poster.jpg",
@@ -680,40 +603,12 @@
       "holdMs": 1267,
       "hash": "aa1cd9def26dfdfb"
     },
-    "example-webgl-neon-grid": {
-      "video": "example-webgl-neon-grid/36658d43db8ec900/preview.mp4",
-      "poster": "example-webgl-neon-grid/36658d43db8ec900/poster.jpg",
-      "durationMs": 5067,
-      "holdMs": 2500,
-      "hash": "36658d43db8ec900"
-    },
     "example-orbit-github": {
       "video": "example-orbit-github/2c462515823c8898/preview.mp4",
       "poster": "example-orbit-github/2c462515823c8898/poster.jpg",
       "durationMs": 1267,
       "holdMs": 1267,
       "hash": "2c462515823c8898"
-    },
-    "example-webgl-particle-galaxy": {
-      "video": "example-webgl-particle-galaxy/4f5f66b49ee14e3b/preview.mp4",
-      "poster": "example-webgl-particle-galaxy/4f5f66b49ee14e3b/poster.jpg",
-      "durationMs": 5067,
-      "holdMs": 2500,
-      "hash": "4f5f66b49ee14e3b"
-    },
-    "example-webgl-pixel-reveal-gallery": {
-      "video": "example-webgl-pixel-reveal-gallery/cd1a290f02c2cf9a/preview.mp4",
-      "poster": "example-webgl-pixel-reveal-gallery/cd1a290f02c2cf9a/poster.jpg",
-      "durationMs": 5567,
-      "holdMs": 2500,
-      "hash": "cd1a290f02c2cf9a"
-    },
-    "example-webgl-raymarched-hero": {
-      "video": "example-webgl-raymarched-hero/ce0683bb3e1b98fd/preview.mp4",
-      "poster": "example-webgl-raymarched-hero/ce0683bb3e1b98fd/poster.jpg",
-      "durationMs": 4167,
-      "holdMs": 2500,
-      "hash": "ce0683bb3e1b98fd"
     },
     "example-simple-deck": {
       "video": "example-simple-deck/d9f0c0fc28b61d98/preview.mp4",
@@ -742,13 +637,6 @@
       "durationMs": 1267,
       "holdMs": 1267,
       "hash": "b6460e965b3c5872"
-    },
-    "example-webgl-voronoi-cells": {
-      "video": "example-webgl-voronoi-cells/d7f8244fd41af8e5/preview.mp4",
-      "poster": "example-webgl-voronoi-cells/d7f8244fd41af8e5/poster.jpg",
-      "durationMs": 4867,
-      "holdMs": 2500,
-      "hash": "d7f8244fd41af8e5"
     },
     "example-webgl-experience": {
       "video": "example-webgl-experience/840cc4684ef7a961/preview.mp4",

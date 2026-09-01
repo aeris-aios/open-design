@@ -6,7 +6,19 @@
 
 import type { InstalledPluginRecord } from '@open-design/contracts';
 
+// Chamber first: the first-party `example-fhcoc-*` packages lead every chip
+// they belong to (the id list lives in ./chamberCuration.ts). Upstream picks
+// fill the tail so no chip goes thin, but a staffer's first row is always
+// chamber collateral rather than a SaaS landing page.
 const CURATED_PROTOTYPE_PLUGIN_IDS = [
+  'example-fhcoc-event-flyer',
+  'example-fhcoc-social-post',
+  'example-fhcoc-event-landing',
+  'example-fhcoc-member-onepager',
+  'example-fhcoc-newsletter',
+  'example-fhcoc-member-directory',
+  'example-fhcoc-sponsorship-packet',
+  'example-fhcoc-annual-report',
   'example-saas-landing',
   'example-kanban-board',
   'example-social-carousel',
@@ -31,26 +43,30 @@ const CURATED_WIREFRAME_PLUGIN_IDS = [
 const CURATED_MOBILE_PLUGIN_IDS = [
   'example-mobile-app',
   'example-mobile-onboarding',
-  'example-gamified-app',
-  'example-mockup-device-3d',
 ] as const;
 
 // Document scenario: polished, print-ready documents — resumes, reports,
 // invoices, papers, briefs — chosen for visual quality.
 const CURATED_DOCUMENT_PLUGIN_IDS = [
-  'example-resume-modern',
+  'example-fhcoc-annual-report',
+  'example-fhcoc-sponsorship-packet',
+  'example-fhcoc-renewal-notice',
+  'example-fhcoc-member-onepager',
   'example-data-report',
   'example-finance-report',
   'example-invoice',
-  'example-clinical-case-report',
+  'example-resume-modern',
   'example-hps-academic-paper',
   'example-digital-eguide',
   'example-article-magazine',
   'example-meeting-notes',
   'example-design-brief',
-  'example-pm-spec',
 ] as const;
 
+// Doubles as the Live Artifact CATEGORY definition (facets.ts reads it), so an
+// id stays listed here to keep its bucket even when the gallery hides it:
+// `example-github-dashboard` is gallery-hidden for this fork but must still
+// resolve to Live Artifact rather than falling back to the dashboards bucket.
 export const CURATED_LIVE_ARTIFACT_PLUGIN_IDS = [
   'example-live-dashboard',
   'example-flowai-live-dashboard-template',
@@ -67,22 +83,23 @@ const PINNED_SLIDE_PLUGIN_IDS = [
   // `example-frontend-slides` (the bare family-root template) is intentionally
   // NOT pinned — its generic cover reads as filler at the top of the shelf, so
   // it drops to the uncurated tail while the styled variants below still lead.
+  // The dev/AI/pop-culture members of this batch (notebook-tabs, memphis-pop,
+  // retro-tv, true-blueprint, terminal-mono) are gallery-hidden for this fork,
+  // so they are dropped here too rather than pinning ids that never render.
   'example-fs-creative-voltage',
   'example-fs-electric-studio',
   'example-fs-emerald-editorial',
   'example-fs-editorial-forest',
-  'example-fs-notebook-tabs',
   'example-hps-bauhaus',
-  'example-hps-memphis-pop',
   'example-hps-y2k-chrome',
-  'example-hps-retro-tv',
-  'example-hps-true-blueprint',
   'example-hps-academic-paper',
   'example-ve-midnight-editorial',
-  'example-ve-terminal-mono',
 ] as const;
 
 const CURATED_DECK_PLUGIN_IDS = [
+  // Chamber decks lead the slide library.
+  'example-fhcoc-board-deck',
+  'example-fhcoc-state-of-the-town-deck',
   ...PINNED_SLIDE_PLUGIN_IDS,
   'example-html-ppt-pitch-deck',
   'example-deck-swiss-international',
@@ -92,6 +109,9 @@ const CURATED_DECK_PLUGIN_IDS = [
 ] as const;
 
 const CURATED_IMAGE_PLUGIN_IDS = [
+  'example-fhcoc-event-flyer',
+  'example-fhcoc-social-post',
+  'example-fhcoc-event-poster',
   'example-image-poster',
   'example-poster-hero',
   'example-magazine-poster',

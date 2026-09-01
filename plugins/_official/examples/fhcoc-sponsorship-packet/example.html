@@ -1,0 +1,712 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Chamber sponsorship packet — example</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg: #ffffff;
+        --surface: #faf7f4;
+        --surface-warm: #fdeadd;
+        --fg: #0f172a;
+        --fg-2: #334155;
+        --muted: #64748b;
+        --meta: #054d87;
+        --meta-deep: #032f54;
+        --border: #dbe4ee;
+        --border-soft: #e3eef7;
+        --accent: #ed7d36;
+        --accent-hover: #d96a26;
+        --font: Poppins, ui-sans-serif, system-ui, -apple-system, sans-serif;
+        --radius-sm: 10px;
+        --radius-md: 12px;
+        --radius-lg: 16px;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; padding: 0; }
+      body {
+        background: var(--surface);
+        color: var(--fg-2);
+        font-family: var(--font);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 32px;
+        padding: 40px 24px 56px;
+        min-height: 100dvh;
+      }
+
+      .sheet {
+        width: min(820px, 100%);
+        aspect-ratio: 8.5 / 11;
+        background: var(--bg);
+        border-radius: var(--radius-lg);
+        box-shadow: 0 18px 48px rgba(5, 77, 135, 0.14);
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+      }
+
+      /* ── masthead ─────────────────────────────────────────────── */
+      .masthead {
+        background: linear-gradient(135deg, var(--meta) 0%, var(--meta-deep) 100%);
+        color: #fff;
+        padding: 22px 44px 20px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+      }
+      .mark { display: flex; align-items: center; gap: 12px; }
+      .mark svg { display: block; }
+      .wordmark { line-height: 1.1; }
+      .wordmark b {
+        display: block;
+        font-size: 17px;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+      }
+      .wordmark span {
+        display: block;
+        font-size: 11px;
+        font-weight: 400;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: rgba(255, 255, 255, 0.7);
+        margin-top: 2px;
+      }
+      .kicker {
+        font-size: 11px;
+        font-weight: 500;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: rgba(255, 255, 255, 0.8);
+        text-align: right;
+        line-height: 1.55;
+      }
+
+      /* ── shared sheet body ────────────────────────────────────── */
+      .body {
+        padding: 32px 44px 20px;
+        display: flex;
+        flex-direction: column;
+        flex: 1;
+        min-height: 0;
+      }
+      .eyebrow {
+        margin: 0;
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.22em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      h1 {
+        margin: 12px 0 0;
+        font-size: 46px;
+        font-weight: 600;
+        line-height: 1.06;
+        letter-spacing: -0.03em;
+        color: var(--meta);
+        max-width: 15ch;
+      }
+      h1 em { font-style: normal; color: var(--fg); }
+      .rule {
+        width: 96px;
+        height: 6px;
+        border-radius: 9999px;
+        background: var(--accent);
+        margin: 20px 0 0;
+        flex-shrink: 0;
+      }
+      .pitch {
+        margin: 20px 0 0;
+        font-size: 15px;
+        line-height: 1.62;
+        color: var(--fg-2);
+        max-width: 64ch;
+      }
+
+      h2 {
+        margin: 0;
+        font-size: 13px;
+        font-weight: 600;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      /* ── stat block ───────────────────────────────────────────── */
+      .stats {
+        margin-top: 22px;
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        border-top: 1px solid var(--border);
+        border-bottom: 1px solid var(--border);
+      }
+      .stat { padding: 16px 16px 17px 0; }
+      .stat + .stat { padding-left: 20px; border-left: 1px solid var(--border); }
+      .stat b {
+        display: block;
+        font-size: 30px;
+        font-weight: 600;
+        letter-spacing: -0.03em;
+        line-height: 1.05;
+        color: var(--meta);
+      }
+      .stat span {
+        display: block;
+        margin-top: 6px;
+        font-size: 12.5px;
+        line-height: 1.4;
+        color: var(--fg-2);
+      }
+
+      /* ── placement list ───────────────────────────────────────── */
+      .placements { margin-top: 22px; }
+      .rows { margin-top: 14px; border-top: 1px solid var(--border-soft); }
+      .row {
+        display: grid;
+        grid-template-columns: 34px 1fr auto;
+        align-items: center;
+        gap: 16px;
+        padding: 12px 0;
+        border-bottom: 1px solid var(--border-soft);
+      }
+      .idx {
+        width: 34px;
+        height: 34px;
+        border-radius: var(--radius-sm);
+        background: var(--surface-warm);
+        color: var(--accent-hover);
+        font-size: 13px;
+        font-weight: 600;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+      }
+      .row-title {
+        font-size: 15px;
+        font-weight: 600;
+        color: var(--fg);
+        line-height: 1.3;
+      }
+      .row-note {
+        margin-top: 3px;
+        font-size: 12.5px;
+        line-height: 1.4;
+        color: var(--muted);
+      }
+      .row-metric {
+        font-size: 12.5px;
+        font-weight: 500;
+        color: var(--meta);
+        background: var(--border-soft);
+        border-radius: 9999px;
+        padding: 7px 14px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        white-space: nowrap;
+      }
+
+      .note-bar {
+        margin-top: auto;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        background: var(--surface-warm);
+        border-radius: var(--radius-md);
+        padding: 13px 18px;
+        margin-bottom: 4px;
+        font-size: 12.5px;
+        line-height: 1.5;
+        color: var(--fg-2);
+      }
+      .note-bar b { color: var(--accent-hover); font-weight: 600; }
+
+      /* ── sheet footer ─────────────────────────────────────────── */
+      .sheet-foot {
+        margin-top: auto;
+        padding: 12px 44px 16px;
+        border-top: 1px solid var(--border);
+        background: var(--surface);
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: space-between;
+        gap: 8px;
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .sheet-foot b { color: var(--meta); font-weight: 600; }
+
+      /* ── sheet two header ─────────────────────────────────────── */
+      .band {
+        background: var(--meta);
+        color: #fff;
+        padding: 14px 44px 15px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+      }
+      .band .mark svg { width: 26px; height: 26px; }
+      .band-title {
+        font-size: 14px;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+      }
+      .band-note {
+        font-size: 11px;
+        font-weight: 500;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: rgba(255, 255, 255, 0.78);
+      }
+
+      h3 {
+        margin: 0;
+        font-size: 30px;
+        font-weight: 600;
+        letter-spacing: -0.025em;
+        line-height: 1.12;
+        color: var(--meta);
+      }
+      .lede {
+        margin: 8px 0 0;
+        font-size: 13.5px;
+        line-height: 1.55;
+        color: var(--fg-2);
+        max-width: 62ch;
+      }
+
+      /* ── tier table ───────────────────────────────────────────── */
+      .tier-table {
+        margin-top: 20px;
+        width: 100%;
+        border-collapse: separate;
+        border-spacing: 0;
+        table-layout: fixed;
+      }
+      .tier-table th, .tier-table td {
+        text-align: center;
+        vertical-align: middle;
+        padding: 7px 8px;
+        border-bottom: 1px solid var(--border-soft);
+      }
+      .tier-table thead th { vertical-align: bottom; padding-bottom: 10px; }
+      .tier-table thead th { border-bottom: 1px solid var(--border); }
+      .tier-table col.c-label { width: 40%; }
+      .tier-table th.benefit, .tier-table td.benefit {
+        text-align: left;
+        font-size: 13px;
+        font-weight: 400;
+        color: var(--fg-2);
+        line-height: 1.35;
+        padding-left: 0;
+        padding-right: 14px;
+      }
+      .tier-name {
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      .tier-price {
+        margin-top: 4px;
+        font-size: 22px;
+        font-weight: 600;
+        letter-spacing: -0.02em;
+        color: var(--meta);
+        line-height: 1.1;
+      }
+      .tier-cap {
+        margin-top: 3px;
+        font-size: 12px;
+        font-weight: 400;
+        color: var(--muted);
+      }
+      .is-lead { background: var(--surface-warm); }
+      thead .is-lead { border-radius: var(--radius-md) var(--radius-md) 0 0; }
+      tbody tr:last-child .is-lead { border-radius: 0 0 var(--radius-md) var(--radius-md); }
+      .is-lead .tier-name { color: var(--accent-hover); }
+      .is-lead .tier-cap { color: var(--accent-hover); font-weight: 500; }
+      .check { display: block; margin: 0 auto; }
+      .qty { font-size: 13.5px; font-weight: 600; color: var(--meta); }
+      .none {
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        border-radius: 9999px;
+        background: var(--border);
+        vertical-align: middle;
+      }
+
+      /* ── rate card ────────────────────────────────────────────── */
+      .ratecard { margin-top: 20px; }
+      .rate-rows { margin-top: 10px; border-top: 1px solid var(--border-soft); }
+      .rate {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 18px;
+        padding: 8px 0;
+        border-bottom: 1px solid var(--border-soft);
+      }
+      .rate-name { font-size: 13.5px; font-weight: 600; color: var(--fg); }
+      .rate-note { margin-top: 2px; font-size: 12px; color: var(--muted); line-height: 1.4; }
+      .rate-price {
+        font-size: 15px;
+        font-weight: 600;
+        color: var(--meta);
+        white-space: nowrap;
+      }
+      .rate-price small { font-size: 12px; font-weight: 500; color: var(--muted); }
+
+      /* ── contact ──────────────────────────────────────────────── */
+      .contact {
+        margin-top: auto;
+        display: flex;
+        align-items: center;
+        gap: 20px;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+        padding: 16px 22px;
+      }
+      .cta-button {
+        background: var(--accent);
+        color: #fff;
+        font-size: 15px;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+        padding: 14px 26px;
+        border-radius: 9999px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        white-space: nowrap;
+      }
+      .contact-meta { font-size: 12.5px; line-height: 1.55; color: var(--fg-2); }
+      .contact-meta b { display: block; color: var(--meta); font-weight: 600; font-size: 14px; }
+
+      @media (max-width: 760px) {
+        .sheet { aspect-ratio: auto; }
+        h1 { font-size: 34px; }
+        .stats { grid-template-columns: repeat(2, 1fr); }
+        .stat + .stat { padding-left: 0; border-left: 0; }
+        .contact { flex-direction: column; align-items: flex-start; }
+      }
+      @media print {
+        body { background: #fff; padding: 0; gap: 0; }
+        .sheet { box-shadow: none; border-radius: 0; width: 100%; }
+        * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      }
+    </style>
+  </head>
+  <body>
+    <!-- ═══ Sheet 1 ═══════════════════════════════════════════════ -->
+    <article class="sheet" data-od-id="sheet-1">
+      <header class="masthead" data-od-id="masthead">
+        <div class="mark">
+          <svg width="34" height="34" viewBox="0 0 34 34" aria-hidden="true">
+            <circle cx="17" cy="17" r="16" fill="rgba(255,255,255,0.10)" />
+            <circle cx="17" cy="17" r="16" fill="none" stroke="rgba(255,255,255,0.45)" stroke-width="1" />
+            <rect x="15.7" y="6.5" width="2.6" height="15" rx="1.3" fill="#ed7d36" />
+            <path d="M11 21 C11 14.5, 13.5 11.5, 15.6 10" fill="none" stroke="#ed7d36" stroke-width="1.8" stroke-linecap="round" opacity="0.75" />
+            <path d="M23 21 C23 14.5, 20.5 11.5, 18.4 10" fill="none" stroke="#ed7d36" stroke-width="1.8" stroke-linecap="round" opacity="0.75" />
+            <path d="M8.5 23.5 h17 a8.5 8.5 0 0 1 -17 0 Z" fill="rgba(255,255,255,0.85)" />
+          </svg>
+          <span class="wordmark">
+            <b>Fountain Hills Chamber</b>
+            <span>of Commerce</span>
+          </span>
+        </div>
+        <div class="kicker">2027 Partnership<br />Prospectus</div>
+      </header>
+
+      <div class="body">
+        <p class="eyebrow">Sponsorship &middot; January to December 2027</p>
+        <h1 data-od-id="headline">Put your business in front of <em>Fountain Hills</em></h1>
+        <div class="rule"></div>
+
+        <p class="pitch" data-od-id="pitch">
+          The chamber gathers the town's business owners, its residents, and its
+          visitors in one place all year long. A partnership keeps your name in that
+          room, on the stage banner, in the newsletter, and in the directory people
+          search before they buy. Choose a tier once, and we place you for the full
+          2027 season.
+        </p>
+
+        <div class="stats" data-od-id="audience-stats">
+          <div class="stat">
+            <b>1,050</b>
+            <span>Member businesses</span>
+          </div>
+          <div class="stat">
+            <b>24,000</b>
+            <span>Monthly newsletter opens</span>
+          </div>
+          <div class="stat">
+            <b>18,000</b>
+            <span>Oktoberfest guests</span>
+          </div>
+          <div class="stat">
+            <b>96%</b>
+            <span>Membership renewal rate</span>
+          </div>
+        </div>
+
+        <section class="placements" data-od-id="placements">
+          <h2>Where your name appears</h2>
+          <div class="rows">
+            <div class="row">
+              <span class="idx">01</span>
+              <div>
+                <div class="row-title">Oktoberfest</div>
+                <div class="row-note">Three days on the Avenue, September 24 to 26</div>
+              </div>
+              <span class="row-metric">18,000 guests</span>
+            </div>
+            <div class="row">
+              <span class="idx">02</span>
+              <div>
+                <div class="row-title">State of the Town</div>
+                <div class="row-note">Community Center luncheon, Thursday, February 11</div>
+              </div>
+              <span class="row-metric">420 seats</span>
+            </div>
+            <div class="row">
+              <span class="idx">03</span>
+              <div>
+                <div class="row-title">Business After Hours</div>
+                <div class="row-note">Members mixer, the third Thursday of each month</div>
+              </div>
+              <span class="row-metric">11 nights</span>
+            </div>
+            <div class="row">
+              <span class="idx">04</span>
+              <div>
+                <div class="row-title">The monthly newsletter</div>
+                <div class="row-note">First Tuesday of the month to 9,600 subscribers</div>
+              </div>
+              <span class="row-metric">24,000 opens</span>
+            </div>
+            <div class="row">
+              <span class="idx">05</span>
+              <div>
+                <div class="row-title">The online directory</div>
+                <div class="row-note">Category pages and search on fhchamber.com</div>
+              </div>
+              <span class="row-metric">31,000 visits</span>
+            </div>
+          </div>
+        </section>
+
+        <div class="note-bar" data-od-id="note">
+          <span>Tiers are placed in the order they are reserved. The 2027 calendar opens Monday, November 2, 2026.</span>
+          <span><b>Tiers and rate card on page 2 &rsaquo;</b></span>
+        </div>
+      </div>
+
+      <footer class="sheet-foot" data-od-id="foot-1">
+        <span><b>Fountain Hills Chamber of Commerce</b> &middot; 2027 Partnership Prospectus</span>
+        <span>Page 1 of 2</span>
+      </footer>
+    </article>
+
+    <!-- ═══ Sheet 2 ═══════════════════════════════════════════════ -->
+    <article class="sheet" data-od-id="sheet-2">
+      <header class="band" data-od-id="band">
+        <div class="mark">
+          <svg width="26" height="26" viewBox="0 0 34 34" aria-hidden="true">
+            <circle cx="17" cy="17" r="16" fill="rgba(255,255,255,0.10)" />
+            <circle cx="17" cy="17" r="16" fill="none" stroke="rgba(255,255,255,0.45)" stroke-width="1" />
+            <rect x="15.7" y="6.5" width="2.6" height="15" rx="1.3" fill="#ed7d36" />
+            <path d="M11 21 C11 14.5, 13.5 11.5, 15.6 10" fill="none" stroke="#ed7d36" stroke-width="1.8" stroke-linecap="round" opacity="0.75" />
+            <path d="M23 21 C23 14.5, 20.5 11.5, 18.4 10" fill="none" stroke="#ed7d36" stroke-width="1.8" stroke-linecap="round" opacity="0.75" />
+            <path d="M8.5 23.5 h17 a8.5 8.5 0 0 1 -17 0 Z" fill="rgba(255,255,255,0.85)" />
+          </svg>
+          <span class="band-title">Fountain Hills Chamber of Commerce</span>
+        </div>
+        <span class="band-note">Tiers &middot; Rate card</span>
+      </header>
+
+      <div class="body">
+        <h3 data-od-id="tiers-title">Choose your tier</h3>
+        <p class="lede">
+          Every tier runs the full calendar year and includes placement at the four
+          signature chamber events. Copper is the tier most partners renew into.
+        </p>
+
+        <table class="tier-table" data-od-id="tier-table">
+          <colgroup>
+            <col class="c-label" />
+            <col /><col /><col /><col />
+          </colgroup>
+          <thead>
+            <tr>
+              <th class="benefit" scope="col"><span class="tier-name">Benefit</span></th>
+              <th scope="col">
+                <div class="tier-name">Fountain</div>
+                <div class="tier-price">$10,000</div>
+                <div class="tier-cap">2 available</div>
+              </th>
+              <th scope="col" class="is-lead">
+                <div class="tier-name">Copper</div>
+                <div class="tier-price">$5,000</div>
+                <div class="tier-cap">Most chosen</div>
+              </th>
+              <th scope="col">
+                <div class="tier-name">Saguaro</div>
+                <div class="tier-price">$2,500</div>
+                <div class="tier-cap">12 available</div>
+              </th>
+              <th scope="col">
+                <div class="tier-name">Supporting</div>
+                <div class="tier-price">$1,000</div>
+                <div class="tier-cap">Open</div>
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="benefit">Logo on event banners and stage signage</td>
+              <td>
+                <svg class="check" width="16" height="16" viewBox="0 0 16 16" aria-label="Included" role="img"><path d="M3.4 8.4 L6.5 11.5 L12.6 4.9" fill="none" stroke="#054d87" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg>
+              </td>
+              <td class="is-lead">
+                <svg class="check" width="16" height="16" viewBox="0 0 16 16" aria-label="Included" role="img"><path d="M3.4 8.4 L6.5 11.5 L12.6 4.9" fill="none" stroke="#054d87" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg>
+              </td>
+              <td>
+                <svg class="check" width="16" height="16" viewBox="0 0 16 16" aria-label="Included" role="img"><path d="M3.4 8.4 L6.5 11.5 L12.6 4.9" fill="none" stroke="#054d87" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg>
+              </td>
+              <td>
+                <svg class="check" width="16" height="16" viewBox="0 0 16 16" aria-label="Included" role="img"><path d="M3.4 8.4 L6.5 11.5 L12.6 4.9" fill="none" stroke="#054d87" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg>
+              </td>
+            </tr>
+            <tr>
+              <td class="benefit">Named sponsor of one signature event</td>
+              <td>
+                <svg class="check" width="16" height="16" viewBox="0 0 16 16" aria-label="Included" role="img"><path d="M3.4 8.4 L6.5 11.5 L12.6 4.9" fill="none" stroke="#054d87" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg>
+              </td>
+              <td class="is-lead">
+                <svg class="check" width="16" height="16" viewBox="0 0 16 16" aria-label="Included" role="img"><path d="M3.4 8.4 L6.5 11.5 L12.6 4.9" fill="none" stroke="#054d87" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg>
+              </td>
+              <td><span class="none" aria-label="Not included" role="img"></span></td>
+              <td><span class="none" aria-label="Not included" role="img"></span></td>
+            </tr>
+            <tr>
+              <td class="benefit">Newsletter banner, months included</td>
+              <td><span class="qty">12</span></td>
+              <td class="is-lead"><span class="qty">6</span></td>
+              <td><span class="qty">3</span></td>
+              <td><span class="none" aria-label="Not included" role="img"></span></td>
+            </tr>
+            <tr>
+              <td class="benefit">Featured listing in the online directory</td>
+              <td>
+                <svg class="check" width="16" height="16" viewBox="0 0 16 16" aria-label="Included" role="img"><path d="M3.4 8.4 L6.5 11.5 L12.6 4.9" fill="none" stroke="#054d87" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg>
+              </td>
+              <td class="is-lead">
+                <svg class="check" width="16" height="16" viewBox="0 0 16 16" aria-label="Included" role="img"><path d="M3.4 8.4 L6.5 11.5 L12.6 4.9" fill="none" stroke="#054d87" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg>
+              </td>
+              <td>
+                <svg class="check" width="16" height="16" viewBox="0 0 16 16" aria-label="Included" role="img"><path d="M3.4 8.4 L6.5 11.5 L12.6 4.9" fill="none" stroke="#054d87" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg>
+              </td>
+              <td><span class="none" aria-label="Not included" role="img"></span></td>
+            </tr>
+            <tr>
+              <td class="benefit">Booth at Oktoberfest and the Home Show</td>
+              <td>
+                <svg class="check" width="16" height="16" viewBox="0 0 16 16" aria-label="Included" role="img"><path d="M3.4 8.4 L6.5 11.5 L12.6 4.9" fill="none" stroke="#054d87" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg>
+              </td>
+              <td class="is-lead">
+                <svg class="check" width="16" height="16" viewBox="0 0 16 16" aria-label="Included" role="img"><path d="M3.4 8.4 L6.5 11.5 L12.6 4.9" fill="none" stroke="#054d87" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg>
+              </td>
+              <td>
+                <svg class="check" width="16" height="16" viewBox="0 0 16 16" aria-label="Included" role="img"><path d="M3.4 8.4 L6.5 11.5 L12.6 4.9" fill="none" stroke="#054d87" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg>
+              </td>
+              <td><span class="none" aria-label="Not included" role="img"></span></td>
+            </tr>
+            <tr>
+              <td class="benefit">Reserved seats at State of the Town</td>
+              <td><span class="qty">8</span></td>
+              <td class="is-lead"><span class="qty">4</span></td>
+              <td><span class="qty">2</span></td>
+              <td><span class="qty">1</span></td>
+            </tr>
+          </tbody>
+        </table>
+
+        <section class="ratecard" data-od-id="rate-card">
+          <h2>Add-ons and rate card</h2>
+          <div class="rate-rows">
+            <div class="rate">
+              <div>
+                <div class="rate-name">Newsletter banner</div>
+                <div class="rate-note">Top of the Tuesday send, 9,600 subscribers</div>
+              </div>
+              <div class="rate-price">$350 <small>/ month</small></div>
+            </div>
+            <div class="rate">
+              <div>
+                <div class="rate-name">Event program, full page</div>
+                <div class="rate-note">Oktoberfest and State of the Town programs</div>
+              </div>
+              <div class="rate-price">$600</div>
+            </div>
+            <div class="rate">
+              <div>
+                <div class="rate-name">Directory spotlight</div>
+                <div class="rate-note">Top of your category on fhchamber.com</div>
+              </div>
+              <div class="rate-price">$250 <small>/ quarter</small></div>
+            </div>
+            <div class="rate">
+              <div>
+                <div class="rate-name">Ribbon-cutting sponsor</div>
+                <div class="rate-note">Your team at the scissors, photos shared to 14,000 followers</div>
+              </div>
+              <div class="rate-price">$400</div>
+            </div>
+            <div class="rate">
+              <div>
+                <div class="rate-name">Golf hole sponsor</div>
+                <div class="rate-note">Tee sign at the Eagle Mountain scramble, Friday, April 16</div>
+              </div>
+              <div class="rate-price">$500</div>
+            </div>
+          </div>
+        </section>
+
+        <div class="contact" data-od-id="contact">
+          <span class="cta-button">Reserve a tier</span>
+          <div class="contact-meta">
+            <b>Marco Alvarez, President and CEO</b>
+            (480) 837-1654 &middot; partners@fhchamber.com &middot; fhchamber.com/partners<br />
+            16837 E. Palisades Blvd., Fountain Hills, AZ 85268
+          </div>
+        </div>
+      </div>
+
+      <footer class="sheet-foot" data-od-id="foot-2">
+        <span><b>Fountain Hills Chamber of Commerce</b> &middot; Tiers hold through December 31, 2027</span>
+        <span>Page 2 of 2</span>
+      </footer>
+    </article>
+  </body>
+</html>

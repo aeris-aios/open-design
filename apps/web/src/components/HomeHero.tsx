@@ -85,6 +85,7 @@ import { PreviewSurface } from './plugins-home/cards/PreviewSurface';
 import { pluginCategoryLabel } from './plugins-home/categoryLabel';
 import { readHomeGuideStage, writeHomeGuideStage } from './home-hero/firstRunGuide';
 import { curatedPluginPriorityForChip } from './plugins-home/curatedPriority';
+import { GALLERY_HIDDEN_PLUGIN_IDS } from './plugins-home/chamberCuration';
 import { comparePluginGalleryOrder } from './plugins-home/pluginPopularity';
 import { sortByVisualAppeal } from './plugins-home/visualScore';
 import { applyFacetSelection } from './plugins-home/facets';
@@ -3874,9 +3875,15 @@ function homeHeroChipTitle(chip: HomeHeroChip, t: ReturnType<typeof useT>): stri
 // concrete example. The per-site examples are plain text prompt cards (from
 // HOME_PROMPT_EXAMPLES) rather than plugins, so hide the base plugin to keep the
 // preset rail empty for web-clone and let those text cards show instead.
+//
+// `GALLERY_HIDDEN_PLUGIN_IDS` folds in the chamber curation list (see
+// plugins-home/chamberCuration.ts): upstream templates that are not work this
+// office does. The rail and the Community grid read the same set, so an id is
+// hidden from both surfaces or from neither.
 const EXAMPLE_PRESET_HIDDEN_PLUGIN_IDS = new Set<string>([
   'od-media-generation',
   'example-web-clone',
+  ...GALLERY_HIDDEN_PLUGIN_IDS,
 ]);
 
 export function homeHeroExamplePluginsForChip(

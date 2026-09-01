@@ -1,0 +1,97 @@
+{
+  "$schema": "https://open-design.ai/schemas/plugin.v1.json",
+  "specVersion": "1.0.0",
+  "name": "example-fhcoc-newsletter",
+  "title": "Chamber Newsletter",
+  "title_i18n": {
+    "en": "Chamber Newsletter"
+  },
+  "version": "0.1.0",
+  "publishedAt": "2026-09-01T00:00:00Z",
+  "description": "The monthly chamber member newsletter: masthead, a lead story, the upcoming event calendar, new member welcomes, a member spotlight, and a sponsor block, laid out as an email-safe single column. Trigger keywords: \"newsletter\", \"member email\", \"monthly digest\".",
+  "description_i18n": {
+    "en": "The monthly chamber member newsletter: masthead, a lead story, the upcoming event calendar, new member welcomes, a member spotlight, and a sponsor block, laid out as an email-safe single column. Trigger keywords: \"newsletter\", \"member email\", \"monthly digest\"."
+  },
+  "license": "MIT",
+  "author": {
+    "name": "Fountain Hills Chamber of Commerce",
+    "url": "https://fhchamber.com"
+  },
+  "homepage": "https://fhchamber.com",
+  "tags": [
+    "example",
+    "first-party",
+    "prototype",
+    "marketing",
+    "newsletter",
+    "email-template",
+    "member-news",
+    "digest",
+    "fountain-hills-chamber",
+    "chamber"
+  ],
+  "compat": {
+    "agentSkills": [
+      {
+        "path": "./SKILL.md"
+      }
+    ]
+  },
+  "od": {
+    "kind": "scenario",
+    "taskKind": "new-generation",
+    "mode": "prototype",
+    "platform": "desktop",
+    "scenario": "marketing",
+    "surface": "web",
+    "preview": {
+      "type": "html",
+      "entry": "./example.html"
+    },
+    "useCase": {
+      "query": {
+        "en": "Lay out the October member newsletter, with a lead story on the Oktoberfest schedule, the month of events, five new member welcomes, and one member spotlight."
+      },
+      "exampleOutputs": [
+        {
+          "path": "./example.html",
+          "title": "Chamber Newsletter"
+        }
+      ]
+    },
+    "context": {
+      "skills": [
+        {
+          "path": "./SKILL.md"
+        }
+      ],
+      "designSystem": {
+        "primary": true,
+        "ref": "fountain-hills-chamber"
+      },
+      "craft": [
+        "typography",
+        "color",
+        "anti-ai-slop"
+      ],
+      "assets": [
+        "./example.html"
+      ]
+    },
+    "pipeline": {
+      "stages": [
+        {
+          "id": "generate",
+          "atoms": [
+            "file-write",
+            "live-artifact"
+          ]
+        }
+      ]
+    },
+    "capabilities": [
+      "prompt:inject",
+      "fs:write"
+    ]
+  }
+}

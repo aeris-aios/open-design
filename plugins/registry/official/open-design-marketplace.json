@@ -12,7 +12,7 @@
     "description": "Official OpenDesign plugin registry seed. The generated public catalog is served from open-design.ai/marketplace.",
     "version": "0.1.0",
     "generatedFrom": "plugins/_official",
-    "bundledPreinstallCount": 192
+    "bundledPreinstallCount": 190
   },
   "plugins": [
     {
@@ -3115,40 +3115,6 @@
       "taskKind": "new-generation"
     },
     {
-      "name": "open-design/example-codex-interactive-capability-map",
-      "title": "Codex Interactive Capability Map",
-      "version": "0.1.0",
-      "source": "github:nexu-io/open-design@main/plugins/_official/examples/codex-interactive-capability-map",
-      "publisher": {
-        "id": "open-design",
-        "url": "https://open-design.ai"
-      },
-      "capabilitiesSummary": [
-        "prompt:inject",
-        "fs:write"
-      ],
-      "description": "Turn a long-form article, thread, memo, or product narrative into a Codex-style clickable capability map with a workflow loop, use-case matrix, and responsive detail panel.",
-      "tags": [
-        "example",
-        "first-party",
-        "prototype",
-        "knowledge",
-        "web",
-        "desktop",
-        "codex",
-        "article",
-        "thread",
-        "knowledge-map",
-        "interactive",
-        "capability-map",
-        "explainer"
-      ],
-      "homepage": "https://github.com/nexu-io/open-design/tree/main/plugins/_official/examples/codex-interactive-capability-map",
-      "license": "MIT",
-      "mode": "prototype",
-      "taskKind": "new-generation"
-    },
-    {
       "name": "open-design/example-invoice",
       "title": "Invoice",
       "version": "0.1.0",
@@ -3449,46 +3415,6 @@
       "license": "MIT",
       "mode": "prototype",
       "taskKind": "new-generation"
-    },
-    {
-      "name": "open-design/example-mockup-device-3d",
-      "title": "Device 3D Showcase",
-      "version": "0.1.0",
-      "source": "github:nexu-io/open-design@main/plugins/_official/examples/mockup-device-3d",
-      "publisher": {
-        "id": "open-design",
-        "url": "https://open-design.ai"
-      },
-      "capabilitiesSummary": [
-        "prompt:inject",
-        "fs:write"
-      ],
-      "description": "Static iPhone and MacBook 3D-style showcase with real HTML embedded on screens, glass-lens refraction, and 360-degree turntable composition.",
-      "tags": [
-        "example",
-        "first-party",
-        "prototype",
-        "product",
-        "web",
-        "desktop",
-        "device",
-        "mockup",
-        "iphone",
-        "macbook",
-        "html-in-canvas"
-      ],
-      "homepage": "https://github.com/nexu-io/open-design/tree/main/plugins/_official/examples/mockup-device-3d",
-      "license": "MIT",
-      "mode": "prototype",
-      "taskKind": "new-generation",
-      "title_i18n": {
-        "en": "Device 3D Showcase",
-        "zh-CN": "iPhone × MacBook 立体展架"
-      },
-      "description_i18n": {
-        "en": "Static iPhone and MacBook 3D-style showcase with real HTML embedded on screens, glass-lens refraction, and 360-degree turntable composition.",
-        "zh-CN": "iPhone + MacBook 仿 GLTF 静态展架, 屏幕内嵌真实 HTML 内容, 玻璃镜头折射, 360° 转盘构图"
-      }
     },
     {
       "name": "open-design/example-motion-frames",

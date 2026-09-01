@@ -34,7 +34,7 @@ export const PLUGIN_POPULARITY_META: PluginPopularityMeta = {
   windowDays: 28,
   weights: { users: 0.6, runs: 0.4 },
   minUsers: 20,
-  count: 74,
+  count: 71,
 };
 
 // Plugin id -> blended popularity score in [0, 1], most-popular first.
@@ -65,11 +65,9 @@ export const PLUGIN_POPULARITY: Readonly<Record<string, number>> = {
   'example-hps-academic-paper': 0.4718,
   'example-fs-emerald-editorial': 0.471,
   'example-wireframe-annotated': 0.4709,
-  'example-codex-interactive-capability-map': 0.4603,
   'example-html-ppt-hermes-cyber-terminal': 0.4547,
   'example-audio-jingle': 0.4461,
   'example-blog-post': 0.4425,
-  'example-mockup-device-3d': 0.4381,
   'example-html-ppt-weekly-report': 0.4278,
   'example-docs-page': 0.4241,
   'example-hps-bauhaus': 0.4174,
@@ -87,7 +85,6 @@ export const PLUGIN_POPULARITY: Readonly<Record<string, number>> = {
   'example-html-ppt-tech-sharing': 0.387,
   'video-template-frame-liquid-bg-hero': 0.3843,
   'example-github-dashboard': 0.3777,
-  'example-webgl-caustic-pool': 0.3768,
   'video-template-frame-glitch-title': 0.3722,
   'example-invoice': 0.3705,
   'example-web-prototype-taste-brutalist': 0.3705,

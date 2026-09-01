@@ -1,0 +1,98 @@
+{
+  "$schema": "https://open-design.ai/schemas/plugin.v1.json",
+  "specVersion": "1.0.0",
+  "name": "example-fhcoc-board-deck",
+  "title": "Chamber Board Deck",
+  "title_i18n": {
+    "en": "Chamber Board Deck"
+  },
+  "version": "0.1.0",
+  "publishedAt": "2026-09-01T00:00:00Z",
+  "description": "A chamber board meeting deck: cover, agenda, membership health stats, a new-member chart, an events scorecard, budget versus actual, a member quote, and the decisions the board is asked to make. Trigger keywords: \"board deck\", \"board meeting\", \"quarterly review\", \"board pre-read\".",
+  "description_i18n": {
+    "en": "A chamber board meeting deck: cover, agenda, membership health stats, a new-member chart, an events scorecard, budget versus actual, a member quote, and the decisions the board is asked to make. Trigger keywords: \"board deck\", \"board meeting\", \"quarterly review\", \"board pre-read\"."
+  },
+  "license": "MIT",
+  "author": {
+    "name": "Fountain Hills Chamber of Commerce",
+    "url": "https://fhchamber.com"
+  },
+  "homepage": "https://fhchamber.com",
+  "tags": [
+    "example",
+    "first-party",
+    "deck",
+    "slides",
+    "strategy",
+    "board-meeting",
+    "governance",
+    "operating-review",
+    "quarterly",
+    "fountain-hills-chamber",
+    "chamber"
+  ],
+  "compat": {
+    "agentSkills": [
+      {
+        "path": "./SKILL.md"
+      }
+    ]
+  },
+  "od": {
+    "kind": "scenario",
+    "taskKind": "new-generation",
+    "mode": "deck",
+    "platform": "desktop",
+    "scenario": "strategy",
+    "surface": "web",
+    "preview": {
+      "type": "html",
+      "entry": "./example.html"
+    },
+    "useCase": {
+      "query": {
+        "en": "Build the Q1 board deck: membership health, new members by month, the events scorecard, budget versus actual, and the three decisions we need at the meeting."
+      },
+      "exampleOutputs": [
+        {
+          "path": "./example.html",
+          "title": "Chamber Board Deck"
+        }
+      ]
+    },
+    "context": {
+      "skills": [
+        {
+          "path": "./SKILL.md"
+        }
+      ],
+      "designSystem": {
+        "primary": true,
+        "ref": "fountain-hills-chamber"
+      },
+      "craft": [
+        "typography",
+        "color",
+        "anti-ai-slop"
+      ],
+      "assets": [
+        "./example.html"
+      ]
+    },
+    "pipeline": {
+      "stages": [
+        {
+          "id": "generate",
+          "atoms": [
+            "file-write",
+            "live-artifact"
+          ]
+        }
+      ]
+    },
+    "capabilities": [
+      "prompt:inject",
+      "fs:write"
+    ]
+  }
+}

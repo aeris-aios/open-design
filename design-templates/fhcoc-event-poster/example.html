@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>State of the Town poster, example</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg: #ffffff;
+        --surface: #faf7f4;
+        --surface-warm: #fdeadd;
+        --fg: #0f172a;
+        --fg-2: #334155;
+        --muted: #64748b;
+        --meta: #054d87;
+        --meta-deep: #032f54;
+        --border: #dbe4ee;
+        --border-soft: #e3eef7;
+        --accent: #ed7d36;
+        --accent-hover: #d96a26;
+        --font: Poppins, ui-sans-serif, system-ui, -apple-system, sans-serif;
+        --radius-sm: 10px;
+        --radius-md: 12px;
+        --radius-lg: 16px;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; padding: 0; }
+      body {
+        background: var(--surface);
+        color: var(--fg-2);
+        font-family: var(--font);
+        display: grid;
+        place-items: start center;
+        padding: 40px 24px 56px;
+        min-height: 100dvh;
+      }
+
+      .sheet {
+        position: relative;
+        width: min(720px, 100%);
+        aspect-ratio: 2 / 3;
+        background: linear-gradient(160deg, var(--meta) 0%, var(--meta-deep) 72%);
+        border-radius: var(--radius-lg);
+        box-shadow: 0 18px 48px rgba(5, 77, 135, 0.14);
+        overflow: hidden;
+        color: #fff;
+        isolation: isolate;
+      }
+
+      /* ── motif: fountain plume of concentric arcs ─────────────── */
+      .motif {
+        position: absolute;
+        inset: 0;
+        z-index: 0;
+        pointer-events: none;
+      }
+      .motif svg { display: block; width: 100%; height: 100%; }
+
+      /* ── content ──────────────────────────────────────────────── */
+      .poster-body {
+        position: relative;
+        z-index: 1;
+        height: 100%;
+        padding: 46px 52px 40px;
+        display: flex;
+        flex-direction: column;
+      }
+      .poster-body > * { flex: 0 0 auto; }
+
+      .mark { display: flex; align-items: center; gap: 12px; }
+      .mark svg { display: block; }
+      .wordmark { line-height: 1.1; }
+      .wordmark b {
+        display: block;
+        font-size: 17px;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+        color: #fff;
+      }
+      .wordmark span {
+        display: block;
+        font-size: 10.5px;
+        font-weight: 400;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: rgba(255, 255, 255, 0.7);
+        margin-top: 2px;
+      }
+
+      .eyebrow {
+        margin: 56px 0 0;
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 0.22em;
+        text-transform: uppercase;
+        color: rgba(255, 255, 255, 0.78);
+      }
+
+      h1 {
+        margin: 24px 0 0;
+        font-size: 126px;
+        font-weight: 600;
+        line-height: 1.02;
+        letter-spacing: -0.035em;
+        color: #fff;
+      }
+      .rule {
+        width: 120px;
+        height: 8px;
+        border-radius: 9999px;
+        background: var(--accent);
+        margin: 30px 0 0;
+      }
+
+      .facts {
+        margin: auto 0 0;
+        padding-top: 34px;
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 20px;
+      }
+      .fact dt {
+        font-size: 10.5px;
+        font-weight: 600;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: rgba(255, 255, 255, 0.62);
+      }
+      .fact dd {
+        margin: 6px 0 0;
+        font-size: 18px;
+        font-weight: 500;
+        line-height: 1.3;
+        color: #fff;
+        letter-spacing: -0.01em;
+      }
+      .fact dd small {
+        display: block;
+        font-size: 13.5px;
+        font-weight: 400;
+        color: rgba(255, 255, 255, 0.74);
+        margin-top: 3px;
+      }
+
+      .pitch {
+        margin: 24px 0 0;
+        font-size: 16px;
+        line-height: 1.6;
+        color: rgba(255, 255, 255, 0.86);
+        max-width: 64ch;
+      }
+
+      .cta {
+        margin-top: 30px;
+        display: flex;
+        align-items: center;
+        gap: 20px;
+      }
+      .cta-button {
+        background: var(--accent);
+        color: #fff;
+        font-size: 19px;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+        padding: 18px 36px;
+        border-radius: var(--radius-md);
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        white-space: nowrap;
+      }
+      .cta-meta { font-size: 13.5px; line-height: 1.5; color: rgba(255, 255, 255, 0.74); }
+      .cta-meta b {
+        display: block;
+        font-size: 16px;
+        font-weight: 600;
+        color: #fff;
+        margin-bottom: 3px;
+      }
+
+      /* ── partners ─────────────────────────────────────────────── */
+      .partners {
+        margin-top: 30px;
+        padding-top: 24px;
+        border-top: 1px solid rgba(255, 255, 255, 0.18);
+      }
+      .partners h2 {
+        margin: 0 0 12px;
+        font-size: 10.5px;
+        font-weight: 600;
+        letter-spacing: 0.2em;
+        text-transform: uppercase;
+        color: rgba(255, 255, 255, 0.6);
+      }
+      .plates { display: flex; flex-wrap: wrap; gap: 7px; }
+      .plate {
+        border: 1px solid rgba(255, 255, 255, 0.4);
+        border-radius: 9999px;
+        padding: 8px 13px;
+        font-size: 12px;
+        font-weight: 500;
+        color: #fff;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+      }
+
+      @media (max-width: 680px) {
+        .sheet { aspect-ratio: auto; }
+        h1 { font-size: 62px; }
+        .poster-body { height: auto; padding: 34px 26px 32px; }
+        .facts { gap: 14px 26px; }
+        .cta { flex-direction: column; align-items: flex-start; }
+      }
+      @media print {
+        body { background: #fff; padding: 0; }
+        .sheet { box-shadow: none; border-radius: 0; width: 100%; }
+        * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      }
+    </style>
+  </head>
+  <body>
+    <article class="sheet">
+      <div class="motif" data-od-id="motif" aria-hidden="true">
+        <svg viewBox="0 0 720 1080" preserveAspectRatio="none">
+          <!-- concentric arcs radiating from the fountain basin -->
+          <g fill="none" stroke="#ffffff">
+            <circle cx="706" cy="1058" r="150" stroke-opacity="0.10" stroke-width="1.5" />
+            <circle cx="706" cy="1058" r="252" stroke-opacity="0.085" stroke-width="1.5" />
+            <circle cx="706" cy="1058" r="452" stroke-opacity="0.06" stroke-width="1.5" />
+            <circle cx="706" cy="1058" r="556" stroke-opacity="0.05" stroke-width="1.5" />
+            <circle cx="706" cy="1058" r="662" stroke-opacity="0.04" stroke-width="1.5" />
+            <circle cx="706" cy="1058" r="770" stroke-opacity="0.03" stroke-width="1.5" />
+          </g>
+          <g fill="none" stroke="#ed7d36">
+            <circle cx="706" cy="1058" r="352" stroke-opacity="0.22" stroke-width="3" />
+            <circle cx="706" cy="1058" r="88" stroke-opacity="0.30" stroke-width="3" />
+          </g>
+        </svg>
+      </div>
+
+      <div class="poster-body">
+        <header class="mark" data-od-id="mark">
+          <svg width="34" height="34" viewBox="0 0 34 34" aria-hidden="true">
+            <circle cx="17" cy="17" r="16" fill="rgba(255,255,255,0.10)" />
+            <circle cx="17" cy="17" r="16" fill="none" stroke="rgba(255,255,255,0.45)" stroke-width="1" />
+            <rect x="15.7" y="6.5" width="2.6" height="15" rx="1.3" fill="#ed7d36" />
+            <path d="M11 21 C11 14.5, 13.5 11.5, 15.6 10" fill="none" stroke="#ed7d36" stroke-width="1.8" stroke-linecap="round" opacity="0.75" />
+            <path d="M23 21 C23 14.5, 20.5 11.5, 18.4 10" fill="none" stroke="#ed7d36" stroke-width="1.8" stroke-linecap="round" opacity="0.75" />
+            <path d="M8.5 23.5 h17 a8.5 8.5 0 0 1 -17 0 Z" fill="rgba(255,255,255,0.85)" />
+          </svg>
+          <span class="wordmark">
+            <b>Fountain Hills Chamber</b>
+            <span>of Commerce</span>
+          </span>
+        </header>
+
+        <p class="eyebrow" data-od-id="eyebrow">Annual breakfast &middot; Chamber members and guests</p>
+
+        <h1 data-od-id="title">State<br />of the<br />Town</h1>
+        <div class="rule"></div>
+
+        <dl class="facts" data-od-id="facts">
+          <div class="fact">
+            <dt>Date</dt>
+            <dd>Wednesday, March 4<small>2027</small></dd>
+          </div>
+          <div class="fact">
+            <dt>Time</dt>
+            <dd>7:30 to 9:00 a.m.<small>Doors and coffee at 7:00</small></dd>
+          </div>
+          <div class="fact">
+            <dt>Venue</dt>
+            <dd>Copperwynd Resort<small>13225 N. Eagle Ridge Dr.</small></dd>
+          </div>
+        </dl>
+
+        <p class="pitch" data-od-id="pitch">
+          The mayor and the town manager open the books on growth, water, and what
+          the town builds next. Breakfast is served at your table.
+        </p>
+
+        <div class="cta" data-od-id="cta">
+          <span class="cta-button">Reserve your seat</span>
+          <div class="cta-meta">
+            <b>fhchamber.com/sot</b>
+            Members $35, guests $50. Seating closes Friday, February 26.
+          </div>
+        </div>
+
+        <footer class="partners" data-od-id="partners">
+          <h2>Presented by</h2>
+          <div class="plates">
+            <span class="plate">Desert Vista Bank</span>
+            <span class="plate">Copperwynd Resort</span>
+            <span class="plate">Palisades Print Co.</span>
+            <span class="plate">Eagle Ridge Dental</span>
+          </div>
+        </footer>
+      </div>
+    </article>
+  </body>
+</html>

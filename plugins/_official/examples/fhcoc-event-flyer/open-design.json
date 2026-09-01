@@ -1,0 +1,99 @@
+{
+  "$schema": "https://open-design.ai/schemas/plugin.v1.json",
+  "specVersion": "1.0.0",
+  "name": "example-fhcoc-event-flyer",
+  "title": "Chamber Event Flyer",
+  "title_i18n": {
+    "en": "Chamber Event Flyer"
+  },
+  "version": "0.1.0",
+  "publishedAt": "2026-09-01T00:00:00Z",
+  "description": "Printable single-page chamber event flyer: navy masthead, oversized event title, orange accent rule, date / time / venue block, ticket tiers, sponsor strip, and one call to action. Built for mixers, ribbon cuttings, Oktoberfest, the golf tournament, and State of the Town. Trigger keywords: \"event flyer\", \"mixer flyer\", \"ribbon cutting\", \"event poster\".",
+  "description_i18n": {
+    "en": "Printable single-page chamber event flyer: navy masthead, oversized event title, orange accent rule, date / time / venue block, ticket tiers, sponsor strip, and one call to action. Built for mixers, ribbon cuttings, Oktoberfest, the golf tournament, and State of the Town. Trigger keywords: \"event flyer\", \"mixer flyer\", \"ribbon cutting\", \"event poster\"."
+  },
+  "license": "MIT",
+  "author": {
+    "name": "Fountain Hills Chamber of Commerce",
+    "url": "https://fhchamber.com"
+  },
+  "homepage": "https://fhchamber.com",
+  "tags": [
+    "example",
+    "first-party",
+    "prototype",
+    "marketing",
+    "poster",
+    "event-flyer",
+    "flyer",
+    "print",
+    "mixer",
+    "ribbon-cutting",
+    "fountain-hills-chamber",
+    "chamber"
+  ],
+  "compat": {
+    "agentSkills": [
+      {
+        "path": "./SKILL.md"
+      }
+    ]
+  },
+  "od": {
+    "kind": "scenario",
+    "taskKind": "new-generation",
+    "mode": "prototype",
+    "platform": "desktop",
+    "scenario": "marketing",
+    "surface": "web",
+    "preview": {
+      "type": "html",
+      "entry": "./example.html"
+    },
+    "useCase": {
+      "query": {
+        "en": "Design a flyer for the Business After Hours mixer on the third Thursday, with the host business, time, address, member and guest pricing, and an RSVP line."
+      },
+      "exampleOutputs": [
+        {
+          "path": "./example.html",
+          "title": "Chamber Event Flyer"
+        }
+      ]
+    },
+    "context": {
+      "skills": [
+        {
+          "path": "./SKILL.md"
+        }
+      ],
+      "designSystem": {
+        "primary": true,
+        "ref": "fountain-hills-chamber"
+      },
+      "craft": [
+        "typography",
+        "color",
+        "anti-ai-slop"
+      ],
+      "assets": [
+        "./example.html"
+      ]
+    },
+    "pipeline": {
+      "stages": [
+        {
+          "id": "generate",
+          "atoms": [
+            "file-write",
+            "live-artifact"
+          ]
+        }
+      ]
+    },
+    "capabilities": [
+      "prompt:inject",
+      "fs:write"
+    ]
+  }
+}

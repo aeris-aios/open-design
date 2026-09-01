@@ -1,0 +1,488 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Member benefits one-pager — example</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg: #ffffff;
+        --surface: #faf7f4;
+        --surface-warm: #fdeadd;
+        --fg: #0f172a;
+        --fg-2: #334155;
+        --muted: #64748b;
+        --meta: #054d87;
+        --meta-deep: #032f54;
+        --border: #dbe4ee;
+        --border-soft: #e3eef7;
+        --accent: #ed7d36;
+        --accent-hover: #d96a26;
+        --font: Poppins, ui-sans-serif, system-ui, -apple-system, sans-serif;
+        --radius-sm: 10px;
+        --radius-md: 12px;
+        --radius-lg: 16px;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; padding: 0; }
+      body {
+        background: var(--surface);
+        color: var(--fg-2);
+        font-family: var(--font);
+        display: grid;
+        place-items: start center;
+        padding: 40px 24px 56px;
+        min-height: 100dvh;
+      }
+      .sheet {
+        width: min(816px, 100%);
+        background: var(--bg);
+        border-radius: var(--radius-lg);
+        box-shadow: 0 18px 48px rgba(5, 77, 135, 0.14);
+        overflow: hidden;
+      }
+
+      /* ── header ───────────────────────────────────────────────── */
+      .header {
+        background: linear-gradient(135deg, var(--meta) 0%, var(--meta-deep) 100%);
+        color: #fff;
+        padding: 26px 44px 24px;
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 20px;
+      }
+      .mark { display: flex; align-items: center; gap: 13px; }
+      .mark svg { display: block; }
+      .wordmark b {
+        display: block;
+        font-size: 19px;
+        font-weight: 600;
+        letter-spacing: -0.015em;
+        line-height: 1.15;
+      }
+      .wordmark span {
+        display: block;
+        font-size: 11.5px;
+        color: rgba(255, 255, 255, 0.7);
+        margin-top: 3px;
+      }
+      .doctype {
+        text-align: right;
+        font-size: 10.5px;
+        font-weight: 600;
+        letter-spacing: 0.2em;
+        text-transform: uppercase;
+        color: rgba(255, 255, 255, 0.78);
+        line-height: 1.7;
+      }
+      .doctype b { display: block; color: var(--accent); }
+
+      .pad { padding: 34px 44px 0; }
+
+      /* ── lede ─────────────────────────────────────────────────── */
+      h1 {
+        margin: 0;
+        font-size: 34px;
+        font-weight: 600;
+        line-height: 1.14;
+        letter-spacing: -0.025em;
+        color: var(--meta);
+        max-width: 20ch;
+      }
+      .lede {
+        margin: 12px 0 0;
+        font-size: 15px;
+        line-height: 1.62;
+        max-width: 68ch;
+      }
+
+      /* ── benefits ─────────────────────────────────────────────── */
+      .section-label {
+        margin: 30px 0 14px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        font-size: 10.5px;
+        font-weight: 600;
+        letter-spacing: 0.2em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      .section-label::after {
+        content: '';
+        flex: 1;
+        height: 1px;
+        background: var(--border);
+      }
+      .benefits {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 14px;
+      }
+      .benefit {
+        border: 1px solid var(--border);
+        border-radius: var(--radius-md);
+        padding: 15px 16px 16px;
+      }
+      .benefit .n {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 24px;
+        height: 24px;
+        border-radius: 8px;
+        background: var(--surface-warm);
+        color: var(--accent-hover);
+        font-size: 11.5px;
+        font-weight: 600;
+      }
+      .benefit h3 {
+        margin: 10px 0 0;
+        font-size: 14.5px;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+        color: var(--fg);
+      }
+      .benefit p { margin: 5px 0 0; font-size: 12.8px; line-height: 1.5; color: var(--fg-2); }
+
+      /* ── tiers ────────────────────────────────────────────────── */
+      .tier-scroll { overflow-x: auto; }
+      .tiers {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(150px, 1fr));
+        gap: 12px;
+        min-width: 620px;
+      }
+      .tier {
+        position: relative;
+        border: 1px solid var(--border);
+        border-radius: var(--radius-md);
+        /* top padding reserves the "Most chosen" slot in every column so the
+           tier names and prices stay on one baseline across all four. */
+        padding: 42px 16px 18px;
+        display: flex;
+        flex-direction: column;
+      }
+      .tier.is-pick {
+        border-color: var(--accent);
+        background: var(--surface-warm);
+        box-shadow: 0 8px 24px rgba(5, 77, 135, 0.1);
+      }
+      .pick-pill {
+        position: absolute;
+        top: 15px;
+        left: 16px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--accent);
+        color: #fff;
+        font-size: 9.5px;
+        font-weight: 600;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        border-radius: 999px;
+        padding: 5px 11px;
+      }
+      .tier .name {
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      .tier.is-pick .name { color: var(--accent-hover); }
+      .tier .price {
+        margin-top: 7px;
+        font-size: 30px;
+        font-weight: 600;
+        letter-spacing: -0.03em;
+        color: var(--meta);
+        line-height: 1;
+      }
+      .tier .price small {
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--muted);
+        letter-spacing: 0;
+      }
+      .tier .best {
+        margin: 8px 0 12px;
+        font-size: 12.2px;
+        line-height: 1.45;
+        color: var(--fg-2);
+        min-height: 53px;
+      }
+      .tier ul { margin: 0; padding: 0; list-style: none; border-top: 1px solid var(--border); }
+      .tier.is-pick ul { border-top-color: #f4cba6; }
+      .tier li {
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+        font-size: 12.4px;
+        line-height: 1.4;
+        color: var(--fg-2);
+        padding: 7px 0 0;
+      }
+      .tier li svg { flex: none; margin-top: 2px; }
+
+      /* ── proof ────────────────────────────────────────────────── */
+      .proof {
+        margin-top: 26px;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-md);
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+      }
+      .stat { padding: 18px 20px; text-align: center; }
+      .stat + .stat { border-left: 1px solid var(--border); }
+      .stat b {
+        display: block;
+        font-size: 30px;
+        font-weight: 600;
+        letter-spacing: -0.03em;
+        color: var(--accent-hover);
+        line-height: 1;
+      }
+      .stat span {
+        display: block;
+        margin-top: 6px;
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.13em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      /* ── close ────────────────────────────────────────────────── */
+      .close {
+        margin-top: 26px;
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 28px;
+        align-items: center;
+      }
+      .steps { margin: 0; padding: 0; list-style: none; counter-reset: step; }
+      .steps li {
+        counter-increment: step;
+        display: flex;
+        gap: 11px;
+        font-size: 13.4px;
+        line-height: 1.5;
+        color: var(--fg-2);
+      }
+      .steps li + li { margin-top: 9px; }
+      .steps li::before {
+        content: counter(step);
+        flex: none;
+        width: 22px;
+        height: 22px;
+        border-radius: 50%;
+        background: var(--border-soft);
+        color: var(--meta);
+        font-size: 11.5px;
+        font-weight: 600;
+        display: grid;
+        place-items: center;
+      }
+      .action {
+        background: var(--accent);
+        color: #fff;
+        border-radius: var(--radius-md);
+        padding: 20px 24px;
+        min-width: 250px;
+        box-shadow: 0 10px 26px rgba(237, 125, 54, 0.26);
+      }
+      .action b { display: block; font-size: 18px; font-weight: 600; letter-spacing: -0.015em; }
+      .action span {
+        display: block;
+        margin-top: 7px;
+        font-size: 13px;
+        line-height: 1.5;
+        color: rgba(255, 255, 255, 0.9);
+      }
+
+      /* ── footer ───────────────────────────────────────────────── */
+      .colophon {
+        margin-top: 28px;
+        padding: 14px 44px 18px;
+        border-top: 1px solid var(--border);
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: space-between;
+        gap: 8px;
+        font-size: 11.5px;
+        color: var(--muted);
+      }
+      .colophon b { color: var(--meta); font-weight: 600; }
+
+      @media (max-width: 760px) {
+        .pad, .colophon { padding-left: 24px; padding-right: 24px; }
+        .benefits { grid-template-columns: 1fr; }
+        .proof { grid-template-columns: 1fr; }
+        .stat + .stat { border-left: 0; border-top: 1px solid var(--border); }
+        .close { grid-template-columns: 1fr; }
+        h1 { font-size: 28px; }
+      }
+      @media print {
+        body { background: #fff; padding: 0; }
+        .sheet { box-shadow: none; border-radius: 0; width: 100%; }
+        .action, .tier.is-pick { box-shadow: none; }
+        * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      }
+    </style>
+  </head>
+  <body>
+    <article class="sheet">
+      <header class="header" data-od-id="header">
+        <div class="mark">
+          <svg width="40" height="40" viewBox="0 0 34 34" aria-hidden="true">
+            <circle cx="17" cy="17" r="16" fill="rgba(255,255,255,0.10)" />
+            <circle cx="17" cy="17" r="16" fill="none" stroke="rgba(255,255,255,0.45)" stroke-width="1" />
+            <rect x="15.7" y="6.5" width="2.6" height="15" rx="1.3" fill="#ed7d36" />
+            <path d="M11 21 C11 14.5, 13.5 11.5, 15.6 10" fill="none" stroke="#ed7d36" stroke-width="1.8" stroke-linecap="round" opacity="0.75" />
+            <path d="M23 21 C23 14.5, 20.5 11.5, 18.4 10" fill="none" stroke="#ed7d36" stroke-width="1.8" stroke-linecap="round" opacity="0.75" />
+            <path d="M8.5 23.5 h17 a8.5 8.5 0 0 1 -17 0 Z" fill="rgba(255,255,255,0.85)" />
+          </svg>
+          <span class="wordmark">
+            <b>Fountain Hills Chamber of Commerce</b>
+            <span>Where Business, Community, and Opportunity Flow</span>
+          </span>
+        </div>
+        <div class="doctype">
+          <b>Membership</b>
+          2026 rates
+        </div>
+      </header>
+
+      <div class="pad">
+        <h1>Four ways to belong, one town to grow.</h1>
+        <p class="lede">
+          Chamber membership puts your business in front of the people who already
+          live and spend here. Every tier includes a directory listing, member
+          pricing on events, and a staff team that passes referrals by name.
+        </p>
+
+        <p class="section-label">What every member gets</p>
+        <section class="benefits" data-od-id="benefits">
+          <div class="benefit">
+            <span class="n">01</span>
+            <h3>Directory listing</h3>
+            <p>Your business on fhchamber.com with hours, photos, and a map pin.</p>
+          </div>
+          <div class="benefit">
+            <span class="n">02</span>
+            <h3>Referral pass</h3>
+            <p>Staff route visitor and resident inquiries to members by name.</p>
+          </div>
+          <div class="benefit">
+            <span class="n">03</span>
+            <h3>Event pricing</h3>
+            <p>Member rates on mixers, luncheons, and the golf tournament.</p>
+          </div>
+          <div class="benefit">
+            <span class="n">04</span>
+            <h3>Ribbon cutting</h3>
+            <p>A scheduled ceremony, photos, and a social announcement.</p>
+          </div>
+          <div class="benefit">
+            <span class="n">05</span>
+            <h3>Newsletter reach</h3>
+            <p>Your news in a monthly email read by 3,100 local subscribers.</p>
+          </div>
+          <div class="benefit">
+            <span class="n">06</span>
+            <h3>Advocacy</h3>
+            <p>A seat at the table on town business issues and permits.</p>
+          </div>
+        </section>
+
+        <p class="section-label">Choose a tier</p>
+        <div class="tier-scroll">
+          <section class="tiers" data-od-id="tiers">
+            <div class="tier">
+              <div class="name">Associate</div>
+              <div class="price">$195<small>/yr</small></div>
+              <p class="best">Sole proprietors and home-based businesses.</p>
+              <ul>
+                <li><svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8.5 6.2 12 13 4.6" fill="none" stroke="#16a34a" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>Directory listing</li>
+                <li><svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8.5 6.2 12 13 4.6" fill="none" stroke="#16a34a" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>Member event pricing</li>
+                <li><svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8.5 6.2 12 13 4.6" fill="none" stroke="#16a34a" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>Monthly newsletter</li>
+                <li><svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8.5 6.2 12 13 4.6" fill="none" stroke="#16a34a" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>One staff intro per year</li>
+              </ul>
+            </div>
+
+            <div class="tier is-pick">
+              <span class="pick-pill">Most chosen</span>
+              <div class="name">Business</div>
+              <div class="price">$395<small>/yr</small></div>
+              <p class="best">Storefronts and service firms with a small team.</p>
+              <ul>
+                <li><svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8.5 6.2 12 13 4.6" fill="none" stroke="#16a34a" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>Everything in Associate</li>
+                <li><svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8.5 6.2 12 13 4.6" fill="none" stroke="#16a34a" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>Featured directory placement</li>
+                <li><svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8.5 6.2 12 13 4.6" fill="none" stroke="#16a34a" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>Ribbon cutting ceremony</li>
+                <li><svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8.5 6.2 12 13 4.6" fill="none" stroke="#16a34a" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>Two mixer seats per event</li>
+                <li><svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8.5 6.2 12 13 4.6" fill="none" stroke="#16a34a" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>One newsletter feature</li>
+              </ul>
+            </div>
+
+            <div class="tier">
+              <div class="name">Premier</div>
+              <div class="price">$795<small>/yr</small></div>
+              <p class="best">Multi-location and high-referral businesses.</p>
+              <ul>
+                <li><svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8.5 6.2 12 13 4.6" fill="none" stroke="#16a34a" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>Everything in Business</li>
+                <li><svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8.5 6.2 12 13 4.6" fill="none" stroke="#16a34a" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>Homepage rotation slot</li>
+                <li><svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8.5 6.2 12 13 4.6" fill="none" stroke="#16a34a" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>Host one mixer per year</li>
+                <li><svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8.5 6.2 12 13 4.6" fill="none" stroke="#16a34a" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>Golf foursome discount</li>
+              </ul>
+            </div>
+
+            <div class="tier">
+              <div class="name">Champion</div>
+              <div class="price">$1,950<small>/yr</small></div>
+              <p class="best">Presenting partners across the full event calendar.</p>
+              <ul>
+                <li><svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8.5 6.2 12 13 4.6" fill="none" stroke="#16a34a" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>Everything in Premier</li>
+                <li><svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8.5 6.2 12 13 4.6" fill="none" stroke="#16a34a" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>Named on every event</li>
+                <li><svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8.5 6.2 12 13 4.6" fill="none" stroke="#16a34a" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>Oktoberfest booth included</li>
+                <li><svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8.5 6.2 12 13 4.6" fill="none" stroke="#16a34a" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>Annual report thank-you</li>
+              </ul>
+            </div>
+          </section>
+        </div>
+
+        <section class="proof" data-od-id="proof">
+          <div class="stat"><b>612</b><span>Member businesses</span></div>
+          <div class="stat"><b>48</b><span>Events a year</span></div>
+          <div class="stat"><b>2,400</b><span>Referrals passed</span></div>
+        </section>
+
+        <section class="close" data-od-id="close">
+          <ol class="steps">
+            <li>Pick a tier and apply online in about four minutes.</li>
+            <li>We confirm your listing details and invoice you by email.</li>
+            <li>Your listing goes live and we schedule your ribbon cutting.</li>
+          </ol>
+          <div class="action">
+            <b>Join at fhchamber.com/join</b>
+            <span>Or call Mary at (480) 837-1654. Prorated dues available after July 1.</span>
+          </div>
+        </section>
+      </div>
+
+      <footer class="colophon">
+        <span><b>Fountain Hills Chamber of Commerce</b> &middot; 16837 E. Palisades Blvd., Fountain Hills, AZ 85268</span>
+        <span>Revised January 2026</span>
+      </footer>
+    </article>
+  </body>
+</html>

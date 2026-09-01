@@ -1,0 +1,98 @@
+{
+  "$schema": "https://open-design.ai/schemas/plugin.v1.json",
+  "specVersion": "1.0.0",
+  "name": "example-fhcoc-annual-report",
+  "title": "Chamber Annual Report",
+  "title_i18n": {
+    "en": "Chamber Annual Report"
+  },
+  "version": "0.1.0",
+  "publishedAt": "2026-09-01T00:00:00Z",
+  "description": "The chamber annual report: a cover, the chair and president letter, a year-in-numbers stat grid, a revenue-by-source bar chart, a program spotlight, and the board roster, laid out on letter sheets. Trigger keywords: \"annual report\", \"year in review\", \"stewardship report\".",
+  "description_i18n": {
+    "en": "The chamber annual report: a cover, the chair and president letter, a year-in-numbers stat grid, a revenue-by-source bar chart, a program spotlight, and the board roster, laid out on letter sheets. Trigger keywords: \"annual report\", \"year in review\", \"stewardship report\"."
+  },
+  "license": "MIT",
+  "author": {
+    "name": "Fountain Hills Chamber of Commerce",
+    "url": "https://fhchamber.com"
+  },
+  "homepage": "https://fhchamber.com",
+  "tags": [
+    "example",
+    "first-party",
+    "prototype",
+    "operations",
+    "report",
+    "document",
+    "annual-report",
+    "board",
+    "stewardship",
+    "fountain-hills-chamber",
+    "chamber"
+  ],
+  "compat": {
+    "agentSkills": [
+      {
+        "path": "./SKILL.md"
+      }
+    ]
+  },
+  "od": {
+    "kind": "scenario",
+    "taskKind": "new-generation",
+    "mode": "prototype",
+    "platform": "desktop",
+    "scenario": "operations",
+    "surface": "web",
+    "preview": {
+      "type": "html",
+      "entry": "./example.html"
+    },
+    "useCase": {
+      "query": {
+        "en": "Lay out the 2026 annual report, with the chair letter, the year in numbers, revenue by source, a program spotlight, and the board of directors."
+      },
+      "exampleOutputs": [
+        {
+          "path": "./example.html",
+          "title": "Chamber Annual Report"
+        }
+      ]
+    },
+    "context": {
+      "skills": [
+        {
+          "path": "./SKILL.md"
+        }
+      ],
+      "designSystem": {
+        "primary": true,
+        "ref": "fountain-hills-chamber"
+      },
+      "craft": [
+        "typography",
+        "color",
+        "anti-ai-slop"
+      ],
+      "assets": [
+        "./example.html"
+      ]
+    },
+    "pipeline": {
+      "stages": [
+        {
+          "id": "generate",
+          "atoms": [
+            "file-write",
+            "live-artifact"
+          ]
+        }
+      ]
+    },
+    "capabilities": [
+      "prompt:inject",
+      "fs:write"
+    ]
+  }
+}

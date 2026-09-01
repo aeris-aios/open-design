@@ -1,0 +1,926 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>State of the Town deck example</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg: #ffffff;
+        --surface: #faf7f4;
+        --surface-warm: #fdeadd;
+        --fg: #0f172a;
+        --fg-2: #334155;
+        --muted: #64748b;
+        --meta: #054d87;
+        --meta-deep: #032f54;
+        --border: #dbe4ee;
+        --border-soft: #e3eef7;
+        --accent: #ed7d36;
+        --accent-hover: #d96a26;
+        --font: Poppins, ui-sans-serif, system-ui, -apple-system, sans-serif;
+        --radius-sm: 10px;
+        --radius-md: 12px;
+        --radius-lg: 16px;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; padding: 0; }
+      body {
+        background: var(--surface);
+        color: var(--fg-2);
+        font-family: var(--font);
+        padding: 40px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 28px;
+      }
+
+      /* ── slide frame ──────────────────────────────────────────── */
+      .slide {
+        position: relative;
+        width: min(1120px, 100%);
+        aspect-ratio: 16 / 9;
+        background: var(--bg);
+        border-radius: 16px;
+        overflow: hidden;
+        box-shadow: 0 8px 24px rgba(5, 77, 135, 0.1);
+        container-type: inline-size;
+        /* one design pixel at the 1120px reference width */
+        --s: 0.0892857cqw;
+        color: var(--fg-2);
+      }
+      .slide.is-dark {
+        background: var(--meta);
+        color: rgba(255, 255, 255, 0.86);
+        --border: rgba(255, 255, 255, 0.22);
+        --border-soft: rgba(255, 255, 255, 0.16);
+        --muted: rgba(255, 255, 255, 0.66);
+        --fg: #ffffff;
+        --fg-2: rgba(255, 255, 255, 0.86);
+        --meta: #ffffff;
+      }
+      .pad {
+        position: absolute;
+        inset: 0;
+        padding: calc(46 * var(--s)) calc(56 * var(--s)) calc(78 * var(--s));
+        display: flex;
+        flex-direction: column;
+      }
+      .foot {
+        position: absolute;
+        left: calc(56 * var(--s));
+        right: calc(56 * var(--s));
+        bottom: calc(24 * var(--s));
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: calc(16 * var(--s));
+        padding-top: calc(13 * var(--s));
+        border-top: 1px solid var(--border);
+        font-size: max(12px, calc(12 * var(--s)));
+        font-weight: 500;
+        color: var(--muted);
+        letter-spacing: 0.02em;
+      }
+      .foot .fnum { font-variant-numeric: tabular-nums; }
+
+      /* ── shared type ──────────────────────────────────────────── */
+      .eyebrow {
+        margin: 0;
+        font-size: max(12px, calc(11.5 * var(--s)));
+        font-weight: 600;
+        letter-spacing: 0.22em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      .stitle {
+        margin: calc(10 * var(--s)) 0 0;
+        font-size: calc(40 * var(--s));
+        font-weight: 600;
+        line-height: 1.1;
+        letter-spacing: -0.02em;
+        color: var(--meta);
+      }
+      .rule {
+        width: calc(72 * var(--s));
+        height: calc(5 * var(--s));
+        border-radius: 999px;
+        background: var(--accent);
+        margin-top: calc(16 * var(--s));
+        flex: none;
+      }
+      .lede {
+        margin: calc(16 * var(--s)) 0 0;
+        font-size: calc(17 * var(--s));
+        line-height: 1.6;
+        color: var(--fg-2);
+        max-width: 72ch;
+      }
+
+      /* ── chamber mark ─────────────────────────────────────────── */
+      .mark { display: flex; align-items: center; gap: calc(13 * var(--s)); }
+      .mark svg { display: block; }
+      .wordmark { line-height: 1.1; }
+      .wordmark b {
+        display: block;
+        font-size: calc(19 * var(--s));
+        font-weight: 600;
+        letter-spacing: -0.01em;
+        color: #fff;
+      }
+      .wordmark span {
+        display: block;
+        font-size: max(12px, calc(11 * var(--s)));
+        font-weight: 400;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: rgba(255, 255, 255, 0.7);
+        margin-top: calc(3 * var(--s));
+      }
+
+      /* ── slide 1, cover with fountain plume ───────────────────── */
+      .slide.cover {
+        background: linear-gradient(135deg, #032f54 0%, #054d87 100%);
+      }
+      .cover .pad { justify-content: space-between; }
+      .fountain {
+        position: absolute;
+        right: calc(64 * var(--s));
+        top: calc(74 * var(--s));
+        width: calc(392 * var(--s));
+        height: calc(392 * var(--s));
+        pointer-events: none;
+      }
+      .fountain .halo {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        transform: translate(-50%, -50%);
+        width: calc(520 * var(--s));
+        height: calc(520 * var(--s));
+        border-radius: 999px;
+        background: radial-gradient(
+          circle at 50% 50%,
+          rgba(255, 255, 255, 0.11),
+          rgba(255, 255, 255, 0) 66%
+        );
+      }
+      .fountain .plume {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        display: block;
+      }
+      .fountain .ripple {
+        position: absolute;
+        left: 50%;
+        transform: translateX(-50%);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 999px;
+      }
+      .fountain .r1 {
+        bottom: calc(20 * var(--s));
+        width: calc(330 * var(--s));
+        height: calc(56 * var(--s));
+      }
+      .fountain .r2 {
+        bottom: calc(2 * var(--s));
+        width: calc(430 * var(--s));
+        height: calc(72 * var(--s));
+        border-color: rgba(255, 255, 255, 0.07);
+      }
+      .cover-main { position: relative; max-width: calc(660 * var(--s)); }
+      .cover-kicker {
+        font-size: max(12px, calc(12 * var(--s)));
+        font-weight: 600;
+        letter-spacing: 0.24em;
+        text-transform: uppercase;
+        color: rgba(255, 255, 255, 0.62);
+      }
+      .cover h1 {
+        margin: calc(14 * var(--s)) 0 0;
+        font-size: calc(72 * var(--s));
+        font-weight: 600;
+        line-height: 1.02;
+        letter-spacing: -0.03em;
+        color: #fff;
+      }
+      .cover h1 em { font-style: normal; color: var(--accent); }
+      .cover .rule { margin-top: calc(22 * var(--s)); width: calc(96 * var(--s)); height: calc(6 * var(--s)); }
+      .cover-org {
+        margin: calc(22 * var(--s)) 0 0;
+        font-size: calc(21 * var(--s));
+        font-weight: 500;
+        color: rgba(255, 255, 255, 0.92);
+      }
+      .cover-foot {
+        position: relative;
+        display: flex;
+        align-items: flex-end;
+        justify-content: space-between;
+        gap: calc(24 * var(--s));
+      }
+      .whenwhere {
+        border-left: calc(3 * var(--s)) solid var(--accent);
+        padding-left: calc(16 * var(--s));
+      }
+      .whenwhere b {
+        display: block;
+        font-size: calc(19 * var(--s));
+        font-weight: 600;
+        color: #fff;
+      }
+      .whenwhere span {
+        display: block;
+        margin-top: calc(3 * var(--s));
+        font-size: max(12px, calc(13.5 * var(--s)));
+        color: rgba(255, 255, 255, 0.68);
+      }
+      .cover-badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        border-radius: 9999px;
+        border: 1px solid rgba(255, 255, 255, 0.28);
+        background: rgba(255, 255, 255, 0.07);
+        padding: calc(10 * var(--s)) calc(22 * var(--s));
+        font-size: max(12px, calc(12.5 * var(--s)));
+        font-weight: 500;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: rgba(255, 255, 255, 0.85);
+      }
+
+      /* ── slide 2, three big stats ─────────────────────────────── */
+      .stat-row {
+        margin-top: calc(30 * var(--s));
+        flex: 1;
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        align-items: center;
+        gap: calc(20 * var(--s));
+      }
+      .stat {
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+        padding: calc(30 * var(--s)) calc(26 * var(--s)) calc(32 * var(--s));
+        background: var(--bg);
+        min-height: calc(232 * var(--s));
+        display: flex;
+        flex-direction: column;
+      }
+      .stat.is-warm { background: var(--surface-warm); border-color: #f6cfae; }
+      .stat .k {
+        font-size: max(12px, calc(11.5 * var(--s)));
+        font-weight: 600;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      .stat.is-warm .k { color: var(--accent-hover); }
+      .stat .v {
+        margin-top: calc(14 * var(--s));
+        font-size: calc(58 * var(--s));
+        font-weight: 600;
+        line-height: 1;
+        letter-spacing: -0.03em;
+        color: var(--meta);
+      }
+      .stat .n {
+        margin: calc(16 * var(--s)) 0 0;
+        margin-top: auto;
+        padding-top: calc(16 * var(--s));
+        font-size: max(12px, calc(14 * var(--s)));
+        line-height: 1.5;
+        color: var(--fg-2);
+      }
+
+      /* ── slide 3, climate ─────────────────────────────────────── */
+      .climate {
+        margin-top: calc(26 * var(--s));
+        display: grid;
+        grid-template-columns: 1.05fr 1fr;
+        gap: calc(48 * var(--s));
+        align-items: start;
+      }
+      .drow {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: calc(20 * var(--s));
+        padding: calc(16 * var(--s)) 0;
+        border-bottom: 1px solid var(--border-soft);
+      }
+      .drow:first-child { border-top: 1px solid var(--border); }
+      .drow .dk {
+        font-size: calc(16 * var(--s));
+        font-weight: 500;
+        color: var(--fg);
+      }
+      .drow .dk small {
+        display: block;
+        margin-top: calc(3 * var(--s));
+        font-size: max(12px, calc(12.5 * var(--s)));
+        font-weight: 400;
+        color: var(--muted);
+      }
+      .drow .dv {
+        flex: none;
+        font-size: calc(34 * var(--s));
+        font-weight: 600;
+        letter-spacing: -0.03em;
+        color: var(--meta);
+        font-variant-numeric: tabular-nums;
+      }
+      .drow.is-lead .dv { color: var(--accent-hover); }
+      .narrative { padding-top: calc(6 * var(--s)); }
+      .narrative .sublabel {
+        font-size: max(12px, calc(11.5 * var(--s)));
+        font-weight: 600;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      .narrative p {
+        margin: calc(14 * var(--s)) 0 0;
+        font-size: max(12px, calc(15.5 * var(--s)));
+        line-height: 1.62;
+        color: var(--fg-2);
+      }
+      .narrative .quiet {
+        margin-top: calc(20 * var(--s));
+        padding: calc(16 * var(--s)) calc(18 * var(--s));
+        background: var(--surface-warm);
+        border-radius: var(--radius-md);
+        font-size: max(12px, calc(14 * var(--s)));
+        line-height: 1.55;
+        color: var(--fg);
+      }
+
+      /* ── slide 4, horizontal bars ─────────────────────────────── */
+      .hchart { margin-top: calc(30 * var(--s)); }
+      .hrow {
+        display: grid;
+        grid-template-columns: calc(190 * var(--s)) 1fr calc(74 * var(--s));
+        align-items: center;
+        gap: calc(20 * var(--s));
+        padding: calc(21 * var(--s)) 0;
+        border-bottom: 1px solid var(--border-soft);
+      }
+      .hrow:first-child { border-top: 1px solid var(--border); }
+      .hrow .hk {
+        font-size: calc(16 * var(--s));
+        font-weight: 500;
+        color: var(--fg);
+      }
+      .htrack {
+        height: calc(26 * var(--s));
+        background: var(--border-soft);
+        border-radius: 9999px;
+        overflow: hidden;
+      }
+      .hfill { height: 100%; background: var(--meta); border-radius: 9999px; }
+      .hrow.is-lead .hfill { background: var(--accent); }
+      .hrow .hv {
+        text-align: right;
+        font-size: calc(22 * var(--s));
+        font-weight: 600;
+        letter-spacing: -0.02em;
+        color: var(--meta);
+        font-variant-numeric: tabular-nums;
+      }
+      .hrow.is-lead .hv { color: var(--accent-hover); }
+      .source {
+        margin-top: auto;
+        padding-top: calc(22 * var(--s));
+        font-size: max(12px, calc(14 * var(--s)));
+        line-height: 1.55;
+        color: var(--muted);
+        max-width: 84ch;
+      }
+
+      /* ── slide 5, pillars ─────────────────────────────────────── */
+      .pillars {
+        margin-top: calc(28 * var(--s));
+        flex: 1;
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: calc(20 * var(--s));
+      }
+      .pillar {
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+        padding: calc(28 * var(--s)) calc(26 * var(--s)) calc(26 * var(--s));
+        display: flex;
+        flex-direction: column;
+      }
+      .pillar .cap {
+        width: calc(48 * var(--s));
+        height: calc(5 * var(--s));
+        border-radius: 999px;
+        background: var(--accent);
+      }
+      .pillar h3 {
+        margin: calc(18 * var(--s)) 0 0;
+        font-size: calc(24 * var(--s));
+        font-weight: 600;
+        letter-spacing: -0.02em;
+        color: var(--meta);
+      }
+      .pillar p {
+        margin: calc(12 * var(--s)) 0 0;
+        font-size: max(12px, calc(14.5 * var(--s)));
+        line-height: 1.6;
+        color: var(--fg-2);
+      }
+      .pillar .tagline {
+        margin-top: auto;
+        padding-top: calc(18 * var(--s));
+        border-top: 1px solid var(--border-soft);
+        font-size: max(12px, calc(12.5 * var(--s)));
+        font-weight: 600;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      /* ── slide 6, timeline ────────────────────────────────────── */
+      .timeline {
+        margin-top: auto;
+        margin-bottom: auto;
+        padding-top: calc(20 * var(--s));
+        position: relative;
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: calc(24 * var(--s));
+      }
+      .timeline::before {
+        content: "";
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: calc(66 * var(--s));
+        height: calc(2 * var(--s));
+        background: var(--border);
+      }
+      .tl-item { position: relative; padding-right: calc(18 * var(--s)); }
+      .tl-month {
+        font-size: max(12px, calc(12.5 * var(--s)));
+        font-weight: 600;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: var(--accent-hover);
+        height: calc(24 * var(--s));
+      }
+      .tl-dot {
+        margin-top: calc(10 * var(--s));
+        width: calc(18 * var(--s));
+        height: calc(18 * var(--s));
+        border-radius: 999px;
+        background: var(--meta);
+        border: calc(4 * var(--s)) solid var(--bg);
+        box-sizing: content-box;
+      }
+      .tl-item.is-lead .tl-dot { background: var(--accent); }
+      .tl-item h3 {
+        margin: calc(22 * var(--s)) 0 0;
+        font-size: calc(19 * var(--s));
+        font-weight: 600;
+        line-height: 1.3;
+        color: var(--fg);
+      }
+      .tl-item p {
+        margin: calc(9 * var(--s)) 0 0;
+        font-size: max(12px, calc(13.5 * var(--s)));
+        line-height: 1.55;
+        color: var(--fg-2);
+      }
+
+      /* ── slide 7, partners ────────────────────────────────────── */
+      .plates {
+        margin-top: calc(30 * var(--s));
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: calc(18 * var(--s));
+      }
+      .plate {
+        border: 1px solid var(--border);
+        border-radius: var(--radius-md);
+        background: var(--surface);
+        min-height: calc(126 * var(--s));
+        padding: calc(18 * var(--s));
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        gap: calc(6 * var(--s));
+      }
+      .plate b {
+        font-size: calc(16 * var(--s));
+        font-weight: 600;
+        color: var(--meta);
+        line-height: 1.3;
+      }
+      .plate span {
+        font-size: max(12px, calc(12 * var(--s)));
+        color: var(--muted);
+      }
+      .thanks {
+        margin-top: auto;
+        padding-top: calc(24 * var(--s));
+        font-size: max(12px, calc(14.5 * var(--s)));
+        line-height: 1.55;
+        color: var(--fg-2);
+      }
+
+      /* ── slide 8, closing ─────────────────────────────────────── */
+      .slide.closing { background: linear-gradient(140deg, #054d87 0%, #032f54 100%); }
+      .closing .pad { justify-content: space-between; }
+      .closing-main { position: relative; }
+      .closing h2 {
+        margin: calc(16 * var(--s)) 0 0;
+        font-size: calc(52 * var(--s));
+        font-weight: 600;
+        line-height: 1.1;
+        letter-spacing: -0.03em;
+        color: #fff;
+        max-width: 20ch;
+      }
+      .closing h2 em { font-style: normal; color: var(--accent); }
+      .contact {
+        margin: calc(26 * var(--s)) 0 0;
+        font-size: calc(16 * var(--s));
+        line-height: 1.7;
+        color: rgba(255, 255, 255, 0.78);
+      }
+      .contact b { display: block; color: #fff; font-weight: 600; font-size: calc(18 * var(--s)); }
+      .join {
+        position: relative;
+        background: var(--accent);
+        border-radius: var(--radius-md);
+        padding: calc(18 * var(--s)) calc(26 * var(--s));
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: calc(20 * var(--s));
+      }
+      .join b {
+        font-size: calc(22 * var(--s));
+        font-weight: 600;
+        color: #fff;
+        letter-spacing: -0.01em;
+      }
+      .join span {
+        font-size: max(12px, calc(14 * var(--s)));
+        font-weight: 500;
+        color: rgba(255, 255, 255, 0.9);
+        white-space: nowrap;
+      }
+    </style>
+  </head>
+  <body>
+
+    <!-- ═══ 01 cover ═══════════════════════════════════════════ -->
+    <section class="slide is-dark cover" data-od-id="slide-cover">
+      <div class="fountain" aria-hidden="true">
+        <div class="halo"></div>
+        <div class="ripple r2"></div>
+        <div class="ripple r1"></div>
+        <svg class="plume" viewBox="0 0 34 34">
+          <circle cx="17" cy="17" r="16" fill="none" stroke="rgba(255,255,255,0.12)" stroke-width="0.35" />
+          <rect x="15.7" y="6.5" width="2.6" height="15" rx="1.3" fill="rgba(255,255,255,0.18)" />
+          <path d="M11 21 C11 14.5, 13.5 11.5, 15.6 10" fill="none" stroke="rgba(255,255,255,0.14)" stroke-width="1.1" stroke-linecap="round" />
+          <path d="M23 21 C23 14.5, 20.5 11.5, 18.4 10" fill="none" stroke="rgba(255,255,255,0.14)" stroke-width="1.1" stroke-linecap="round" />
+          <path d="M8.5 23.5 h17 a8.5 8.5 0 0 1 -17 0 Z" fill="rgba(255,255,255,0.11)" />
+        </svg>
+      </div>
+      <div class="pad">
+        <div class="mark" data-od-id="cover-mark">
+          <svg width="42" height="42" viewBox="0 0 34 34" aria-hidden="true">
+            <circle cx="17" cy="17" r="16" fill="rgba(255,255,255,0.10)" />
+            <circle cx="17" cy="17" r="16" fill="none" stroke="rgba(255,255,255,0.45)" stroke-width="1" />
+            <rect x="15.7" y="6.5" width="2.6" height="15" rx="1.3" fill="#ed7d36" />
+            <path d="M11 21 C11 14.5, 13.5 11.5, 15.6 10" fill="none" stroke="#ed7d36" stroke-width="1.8" stroke-linecap="round" opacity="0.75" />
+            <path d="M23 21 C23 14.5, 20.5 11.5, 18.4 10" fill="none" stroke="#ed7d36" stroke-width="1.8" stroke-linecap="round" opacity="0.75" />
+            <path d="M8.5 23.5 h17 a8.5 8.5 0 0 1 -17 0 Z" fill="rgba(255,255,255,0.85)" />
+          </svg>
+          <span class="wordmark">
+            <b>Fountain Hills Chamber</b>
+            <span>of Commerce</span>
+          </span>
+        </div>
+
+        <div class="cover-main" data-od-id="cover-title">
+          <div class="cover-kicker">Annual community address</div>
+          <h1>State of the<br /><em>Town 2027</em></h1>
+          <div class="rule"></div>
+          <p class="cover-org">Fountain Hills Chamber of Commerce</p>
+        </div>
+
+        <div class="cover-foot" data-od-id="cover-when">
+          <div class="whenwhere">
+            <b>Thursday, March 18, 2027 &middot; 8:30 a.m.</b>
+            <span>Community Center Ballroom, 13001 N. La Monta&ntilde;a Drive</span>
+          </div>
+          <span class="cover-badge">Open to the public</span>
+        </div>
+      </div>
+      <div class="foot">
+        <span>Fountain Hills Chamber of Commerce</span>
+        <span class="fnum">01 / 08</span>
+      </div>
+    </section>
+
+    <!-- ═══ 02 the year in one page ════════════════════════════ -->
+    <section class="slide" data-od-id="slide-year">
+      <div class="pad">
+        <p class="eyebrow">February 2026 through January 2027</p>
+        <h2 class="stitle">The year in one page</h2>
+        <div class="rule"></div>
+        <p class="lede">
+          Three numbers describe the last twelve months in Fountain Hills. Businesses
+          stayed open, they hired, and more people came to town to spend money here.
+        </p>
+
+        <div class="stat-row" data-od-id="year-stats">
+          <div class="stat">
+            <div class="k">Member businesses</div>
+            <div class="v">1,050</div>
+            <p class="n">Up from 972 a year ago, the largest roster in chamber history.</p>
+          </div>
+          <div class="stat is-warm">
+            <div class="k">Jobs added in town</div>
+            <div class="v">236</div>
+            <p class="n">Net new positions reported by member businesses at renewal.</p>
+          </div>
+          <div class="stat">
+            <div class="k">Visitor center guests</div>
+            <div class="v">74,800</div>
+            <p class="n">Walk-ins at the Avenue office, a 9 percent year over year gain.</p>
+          </div>
+        </div>
+      </div>
+      <div class="foot">
+        <span>Fountain Hills Chamber of Commerce</span>
+        <span class="fnum">02 / 08</span>
+      </div>
+    </section>
+
+    <!-- ═══ 03 business climate ════════════════════════════════ -->
+    <section class="slide" data-od-id="slide-climate">
+      <div class="pad">
+        <p class="eyebrow">Main street indicators</p>
+        <h2 class="stitle">Business climate</h2>
+        <div class="rule"></div>
+
+        <div class="climate">
+          <div data-od-id="climate-rows">
+            <div class="drow is-lead">
+              <div class="dk">Storefront occupancy<small>Avenue of the Fountains and Saguaro corridor</small></div>
+              <div class="dv">94%</div>
+            </div>
+            <div class="drow">
+              <div class="dk">New business licenses<small>Issued by the town in calendar 2026</small></div>
+              <div class="dv">61</div>
+            </div>
+            <div class="drow">
+              <div class="dk">Average business tenure<small>Years in operation across the member roster</small></div>
+              <div class="dv">9.2</div>
+            </div>
+            <div class="drow">
+              <div class="dk">Visitor spend<small>Lodging, dining, and retail, town estimate</small></div>
+              <div class="dv">$41M</div>
+            </div>
+          </div>
+
+          <div class="narrative" data-od-id="climate-narrative">
+            <div class="sublabel">What it means</div>
+            <p>
+              Occupancy has not been this tight since 2018. Four of the five vacancies
+              on the Avenue are already under lease, and two of those tenants relocated
+              from Scottsdale to be closer to the fountain.
+            </p>
+            <p>
+              Tenure is the quieter story. A town where the average business has been
+              open more than nine years is a town where owners are choosing to stay,
+              and that stability is what keeps hiring steady through a slow summer.
+            </p>
+            <div class="quiet">
+              Watch item for 2027: three long-standing owners plan to retire, so
+              succession support moves onto the chamber program calendar in June.
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="foot">
+        <span>Fountain Hills Chamber of Commerce</span>
+        <span class="fnum">03 / 08</span>
+      </div>
+    </section>
+
+    <!-- ═══ 04 visitor origin chart ════════════════════════════ -->
+    <section class="slide" data-od-id="slide-visitors">
+      <div class="pad">
+        <p class="eyebrow">Visitor center intake, 74,800 guests</p>
+        <h2 class="stitle">Where visitors come from</h2>
+        <div class="rule"></div>
+
+        <div class="hchart" data-od-id="visitor-chart">
+          <div class="hrow is-lead">
+            <div class="hk">Phoenix metro</div>
+            <div class="htrack"><div class="hfill" style="width: 100%"></div></div>
+            <div class="hv">52%</div>
+          </div>
+          <div class="hrow">
+            <div class="hk">Out of state</div>
+            <div class="htrack"><div class="hfill" style="width: 51.9%"></div></div>
+            <div class="hv">27%</div>
+          </div>
+          <div class="hrow">
+            <div class="hk">In town</div>
+            <div class="htrack"><div class="hfill" style="width: 26.9%"></div></div>
+            <div class="hv">14%</div>
+          </div>
+          <div class="hrow">
+            <div class="hk">International</div>
+            <div class="htrack"><div class="hfill" style="width: 13.5%"></div></div>
+            <div class="hv">7%</div>
+          </div>
+        </div>
+
+        <p class="source">
+          Half of every visitor dollar still arrives from a 40 minute drive away, so
+          the 2027 marketing spend stays weighted toward the East Valley.
+        </p>
+      </div>
+      <div class="foot">
+        <span>Fountain Hills Chamber of Commerce</span>
+        <span class="fnum">04 / 08</span>
+      </div>
+    </section>
+
+    <!-- ═══ 05 pillars ═════════════════════════════════════════ -->
+    <section class="slide" data-od-id="slide-pillars">
+      <div class="pad">
+        <p class="eyebrow">How the chamber spends its year</p>
+        <h2 class="stitle">Three community pillars</h2>
+        <div class="rule"></div>
+
+        <div class="pillars" data-od-id="pillars">
+          <div class="pillar">
+            <span class="cap"></span>
+            <h3>Small business</h3>
+            <p>
+              Free one-on-one counseling, a monthly bookkeeping clinic, and a lending
+              desk that helped 22 owners secure working capital last year. Members who
+              use counseling renew at 99 percent.
+            </p>
+            <div class="tagline">1,050 members served</div>
+          </div>
+          <div class="pillar">
+            <span class="cap"></span>
+            <h3>Tourism</h3>
+            <p>
+              The visitor center, the events calendar, and the shared regional campaign
+              that puts Fountain Hills in front of Phoenix travelers. Every dollar of
+              chamber promotion returned about eleven dollars in visitor spend.
+            </p>
+            <div class="tagline">$41M visitor spend</div>
+          </div>
+          <div class="pillar">
+            <span class="cap"></span>
+            <h3>Workforce</h3>
+            <p>
+              A hiring board for local employers and a high school internship pipeline
+              with the Fountain Hills Unified District. Thirty-one students finished a
+              placement and nine were hired on.
+            </p>
+            <div class="tagline">236 jobs added</div>
+          </div>
+        </div>
+      </div>
+      <div class="foot">
+        <span>Fountain Hills Chamber of Commerce</span>
+        <span class="fnum">05 / 08</span>
+      </div>
+    </section>
+
+    <!-- ═══ 06 timeline ════════════════════════════════════════ -->
+    <section class="slide" data-od-id="slide-timeline">
+      <div class="pad">
+        <p class="eyebrow">Four milestones, one year</p>
+        <h2 class="stitle">What&rsquo;s ahead in 2027</h2>
+        <div class="rule"></div>
+
+        <div class="timeline" data-od-id="timeline">
+          <div class="tl-item is-lead">
+            <div class="tl-month">March</div>
+            <div class="tl-dot"></div>
+            <h3>Avenue streetscape work begins</h3>
+            <p>Shade structures, wider walks, and 40 new parking spaces between La Montaña and Verde River.</p>
+          </div>
+          <div class="tl-item">
+            <div class="tl-month">June</div>
+            <div class="tl-dot"></div>
+            <h3>Succession clinic opens</h3>
+            <p>A six-week program for owners planning a sale or a handoff, built with the town and a local law firm.</p>
+          </div>
+          <div class="tl-item">
+            <div class="tl-month">September</div>
+            <div class="tl-dot"></div>
+            <h3>Workforce academy first cohort</h3>
+            <p>Forty students from Fountain Hills High School start paid placements with member businesses.</p>
+          </div>
+          <div class="tl-item">
+            <div class="tl-month">November</div>
+            <div class="tl-dot"></div>
+            <h3>Merchant Stroll goes two nights</h3>
+            <p>The holiday stroll expands to Friday and Saturday, with 60 vendor booths and a second stage.</p>
+          </div>
+        </div>
+      </div>
+      <div class="foot">
+        <span>Fountain Hills Chamber of Commerce</span>
+        <span class="fnum">06 / 08</span>
+      </div>
+    </section>
+
+    <!-- ═══ 07 partners ════════════════════════════════════════ -->
+    <section class="slide" data-od-id="slide-partners">
+      <div class="pad">
+        <p class="eyebrow">None of this happens alone</p>
+        <h2 class="stitle">Thank you to our 2027 partners</h2>
+        <div class="rule"></div>
+
+        <div class="plates" data-od-id="partner-plates">
+          <div class="plate"><b>Desert Vista Bank</b><span>Presenting partner</span></div>
+          <div class="plate"><b>CopperWynd Resort</b><span>Hospitality partner</span></div>
+          <div class="plate"><b>Sunridge Canyon Grill</b><span>Hospitality partner</span></div>
+          <div class="plate"><b>Four Peaks Insurance Group</b><span>Program partner</span></div>
+          <div class="plate"><b>Palisades Print Co.</b><span>Program partner</span></div>
+          <div class="plate"><b>Saguaro Ridge Realty</b><span>Community partner</span></div>
+          <div class="plate"><b>Fountain View Dental</b><span>Community partner</span></div>
+          <div class="plate"><b>Adero Canyon Outfitters</b><span>Community partner</span></div>
+        </div>
+
+        <p class="thanks">
+          Partner support covered 31 percent of chamber programming in 2026, which is
+          why counseling, the hiring board, and the visitor center stay free to use.
+        </p>
+      </div>
+      <div class="foot">
+        <span>Fountain Hills Chamber of Commerce</span>
+        <span class="fnum">07 / 08</span>
+      </div>
+    </section>
+
+    <!-- ═══ 08 closing ═════════════════════════════════════════ -->
+    <section class="slide is-dark closing" data-od-id="slide-closing">
+      <div class="pad">
+        <div class="mark">
+          <svg width="42" height="42" viewBox="0 0 34 34" aria-hidden="true">
+            <circle cx="17" cy="17" r="16" fill="rgba(255,255,255,0.10)" />
+            <circle cx="17" cy="17" r="16" fill="none" stroke="rgba(255,255,255,0.45)" stroke-width="1" />
+            <rect x="15.7" y="6.5" width="2.6" height="15" rx="1.3" fill="#ed7d36" />
+            <path d="M11 21 C11 14.5, 13.5 11.5, 15.6 10" fill="none" stroke="#ed7d36" stroke-width="1.8" stroke-linecap="round" opacity="0.75" />
+            <path d="M23 21 C23 14.5, 20.5 11.5, 18.4 10" fill="none" stroke="#ed7d36" stroke-width="1.8" stroke-linecap="round" opacity="0.75" />
+            <path d="M8.5 23.5 h17 a8.5 8.5 0 0 1 -17 0 Z" fill="rgba(255,255,255,0.85)" />
+          </svg>
+          <span class="wordmark">
+            <b>Fountain Hills Chamber</b>
+            <span>of Commerce</span>
+          </span>
+        </div>
+
+        <div class="closing-main">
+          <div class="cover-kicker">Thank you for a strong year</div>
+          <h2>Where Business, Community, and <em>Opportunity Flow</em></h2>
+          <p class="contact">
+            <b>16837 E. Palisades Blvd., Fountain Hills, AZ 85268</b>
+            (480) 837-1654 &middot; fhchamber.com &middot; Visitor center open Monday through Friday, 9 a.m. to 4 p.m.
+          </p>
+        </div>
+
+        <div class="join" data-od-id="join-cta">
+          <b>Become a member</b>
+          <span>fhchamber.com/join &middot; (480) 837-1654</span>
+        </div>
+      </div>
+      <div class="foot">
+        <span>Fountain Hills Chamber of Commerce</span>
+        <span class="fnum">08 / 08</span>
+      </div>
+    </section>
+
+  </body>
+</html>

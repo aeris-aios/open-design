@@ -1,0 +1,99 @@
+{
+  "$schema": "https://open-design.ai/schemas/plugin.v1.json",
+  "specVersion": "1.0.0",
+  "name": "example-fhcoc-member-onepager",
+  "title": "Membership Benefits One-Pager",
+  "title_i18n": {
+    "en": "Membership Benefits One-Pager"
+  },
+  "version": "0.1.0",
+  "publishedAt": "2026-09-01T00:00:00Z",
+  "description": "A chamber membership one-pager: what a business gets, the tier ladder with dues, sponsorship and advertising rates, and one join call to action. Trigger keywords: \"membership benefits\", \"one-pager\", \"join sheet\", \"rate card\".",
+  "description_i18n": {
+    "en": "A chamber membership one-pager: what a business gets, the tier ladder with dues, sponsorship and advertising rates, and one join call to action. Trigger keywords: \"membership benefits\", \"one-pager\", \"join sheet\", \"rate card\"."
+  },
+  "license": "MIT",
+  "author": {
+    "name": "Fountain Hills Chamber of Commerce",
+    "url": "https://fhchamber.com"
+  },
+  "homepage": "https://fhchamber.com",
+  "tags": [
+    "example",
+    "first-party",
+    "prototype",
+    "marketing",
+    "lead-magnet",
+    "e-guide",
+    "one-pager",
+    "membership",
+    "benefits",
+    "rate-card",
+    "fountain-hills-chamber",
+    "chamber"
+  ],
+  "compat": {
+    "agentSkills": [
+      {
+        "path": "./SKILL.md"
+      }
+    ]
+  },
+  "od": {
+    "kind": "scenario",
+    "taskKind": "new-generation",
+    "mode": "prototype",
+    "platform": "desktop",
+    "scenario": "marketing",
+    "surface": "web",
+    "preview": {
+      "type": "html",
+      "entry": "./example.html"
+    },
+    "useCase": {
+      "query": {
+        "en": "Build a one-page membership benefits sheet for prospective members, with the four dues tiers, what each tier includes, the sponsorship rate card, and a join call to action."
+      },
+      "exampleOutputs": [
+        {
+          "path": "./example.html",
+          "title": "Membership Benefits One-Pager"
+        }
+      ]
+    },
+    "context": {
+      "skills": [
+        {
+          "path": "./SKILL.md"
+        }
+      ],
+      "designSystem": {
+        "primary": true,
+        "ref": "fountain-hills-chamber"
+      },
+      "craft": [
+        "typography",
+        "color",
+        "anti-ai-slop"
+      ],
+      "assets": [
+        "./example.html"
+      ]
+    },
+    "pipeline": {
+      "stages": [
+        {
+          "id": "generate",
+          "atoms": [
+            "file-write",
+            "live-artifact"
+          ]
+        }
+      ]
+    },
+    "capabilities": [
+      "prompt:inject",
+      "fs:write"
+    ]
+  }
+}

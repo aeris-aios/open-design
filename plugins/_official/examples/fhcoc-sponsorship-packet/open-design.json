@@ -1,0 +1,99 @@
+{
+  "$schema": "https://open-design.ai/schemas/plugin.v1.json",
+  "specVersion": "1.0.0",
+  "name": "example-fhcoc-sponsorship-packet",
+  "title": "Sponsorship Packet",
+  "title_i18n": {
+    "en": "Sponsorship Packet"
+  },
+  "version": "0.1.0",
+  "publishedAt": "2026-09-01T00:00:00Z",
+  "description": "A chamber sponsorship prospectus: the audience numbers, where a sponsor name appears, a four-tier benefit comparison table, an add-on rate card, and one reserve-a-tier call to action, laid out on letter sheets. Trigger keywords: \"sponsorship packet\", \"partnership prospectus\", \"sponsor deck\", \"rate card\".",
+  "description_i18n": {
+    "en": "A chamber sponsorship prospectus: the audience numbers, where a sponsor name appears, a four-tier benefit comparison table, an add-on rate card, and one reserve-a-tier call to action, laid out on letter sheets. Trigger keywords: \"sponsorship packet\", \"partnership prospectus\", \"sponsor deck\", \"rate card\"."
+  },
+  "license": "MIT",
+  "author": {
+    "name": "Fountain Hills Chamber of Commerce",
+    "url": "https://fhchamber.com"
+  },
+  "homepage": "https://fhchamber.com",
+  "tags": [
+    "example",
+    "first-party",
+    "prototype",
+    "sales",
+    "report",
+    "document",
+    "sponsorship",
+    "rate-card",
+    "prospectus",
+    "partnership",
+    "fountain-hills-chamber",
+    "chamber"
+  ],
+  "compat": {
+    "agentSkills": [
+      {
+        "path": "./SKILL.md"
+      }
+    ]
+  },
+  "od": {
+    "kind": "scenario",
+    "taskKind": "new-generation",
+    "mode": "prototype",
+    "platform": "desktop",
+    "scenario": "sales",
+    "surface": "web",
+    "preview": {
+      "type": "html",
+      "entry": "./example.html"
+    },
+    "useCase": {
+      "query": {
+        "en": "Build the 2027 sponsorship prospectus, with audience numbers, the four tier levels and what each includes, the add-on rate card, and a reserve a tier call to action."
+      },
+      "exampleOutputs": [
+        {
+          "path": "./example.html",
+          "title": "Sponsorship Packet"
+        }
+      ]
+    },
+    "context": {
+      "skills": [
+        {
+          "path": "./SKILL.md"
+        }
+      ],
+      "designSystem": {
+        "primary": true,
+        "ref": "fountain-hills-chamber"
+      },
+      "craft": [
+        "typography",
+        "color",
+        "anti-ai-slop"
+      ],
+      "assets": [
+        "./example.html"
+      ]
+    },
+    "pipeline": {
+      "stages": [
+        {
+          "id": "generate",
+          "atoms": [
+            "file-write",
+            "live-artifact"
+          ]
+        }
+      ]
+    },
+    "capabilities": [
+      "prompt:inject",
+      "fs:write"
+    ]
+  }
+}

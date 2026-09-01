@@ -1,0 +1,598 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Chamber annual report — example</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg: #ffffff;
+        --surface: #faf7f4;
+        --surface-warm: #fdeadd;
+        --fg: #0f172a;
+        --fg-2: #334155;
+        --muted: #64748b;
+        --meta: #054d87;
+        --meta-deep: #032f54;
+        --border: #dbe4ee;
+        --border-soft: #e3eef7;
+        --accent: #ed7d36;
+        --accent-hover: #d96a26;
+        --font: Poppins, ui-sans-serif, system-ui, -apple-system, sans-serif;
+        --radius-sm: 10px;
+        --radius-md: 12px;
+        --radius-lg: 16px;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; padding: 0; }
+      body {
+        background: var(--surface);
+        color: var(--fg-2);
+        font-family: var(--font);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 32px;
+        padding: 40px 24px 56px;
+        min-height: 100dvh;
+      }
+
+      .sheet {
+        width: min(820px, 100%);
+        aspect-ratio: 8.5 / 11;
+        background: var(--bg);
+        border-radius: var(--radius-lg);
+        box-shadow: 0 18px 48px rgba(5, 77, 135, 0.14);
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+      }
+
+      /* ── cover band ───────────────────────────────────────────── */
+      .cover {
+        position: relative;
+        overflow: hidden;
+        flex: 0 0 45%;
+        background: linear-gradient(135deg, var(--meta) 0%, var(--meta-deep) 100%);
+        color: #fff;
+        padding: 30px 48px 34px;
+        display: flex;
+        flex-direction: column;
+      }
+      .cover > * { position: relative; z-index: 1; }
+      .cover-art {
+        position: absolute;
+        z-index: 0;
+        right: -34px;
+        top: 74px;
+        width: 300px;
+        height: 300px;
+        opacity: 0.15;
+      }
+      .cover-top {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 16px;
+      }
+      .cover-kicker {
+        font-size: 11px;
+        font-weight: 500;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: rgba(255, 255, 255, 0.78);
+        text-align: right;
+        line-height: 1.6;
+      }
+      .mark { display: flex; align-items: center; gap: 12px; }
+      .mark svg { display: block; }
+      .wordmark { line-height: 1.1; }
+      .wordmark b {
+        display: block;
+        font-size: 17px;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+      }
+      .wordmark span {
+        display: block;
+        font-size: 11px;
+        font-weight: 400;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: rgba(255, 255, 255, 0.7);
+        margin-top: 2px;
+      }
+      .cover-body { margin-top: auto; }
+      .year {
+        font-size: 78px;
+        font-weight: 600;
+        letter-spacing: -0.04em;
+        line-height: 0.92;
+        color: rgba(255, 255, 255, 0.42);
+      }
+      .cover h1 {
+        margin: 6px 0 0;
+        font-size: 54px;
+        font-weight: 600;
+        letter-spacing: -0.03em;
+        line-height: 1.02;
+        color: #fff;
+      }
+      .cover-rule {
+        width: 96px;
+        height: 6px;
+        border-radius: 9999px;
+        background: var(--accent);
+        margin: 20px 0 0;
+      }
+      .tagline {
+        margin: 16px 0 0;
+        font-size: 15px;
+        font-weight: 400;
+        line-height: 1.5;
+        color: rgba(255, 255, 255, 0.85);
+      }
+
+      /* ── sheet body ───────────────────────────────────────────── */
+      .body {
+        padding: 28px 48px 18px;
+        display: flex;
+        flex-direction: column;
+        flex: 1;
+        min-height: 0;
+      }
+      h2 {
+        margin: 0;
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 0.2em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      .letter p {
+        margin: 12px 0 0;
+        font-size: 13px;
+        line-height: 1.62;
+        color: var(--fg-2);
+        max-width: 74ch;
+      }
+      .letter p:first-of-type { margin-top: 14px; }
+      .letter p b { color: var(--meta); font-weight: 600; }
+      .signoff {
+        margin-top: 16px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 32px;
+        padding-top: 14px;
+        border-top: 1px solid var(--border-soft);
+      }
+      .sig-name { font-size: 13.5px; font-weight: 600; color: var(--meta); }
+      .sig-role { margin-top: 2px; font-size: 12px; color: var(--muted); }
+
+      /* ── highlight row ────────────────────────────────────────── */
+      .highlights {
+        margin-top: auto;
+        padding-top: 20px;
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 14px;
+      }
+      .highlight {
+        border: 1px solid var(--border);
+        border-radius: var(--radius-md);
+        padding: 14px 16px 15px;
+        background: var(--bg);
+      }
+      .highlight.is-lead { background: var(--surface-warm); border-color: rgba(237, 125, 54, 0.34); }
+      .highlight .label {
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      .highlight.is-lead .label { color: var(--accent-hover); }
+      .highlight .value {
+        margin-top: 6px;
+        font-size: 26px;
+        font-weight: 600;
+        letter-spacing: -0.03em;
+        line-height: 1.05;
+        color: var(--meta);
+      }
+      .highlight .note {
+        margin: 4px 0 0;
+        font-size: 12px;
+        line-height: 1.45;
+        color: var(--fg-2);
+      }
+
+      /* ── sheet footer ─────────────────────────────────────────── */
+      .sheet-foot {
+        margin-top: auto;
+        padding: 12px 48px 16px;
+        border-top: 1px solid var(--border);
+        background: var(--surface);
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: space-between;
+        gap: 8px;
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .sheet-foot b { color: var(--meta); font-weight: 600; }
+
+      /* ── sheet two band ───────────────────────────────────────── */
+      .band {
+        background: var(--meta);
+        color: #fff;
+        padding: 14px 48px 15px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+      }
+      .band-title { font-size: 14px; font-weight: 600; letter-spacing: -0.01em; }
+      .band-note {
+        font-size: 11px;
+        font-weight: 500;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: rgba(255, 255, 255, 0.78);
+      }
+      h3 {
+        margin: 0;
+        font-size: 30px;
+        font-weight: 600;
+        letter-spacing: -0.025em;
+        line-height: 1.12;
+        color: var(--meta);
+      }
+      .lede {
+        margin: 8px 0 0;
+        font-size: 13px;
+        line-height: 1.55;
+        color: var(--fg-2);
+        max-width: 70ch;
+      }
+
+      /* ── numbers grid ─────────────────────────────────────────── */
+      .numbers {
+        margin-top: 18px;
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 1px;
+        background: var(--border);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-md);
+        overflow: hidden;
+      }
+      .number { background: var(--bg); padding: 14px 16px 15px; }
+      .number b {
+        display: block;
+        font-size: 27px;
+        font-weight: 600;
+        letter-spacing: -0.03em;
+        line-height: 1.05;
+        color: var(--meta);
+      }
+      .number span {
+        display: block;
+        margin-top: 5px;
+        font-size: 12px;
+        line-height: 1.4;
+        color: var(--fg-2);
+      }
+
+      /* ── bar chart ────────────────────────────────────────────── */
+      .chart { margin-top: 22px; }
+      .bars { margin-top: 12px; display: flex; flex-direction: column; gap: 9px; }
+      .bar-row {
+        display: grid;
+        grid-template-columns: 150px 1fr 44px;
+        align-items: center;
+        gap: 14px;
+      }
+      .bar-label { font-size: 13px; color: var(--fg-2); line-height: 1.3; }
+      .bar-track {
+        height: 18px;
+        background: var(--border-soft);
+        border-radius: 9999px;
+        overflow: hidden;
+      }
+      .bar-fill {
+        height: 100%;
+        background: var(--meta);
+        border-radius: 9999px;
+      }
+      .bar-fill.is-top { background: var(--accent); }
+      .bar-value {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--meta);
+        text-align: right;
+      }
+      .chart-note { margin: 10px 0 0; font-size: 12px; color: var(--muted); line-height: 1.45; }
+
+      /* ── spotlight ────────────────────────────────────────────── */
+      .spotlight { margin-top: 22px; }
+      .spot-grid {
+        margin-top: 12px;
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 14px;
+      }
+      .spot {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-md);
+        padding: 14px 16px 15px;
+      }
+      .spot h4 {
+        margin: 0;
+        font-size: 14.5px;
+        font-weight: 600;
+        color: var(--meta);
+        letter-spacing: -0.01em;
+      }
+      .spot p { margin: 6px 0 0; font-size: 12.5px; line-height: 1.5; color: var(--fg-2); }
+      .spot .tag {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        margin-top: 10px;
+        padding: 5px 12px;
+        border-radius: 9999px;
+        background: var(--surface-warm);
+        color: var(--accent-hover);
+        font-size: 12px;
+        font-weight: 600;
+      }
+
+      /* ── board ────────────────────────────────────────────────── */
+      .board { margin-top: 22px; }
+      .board-grid {
+        margin-top: 12px;
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 10px 18px;
+      }
+      .director { border-top: 1px solid var(--border-soft); padding-top: 8px; }
+      .director b { display: block; font-size: 13px; font-weight: 600; color: var(--fg); }
+      .director span { display: block; margin-top: 2px; font-size: 12px; color: var(--muted); line-height: 1.35; }
+
+      @media (max-width: 760px) {
+        .sheet { aspect-ratio: auto; }
+        .cover { flex: 0 0 auto; }
+        .cover h1 { font-size: 38px; }
+        .year { font-size: 56px; }
+        .highlights, .numbers, .spot-grid, .board-grid { grid-template-columns: 1fr; }
+        .bar-row { grid-template-columns: 120px 1fr 40px; }
+      }
+      @media print {
+        body { background: #fff; padding: 0; gap: 0; }
+        .sheet { box-shadow: none; border-radius: 0; width: 100%; }
+        * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      }
+    </style>
+  </head>
+  <body>
+    <!-- ═══ Sheet 1, cover and year in review ════════════════════ -->
+    <article class="sheet" data-od-id="sheet-1">
+      <header class="cover" data-od-id="cover">
+        <svg class="cover-art" viewBox="0 0 34 34" aria-hidden="true">
+          <g fill="none" stroke="#ffffff" stroke-width="0.7" stroke-linecap="round">
+            <circle cx="17" cy="17" r="16" />
+            <circle cx="17" cy="17" r="12.4" stroke-width="0.4" />
+            <path d="M17 6.5 V21.5" stroke-width="1.1" />
+            <path d="M11 21 C11 14.5, 13.5 11.5, 15.6 10" />
+            <path d="M23 21 C23 14.5, 20.5 11.5, 18.4 10" />
+            <path d="M8.5 23.5 h17 a8.5 8.5 0 0 1 -17 0 Z" stroke-width="0.9" />
+          </g>
+        </svg>
+
+        <div class="cover-top">
+          <div class="mark">
+            <svg width="34" height="34" viewBox="0 0 34 34" aria-hidden="true">
+              <circle cx="17" cy="17" r="16" fill="rgba(255,255,255,0.10)" />
+              <circle cx="17" cy="17" r="16" fill="none" stroke="rgba(255,255,255,0.45)" stroke-width="1" />
+              <rect x="15.7" y="6.5" width="2.6" height="15" rx="1.3" fill="#ed7d36" />
+              <path d="M11 21 C11 14.5, 13.5 11.5, 15.6 10" fill="none" stroke="#ed7d36" stroke-width="1.8" stroke-linecap="round" opacity="0.75" />
+              <path d="M23 21 C23 14.5, 20.5 11.5, 18.4 10" fill="none" stroke="#ed7d36" stroke-width="1.8" stroke-linecap="round" opacity="0.75" />
+              <path d="M8.5 23.5 h17 a8.5 8.5 0 0 1 -17 0 Z" fill="rgba(255,255,255,0.85)" />
+            </svg>
+            <span class="wordmark">
+              <b>Fountain Hills Chamber</b>
+              <span>of Commerce</span>
+            </span>
+          </div>
+          <div class="cover-kicker">Fountain Hills, Arizona<br />Adopted March 4, 2027</div>
+        </div>
+
+        <div class="cover-body">
+          <div class="year">2026</div>
+          <h1 data-od-id="cover-title">Annual Report</h1>
+          <div class="cover-rule"></div>
+          <p class="tagline">Where Business, Community, and Opportunity Flow</p>
+        </div>
+      </header>
+
+      <div class="body">
+        <section class="letter" data-od-id="chair-letter">
+          <h2>A letter from the chamber</h2>
+          <p>
+            <b>2026 was the year Fountain Hills got busier.</b> Our members opened 41
+            new storefronts along the Avenue and Saguaro Boulevard, and the chamber
+            grew to 1,050 businesses. Every one of them showed up for each other, at
+            ribbon cuttings, at mixers, and on the Oktoberfest grounds.
+          </p>
+          <p>
+            We spent the year on the work members told us matters most, which is
+            getting found and getting introduced. The rebuilt online directory sent
+            31,000 visits to member listings, and 268 one-on-one advising sessions
+            helped owners price, hire, and plan.
+          </p>
+          <p>
+            Thank you to the volunteers, the sponsors, and the board who carried this.
+            The pages that follow are your year, in numbers. We are already building
+            the 2027 calendar, and we would like to see your name on it.
+          </p>
+          <div class="signoff">
+            <div>
+              <div class="sig-name">Betsy Lawson</div>
+              <div class="sig-role">Board Chair</div>
+            </div>
+            <div>
+              <div class="sig-name">Marco Alvarez</div>
+              <div class="sig-role">President and CEO</div>
+            </div>
+          </div>
+        </section>
+
+        <div class="highlights" data-od-id="highlights">
+          <div class="highlight is-lead">
+            <div class="label">Record attendance</div>
+            <div class="value">18,000</div>
+            <p class="note">Guests at the 2026 Oktoberfest, our largest gate yet.</p>
+          </div>
+          <div class="highlight">
+            <div class="label">Local spend</div>
+            <div class="value">$1.4M</div>
+            <p class="note">Tracked through the Shop Fountain Hills card program.</p>
+          </div>
+          <div class="highlight">
+            <div class="label">Owner advising</div>
+            <div class="value">268</div>
+            <p class="note">One-on-one sessions with member business owners.</p>
+          </div>
+        </div>
+      </div>
+
+      <footer class="sheet-foot" data-od-id="foot-1">
+        <span><b>Fountain Hills Chamber of Commerce</b> &middot; 2026 Annual Report</span>
+        <span>Page 1 of 2</span>
+      </footer>
+    </article>
+
+    <!-- ═══ Sheet 2, the numbers ═════════════════════════════════ -->
+    <article class="sheet" data-od-id="sheet-2">
+      <header class="band" data-od-id="band">
+        <div class="mark">
+          <svg width="26" height="26" viewBox="0 0 34 34" aria-hidden="true">
+            <circle cx="17" cy="17" r="16" fill="rgba(255,255,255,0.10)" />
+            <circle cx="17" cy="17" r="16" fill="none" stroke="rgba(255,255,255,0.45)" stroke-width="1" />
+            <rect x="15.7" y="6.5" width="2.6" height="15" rx="1.3" fill="#ed7d36" />
+            <path d="M11 21 C11 14.5, 13.5 11.5, 15.6 10" fill="none" stroke="#ed7d36" stroke-width="1.8" stroke-linecap="round" opacity="0.75" />
+            <path d="M23 21 C23 14.5, 20.5 11.5, 18.4 10" fill="none" stroke="#ed7d36" stroke-width="1.8" stroke-linecap="round" opacity="0.75" />
+            <path d="M8.5 23.5 h17 a8.5 8.5 0 0 1 -17 0 Z" fill="rgba(255,255,255,0.85)" />
+          </svg>
+          <span class="band-title">Fountain Hills Chamber of Commerce</span>
+        </div>
+        <span class="band-note">2026 Annual Report</span>
+      </header>
+
+      <div class="body">
+        <h3 data-od-id="numbers-title">The year in numbers</h3>
+        <p class="lede">
+          Figures cover January 1 to December 31, 2026, and were reviewed by Sonoran
+          Ridge CPA in February 2027.
+        </p>
+
+        <div class="numbers" data-od-id="stat-grid">
+          <div class="number"><b>1,050</b><span>Member businesses</span></div>
+          <div class="number"><b>178</b><span>New members joined</span></div>
+          <div class="number"><b>142</b><span>Events held</span></div>
+          <div class="number"><b>31,400</b><span>Total event attendance</span></div>
+          <div class="number"><b>46</b><span>Ribbon cuttings</span></div>
+          <div class="number"><b>6,340</b><span>Volunteer hours</span></div>
+        </div>
+
+        <section class="chart" data-od-id="revenue-chart">
+          <h2>Revenue by source</h2>
+          <div class="bars">
+            <div class="bar-row">
+              <div class="bar-label">Membership dues</div>
+              <div class="bar-track"><div class="bar-fill is-top" style="width: 100%"></div></div>
+              <div class="bar-value">46%</div>
+            </div>
+            <div class="bar-row">
+              <div class="bar-label">Events</div>
+              <div class="bar-track"><div class="bar-fill" style="width: 58.7%"></div></div>
+              <div class="bar-value">27%</div>
+            </div>
+            <div class="bar-row">
+              <div class="bar-label">Sponsorship</div>
+              <div class="bar-track"><div class="bar-fill" style="width: 39.1%"></div></div>
+              <div class="bar-value">18%</div>
+            </div>
+            <div class="bar-row">
+              <div class="bar-label">Programs</div>
+              <div class="bar-track"><div class="bar-fill" style="width: 13%"></div></div>
+              <div class="bar-value">6%</div>
+            </div>
+            <div class="bar-row">
+              <div class="bar-label">Other</div>
+              <div class="bar-track"><div class="bar-fill" style="width: 6.5%"></div></div>
+              <div class="bar-value">3%</div>
+            </div>
+          </div>
+          <p class="chart-note">
+            Total 2026 operating revenue was $1,284,500. Bars are scaled against
+            membership dues, the largest source.
+          </p>
+        </section>
+
+        <section class="spotlight" data-od-id="program-spotlight">
+          <h2>Program spotlight</h2>
+          <div class="spot-grid">
+            <div class="spot">
+              <h4>Leadership Fountain Hills</h4>
+              <p>
+                Twenty-four owners and managers finished the ninth class, nine months
+                of town history, budgets, and civic practice. The capstone team rebuilt
+                the community garden shade structure.
+              </p>
+              <span class="tag">24 graduates</span>
+            </div>
+            <div class="spot">
+              <h4>Shop Fountain Hills</h4>
+              <p>
+                The holiday card program ran from November 6 through January 4 with
+                214 participating storefronts, the widest merchant list since the
+                program started in 2021.
+              </p>
+              <span class="tag">$1.4M tracked spend</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="board" data-od-id="board">
+          <h2>2026 Board of Directors</h2>
+          <div class="board-grid">
+            <div class="director"><b>Betsy Lawson</b><span>Chair, Lawson Title Agency</span></div>
+            <div class="director"><b>Dana Whitfield</b><span>Vice Chair, Whitfield Dental</span></div>
+            <div class="director"><b>Ray Okafor</b><span>Treasurer, Sonoran Ridge CPA</span></div>
+            <div class="director"><b>Priya Raghavan</b><span>Secretary, Raghavan Design Build</span></div>
+            <div class="director"><b>Tom Beckett</b><span>Director, Beckett Auto Care</span></div>
+            <div class="director"><b>Elena Cortez</b><span>Director, Avenue Coffee Roasters</span></div>
+            <div class="director"><b>Greg Halloran</b><span>Director, Copperwynd Resort</span></div>
+            <div class="director"><b>Michelle Duarte</b><span>Director, Duarte Physical Therapy</span></div>
+            <div class="director"><b>Sam Pruitt</b><span>Director, Palisades Print Co.</span></div>
+          </div>
+        </section>
+      </div>
+
+      <footer class="sheet-foot" data-od-id="foot-2">
+        <span><b>16837 E. Palisades Blvd., Fountain Hills, AZ 85268</b> &middot; (480) 837-1654 &middot; fhchamber.com</span>
+        <span>Page 2 of 2</span>
+      </footer>
+    </article>
+  </body>
+</html>

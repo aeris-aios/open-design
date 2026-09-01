@@ -1,0 +1,913 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Fountain Hills Chamber member directory</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg: #ffffff;
+        --surface: #faf7f4;
+        --surface-warm: #fdeadd;
+        --fg: #0f172a;
+        --fg-2: #334155;
+        --muted: #64748b;
+        --meta: #054d87;
+        --meta-deep: #032f54;
+        --border: #dbe4ee;
+        --border-soft: #e3eef7;
+        --accent: #ed7d36;
+        --accent-hover: #d96a26;
+        --font: Poppins, ui-sans-serif, system-ui, -apple-system, sans-serif;
+        --radius-sm: 10px;
+        --radius-md: 12px;
+        --radius-lg: 16px;
+        --radius-pill: 9999px;
+        --elev: 0 8px 24px rgba(5, 77, 135, 0.1);
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; padding: 0; }
+      body {
+        background: var(--bg);
+        color: var(--fg-2);
+        font-family: var(--font);
+        font-size: 16px;
+        line-height: 1.55;
+        -webkit-font-smoothing: antialiased;
+      }
+      h1, h2, h3, h4, p, ul, ol, dl, dd, dt { margin: 0; }
+      ul { padding: 0; list-style: none; }
+
+      .wrap {
+        width: 100%;
+        max-width: 1160px;
+        margin: 0 auto;
+        padding: 0 32px;
+      }
+      .eyebrow {
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 0.2em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        min-height: 44px;
+        padding: 12px 24px;
+        border-radius: var(--radius-md);
+        border: 1px solid transparent;
+        font-family: inherit;
+        font-size: 15px;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+        text-decoration: none;
+        cursor: pointer;
+        transition: background-color 150ms cubic-bezier(0.2, 0, 0, 1),
+          border-color 150ms cubic-bezier(0.2, 0, 0, 1),
+          color 150ms cubic-bezier(0.2, 0, 0, 1);
+      }
+      .btn-primary { background: var(--accent); color: #fff; }
+      .btn-primary:hover { background: var(--accent-hover); }
+      .btn-lg { min-height: 52px; padding: 14px 30px; font-size: 16px; }
+
+      /* ── utility bar ───────────────────────────────────────────── */
+      .utility {
+        background: var(--meta-deep);
+        color: rgba(255, 255, 255, 0.78);
+        font-size: 12.5px;
+        line-height: 1.5;
+      }
+      .utility .wrap {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        padding-top: 9px;
+        padding-bottom: 9px;
+      }
+      .utility b { color: #fff; font-weight: 500; }
+      .utility .sep { color: rgba(255, 255, 255, 0.34); padding: 0 8px; }
+
+      /* ── header ────────────────────────────────────────────────── */
+      .siteheader {
+        background: var(--bg);
+        border-bottom: 1px solid var(--border);
+        box-shadow: 0 1px 0 rgba(5, 77, 135, 0.04);
+      }
+      .siteheader .wrap {
+        display: flex;
+        align-items: center;
+        gap: 32px;
+        padding-top: 16px;
+        padding-bottom: 16px;
+      }
+      .mark { display: flex; align-items: center; gap: 12px; }
+      .mark svg { display: block; flex: none; }
+      .wordmark { line-height: 1.15; }
+      .wordmark b {
+        display: block;
+        font-size: 16px;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+        color: var(--meta);
+      }
+      .wordmark span {
+        display: block;
+        font-size: 12px;
+        font-weight: 400;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--muted);
+        margin-top: 1px;
+      }
+      .nav { margin-left: auto; display: flex; align-items: center; gap: 30px; }
+      .nav a {
+        font-size: 15px;
+        font-weight: 500;
+        color: var(--fg-2);
+        text-decoration: none;
+        transition: color 150ms cubic-bezier(0.2, 0, 0, 1);
+      }
+      .nav a:hover { color: var(--accent-hover); }
+      .nav a.is-current { color: var(--meta); font-weight: 600; }
+
+      /* ── directory hero ────────────────────────────────────────── */
+      .dir-hero {
+        background:
+          radial-gradient(110% 150% at 90% 0%, #fdeadd 0%, rgba(253, 234, 221, 0) 62%),
+          var(--surface);
+        border-bottom: 1px solid var(--border);
+      }
+      .dir-hero .wrap { padding-top: 60px; padding-bottom: 44px; }
+      .dir-hero-top {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 344px;
+        gap: 56px;
+        align-items: start;
+      }
+      .dir-hero h1 {
+        margin-top: 12px;
+        font-size: 48px;
+        line-height: 1.08;
+        font-weight: 600;
+        letter-spacing: -0.03em;
+        color: var(--meta);
+      }
+      .dir-hero .lede {
+        margin-top: 16px;
+        font-size: 17px;
+        line-height: 1.6;
+        color: var(--fg-2);
+        max-width: 52ch;
+      }
+
+      .glance {
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+        box-shadow: var(--elev);
+        overflow: hidden;
+      }
+      .glance-head { background: var(--meta); color: #fff; padding: 18px 24px 16px; }
+      .glance-head .label {
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 0.2em;
+        text-transform: uppercase;
+        color: rgba(255, 255, 255, 0.72);
+      }
+      .glance-head .headline {
+        margin-top: 6px;
+        font-size: 19px;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+      }
+      .glance dl { padding: 4px 24px 18px; }
+      .glance .row {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 13px 0;
+        border-bottom: 1px solid var(--border-soft);
+      }
+      .glance .row:last-child { border-bottom: 0; padding-bottom: 2px; }
+      .glance dt {
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--muted);
+        white-space: nowrap;
+      }
+      .glance dd {
+        text-align: right;
+        font-size: 15px;
+        font-weight: 500;
+        color: var(--fg);
+        line-height: 1.4;
+      }
+      .glance .foot {
+        background: var(--surface-warm);
+        border-top: 1px solid #f6cfae;
+        padding: 13px 24px;
+        font-size: 13px;
+        color: #8a4415;
+        font-weight: 500;
+        text-align: center;
+      }
+
+      .searchbar {
+        margin-top: 34px;
+        display: flex;
+        gap: 12px;
+      }
+      .field {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        min-height: 52px;
+        padding: 0 18px;
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-md);
+        box-shadow: var(--elev);
+      }
+      .field svg { flex: none; display: block; }
+      .field .placeholder {
+        font-size: 15.5px;
+        color: var(--muted);
+      }
+      .searchbar .btn { flex: none; }
+
+      .filters {
+        margin-top: 26px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+      .chip {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        min-height: 44px;
+        padding: 10px 20px;
+        border-radius: var(--radius-pill);
+        border: 1px solid var(--border);
+        background: var(--bg);
+        color: var(--fg-2);
+        font-size: 14.5px;
+        font-weight: 500;
+        text-decoration: none;
+        transition: border-color 150ms cubic-bezier(0.2, 0, 0, 1),
+          color 150ms cubic-bezier(0.2, 0, 0, 1);
+      }
+      .chip:hover { border-color: var(--accent); color: var(--accent-hover); }
+      .chip.is-active {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: #fff;
+        font-weight: 600;
+      }
+      .chip.is-active:hover { background: var(--accent-hover); color: #fff; }
+
+      /* ── results ───────────────────────────────────────────────── */
+      .results { padding: 44px 0 88px; }
+      .results-head {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 24px;
+        flex-wrap: wrap;
+        padding-bottom: 22px;
+        border-bottom: 1px solid var(--border);
+      }
+      .results-head h2 {
+        font-size: 19px;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+        color: var(--meta);
+      }
+      .results-head h2 span { color: var(--muted); font-weight: 400; font-size: 15.5px; }
+      .results-head .hint { font-size: 13.5px; color: var(--muted); }
+
+      .grid {
+        margin-top: 28px;
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 24px;
+      }
+      .member {
+        display: flex;
+        flex-direction: column;
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+        box-shadow: var(--elev);
+        padding: 24px 24px 20px;
+      }
+      .member-top { display: flex; align-items: flex-start; gap: 16px; }
+      .monogram {
+        flex: none;
+        width: 60px;
+        height: 60px;
+        border-radius: var(--radius-md);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        font-size: 19px;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+        background: var(--meta);
+        color: #fff;
+      }
+      .monogram.is-warm { background: var(--surface-warm); color: var(--accent-hover); }
+      .member h3 {
+        font-size: 18px;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+        line-height: 1.3;
+        color: var(--meta);
+      }
+      .badges { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; }
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        border-radius: var(--radius-pill);
+        padding: 4px 12px;
+        font-size: 12px;
+        font-weight: 500;
+        line-height: 1.5;
+      }
+      .badge-cat { background: var(--border-soft); color: var(--meta); }
+      .badge-champion { background: var(--accent); color: #fff; font-weight: 600; }
+      .member .desc {
+        margin-top: 16px;
+        margin-bottom: 16px;
+        font-size: 14.5px;
+        line-height: 1.6;
+        color: var(--fg-2);
+      }
+      .member .facts {
+        margin-top: auto;
+        padding-top: 16px;
+        border-top: 1px solid var(--border-soft);
+        font-size: 13.5px;
+        line-height: 1.7;
+        color: var(--muted);
+        font-style: normal;
+      }
+      .member .facts b { display: block; color: var(--fg-2); font-weight: 500; }
+      .member .view {
+        margin-top: 18px;
+        padding-top: 14px;
+        border-top: 1px solid var(--border-soft);
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--meta);
+        text-decoration: none;
+        transition: color 150ms cubic-bezier(0.2, 0, 0, 1);
+      }
+      .member .view:hover { color: var(--accent-hover); }
+      .member .view .chev { font-weight: 500; font-size: 16px; line-height: 1; }
+      .member-body { display: flex; flex-direction: column; flex: 1; }
+
+      .pager {
+        margin-top: 36px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+      }
+      .page {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        min-width: 44px;
+        min-height: 44px;
+        padding: 10px 14px;
+        border-radius: var(--radius-md);
+        border: 1px solid var(--border);
+        background: var(--bg);
+        color: var(--fg-2);
+        font-size: 14.5px;
+        font-weight: 500;
+        text-decoration: none;
+      }
+      .page.is-active { background: var(--meta); border-color: var(--meta); color: #fff; font-weight: 600; }
+
+      /* ── join band ─────────────────────────────────────────────── */
+      .join { padding: 0 0 88px; }
+      .join .panel {
+        background: linear-gradient(135deg, var(--meta) 0%, var(--meta-deep) 100%);
+        border-radius: var(--radius-lg);
+        padding: 48px 56px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 40px;
+        flex-wrap: wrap;
+      }
+      .join h2 {
+        font-size: 32px;
+        font-weight: 600;
+        letter-spacing: -0.02em;
+        line-height: 1.15;
+        color: #fff;
+      }
+      .join p {
+        margin-top: 12px;
+        font-size: 16px;
+        line-height: 1.6;
+        color: rgba(255, 255, 255, 0.8);
+        max-width: 56ch;
+      }
+      .join .btn { flex: none; }
+
+      /* ── footer ────────────────────────────────────────────────── */
+      .footer { background: var(--meta); color: rgba(255, 255, 255, 0.78); }
+      .footer .wrap { padding-top: 56px; padding-bottom: 28px; }
+      .footer-grid {
+        display: grid;
+        grid-template-columns: 1.4fr 1fr 1fr;
+        gap: 40px;
+      }
+      .footer .wordmark b { color: #fff; }
+      .footer .wordmark span { color: rgba(255, 255, 255, 0.62); }
+      .footer address {
+        margin-top: 18px;
+        font-style: normal;
+        font-size: 14.5px;
+        line-height: 1.7;
+      }
+      .footer address b { color: #fff; font-weight: 500; }
+      .footer h4 {
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: rgba(255, 255, 255, 0.62);
+      }
+      .footer ul { margin-top: 8px; }
+      .footer li { margin-top: 10px; }
+      .footer a { color: rgba(255, 255, 255, 0.86); text-decoration: none; font-size: 14.5px; }
+      .footer a:hover { color: var(--accent); }
+      .footer .tagline {
+        margin-top: 36px;
+        padding-top: 20px;
+        border-top: 1px solid rgba(255, 255, 255, 0.16);
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        flex-wrap: wrap;
+        font-size: 13px;
+        color: rgba(255, 255, 255, 0.66);
+      }
+      .footer .tagline b {
+        color: #fff;
+        font-weight: 500;
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .footer .tagline b::before {
+        content: "";
+        width: 22px;
+        height: 3px;
+        border-radius: var(--radius-pill);
+        background: var(--accent);
+        flex: none;
+      }
+
+      @media (max-width: 1040px) {
+        .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      }
+      @media (max-width: 960px) {
+        .wrap { padding: 0 24px; }
+        .dir-hero-top { grid-template-columns: 1fr; gap: 32px; }
+        .dir-hero h1 { font-size: 38px; }
+        .join .panel { padding: 36px 32px; }
+        .footer-grid { grid-template-columns: 1fr; }
+      }
+      @media (max-width: 640px) {
+        .wrap { padding: 0 16px; }
+        .nav { display: none; }
+        .grid { grid-template-columns: 1fr; }
+        .searchbar { flex-direction: column; }
+        .results { padding-bottom: 56px; }
+        .join { padding-bottom: 56px; }
+      }
+    </style>
+  </head>
+  <body>
+    <!-- ── utility bar ─────────────────────────────────────────── -->
+    <div class="utility" data-od-id="utility">
+      <div class="wrap">
+        <span
+          ><b>Fountain Hills Chamber of Commerce</b><span class="sep">&middot;</span>16837 E.
+          Palisades Blvd., Fountain Hills, AZ 85268</span
+        >
+        <span>(480) 837-1654<span class="sep">&middot;</span>fhchamber.com</span>
+      </div>
+    </div>
+
+    <!-- ── header ──────────────────────────────────────────────── -->
+    <header class="siteheader" data-od-id="header">
+      <div class="wrap">
+        <div class="mark">
+          <svg width="40" height="40" viewBox="0 0 34 34" aria-hidden="true">
+            <circle cx="17" cy="17" r="16" fill="#054d87" />
+            <circle cx="17" cy="17" r="16" fill="none" stroke="rgba(5,77,135,0.25)" stroke-width="1" />
+            <rect x="15.7" y="6.5" width="2.6" height="15" rx="1.3" fill="#ed7d36" />
+            <path d="M11 21 C11 14.5, 13.5 11.5, 15.6 10" fill="none" stroke="#ed7d36" stroke-width="1.8" stroke-linecap="round" opacity="0.75" />
+            <path d="M23 21 C23 14.5, 20.5 11.5, 18.4 10" fill="none" stroke="#ed7d36" stroke-width="1.8" stroke-linecap="round" opacity="0.75" />
+            <path d="M8.5 23.5 h17 a8.5 8.5 0 0 1 -17 0 Z" fill="rgba(255,255,255,0.9)" />
+          </svg>
+          <span class="wordmark">
+            <b>Fountain Hills Chamber</b>
+            <span>of Commerce</span>
+          </span>
+        </div>
+        <nav class="nav">
+          <a href="#directory" class="is-current">Directory</a>
+          <a href="#directory">Events</a>
+          <a href="#directory">Membership</a>
+          <a href="#join">Visit Fountain Hills</a>
+          <a class="btn btn-primary" href="#join">Join the chamber</a>
+        </nav>
+      </div>
+    </header>
+
+    <!-- ── directory hero ──────────────────────────────────────── -->
+    <section class="dir-hero" id="directory" data-od-id="hero">
+      <div class="wrap">
+        <div class="dir-hero-top">
+          <div>
+            <p class="eyebrow">Member directory</p>
+            <h1>Find a Fountain Hills business</h1>
+            <p class="lede">
+              Every listing below belongs to a business that pays dues, hires locally, and helps
+              fund the events that fill Fountain Park. Search by name, or browse a category.
+            </p>
+
+            <div class="searchbar" data-od-id="search">
+              <div class="field">
+                <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true">
+                  <circle cx="9" cy="9" r="6" fill="none" stroke="#64748b" stroke-width="1.8" />
+                  <path d="M13.5 13.5 17 17" stroke="#64748b" stroke-width="1.8" stroke-linecap="round" />
+                </svg>
+                <span class="placeholder">Search by name, service, or keyword</span>
+              </div>
+              <a class="btn btn-primary btn-lg" href="#directory">Search</a>
+            </div>
+          </div>
+
+          <aside class="glance" data-od-id="glance">
+            <div class="glance-head">
+              <div class="label">Directory</div>
+              <div class="headline">312 member businesses</div>
+            </div>
+            <dl>
+              <div class="row"><dt>Categories</dt><dd>26</dd></div>
+              <div class="row"><dt>Chamber Champions</dt><dd>34 businesses</dd></div>
+              <div class="row"><dt>Last updated</dt><dd>September 1, 2026</dd></div>
+            </dl>
+            <div class="foot">Every listing is verified by the chamber office</div>
+          </aside>
+        </div>
+
+        <div class="filters" data-od-id="filters">
+          <a class="chip is-active" href="#directory">All</a>
+          <a class="chip" href="#directory">Dining</a>
+          <a class="chip" href="#directory">Retail</a>
+          <a class="chip" href="#directory">Professional services</a>
+          <a class="chip" href="#directory">Home services</a>
+          <a class="chip" href="#directory">Health &amp; wellness</a>
+          <a class="chip" href="#directory">Real estate</a>
+          <a class="chip" href="#directory">Nonprofit</a>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── results ─────────────────────────────────────────────── -->
+    <section class="results" data-od-id="results">
+      <div class="wrap">
+        <div class="results-head">
+          <h2>312 members <span>&middot; sorted by name</span></h2>
+          <p class="hint">Showing 1 to 9. Chamber Champion listings appear first in their category.</p>
+        </div>
+
+        <div class="grid" data-od-id="member-grid">
+          <article class="member">
+            <div class="member-body">
+              <div class="member-top">
+                <div class="monogram">AW</div>
+                <div>
+                  <h3>Adero Wellness Studio</h3>
+                  <div class="badges">
+                    <span class="badge badge-cat">Health &amp; wellness</span>
+                  </div>
+                </div>
+              </div>
+              <p class="desc">
+                Small group pilates, recovery sauna, and physical therapy referrals, seven mornings
+                a week.
+              </p>
+              <address class="facts">
+                <b>13440 N. Verde River Dr., Suite 4</b>
+                (480) 837-2208
+              </address>
+            </div>
+            <a class="view" href="#directory">View listing <span class="chev">&rsaquo;</span></a>
+          </article>
+
+          <article class="member">
+            <div class="member-body">
+              <div class="member-top">
+                <div class="monogram is-warm">CR</div>
+                <div>
+                  <h3>Copperwynd Resort</h3>
+                  <div class="badges">
+                    <span class="badge badge-cat">Dining</span>
+                    <span class="badge badge-champion">Chamber Champion</span>
+                  </div>
+                </div>
+              </div>
+              <p class="desc">
+                Hilltop rooms, tennis courts, and a terrace kitchen that hosts the chamber's annual
+                awards dinner.
+              </p>
+              <address class="facts">
+                <b>13225 N. Eagle Ridge Dr.</b>
+                (480) 837-0770
+              </address>
+            </div>
+            <a class="view" href="#directory">View listing <span class="chev">&rsaquo;</span></a>
+          </article>
+
+          <article class="member">
+            <div class="member-body">
+              <div class="member-top">
+                <div class="monogram">DV</div>
+                <div>
+                  <h3>Desert Vista Bank</h3>
+                  <div class="badges">
+                    <span class="badge badge-cat">Professional services</span>
+                  </div>
+                </div>
+              </div>
+              <p class="desc">
+                Community lender with a small business desk, SBA loans, and a branch on the
+                boulevard since 1994.
+              </p>
+              <address class="facts">
+                <b>16748 E. Palisades Blvd.</b>
+                (480) 837-4410
+              </address>
+            </div>
+            <a class="view" href="#directory">View listing <span class="chev">&rsaquo;</span></a>
+          </article>
+
+          <article class="member">
+            <div class="member-body">
+              <div class="member-top">
+                <div class="monogram is-warm">FC</div>
+                <div>
+                  <h3>Fountain Hills Community Theater</h3>
+                  <div class="badges">
+                    <span class="badge badge-cat">Nonprofit</span>
+                    <span class="badge badge-champion">Chamber Champion</span>
+                  </div>
+                </div>
+              </div>
+              <p class="desc">
+                A 180 seat playhouse running six mainstage productions plus a youth workshop each
+                season.
+              </p>
+              <address class="facts">
+                <b>11445 N. Saguaro Blvd.</b>
+                (480) 837-9661
+              </address>
+            </div>
+            <a class="view" href="#directory">View listing <span class="chev">&rsaquo;</span></a>
+          </article>
+
+          <article class="member">
+            <div class="member-body">
+              <div class="member-top">
+                <div class="monogram">FP</div>
+                <div>
+                  <h3>Fountain Park Realty</h3>
+                  <div class="badges">
+                    <span class="badge badge-cat">Real estate</span>
+                  </div>
+                </div>
+              </div>
+              <p class="desc">
+                Nine agents covering Fountain Hills, Rio Verde, and north Scottsdale, with free
+                relocation packets.
+              </p>
+              <address class="facts">
+                <b>16810 E. Ave. of the Fountains, Suite 102</b>
+                (480) 837-3155
+              </address>
+            </div>
+            <a class="view" href="#directory">View listing <span class="chev">&rsaquo;</span></a>
+          </article>
+
+          <article class="member">
+            <div class="member-body">
+              <div class="member-top">
+                <div class="monogram">IH</div>
+                <div>
+                  <h3>Ironwood Home Services</h3>
+                  <div class="badges">
+                    <span class="badge badge-cat">Home services</span>
+                  </div>
+                </div>
+              </div>
+              <p class="desc">
+                Licensed heating, cooling, and plumbing crews with same day service across the
+                85268 zip code.
+              </p>
+              <address class="facts">
+                <b>16929 E. Enterprise Dr., Bay 3</b>
+                (480) 837-6127
+              </address>
+            </div>
+            <a class="view" href="#directory">View listing <span class="chev">&rsaquo;</span></a>
+          </article>
+
+          <article class="member">
+            <div class="member-body">
+              <div class="member-top">
+                <div class="monogram">PP</div>
+                <div>
+                  <h3>Palisades Print Co.</h3>
+                  <div class="badges">
+                    <span class="badge badge-cat">Retail</span>
+                  </div>
+                </div>
+              </div>
+              <p class="desc">
+                Signs, banners, and short run printing, plus the wristbands and programs for every
+                chamber festival.
+              </p>
+              <address class="facts">
+                <b>16605 E. Palisades Blvd., Suite B</b>
+                (480) 837-5540
+              </address>
+            </div>
+            <a class="view" href="#directory">View listing <span class="chev">&rsaquo;</span></a>
+          </article>
+
+          <article class="member">
+            <div class="member-body">
+              <div class="member-top">
+                <div class="monogram">SD</div>
+                <div>
+                  <h3>Saguaro Dental Group</h3>
+                  <div class="badges">
+                    <span class="badge badge-cat">Health &amp; wellness</span>
+                  </div>
+                </div>
+              </div>
+              <p class="desc">
+                Family and cosmetic dentistry with evening appointments and a Saturday emergency
+                line.
+              </p>
+              <address class="facts">
+                <b>13014 N. Saguaro Blvd., Suite 200</b>
+                (480) 837-7712
+              </address>
+            </div>
+            <a class="view" href="#directory">View listing <span class="chev">&rsaquo;</span></a>
+          </article>
+
+          <article class="member">
+            <div class="member-body">
+              <div class="member-top">
+                <div class="monogram is-warm">SC</div>
+                <div>
+                  <h3>Sunridge Canyon Grill</h3>
+                  <div class="badges">
+                    <span class="badge badge-cat">Dining</span>
+                    <span class="badge badge-champion">Chamber Champion</span>
+                  </div>
+                </div>
+              </div>
+              <p class="desc">
+                Clubhouse dining with a patio over the 18th green, and the host of Business After
+                Hours each October.
+              </p>
+              <address class="facts">
+                <b>13100 N. Sunridge Dr.</b>
+                (480) 837-5100
+              </address>
+            </div>
+            <a class="view" href="#directory">View listing <span class="chev">&rsaquo;</span></a>
+          </article>
+        </div>
+
+        <nav class="pager" aria-label="Directory pages">
+          <span class="page is-active">1</span>
+          <a class="page" href="#directory">2</a>
+          <a class="page" href="#directory">3</a>
+          <a class="page" href="#directory">4</a>
+          <a class="page" href="#directory">Next &rsaquo;</a>
+        </nav>
+      </div>
+    </section>
+
+    <!-- ── join band ───────────────────────────────────────────── -->
+    <section class="join" id="join" data-od-id="cta">
+      <div class="wrap">
+        <div class="panel">
+          <div>
+            <h2>Not listed yet?</h2>
+            <p>
+              Membership starts at $295 a year and includes this listing, event pricing, and a spot
+              in the referral network that 312 Fountain Hills businesses already share.
+            </p>
+          </div>
+          <a class="btn btn-primary btn-lg" href="#join">Become a member</a>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── footer ──────────────────────────────────────────────── -->
+    <footer class="footer" data-od-id="footer">
+      <div class="wrap">
+        <div class="footer-grid">
+          <div>
+            <div class="mark">
+              <svg width="40" height="40" viewBox="0 0 34 34" aria-hidden="true">
+                <circle cx="17" cy="17" r="16" fill="rgba(255,255,255,0.10)" />
+                <circle cx="17" cy="17" r="16" fill="none" stroke="rgba(255,255,255,0.45)" stroke-width="1" />
+                <rect x="15.7" y="6.5" width="2.6" height="15" rx="1.3" fill="#ed7d36" />
+                <path d="M11 21 C11 14.5, 13.5 11.5, 15.6 10" fill="none" stroke="#ed7d36" stroke-width="1.8" stroke-linecap="round" opacity="0.75" />
+                <path d="M23 21 C23 14.5, 20.5 11.5, 18.4 10" fill="none" stroke="#ed7d36" stroke-width="1.8" stroke-linecap="round" opacity="0.75" />
+                <path d="M8.5 23.5 h17 a8.5 8.5 0 0 1 -17 0 Z" fill="rgba(255,255,255,0.85)" />
+              </svg>
+              <span class="wordmark">
+                <b>Fountain Hills Chamber</b>
+                <span>of Commerce</span>
+              </span>
+            </div>
+            <address>
+              <b>16837 E. Palisades Blvd.</b><br />
+              Fountain Hills, AZ 85268<br />
+              (480) 837-1654<br />
+              fhchamber.com
+            </address>
+          </div>
+
+          <div>
+            <h4>Directory</h4>
+            <ul>
+              <li><a href="#directory">Browse all members</a></li>
+              <li><a href="#directory">Categories</a></li>
+              <li><a href="#directory">Chamber Champions</a></li>
+              <li><a href="#directory">Update your listing</a></li>
+            </ul>
+          </div>
+
+          <div>
+            <h4>The chamber</h4>
+            <ul>
+              <li><a href="#join">Become a member</a></li>
+              <li><a href="#directory">Events calendar</a></li>
+              <li><a href="#directory">Visitor center</a></li>
+              <li><a href="#directory">Contact the office</a></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="tagline">
+          <span><b>Where Business, Community, and Opportunity Flow</b></span>
+          <span>&copy; 2026 Fountain Hills Chamber of Commerce. Fountain Hills, Arizona.</span>
+        </div>
+      </div>
+    </footer>
+  </body>
+</html>

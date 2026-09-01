@@ -26,6 +26,7 @@ import {
   extractCategories,
   extractSubcategories,
 } from './plugins-home/facets';
+import { chamberPluginRank, isGalleryHidden } from './plugins-home/chamberCuration';
 import { localizePluginTitle } from './plugins-home/localization';
 import { examplePresetSeedPrompt } from './plugins-home/presetSeedPrompt';
 import { inferPluginPreview, type MediaPreviewSpec } from './plugins-home/preview';
@@ -133,6 +134,10 @@ export function buildCommunityTemplates(
   }
 
   const entries = plugins.flatMap((record, index) => {
+    // Gallery curation (chamberCuration.ts): upstream templates that are not
+    // work a chamber does never reach the grid. Same set the Home Examples
+    // rail filters on, so the two surfaces cannot disagree about a card.
+    if (isGalleryHidden(record.id)) return [];
     const categorySlug = extractCategories(record)[0];
     if (!categorySlug) return [];
     const type = FACET_CATEGORY_TYPE[categorySlug];
@@ -141,12 +146,18 @@ export function buildCommunityTemplates(
     return [{ record, index, categorySlug, subSlug, type }];
   });
 
-  // Group the grid the way the pills read: category order, then the sub-facet
-  // display order, then catalogue order. The subtype pill row is derived from
-  // this array, so sorting here is what puts the pills in taxonomy order.
+  // Group the grid the way the pills read: category order, then the chamber's
+  // own templates, then the sub-facet display order, then catalogue order. The
+  // subtype pill row is derived from this array, so sorting here is what puts
+  // both the cards and the pills in the order this office works: the first tab
+  // a staffer opens leads with chamber collateral, and the pill behind it is
+  // the facet that collateral belongs to.
   entries.sort((a, b) => {
     const byCategory = categoryOrder.indexOf(a.categorySlug) - categoryOrder.indexOf(b.categorySlug);
     if (byCategory !== 0) return byCategory;
+    const chamber = (id: string) => chamberPluginRank(id) ?? Number.MAX_SAFE_INTEGER;
+    const byChamber = chamber(a.record.id) - chamber(b.record.id);
+    if (byChamber !== 0) return byChamber;
     const rank = (categorySlug: string, subSlug: string | null) => (
       subSlug === null
         ? Number.MAX_SAFE_INTEGER

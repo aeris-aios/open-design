@@ -1,0 +1,98 @@
+{
+  "$schema": "https://open-design.ai/schemas/plugin.v1.json",
+  "specVersion": "1.0.0",
+  "name": "example-fhcoc-social-post",
+  "title": "Member Spotlight Social Post",
+  "title_i18n": {
+    "en": "Member Spotlight Social Post"
+  },
+  "version": "0.1.0",
+  "publishedAt": "2026-09-01T00:00:00Z",
+  "description": "Square social graphics for the chamber feed: member spotlight, event promo, and membership drive, each 1080 by 1080 with the chamber mark, one focal headline, and one call to action. Trigger keywords: \"social post\", \"member spotlight\", \"event promo graphic\", \"instagram post\".",
+  "description_i18n": {
+    "en": "Square social graphics for the chamber feed: member spotlight, event promo, and membership drive, each 1080 by 1080 with the chamber mark, one focal headline, and one call to action. Trigger keywords: \"social post\", \"member spotlight\", \"event promo graphic\", \"instagram post\"."
+  },
+  "license": "MIT",
+  "author": {
+    "name": "Fountain Hills Chamber of Commerce",
+    "url": "https://fhchamber.com"
+  },
+  "homepage": "https://fhchamber.com",
+  "tags": [
+    "example",
+    "first-party",
+    "prototype",
+    "marketing",
+    "social",
+    "social-media-post",
+    "member-spotlight",
+    "poster",
+    "square",
+    "fountain-hills-chamber",
+    "chamber"
+  ],
+  "compat": {
+    "agentSkills": [
+      {
+        "path": "./SKILL.md"
+      }
+    ]
+  },
+  "od": {
+    "kind": "scenario",
+    "taskKind": "new-generation",
+    "mode": "prototype",
+    "platform": "desktop",
+    "scenario": "marketing",
+    "surface": "web",
+    "preview": {
+      "type": "html",
+      "entry": "./example.html"
+    },
+    "useCase": {
+      "query": {
+        "en": "Design three square social posts: a member spotlight for a local restaurant, an event promo for the next mixer, and a membership drive card."
+      },
+      "exampleOutputs": [
+        {
+          "path": "./example.html",
+          "title": "Member Spotlight Social Post"
+        }
+      ]
+    },
+    "context": {
+      "skills": [
+        {
+          "path": "./SKILL.md"
+        }
+      ],
+      "designSystem": {
+        "primary": true,
+        "ref": "fountain-hills-chamber"
+      },
+      "craft": [
+        "typography",
+        "color",
+        "anti-ai-slop"
+      ],
+      "assets": [
+        "./example.html"
+      ]
+    },
+    "pipeline": {
+      "stages": [
+        {
+          "id": "generate",
+          "atoms": [
+            "file-write",
+            "live-artifact"
+          ]
+        }
+      ]
+    },
+    "capabilities": [
+      "prompt:inject",
+      "fs:write"
+    ]
+  }
+}
