@@ -35,6 +35,7 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import { coalescedGet, evictCoalescedGet } from '../lib/coalesced-get';
+import { CLOUD_DISABLED } from '../cf-deployment';
 import {
   workspaceSeatCapacityState,
   type WorkspaceActiveResponse,
@@ -1209,6 +1210,11 @@ function RailSocialRow({
       ...dimensions,
     });
   }
+
+  // CF self-hosted: these point at the upstream project's Discord, X account
+  // and support inbox. Chamber staff have their own support path, and the
+  // links put another product's brand on every screen, so they are omitted.
+  if (CLOUD_DISABLED) return null;
 
   return (
     <div className="entry-nav-rail__social" data-testid="entry-nav-rail-social">

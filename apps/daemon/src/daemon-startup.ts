@@ -122,16 +122,21 @@ export async function startDaemonRuntime(options: DaemonRuntimeOptions = {}): Pr
   // deployment that has a Chromium binary, fall back to a headless renderer
   // implementing the same contract so those exports still work. Hosts without
   // Chromium keep the previous behaviour (the route reports unavailable).
-  let { desktopArtifactExporter } = serverOptions;
-  if (!desktopArtifactExporter) {
-    const { exportArtifactHeadless, headlessArtifactExportAvailable } = await import(
-      './headless-artifact-export.js'
-    );
-    if (headlessArtifactExportAvailable()) desktopArtifactExporter = exportArtifactHeadless;
+  let { desktopArtifactExporter, desktopPdfExporter } = serverOptions;
+  if (!desktopArtifactExporter || !desktopPdfExporter) {
+    const { exportArtifactHeadless, exportPdfHeadless, headlessArtifactExportAvailable } =
+      await import('./headless-artifact-export.js');
+    if (headlessArtifactExportAvailable()) {
+      desktopArtifactExporter ??= exportArtifactHeadless;
+      // The PDF route is gated on its own hook, so wiring only the artifact
+      // exporter still left "Export as PDF" answering 501.
+      desktopPdfExporter ??= exportPdfHeadless;
+    }
   }
   const started = await startServer({
     ...serverOptions,
     ...(desktopArtifactExporter ? { desktopArtifactExporter } : {}),
+    ...(desktopPdfExporter ? { desktopPdfExporter } : {}),
     returnServer: true,
   }) as string | StartedServer;
   if (typeof started === 'string') {

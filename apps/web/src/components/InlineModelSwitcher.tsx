@@ -55,6 +55,7 @@ import {
 import { KNOWN_PROVIDERS } from '../state/config';
 import { fetchProviderModels } from '../providers/provider-models';
 import { SUGGESTED_MODELS_BY_PROTOCOL } from '../state/apiProtocols';
+import { CLOUD_DISABLED } from '../cf-deployment';
 import {
   canUpgradeVelaPlan,
   cancelVelaLogin,
@@ -1223,16 +1224,23 @@ export function InlineModelSwitcher({
                 </span>
               )}
             </span>
-            {/* Divider sits right after the agent logo; the status dot then
+            {/* CF self-hosted: the model is pinned server-side, so staff never
+                see engine internals. Upstream shows a divider, status dot and
+                model name here; the chip itself still opens the picker.
+                Divider sits right after the agent logo; the status dot then
                 leads the model name so the dot reads as part of the model
                 label rather than trailing the logo. */}
-            <span className="inline-switcher__chip-divider" aria-hidden="true" />
-            <span
-              className="inline-switcher__chip-conn"
-              data-connected={chipConnected ? 'true' : 'false'}
-              aria-hidden="true"
-            />
-            <span className="inline-switcher__chip-model-name">{chipModel}</span>
+            {CLOUD_DISABLED ? null : (
+              <>
+                <span className="inline-switcher__chip-divider" aria-hidden="true" />
+                <span
+                  className="inline-switcher__chip-conn"
+                  data-connected={chipConnected ? 'true' : 'false'}
+                  aria-hidden="true"
+                />
+                <span className="inline-switcher__chip-model-name">{chipModel}</span>
+              </>
+            )}
             {chipUnlimitedBadge ? (
               <span
                 className={

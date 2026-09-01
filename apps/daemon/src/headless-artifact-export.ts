@@ -18,6 +18,8 @@ import path from 'node:path';
 import type {
   DesktopExportArtifactInput,
   DesktopExportArtifactResult,
+  DesktopExportPdfInput,
+  DesktopExportPdfResult,
 } from '@open-design/sidecar-proto';
 import {
   findRealElementRange,
@@ -162,4 +164,24 @@ export async function exportArtifactHeadless(
   } finally {
     if (dir) await fs.promises.rm(dir, { force: true, recursive: true }).catch(() => {});
   }
+}
+
+/**
+ * The separate "export PDF" hook the desktop shell also provides. Same render
+ * path as above; without this the PDF route answers 501 "only available in the
+ * desktop runtime" even when the artifact exporter is wired.
+ */
+export async function exportPdfHeadless(
+  input: DesktopExportPdfInput,
+): Promise<DesktopExportPdfResult> {
+  const result = await exportArtifactHeadless({
+    deck: input.deck,
+    format: 'pdf',
+    html: input.html,
+    title: input.title,
+    ...(input.baseHref !== undefined ? { baseHref: input.baseHref } : {}),
+  });
+  return result.ok && result.path
+    ? { ok: true, path: result.path }
+    : { ok: false, error: result.error ?? 'headless PDF export failed' };
 }
