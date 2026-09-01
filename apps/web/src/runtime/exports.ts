@@ -804,6 +804,16 @@ export async function exportProjectAsPdf(opts: {
       method: 'POST',
     });
     if (!resp.ok) throw new Error(`desktop PDF export unavailable (${resp.status})`);
+    // The desktop shell saves the file itself and answers with JSON describing
+    // where it went. A server-side renderer has nowhere to save on the user's
+    // machine, so it streams the PDF back instead - deliver that as a download.
+    // Without this branch `resp.json()` rejects on "%PDF-1.4…", the catch below
+    // turned that into `{}`, and the export reported success having delivered
+    // nothing.
+    if (resp.headers.get('content-type')?.includes('application/pdf')) {
+      triggerDownload(await resp.blob(), `${safeFilename(opts.title, 'artifact')}.pdf`);
+      return 'desktop';
+    }
     const body = await resp.json().catch(() => ({}));
     if (body?.canceled === true) return 'cancelled';
     if (body && body.ok === false) throw new Error(body.error || 'desktop PDF export failed');

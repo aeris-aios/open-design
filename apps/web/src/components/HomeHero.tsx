@@ -742,9 +742,18 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
   // this read only `activeExamplePlugins` to guarantee non-empty slices, but
   // that left the rail showing fewer types than Community; the empty case is
   // now handled by the full-catalog fallback in `filteredExamplePlugins`.)
+  // Gallery curation applies to every path that can put a card on this rail,
+  // not just the curated showcase: the sub-category pills and the pill-filtered
+  // list below both derive from the install set, and reading it raw let upstream
+  // templates (SaaS landings, pitch-deck prompts, invoices) reappear the moment
+  // a staffer picked a sub-category. See plugins-home/chamberCuration.ts.
+  const galleryPluginOptions = useMemo(
+    () => pluginOptions.filter((plugin) => !isGalleryHidden(plugin.id)),
+    [pluginOptions],
+  );
   const activeSubChips = useMemo(
-    () => subChipsForChip(activeChipId, pluginOptions),
-    [activeChipId, pluginOptions],
+    () => subChipsForChip(activeChipId, galleryPluginOptions),
+    [activeChipId, galleryPluginOptions],
   );
   // When a sub-category pill is active, show the SAME set the Community section
   // shows for that sub-category — every matching plugin from the full install
@@ -767,11 +776,11 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
           ? null
           : selectedSubcategory;
     if (!facetSubcategory) return activeExamplePlugins;
-    const pool = pluginOptions.filter((plugin) => plugin.manifest?.od?.kind !== 'atom');
+    const pool = galleryPluginOptions.filter((plugin) => plugin.manifest?.od?.kind !== 'atom');
     return sortByVisualAppeal(
       applyFacetSelection(pool, { category: activeChipId, subcategory: facetSubcategory }),
     );
-  }, [activeExamplePlugins, activeChipId, selectedSubcategory, pluginOptions]);
+  }, [activeExamplePlugins, activeChipId, selectedSubcategory, galleryPluginOptions]);
 
   // First-run guide, beat 1: pulse the Prototype chip for brand-new users only
   // when Home could not bind a default type. A successfully seeded default has
