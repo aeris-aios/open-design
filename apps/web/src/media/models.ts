@@ -326,7 +326,9 @@ export interface MediaModel {
  * `packages/model-bank/src/aiModels/openai.ts` and friends in lobehub.
  */
 export const IMAGE_MODELS: MediaModel[] = [
-  { id: 'vela/gpt-image-2', label: 'gpt-image-2 (Cloud)', hint: 'OpenDesign Cloud · managed image generation and editing', provider: 'vela', caps: ['t2i', 'i2i'], default: true },
+  // CF self-hosted: Cloud (vela) models need a proprietary CLI binary that is
+  // not in this image, so the default is the direct OpenAI renderer below.
+  { id: 'vela/gpt-image-2', label: 'gpt-image-2 (Cloud)', hint: 'OpenDesign Cloud · managed image generation and editing', provider: 'vela', caps: ['t2i', 'i2i'] },
   { id: 'vela/nano-banana-2', label: 'nano-banana-2 (Cloud)', hint: 'OpenDesign Cloud · managed image generation and editing', provider: 'vela', caps: ['t2i', 'i2i'] },
   { id: 'vela/nano-banana-2-lite', label: 'nano-banana-2-lite (Cloud)', hint: 'OpenDesign Cloud · fast managed image generation and editing', provider: 'vela', caps: ['t2i', 'i2i'] },
   { id: 'vela/seedream-5.0', label: 'seedream-5.0 (Cloud)', hint: 'OpenDesign Cloud · managed image generation and editing', provider: 'vela', caps: ['t2i', 'i2i'] },
@@ -338,6 +340,7 @@ export const IMAGE_MODELS: MediaModel[] = [
     hint: 'OpenAI · 4K, native multimodal',
     provider: 'openai',
     caps: ['t2i', 'i2i', 'inpaint'],
+    default: true,
   },
   {
     id: 'gpt-image-1.5',

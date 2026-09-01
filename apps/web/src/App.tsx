@@ -295,8 +295,16 @@ const AGENT_FOCUS_REFRESH_THROTTLE_MS = 10_000;
 export function shouldRouteToFirstRunOnboarding(
   config: AppConfig,
   pathname: string,
+  hasAvailableAgent = false,
 ): boolean {
   if (config.onboardingCompleted === true) return false;
+  // CF self-hosted deployment - there is exactly one engine, so the setup step
+  // is meaningless friction: staff land straight in the composer and the agent
+  // is selected for them (see the backfill effect keyed on CLOUD_DISABLED).
+  // The one case that still warrants it is no engine detected at all - then the
+  // setup screen is the honest signal that the server is misconfigured, rather
+  // than a composer that silently fails on first use.
+  if (CLOUD_DISABLED && hasAvailableAgent) return false;
   if (
     pathname.startsWith('/projects/')
     || pathname.startsWith('/collab-demo')
@@ -2238,7 +2246,11 @@ function AppInner() {
         // banner keys off `privacyDecisionAt`. They may coexist on the
         // first launch; the banner sits above the modal layer so it
         // stays actionable regardless of the active view.
-        if (shouldRouteToFirstRunOnboarding(next, window.location.pathname)) {
+        // CLOUD_DISABLED skips the setup screen here unconditionally: the agent
+        // scan is still in flight at boot, so deciding on availability now
+        // would race. The effect below re-routes to onboarding if the scan
+        // finishes and finds no engine.
+        if (shouldRouteToFirstRunOnboarding(next, window.location.pathname, CLOUD_DISABLED)) {
           navigate({ kind: 'home', view: 'onboarding' }, { replace: true });
         }
         setDaemonConfigLoaded(true);
@@ -2301,19 +2313,47 @@ function AppInner() {
   // persists it to the daemon, which then races and clobbers the user's AMR
   // selection on the next launch. Gate on onboardingCompleted so this only
   // backfills an empty slot for returning users.
+  // CF self-hosted: the AMR race the guard below protects against cannot occur
+  // (AMR is never an option under CLOUD_DISABLED), so this effect is allowed to
+  // run before onboarding completes - it then does exactly what the setup
+  // screen's Continue button did: pick the detected engine and persist it.
   useEffect(() => {
     if (!daemonConfigLoaded || agentsLoading) return;
-    if (config.onboardingCompleted !== true) return;
+    if (!CLOUD_DISABLED && config.onboardingCompleted !== true) return;
     if (config.agentId) return;
     const firstAvailable = agents.find((a) => a.available);
     if (!firstAvailable) return;
     setConfig((prev) => {
       if (prev.agentId) return prev;
-      const next: AppConfig = { ...prev, agentId: firstAvailable.id };
+      const next: AppConfig = {
+        ...prev,
+        agentId: firstAvailable.id,
+        // Completing onboarding on the user's behalf; the daemon copy of this
+        // flag is what stops every other browser re-running the setup screen.
+        ...(CLOUD_DISABLED ? { onboardingCompleted: true } : {}),
+      };
       saveConfig(next);
       void syncConfigToDaemon(next);
       return next;
     });
+  }, [
+    daemonConfigLoaded,
+    agentsLoading,
+    agents,
+    config.agentId,
+    config.onboardingCompleted,
+  ]);
+
+  // CF self-hosted fallback: boot skipped the setup screen optimistically
+  // because the agent scan had not finished. If it finishes with no engine
+  // available, show the setup screen after all - a visible, actionable state
+  // beats a composer that fails the moment someone tries to design something.
+  useEffect(() => {
+    if (!CLOUD_DISABLED) return;
+    if (!daemonConfigLoaded || agentsLoading) return;
+    if (config.onboardingCompleted === true || config.agentId) return;
+    if (agents.some((a) => a.available)) return;
+    navigate({ kind: 'home', view: 'onboarding' }, { replace: true });
   }, [
     daemonConfigLoaded,
     agentsLoading,

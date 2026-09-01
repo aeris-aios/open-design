@@ -2445,16 +2445,13 @@
   background: transparent;
   box-shadow: none;
 }
+/* CF self-hosted: keep the engine/model readout ("Default (CLI config)")
+   hidden. The model is pinned server-side and staff have no reason to see
+   engine internals. This block is the only rule that opted it back in over the
+   base `display: none` in shell.css; the picker itself still works. */
 .app .composer-row .avatar-agent-trigger .avatar-agent-trigger__model,
 .chat-composer-fixed-layer .composer-row .avatar-agent-trigger .avatar-agent-trigger__model {
-  display: inline-block;
-  max-width: 148px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-muted);
+  display: none;
 }
 .app .composer-row .avatar-agent-trigger:hover:not(:disabled),
 .app .composer-row .avatar-agent-trigger:focus-visible,

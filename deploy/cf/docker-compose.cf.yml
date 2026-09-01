@@ -20,6 +20,11 @@ services:
       OD_API_TOKEN: ${OD_API_TOKEN:?set in .env}
       OD_ALLOWED_ORIGINS: https://studio.commercefountain.com
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:?set in .env}
+      # Image generation needs its own provider credential - the Anthropic key
+      # runs the designer but cannot render images. OpenAI serves gpt-image-2
+      # (the daemon's first-class renderer); Gemini is the second provider.
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?set in .env}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       HOME: /app/.od/home
       OD_BROWSER_EXECUTABLE_PATH: /usr/bin/chromium-browser
     volumes:

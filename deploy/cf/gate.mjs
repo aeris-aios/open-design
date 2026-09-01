@@ -89,7 +89,12 @@ function securityHeaders(headers) {
 }
 
 function proxy(req, res, session) {
-  const headers = { ...req.headers, host: UPSTREAM.host };
+  // Preserve the client's Host. The daemon's same-origin check
+  // (isLocalSameOrigin) validates the Host header, so rewriting it to the
+  // internal service name made every browser same-origin GET (which omits
+  // Origin per the Fetch spec) fail with 403 - including GET/PUT
+  // /api/app-config, so no setting ever persisted server-side.
+  const headers = { ...req.headers };
   delete headers.authorization;
   if (OD_API_TOKEN) headers.authorization = `Bearer ${OD_API_TOKEN}`;
   const up = http.request(
@@ -155,7 +160,7 @@ server.on("upgrade", (req, socket) => {
   const session = sessionFrom(req);
   if (!session) return socket.destroy();
   const up = net.connect(Number(UPSTREAM.port), UPSTREAM.hostname, () => {
-    const headers = { ...req.headers, host: UPSTREAM.host };
+    const headers = { ...req.headers }; // Host preserved, see proxy() above
     delete headers.authorization;
     if (OD_API_TOKEN) headers.authorization = `Bearer ${OD_API_TOKEN}`;
     const lines = [`${req.method} ${req.url} HTTP/1.1`];

@@ -923,7 +923,13 @@ const OPENAI_IMAGE_NO_CREDENTIAL_MESSAGE =
 
 async function renderOpenAIImage(ctx: MediaContext, credentials: ProviderConfig): Promise<RenderResult> {
   if (!credentials.apiKey) {
-    throw new Error(OPENAI_IMAGE_NO_CREDENTIAL_MESSAGE);
+    // Carry a code: mediaTaskErrorFromFailure only forwards a code when one is
+    // set, and without it the media prompt contract falls back to the useless
+    // generic "MEDIA_DISPATCH_FAILED / unclassified reason" copy.
+    throw Object.assign(new Error(OPENAI_IMAGE_NO_CREDENTIAL_MESSAGE), {
+      code: 'MEDIA_PROVIDER_NOT_CONFIGURED',
+      status: 400,
+    });
   }
   const rawBase = credentials.baseUrl || 'https://api.openai.com/v1';
   const azure = detectAzureEndpoint(rawBase);

@@ -1291,7 +1291,12 @@ async function spawnVelaLoginAttempt(
       { stage: 'spawn_result', result: 'failed', errorKind: 'internal_error' },
       'daemon',
     );
-    throw new Error('vela binary not found; install vela or configure VELA_BIN');
+    // Coded so this surfaces as an actionable message instead of the generic
+    // "unclassified reason" fallback in the media prompt contract.
+    throw Object.assign(
+      new Error('vela binary not found; install vela or configure VELA_BIN'),
+      { code: 'MEDIA_PROVIDER_NOT_CONFIGURED', status: 400 },
+    );
   }
   const env: NodeJS.ProcessEnv = {
     ...spawnEnvForAgent('amr', baseEnv, configuredEnv),
