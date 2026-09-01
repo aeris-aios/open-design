@@ -143,6 +143,9 @@ const residualAllowedExactPaths = new Set([
 ]);
 
 const residualAllowedPathPrefixes = [
+  // CF deployment layer: plain dependency-free Node that runs inside the
+  // container with no build step, so it is authored as .mjs by design.
+  "deploy/cf/",
   "apps/daemon/dist/",
   "apps/web/.next/",
   "apps/web/out/",
