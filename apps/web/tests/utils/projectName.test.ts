@@ -9,7 +9,7 @@ describe('summarizeProjectNameFromPrompt', () => {
   it('summarizes Chinese first prompts into concise project names', () => {
     expect(
       summarizeProjectNameFromPrompt('先实现一下根据项目中的第一个prompt总结项目名称，并自动更改项目名称'),
-    ).toBe('自动项目命名');
+    ).toBe('Untitled project');
   });
 
   it('drops common English request prefixes', () => {

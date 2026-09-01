@@ -6,7 +6,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SkillsSection } from '../../src/components/SkillsSection';
 import { I18nProvider } from '../../src/i18n';
 import { en } from '../../src/i18n/locales/en';
-import { zhCN } from '../../src/i18n/locales/zh-CN';
 import type { AppConfig } from '../../src/types';
 import type { SkillSummary } from '@open-design/contracts';
 
@@ -385,7 +384,6 @@ describe('SkillsSection', () => {
   // key) goes red.
   describe.each([
     { locale: 'en' as const, dict: en },
-    { locale: 'zh-CN' as const, dict: zhCN },
   ])('built-in skill override wording ($locale)', ({ locale, dict }) => {
     it('frames the edit affordance, confirmation, form, and submit as a user override', async () => {
       renderSkillsSection(
@@ -462,7 +460,9 @@ describe('SkillsSection', () => {
     );
   });
 
-  it('matches localized built-in skill names and descriptions in search', async () => {
+  it('matches built-in skill display names and descriptions in search', async () => {
+    // English-only deployment: the UI ships one dictionary, so this exercises
+    // the `en` entries of the per-locale skill display name / description maps.
     renderSkillsSection(
       [
         makeSkill({
@@ -470,12 +470,10 @@ describe('SkillsSection', () => {
           name: 'localized-skill',
           displayName: {
             en: 'Localized Skill',
-            'zh-CN': '本地化技能',
           },
           description: 'English description',
           descriptionI18n: {
-            en: 'English description',
-            'zh-CN': '中文能力描述',
+            en: 'Handles English capability copy',
           },
           source: 'built-in',
         }),
@@ -484,18 +482,17 @@ describe('SkillsSection', () => {
           name: 'other-skill',
           displayName: {
             en: 'Other Skill',
-            'zh-CN': '其他技能',
           },
           description: 'Other description',
           source: 'built-in',
         }),
       ],
-      { locale: 'zh-CN' },
+      { locale: 'en' },
     );
 
-    expect(await screen.findByText('本地化技能')).toBeTruthy();
-    fireEvent.change(screen.getByPlaceholderText('搜索...'), {
-      target: { value: '中文能力' },
+    expect(await screen.findByText('Localized Skill')).toBeTruthy();
+    fireEvent.change(screen.getByPlaceholderText(en['settings.librarySearch']), {
+      target: { value: 'English capability' },
     });
 
     expect(screen.getByTestId('skill-row-localized-skill')).toBeTruthy();

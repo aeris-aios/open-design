@@ -4892,65 +4892,9 @@ describe('SettingsDialog MCP server interactions', () => {
   });
 });
 
-describe('SettingsDialog language interactions', () => {
-  afterEach(() => {
-    cleanup();
-    window.localStorage.removeItem('open-design:locale');
-    document.documentElement.removeAttribute('lang');
-    document.documentElement.removeAttribute('dir');
-  });
-
-  // #5517 replaced the 4×N locale tile grid with one compact select. The
-  // capability is unchanged — every locale is still offered — so these specs
-  // now drive the <select> instead of clicking radio tiles.
-  it('offers every locale in the language select and shows the current one', async () => {
-    renderLanguageSettingsDialog('en');
-
-    const select = (await screen.findByLabelText('Language')) as HTMLSelectElement;
-    expect(select.tagName).toBe('SELECT');
-    expect(within(select).getAllByRole('option')).toHaveLength(LOCALES.length);
-    expect(select.value).toBe('en');
-    expect(within(select).getByRole('option', { name: /简体中文/i })).toBeTruthy();
-  });
-
-  it('switches locale immediately and updates localStorage', async () => {
-    renderLanguageSettingsDialog('en');
-
-    const select = screen.getByLabelText('Language') as HTMLSelectElement;
-    fireEvent.change(select, { target: { value: 'zh-CN' } });
-
-    expect((screen.getByLabelText('界面语言') as HTMLSelectElement).value).toBe('zh-CN');
-    expect(window.localStorage.getItem('open-design:locale')).toBe('zh-CN');
-    expect(document.documentElement.getAttribute('lang')).toBe('zh-CN');
-    expect(document.documentElement.getAttribute('dir')).toBe('ltr');
-  });
-
-  it('sets rtl direction for rtl locales', async () => {
-    renderLanguageSettingsDialog('en');
-
-    fireEvent.change(screen.getByLabelText('Language'), { target: { value: 'fa' } });
-
-    expect(window.localStorage.getItem('open-design:locale')).toBe('fa');
-    expect(document.documentElement.getAttribute('lang')).toBe('fa');
-    expect(document.documentElement.getAttribute('dir')).toBe('rtl');
-  });
-
-  it('does not route language changes through autosave and closing does not revert an applied locale', async () => {
-    const { onPersist, onClose } = renderLanguageSettingsDialog('en');
-
-    fireEvent.change(screen.getByLabelText('Language'), { target: { value: 'de' } });
-
-    expect(window.localStorage.getItem('open-design:locale')).toBe('de');
-    expect(document.documentElement.getAttribute('lang')).toBe('de');
-
-    fireEvent.click(screen.getByTitle(/close|schließen/i));
-    expect(onPersist).not.toHaveBeenCalled();
-    expect(onClose).toHaveBeenCalledTimes(1);
-    expect(window.localStorage.getItem('open-design:locale')).toBe('de');
-    expect(document.documentElement.getAttribute('lang')).toBe('de');
-    expect(document.documentElement.getAttribute('dir')).toBe('ltr');
-  });
-});
+// English-only deployment: the Settings language picker was removed (a
+// one-option select is noise), so the locale-switching specs that drove it
+// are gone with it.
 
 describe('SettingsDialog notifications interactions', () => {
   afterEach(() => {

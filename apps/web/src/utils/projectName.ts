@@ -39,22 +39,24 @@ function cleanPrompt(prompt: string): string {
     .trim();
 }
 
+// English-only deployment: a CJK prompt still gets trimmed of its leading
+// filler, but the auto-naming FALLBACK must never hand the user a Chinese
+// project name — the UI is English, so an untitled project reads as English.
+const UNTITLED_PROJECT_NAME = 'Untitled project';
+
 function trimCjkTitle(input: string): string {
   let title = input.trim();
   for (const pattern of LEADING_CJK_FILLER) {
     title = title.replace(pattern, '').trim();
   }
   if (/项目名称/.test(title) && /自动/.test(title) && /(更改|修改|命名)/.test(title)) {
-    return '自动项目命名';
+    return UNTITLED_PROJECT_NAME;
   }
   title = title
     .replace(/^根据项目中的?第一个\s*prompt\s*/i, '')
-    .replace(/项目名称.*自动.*(更改|修改|命名)/, '自动项目命名')
-    .replace(/自动.*(更改|修改).*项目名称/, '自动项目命名')
-    .replace(/总结项目名称/, '项目命名')
     .replace(/[，。！？；：,.!?;:].*$/, '')
     .replace(/\s+/g, '');
-  if (!title) return '';
+  if (!title) return UNTITLED_PROJECT_NAME;
   return title.slice(0, MAX_CJK_TITLE_LENGTH);
 }
 

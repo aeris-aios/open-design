@@ -41,6 +41,10 @@ const ICON_EXT: Record<string, 'svg' | 'png'> = {
 // instead of duplicating identical SVG files under transport-specific ids.
 const ICON_ASSET_ID: Record<string, string> = {
   'deepseek-harness': 'deepseek',
+  // The assistant is presented as AERIS, never as a vendor. Point the claude
+  // runtime id at the neutral AERIS mark instead of the Anthropic wordmark
+  // that still sits at public/agent-icons/claude.svg for upstream parity.
+  claude: 'amr',
 };
 
 // SVG marks that are single-color silhouettes (no baked brand colors).

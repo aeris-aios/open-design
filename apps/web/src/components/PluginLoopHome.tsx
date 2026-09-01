@@ -89,12 +89,9 @@ interface Props {
 }
 
 function pluginLoopLocalLabel(
-  locale: string,
+  _locale: string,
   key: 'pluginActive' | 'reloadExampleQuery',
 ): string {
-  if (locale === 'zh-CN') {
-    return key === 'pluginActive' ? '插件已启用' : '重新加载示例请求';
-  }
   return key === 'pluginActive' ? 'Plugin active' : 'Reload example query';
 }
 

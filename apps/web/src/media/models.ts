@@ -94,7 +94,7 @@ export const MEDIA_PROVIDERS: MediaProvider[] = [
   },
   {
     id: 'vela',
-    label: 'OpenDesign Cloud',
+    label: 'AERIS Cloud',
     hint: 'Managed image and video generation through Vela',
     integrated: true,
     credentialsRequired: false,
@@ -328,11 +328,11 @@ export interface MediaModel {
 export const IMAGE_MODELS: MediaModel[] = [
   // CF self-hosted: Cloud (vela) models need a proprietary CLI binary that is
   // not in this image, so the default is the direct OpenAI renderer below.
-  { id: 'vela/gpt-image-2', label: 'gpt-image-2 (Cloud)', hint: 'OpenDesign Cloud · managed image generation and editing', provider: 'vela', caps: ['t2i', 'i2i'] },
-  { id: 'vela/nano-banana-2', label: 'nano-banana-2 (Cloud)', hint: 'OpenDesign Cloud · managed image generation and editing', provider: 'vela', caps: ['t2i', 'i2i'] },
-  { id: 'vela/nano-banana-2-lite', label: 'nano-banana-2-lite (Cloud)', hint: 'OpenDesign Cloud · fast managed image generation and editing', provider: 'vela', caps: ['t2i', 'i2i'] },
-  { id: 'vela/seedream-5.0', label: 'seedream-5.0 (Cloud)', hint: 'OpenDesign Cloud · managed image generation and editing', provider: 'vela', caps: ['t2i', 'i2i'] },
-  { id: 'vela/seedream-5.0-pro', label: 'seedream-5.0-pro (Cloud)', hint: 'OpenDesign Cloud · high-quality managed image generation and editing', provider: 'vela', caps: ['t2i', 'i2i'] },
+  { id: 'vela/gpt-image-2', label: 'gpt-image-2 (Cloud)', hint: 'AERIS Cloud · managed image generation and editing', provider: 'vela', caps: ['t2i', 'i2i'] },
+  { id: 'vela/nano-banana-2', label: 'nano-banana-2 (Cloud)', hint: 'AERIS Cloud · managed image generation and editing', provider: 'vela', caps: ['t2i', 'i2i'] },
+  { id: 'vela/nano-banana-2-lite', label: 'nano-banana-2-lite (Cloud)', hint: 'AERIS Cloud · fast managed image generation and editing', provider: 'vela', caps: ['t2i', 'i2i'] },
+  { id: 'vela/seedream-5.0', label: 'seedream-5.0 (Cloud)', hint: 'AERIS Cloud · managed image generation and editing', provider: 'vela', caps: ['t2i', 'i2i'] },
+  { id: 'vela/seedream-5.0-pro', label: 'seedream-5.0-pro (Cloud)', hint: 'AERIS Cloud · high-quality managed image generation and editing', provider: 'vela', caps: ['t2i', 'i2i'] },
   // OpenAI — fully integrated path.
   {
     id: 'gpt-image-2',
@@ -540,7 +540,7 @@ export const IMAGE_MODELS: MediaModel[] = [
  * Seedance Lite), kling.ts and friends.
  */
 export const VIDEO_MODELS: MediaModel[] = [
-  { id: 'vela/doubao-seedance-2-0-260128', label: 'seedance-2.0 (Cloud)', hint: 'OpenDesign Cloud · managed text/image-to-video · 720p default', provider: 'vela', caps: ['t2v', 'i2v'] },
+  { id: 'vela/doubao-seedance-2-0-260128', label: 'seedance-2.0 (Cloud)', hint: 'AERIS Cloud · managed text/image-to-video · 720p default', provider: 'vela', caps: ['t2v', 'i2v'] },
   // Volcengine — Seedance 2.0 (integrated).
   {
     id: 'doubao-seedance-2-0-260128',

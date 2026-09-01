@@ -35,8 +35,6 @@ const THREADS_URL = 'https://www.threads.com/@opendesign.ai';
 const YOUTUBE_URL = 'https://www.youtube.com/@Open-Design-ai';
 const INSTAGRAM_URL = 'https://www.instagram.com/opendesign.ai/';
 const LINKEDIN_URL = 'https://www.linkedin.com/company/open-design-ai/';
-const XIAOHONGSHU_URL =
-  'https://www.xiaohongshu.com/user/profile/691effad000000003002978f';
 
 export type EntrySettingsSection =
   | 'execution'
@@ -462,30 +460,6 @@ export function EntrySettingsMenu({
               in
             </span>
             <span>{t('entry.followLinkedinLabel')}</span>
-            <Icon name="external-link" size={12} className="entry-settings-menu__item-end" />
-          </a>
-          <a
-            className="entry-settings-menu__item"
-            href={XIAOHONGSHU_URL}
-            target="_blank"
-            rel="noreferrer noopener"
-            role="menuitem"
-            onClick={() => {
-              trackSettingsPopoverClick(analytics.track, {
-                page_name: pageName,
-                area: 'settings_popover',
-                element: 'follow_xiaohongshu',
-              });
-              setOpen(false);
-            }}
-          >
-            <span
-              className="entry-settings-menu__item-icon entry-settings-menu__x-mark"
-              aria-hidden
-            >
-              RED
-            </span>
-            <span>{t('entry.followXiaohongshuLabel')}</span>
             <Icon name="external-link" size={12} className="entry-settings-menu__item-end" />
           </a>
 

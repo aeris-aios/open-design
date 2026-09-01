@@ -364,9 +364,7 @@ export function UpdateDialog() {
     if (model.upToDate) {
       if (status?.currentVersion == null) return t('updater.upToDate');
       const version = `v${status.currentVersion}`;
-      return locale === 'zh-CN' || locale === 'zh-TW'
-        ? `${t('updater.upToDate')}（${version}）`
-        : `${t('updater.upToDate')} (${version})`;
+      return `${t('updater.upToDate')} (${version})`;
     }
     if (unsupported) return t('updater.dialogUnsupported');
     return t('settings.updateStatusNotChecked');

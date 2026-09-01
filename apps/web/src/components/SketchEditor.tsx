@@ -847,93 +847,9 @@ function clampSketchContextPopover(popover: HTMLElement, viewportRoot: HTMLEleme
 
 const SKETCH_TEXT_OVERRIDE_ATTRS = ['title', 'aria-label', 'placeholder'] as const;
 
-const ZH_CN_SKETCH_TEXT_OVERRIDES: Record<string, string> = {
-  Close: '关闭',
-  Generate: '生成',
-  'Wrap selection in frame': '将选区包裹为画框',
-  'Copy to clipboard as PNG': '复制为 PNG 到剪贴板',
-  'Copy to clipboard as SVG': '复制为 SVG 到剪贴板',
-  'Copy link to object': '复制对象链接',
-  'Link to object': '链接到对象',
-  'Add link': '新建链接',
-  'Edit link': '编辑链接',
-  'Edit embeddable link': '编辑嵌入链接',
-  'Copy link': '复制链接',
-  'Copy styles': '复制样式',
-  'Paste styles': '粘贴样式',
-  'Bring forward': '上移一层',
-  'Send backward': '下移一层',
-  'Send to back': '置于底层',
-  'Bring to front': '置于顶层',
-  Duplicate: '复制',
-  Lock: '锁定',
-  Unlock: '解锁',
-  'Lock all': '全部锁定',
-  'Unlock all': '全部解锁',
-  'Flip horizontal': '水平翻转',
-  'Flip vertical': '垂直翻转',
-  'Select all elements in frame': '选择画框内所有元素',
-  'Remove all elements from frame': '从画框中移除所有元素',
-  'Frame tool': '画框工具',
-  'Web Embed': '嵌入网页',
-  'Mermaid to Excalidraw': 'Mermaid 转 Excalidraw',
-  'Mermaid To Excalidraw': 'Mermaid 转 Excalidraw',
-  'Mermaid syntax': 'Mermaid 语法',
-  Preview: '预览',
-  Mermaid: 'Mermaid',
-  'Text to diagram': '文本转图表',
-  'Currently we use Mermaid as a middle step, so you\'ll get best results if you describe a diagram, workflow, flow chart, and similar.': '当前会先通过 Mermaid 中间步骤生成；描述图表、工作流、流程图等内容时效果最好。',
-  'View as Mermaid': '以 Mermaid 查看',
-  'Write Mermaid diagram defintion here...': '在这里输入 Mermaid 图表定义...',
-  'Write Mermaid diagram definition here...': '在这里输入 Mermaid 图表定义...',
-  Insert: '插入',
-};
-
-const ZH_TW_SKETCH_TEXT_OVERRIDES: Record<string, string> = {
-  ...ZH_CN_SKETCH_TEXT_OVERRIDES,
-  Close: '關閉',
-  Generate: '生成',
-  'Wrap selection in frame': '將選取範圍包裹為畫框',
-  'Copy to clipboard as PNG': '複製為 PNG 到剪貼簿',
-  'Copy to clipboard as SVG': '複製為 SVG 到剪貼簿',
-  'Copy link to object': '複製物件連結',
-  'Link to object': '連結到物件',
-  'Add link': '新增連結',
-  'Edit link': '編輯連結',
-  'Edit embeddable link': '編輯嵌入連結',
-  'Copy link': '複製連結',
-  'Copy styles': '複製樣式',
-  'Paste styles': '貼上樣式',
-  'Bring forward': '上移一層',
-  'Send backward': '下移一層',
-  'Send to back': '置於底層',
-  'Bring to front': '置於頂層',
-  Duplicate: '複製',
-  Lock: '鎖定',
-  Unlock: '解鎖',
-  'Lock all': '全部鎖定',
-  'Unlock all': '全部解鎖',
-  'Flip horizontal': '水平翻轉',
-  'Flip vertical': '垂直翻轉',
-  'Select all elements in frame': '選取畫框內所有元素',
-  'Remove all elements from frame': '從畫框中移除所有元素',
-  'Frame tool': '畫框工具',
-  'Web Embed': '嵌入網頁',
-  'Mermaid to Excalidraw': 'Mermaid 轉 Excalidraw',
-  'Mermaid To Excalidraw': 'Mermaid 轉 Excalidraw',
-  'Mermaid syntax': 'Mermaid 語法',
-  Preview: '預覽',
-  'Text to diagram': '文字轉圖表',
-  'Currently we use Mermaid as a middle step, so you\'ll get best results if you describe a diagram, workflow, flow chart, and similar.': '目前會先透過 Mermaid 中間步驟生成；描述圖表、工作流程、流程圖等內容時效果最好。',
-  'View as Mermaid': '以 Mermaid 檢視',
-  'Write Mermaid diagram defintion here...': '在這裡輸入 Mermaid 圖表定義...',
-  'Write Mermaid diagram definition here...': '在這裡輸入 Mermaid 圖表定義...',
-  Insert: '插入',
-};
-
-function sketchTextOverrides(locale: Locale): Record<string, string> | null {
-  if (locale === 'zh-CN') return ZH_CN_SKETCH_TEXT_OVERRIDES;
-  if (locale === 'zh-TW') return ZH_TW_SKETCH_TEXT_OVERRIDES;
+// English-only deployment: upstream's zh-CN / zh-TW DOM text overrides for the
+// embedded sketch chrome are not bundled.
+function sketchTextOverrides(_locale: Locale): Record<string, string> | null {
   return null;
 }
 

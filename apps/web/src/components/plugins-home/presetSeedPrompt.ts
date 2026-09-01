@@ -27,9 +27,9 @@ const HOME_ARGUMENT_PLACEHOLDER_PATTERN =
 
 export type PromptLocaleKind = 'zh' | 'ja' | 'en';
 
-export function promptLocaleKind(locale: Locale): PromptLocaleKind {
-  if (locale === 'zh-CN' || locale === 'zh-TW') return 'zh';
-  if (locale === 'ja') return 'ja';
+// English-only deployment: the UI bundles a single locale, so preset seeds
+// always resolve to the English variant.
+export function promptLocaleKind(_locale: Locale): PromptLocaleKind {
   return 'en';
 }
 

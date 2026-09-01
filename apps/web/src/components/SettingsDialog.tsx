@@ -537,43 +537,9 @@ export interface AgentRefreshOptions {
 const AMR_SIGN_IN_RESCAN_ATTEMPTS = 4;
 const AMR_SIGN_IN_RESCAN_RETRY_MS = 1500;
 
-function codexPathStrings(locale: Locale) {
-  if (locale === 'zh-CN') {
-    return {
-      repairHint: '当前保存的 Codex 路径不适合继续使用。',
-      useDetected: '使用检测到的 Codex',
-      clearCustom: '清空自定义路径',
-      configuredSuccess: (path: string) => `本次测试使用的是已配置的 Codex 路径：${path}。`,
-      invalidFallback: (configuredPath: string, detectedPath: string) =>
-        `已配置的 Codex 路径无效或不可执行：${configuredPath}。本次测试改用 PATH 中的 Codex CLI：${detectedPath}。建议更新 CODEX_BIN 或清空自定义路径。`,
-      failedFallback: (configuredPath: string, detectedPath: string) =>
-        `已配置的 Codex 路径启动失败：${configuredPath}。本次测试改用 PATH 中的 Codex CLI：${detectedPath}。建议更新 CODEX_BIN 或清空自定义路径。`,
-    };
-  }
-  if (locale === 'zh-TW') {
-    return {
-      repairHint: '目前儲存的 Codex 路徑不適合繼續使用。',
-      useDetected: '使用偵測到的 Codex',
-      clearCustom: '清除自訂路徑',
-      configuredSuccess: (path: string) => `本次測試使用的是已設定的 Codex 路徑：${path}。`,
-      invalidFallback: (configuredPath: string, detectedPath: string) =>
-        `已設定的 Codex 路徑無效或不可執行：${configuredPath}。本次測試改用 PATH 中的 Codex CLI：${detectedPath}。建議更新 CODEX_BIN 或清除自訂路徑。`,
-      failedFallback: (configuredPath: string, detectedPath: string) =>
-        `已設定的 Codex 路徑啟動失敗：${configuredPath}。本次測試改用 PATH 中的 Codex CLI：${detectedPath}。建議更新 CODEX_BIN 或清除自訂路徑。`,
-    };
-  }
-  if (locale === 'ja') {
-    return {
-      repairHint: '保存されている Codex のパスは、このテストで使用すべきバイナリではありません。',
-      useDetected: '検出された Codex を使用',
-      clearCustom: 'カスタムパスをクリア',
-      configuredSuccess: (path: string) => `このテストでは設定済みの Codex パスを使用しました：${path}。`,
-      invalidFallback: (configuredPath: string, detectedPath: string) =>
-        `設定された Codex パスが無効か実行できません：${configuredPath}。このテストでは PATH 上の Codex CLI（${detectedPath}）を使用しました。CODEX_BIN を更新するか、カスタムパスをクリアしてください。`,
-      failedFallback: (configuredPath: string, detectedPath: string) =>
-        `設定された Codex パスの起動に失敗しました：${configuredPath}。このテストは PATH 上の Codex CLI（${detectedPath}）で成功しました。CODEX_BIN を更新するか、カスタムパスをクリアしてください。`,
-    };
-  }
+// English-only deployment: upstream's zh-CN / zh-TW / ja variants of these
+// strings are dropped along with the rest of the non-English bundles.
+function codexPathStrings(_locale: Locale) {
   return {
     repairHint: 'The saved Codex path is not the binary this test should keep using.',
     useDetected: 'Use detected Codex',
@@ -5938,36 +5904,8 @@ export function SettingsDialog({
               there is no longer a standalone render block for any of them. */}
           {activeSection === 'general' ? (
             <section className="settings-section settings-general-section">
-              <div className="settings-general-block">
-                <div className="settings-general-field">
-                  <span className="settings-general-label">{t('settings.language')}</span>
-                  <label className="settings-general-select">
-                    <select
-                      value={locale}
-                      aria-label={t('settings.language')}
-                      onChange={(event) => {
-                        const next = event.target.value as Locale;
-                        // P1 ui_click area=language — record the locale id
-                        // that was picked, regardless of whether it differs
-                        // from the current one (user clicked = signal).
-                        trackSettingsLanguageClick(analytics.track, {
-                          page_name: 'settings',
-                          area: 'language',
-                          element: next,
-                        });
-                        setLocale(next);
-                      }}
-                    >
-                      {LOCALES.map((code) => (
-                        <option key={code} value={code}>
-                          {LOCALE_LABEL[code]} · {code}
-                        </option>
-                      ))}
-                    </select>
-                    <Icon name="chevron-down" size={14} />
-                  </label>
-                </div>
-              </div>
+              {/* Language picker removed: this deployment bundles a single
+                  (English) dictionary, so a one-option picker is noise. */}
 
               <div className="settings-general-block">
                 <div className="settings-general-block-head">

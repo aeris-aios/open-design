@@ -297,20 +297,9 @@ function promptActionTitle(action: PromptNextStepAction, t: TranslateFn): string
   return t(action.titleKey);
 }
 
-function promptActionPrompt(action: PromptNextStepAction, locale: string): string {
-  if (locale !== 'zh-CN') return action.prompt;
-  switch (action.id) {
-    case 'project-continue':
-      return '从已停止或未完成的回合继续处理。先阅读当前对话、项目文件和可见错误，再执行下一个具体步骤。如果主产物已经存在，就在原文件上更新；否则创建缺失的主产物，并简要总结改了什么。';
-    case 'project-generate-artifact':
-      return '现在生成缺失的项目产物。基于当前对话和项目上下文创建主要的可预览交付物；根据需求保存成简短的语义化文件名，例如 investor-pitch-deck.html、refund-dashboard.html 或 pricing-page.html。只有固定运行时约定或入口概览页才使用 index.html。把文件保存到当前项目中，并简要说明创建了哪些文件。';
-    case 'design-system-ai-refine':
-      return '使用 AI 提取继续原地优化这个设计系统。读取当前 DESIGN.md、brand.json、source context、tokens、字体、色板、资产和组件套件预览；如果有链接的网站或源文件，请重新测量。保持同一个设计系统 id，不要创建重复系统。重点强化 token 角色、品牌语气、组件指导、明暗主题套件质量和可复用实现说明。最后总结改动和更新的文件。';
-    case 'design-system-audit-kit':
-      return '审查这个设计系统是否已经可用。检查 DESIGN.md、brand.json、variables.css、theme.json、kit.html、kit.dark.html、生成产物、色彩对比度、字体样张、间距/圆角规则和组件覆盖度。直接修复最高影响的问题，保持同一个已注册设计系统 id，并在发布或用于其他项目之前报告剩余缺口。';
-    default:
-      return (action as PromptNextStepAction).prompt;
-  }
+// English-only deployment: upstream's zh-CN prompt bodies are not bundled.
+function promptActionPrompt(action: PromptNextStepAction, _locale: string): string {
+  return action.prompt;
 }
 
 export function NextStepActions({

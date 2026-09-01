@@ -1,29 +1,16 @@
-// Supported UI locales. Adding a new locale requires creating a new
-// dictionary in `./locales/` and registering it in `./index.tsx`.
+// Supported UI locales. This deployment is single-tenant and English-only
+// (Fountain Hills Chamber of Commerce): only the `en` dictionary is bundled
+// and `detectInitialLocale()` is pinned to 'en', so browser / OS language can
+// never flip the UI. The `Locale` union is intentionally left at upstream's
+// full list so per-locale lookup tables elsewhere in the tree keep compiling
+// and diffs against upstream stay small — LOCALES below is the switch that
+// actually decides what ships.
 export type Locale = 'en' | 'id' | 'de' | 'zh-CN' | 'zh-TW' | 'pt-BR' | 'es-ES' | 'ru' | 'fa' | 'ar' | 'ja' | 'ko' | 'pl' | 'hu' | 'fr' | 'uk' | 'tr' | 'th' | 'it';
 
-export const LOCALES: Locale[] = ['en', 'id', 'de', 'zh-CN', 'zh-TW', 'pt-BR', 'es-ES', 'ru', 'fa', 'ar', 'ja', 'ko', 'pl', 'hu', 'fr', 'uk', 'tr', 'th', 'it'];
+export const LOCALES: Locale[] = ['en'];
 
-export const LOCALE_LABEL: Record<Locale, string> = {
-  'en': 'English',
-  'id': 'Bahasa Indonesia',
-  'de': 'Deutsch',
-  'zh-CN': '简体中文',
-  'zh-TW': '繁體中文',
-  'pt-BR': 'Português (Brasil)',
-  'es-ES': 'Español (España)',
-  'ru': 'Русский',
-  'fa': 'فارسی',
-  'ar': 'العربية',
-  'ja': '日本語',
-  'ko': '한국어',
-  'pl': 'Polski',
-  'hu': 'Magyar',
-  'fr': 'Français',
-  'uk': 'Українська',
-  'tr': 'Türkçe',
-  'th': 'ภาษาไทย',
-  'it': 'Italiano'
+export const LOCALE_LABEL: Partial<Record<Locale, string>> = {
+  'en': 'English'
 };
 
 // Translation dictionary shape — flat keys, dot-namespaced. We keep it

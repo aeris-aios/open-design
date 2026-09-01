@@ -110,8 +110,7 @@ type SocialSharePlatform =
   | 'reddit'
   | 'facebook'
   | 'linkedin'
-  | 'instagram'
-  | 'xiaohongshu';
+  | 'instagram';
 
 // Every clickable item inside the merged Share popover — social intents,
 // copy actions and file exports. Callers receive these verbatim as
@@ -133,8 +132,7 @@ const SOCIAL_SHARE_PLATFORMS: Array<{
     | 'preview.shareToReddit'
     | 'preview.shareToFacebook'
     | 'preview.shareToLinkedIn'
-    | 'preview.shareToInstagram'
-    | 'preview.shareToXiaohongshu';
+    | 'preview.shareToInstagram';
   mark: string;
   mode: 'intent' | 'copy-open';
   entryUrl?: string;
@@ -149,13 +147,6 @@ const SOCIAL_SHARE_PLATFORMS: Array<{
     mark: 'IG',
     mode: 'copy-open',
     entryUrl: 'https://www.instagram.com/',
-  },
-  {
-    platform: 'xiaohongshu',
-    labelKey: 'preview.shareToXiaohongshu',
-    mark: '小',
-    mode: 'copy-open',
-    entryUrl: 'https://www.xiaohongshu.com/',
   },
 ];
 
@@ -181,7 +172,6 @@ function buildSocialShareUrl(
       params.set('url', args.url);
       return `https://www.linkedin.com/sharing/share-offsite/?${params.toString()}`;
     case 'instagram':
-    case 'xiaohongshu':
       return null;
   }
   const exhaustive: never = platform;

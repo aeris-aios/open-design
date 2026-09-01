@@ -165,12 +165,16 @@ function markAmrReminderSeen(): void {
   amrReminderSeenFallback = true;
 }
 
+// Home-screen surface: the assistant is AERIS, never the engine's vendor
+// name. (Settings keeps the raw name — that pane is admin diagnostics.)
+const AERIS_AGENT_IDS = new Set(['amr', 'claude']);
+
 function displayAgentName(agent: Pick<AgentInfo, 'id' | 'name'>): string {
-  return agent.id === 'amr' ? 'AERIS' : agent.name;
+  return AERIS_AGENT_IDS.has(agent.id) ? 'AERIS' : agent.name;
 }
 
 function displayAgentChipName(agent: Pick<AgentInfo, 'id' | 'name'>): string {
-  return agent.id === 'amr' ? 'AERIS' : displayAgentName(agent);
+  return AERIS_AGENT_IDS.has(agent.id) ? 'AERIS' : displayAgentName(agent);
 }
 
 export function InlineModelSwitcher({
@@ -1658,7 +1662,7 @@ export function InlineModelSwitcher({
                     <span className="inline-switcher__account-text">
                       <span className="inline-switcher__account-name-row">
                         <span className="inline-switcher__account-name">
-                          OpenDesign
+                          AERIS Cloud
                         </span>
                         {amrLoggedIn ? (
                           <PlanBadge plan={amrPlanLabel} size="md" />

@@ -174,13 +174,14 @@ const TRAIL = 24;
 const TRAIL_LIFE = 1.1;
 const TRAIL_MIN_PX = 3;
 
-// Brand greens: #87EA5C leads the wave, #D0FFB5 is the shimmer partner, and
-// the deep #2F781D tints the rising edge of each block.
-const ACCENT: [number, number, number] = [0.529, 0.918, 0.361]; // #87EA5C
-const ACCENT2: [number, number, number] = [0.816, 1.0, 0.71]; // #D0FFB5
-const BASE: [number, number, number] = [0.184, 0.471, 0.114]; // #2F781D
-// The resting artwork: the real logo SVG (paths filled #202020, matching the
-// app's near-black text tone); its alpha channel is the glyph mask the shader
+// Commerce Fountain brand: accent orange #ED7D36 leads the wave, the lighter
+// #F6B48A is the shimmer partner, and brand navy #054D87 tints the rising edge
+// of each block.
+const ACCENT: [number, number, number] = [0.929, 0.49, 0.212]; // #ED7D36
+const ACCENT2: [number, number, number] = [0.965, 0.706, 0.541]; // #F6B48A
+const BASE: [number, number, number] = [0.02, 0.302, 0.529]; // #054D87
+// The resting artwork: the Design Studio wordmark SVG (Commerce Fountain mark
+// + navy/orange lettering); its alpha channel is the glyph mask the shader
 // samples. Same 1705:291 aspect as the host box.
 const LOGO_SRC = '/logo-scan.svg';
 

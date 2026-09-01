@@ -262,7 +262,7 @@ describe('onboarding -> home AMR selection (end to end)', () => {
     // default and completes onboarding directly; the removed About-you,
     // Newsletter, and design-system steps must not be part of this witness.
     const hostedSource = await screen.findByRole('radio', {
-      name: /OpenDesign Hosted/i,
+      name: /AERIS Hosted/i,
     });
     expect(hostedSource.getAttribute('aria-checked')).toBe('true');
     fireEvent.click(await screen.findByRole('button', { name: /^Continue$/i }));

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { CLOUD_DISABLED } from '../cf-deployment';
 import {
   deepSeekV4FlashCampaignNextBoundary,
   isDeepSeekV4FlashCampaignVisible,
@@ -15,6 +16,7 @@ export function useDeepSeekV4FlashCampaignVisibility(): {
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
+    if (CLOUD_DISABLED) return;
     const boundary = deepSeekV4FlashCampaignNextBoundary(Date.now());
     if (boundary === null) return;
     const delay = Math.max(0, boundary - Date.now()) + 50;
@@ -22,8 +24,10 @@ export function useDeepSeekV4FlashCampaignVisibility(): {
     return () => window.clearTimeout(timer);
   }, [now]);
 
+  // Self-hosted deployment: upstream's model-promo campaign is a cloud-plan
+  // marketing surface, so it can never become visible here.
   return {
     now,
-    visible: isDeepSeekV4FlashCampaignVisible(now),
+    visible: !CLOUD_DISABLED && isDeepSeekV4FlashCampaignVisible(now),
   };
 }

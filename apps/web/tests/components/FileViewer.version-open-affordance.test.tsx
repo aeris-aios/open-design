@@ -22,34 +22,14 @@
 
 import { describe, expect, it } from 'vitest';
 import type { Dict } from '../../src/i18n/types';
-import { ar } from '../../src/i18n/locales/ar';
-import { de } from '../../src/i18n/locales/de';
 import { en } from '../../src/i18n/locales/en';
-import { esES } from '../../src/i18n/locales/es-ES';
-import { fa } from '../../src/i18n/locales/fa';
-import { fr } from '../../src/i18n/locales/fr';
-import { hu } from '../../src/i18n/locales/hu';
-import { id } from '../../src/i18n/locales/id';
 // Aliased: the bare `it` export would shadow vitest's own `it`.
-import { it as itIT } from '../../src/i18n/locales/it';
-import { ja } from '../../src/i18n/locales/ja';
-import { ko } from '../../src/i18n/locales/ko';
-import { pl } from '../../src/i18n/locales/pl';
-import { ptBR } from '../../src/i18n/locales/pt-BR';
-import { ru } from '../../src/i18n/locales/ru';
-import { th } from '../../src/i18n/locales/th';
-import { tr } from '../../src/i18n/locales/tr';
-import { uk } from '../../src/i18n/locales/uk';
-import { zhCN } from '../../src/i18n/locales/zh-CN';
-import { zhTW } from '../../src/i18n/locales/zh-TW';
 
 const KEY = 'fileViewer.versions.open' as const;
 
+// English-only deployment: `en` is the only bundled dictionary.
 const LOCALES: ReadonlyArray<readonly [string, Dict]> = [
-  ['ar', ar], ['de', de], ['en', en], ['es-ES', esES], ['fa', fa],
-  ['fr', fr], ['hu', hu], ['id', id], ['it', itIT], ['ja', ja],
-  ['ko', ko], ['pl', pl], ['pt-BR', ptBR], ['ru', ru], ['th', th],
-  ['tr', tr], ['uk', uk], ['zh-CN', zhCN], ['zh-TW', zhTW],
+  ['en', en],
 ];
 
 describe('version history open-elsewhere affordance (OPEND-2160)', () => {
@@ -59,7 +39,7 @@ describe('version history open-elsewhere affordance (OPEND-2160)', () => {
     expect(en[KEY].toLowerCase()).toMatch(/new window|new tab/);
   });
 
-  it('carries a destination in every locale, not just English', () => {
+  it('carries a destination in the bundled locale', () => {
     // The button is icon-only, so this string is the entire explanation the
     // user gets. A locale left on the old wording ships the same ambiguity
     // this issue was filed about.

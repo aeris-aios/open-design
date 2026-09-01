@@ -7,6 +7,7 @@ import {
   type DeepSeekV4FlashCampaignAudience,
 } from '../campaigns/deepseek-v4-flash';
 import { goPlanPricingUrl } from '../campaigns/go-plan';
+import { CLOUD_DISABLED } from '../cf-deployment';
 import {
   amrHandoffDeviceId,
   attributedAmrUrl,
@@ -136,6 +137,28 @@ function highlightModelSwitcher(): void {
 }
 
 export function DeepSeekV4FlashCampaign({
+  audience,
+  active = true,
+  onUseCampaignModel,
+  metricsConsent = false,
+  installationId = null,
+}: Props) {
+  // Self-hosted deployment: this is a paid-plan / model-promo surface for a
+  // cloud we do not use. Render nothing rather than deleting the component,
+  // so the diff against upstream stays a single guard.
+  if (CLOUD_DISABLED) return null;
+  return (
+    <DeepSeekV4FlashCampaignBody
+      audience={audience}
+      active={active}
+      onUseCampaignModel={onUseCampaignModel}
+      metricsConsent={metricsConsent}
+      installationId={installationId}
+    />
+  );
+}
+
+function DeepSeekV4FlashCampaignBody({
   audience,
   active = true,
   onUseCampaignModel,

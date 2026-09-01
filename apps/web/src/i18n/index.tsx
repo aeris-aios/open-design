@@ -9,25 +9,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { de } from './locales/de';
 import { en } from './locales/en';
-import { id } from './locales/id';
-import { esES } from './locales/es-ES';
-import { fa } from './locales/fa';
-import { ar } from './locales/ar';
-import { ja } from './locales/ja';
-import { ko } from './locales/ko';
-import { ptBR } from './locales/pt-BR';
-import { ru } from './locales/ru';
-import { zhCN } from './locales/zh-CN';
-import { zhTW } from './locales/zh-TW';
-import { pl } from './locales/pl';
-import { hu } from './locales/hu';
-import { fr } from './locales/fr';
-import { uk } from './locales/uk';
-import { tr } from './locales/tr';
-import { th } from './locales/th';
-import { it } from './locales/it';
 import { getOpenDesignHost } from '@open-design/host';
 import { LOCALES, type Dict, type Locale } from './types';
 
@@ -36,26 +18,8 @@ export type { Locale } from './types';
 
 type DictKey = keyof Dict;
 
-const DICTS: Record<Locale, Dict> = {
+const DICTS: Partial<Record<Locale, Dict>> = {
   'en': en,
-  'id': id,
-  'de': de,
-  'zh-CN': zhCN,
-  'zh-TW': zhTW,
-  'pt-BR': ptBR,
-  'es-ES': esES,
-  'ru': ru,
-  'fa': fa,
-  'ar': ar,
-  'ja': ja,
-  'ko': ko,
-  'pl': pl,
-  'hu': hu,
-  'fr': fr,
-  'uk': uk,
-  'tr': tr,
-  'th': th,
-  'it': it,
 };
 
 const LS_KEY = 'open-design:locale';
@@ -67,25 +31,15 @@ const LS_KEY = 'open-design:locale';
 const LS_SOURCE_KEY = 'open-design:locale-source';
 const MANUAL_LOCALE_SOURCE = 'manual';
 
+// Single-tenant English-only deployment: the only bundled locale is `en`,
+// so system-language detection can never resolve anything else. Kept as a
+// function (rather than deleted) so the export surface and its callers stay
+// unchanged against upstream.
 export function resolveSystemLocale(languages: readonly string[]): Locale | null {
-  const supported = LOCALES as readonly string[];
   for (const raw of languages) {
-    const normalized = raw.trim();
+    const normalized = raw.trim().toLowerCase();
     if (!normalized) continue;
-
-    const exact = LOCALES.find((locale) => locale.toLowerCase() === normalized.toLowerCase());
-    if (exact) return exact;
-
-    const [language, regionOrScript] = normalized.toLowerCase().split('-');
-    if (language === 'zh') {
-      if (regionOrScript === 'hant' || regionOrScript === 'tw' || regionOrScript === 'hk' || regionOrScript === 'mo') {
-        return 'zh-TW';
-      }
-      return 'zh-CN';
-    }
-
-    const baseMatch = LOCALES.find((locale) => locale.toLowerCase().split('-')[0] === language);
-    if (baseMatch && supported.includes(baseMatch)) return baseMatch;
+    if (normalized === 'en' || normalized.split('-')[0] === 'en') return 'en';
   }
   return null;
 }
@@ -128,40 +82,15 @@ function readDesktopHostOsLocale(): string | undefined {
   return typeof value === 'string' && value.length > 0 ? value : undefined;
 }
 
-// First-run defaults to the user's OS / browser language when possible.
-// Priority: explicit user pick saved to localStorage (only when tagged
-// as manual) > OS locale that the desktop host injected (packaged
-// Electron) > navigator.languages > 'en'. The source tag matters
-// because untagged localStorage values are treated as legacy /
-// auto-detected — they don't override a fresh OS locale read.
-// Exported so tests can pin the priority chain without spinning up the
-// full I18nProvider.
+// Single-tenant English-only deployment (Fountain Hills Chamber of
+// Commerce). The UI ships one dictionary, so browser / OS language must
+// never be able to flip the app into a locale we do not bundle. The
+// function is kept (rather than removed) so the export surface, its
+// callers and its tests stay put — it simply short-circuits to 'en'.
+// The localStorage / desktop-host detection chain below is intentionally
+// unreachable; restore it here if more locales are ever bundled again.
 export function detectInitialLocale(): Locale {
-  if (typeof window === 'undefined') return 'en';
-  let storedLocale: string | null = null;
-  let storedSource: string | null = null;
-  try {
-    storedLocale = window.localStorage.getItem(LS_KEY);
-    storedSource = window.localStorage.getItem(LS_SOURCE_KEY);
-  } catch {
-    /* ignore */
-  }
-  if (
-    storedSource === MANUAL_LOCALE_SOURCE &&
-    storedLocale &&
-    (LOCALES as string[]).includes(storedLocale)
-  ) {
-    return storedLocale as Locale;
-  }
-  const hostOsLocale = readDesktopHostOsLocale();
-  if (hostOsLocale) {
-    const fromHost = resolveSystemLocale([hostOsLocale]);
-    if (fromHost) return fromHost;
-  }
-  const detected = resolveSystemLocale(
-    navigator.languages?.length ? navigator.languages : [navigator.language],
-  );
-  return detected ?? 'en';
+  return 'en';
 }
 
 interface I18nContextValue {
@@ -197,7 +126,8 @@ interface ProviderProps {
   children: ReactNode;
 }
 
-const RTL_LOCALES: Locale[] = ['ar', 'fa'];
+// English-only deployment: no RTL locales are bundled.
+const RTL_LOCALES: Locale[] = [];
 
 export function I18nProvider({ initial, children }: ProviderProps) {
   const [locale, setLocaleState] = useState<Locale>(() => initial ?? detectInitialLocale());

@@ -173,7 +173,7 @@ describe('RailAccountSyncTip', () => {
     // Same headline as the callout it replaces (now screen-reader-only, see
     // the skeleton-shape test below), so assistive tech still announces the
     // swap as a state change on the same card rather than a different one.
-    expect(status.textContent).toContain('OpenDesign Cloud');
+    expect(status.textContent).toContain('AERIS Cloud');
     expect(status.textContent).toContain('Loading');
   });
 

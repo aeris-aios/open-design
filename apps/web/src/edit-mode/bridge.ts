@@ -989,7 +989,7 @@ export function buildManualEditBridge(enabled: boolean): string {
       return;
     }
     if (ev.data.type === 'od-edit-preview-text') {
-      // Live text preview from the host panel's 文本 textarea — the counterpart
+      // Live text preview from the host panel's text textarea — the counterpart
       // to od-edit-preview-style. Setting textContent on the (blurred, the host
       // textarea holds focus) element mirrors exactly what the set-text patch
       // will persist, so a newline typed in the panel shows immediately instead

@@ -54,16 +54,11 @@ describe('Go plan touchpoints', () => {
     expect(resolveSubscriptionAudience({ plan: null, loggedIn: true })).toBe('unknown');
   });
 
-  it('keeps the confirmed Chinese lightweight-entry copy', () => {
-    const chinese = getGoPlanCampaignCopy('zh-CN');
+  it('keeps the confirmed English lightweight-entry copy', () => {
+    // English-only deployment: the per-locale promo overlays upstream ships
+    // are not bundled (see go-plan-content.ts), so only `en` is asserted.
     const english = getGoPlanCampaignCopy('en');
 
-    expect(chinese.workbenchBadge).toBe('全新 Go 套餐 · 首月 ¥5 · 模型无限用');
-    expect(chinese.headline).toBe('人人可用的低成本设计方案');
-    expect(chinese.description).toBe(
-      '以更低成本使用专业设计模型，让每一个想法更快成为作品。',
-    );
-    expect(chinese.cta).toBe('查看 Go 套餐 · 限时 5 折');
     expect(english.workbenchBadge).toBe(
       'The new Go Plan · ¥5 for the first month · Unlimited model usage',
     );

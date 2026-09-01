@@ -183,7 +183,6 @@ import {
   type OptimisticProjectOwnershipWitnesses,
 } from '../collab/optimistic-project-ownership';
 import type { ModelCapabilityTag } from './modelCapabilityTags';
-import { LanguageMenu } from './LanguageMenu';
 import { IntegrationsView, type IntegrationTab } from './IntegrationsView';
 import { InlineModelSwitcher } from './InlineModelSwitcher';
 import { type EntrySettingsSection } from './EntrySettingsMenu';
@@ -3506,9 +3505,9 @@ function OnboardingView({
             )}
           </div>
           <footer className="onboarding-cloud__footer">
-            <LanguageMenu placement="up" align="start" />
+            {/* Language picker dropped: this deployment bundles English only. */}
             <span>
-              © {new Date().getFullYear()} OpenDesign · {t('settings.onboardingCloudRights')}
+              © {new Date().getFullYear()} Commerce Fountain · {t('settings.onboardingCloudRights')}
             </span>
           </footer>
         </div>
@@ -3634,9 +3633,9 @@ function OnboardingView({
             </button>
           </div>
           <footer className="onboarding-cloud__footer">
-            <LanguageMenu placement="up" align="start" />
+            {/* Language picker dropped: this deployment bundles English only. */}
             <span>
-              © {new Date().getFullYear()} OpenDesign ·{' '}
+              © {new Date().getFullYear()} Commerce Fountain ·{' '}
               {t('settings.onboardingCloudRights')}
             </span>
           </footer>

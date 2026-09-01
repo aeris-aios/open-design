@@ -1,7 +1,9 @@
 const AGENT_LABELS: Record<string, string> = {
   aider: 'Aider',
   amp: 'Amp',
-  claude: 'Claude',
+  // Staff never see the engine presented by vendor name — the assistant is
+  // AERIS everywhere in user-facing copy.
+  claude: 'AERIS',
   codex: 'Codex',
   devin: 'Devin',
   gemini: 'Gemini',

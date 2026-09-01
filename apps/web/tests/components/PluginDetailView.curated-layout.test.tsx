@@ -185,7 +185,7 @@ describe('PluginDetailView curated installed-extension layout', () => {
     const skills = screen.getByRole('region', { name: /knowledge skills/i });
     expect(within(skills).getByText('skills/source-review/SKILL.md')).toBeTruthy();
     expect(screen.getByText('@OpenDesign')).toBeTruthy();
-    expect(screen.getByText('OpenDesign official')).toBeTruthy();
+    expect(screen.getByText('Official plugin')).toBeTruthy();
 
     const advanced = screen.getByTestId('plugin-meta-advanced');
     expect(advanced).not.toHaveAttribute('open');
@@ -237,20 +237,8 @@ describe('PluginDetailView curated installed-extension layout', () => {
     )).toHaveClass('plugin-suite-detail__empty-row');
   });
 
-  it('renders the demo copy and official identity in Simplified Chinese', async () => {
-    render(
-      <I18nProvider initial="zh-CN">
-        <PluginDetailView pluginId={PLUGIN.id} />
-      </I18nProvider>,
-    );
-
-    expect(await screen.findByRole('button', { name: '返回列表' })).toBeTruthy();
-    expect(screen.getByRole('region', { name: /快捷命令/ })).toBeTruthy();
-    expect(screen.getByRole('region', { name: /数据连接/ })).toBeTruthy();
-    expect(screen.getByRole('region', { name: /知识技能/ })).toBeTruthy();
-    expect(screen.getByText('OpenDesign 官方')).toBeTruthy();
-    expect(screen.getByText('@OpenDesign')).toBeTruthy();
-  });
+  // English-only deployment: the Simplified-Chinese rendering spec is dropped
+  // along with the non-English dictionaries.
 
   it('renders a safe paragraph from the repository humanize-ppt knowledge skill', async () => {
     mockKnowledgeDetailRequests();
