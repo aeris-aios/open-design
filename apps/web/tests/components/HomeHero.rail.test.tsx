@@ -279,7 +279,7 @@ describe('HomeHero intent rail', () => {
 
     fireEvent.click(examples[0]!);
     expect(onPromptChange).toHaveBeenCalledWith(
-      'Research the market opportunity for a product launch, including competitors, target users, pricing hypotheses, and launch narrative',
+      'Create a board meeting deck covering membership growth, event revenue, budget variance, and the next quarter priorities',
     );
     // The top "selected example" pill was removed from the composer; picking an
     // example still seeds the prompt but no longer surfaces a dismissible chip.
@@ -323,6 +323,12 @@ describe('HomeHero intent rail', () => {
   });
 
   it('maps powered WebGL presets to the WebGL chip without exposing a Worker chip', () => {
+    // Shader-tag matching still routes ONLY the WebGL seed to the WebGL chip:
+    // the Worker visualizer shares `powered-preview` but must never leak in.
+    // Both are gallery-hidden in this fork (plugins-home/chamberCuration.ts) —
+    // they are chip/powered-preview bindings, not chamber collateral — so the
+    // rail resolves to nothing rather than to a shader toy, and the Worker
+    // plugin still gets no chip of its own.
     const webgl = makePlugin('example-webgl-experience', 'prototype', 'WebGL Experience', [
       'webgl',
       'webgl2',
@@ -338,41 +344,41 @@ describe('HomeHero intent rail', () => {
       'powered-preview',
     ]);
     const unrelated = makePlugin('example-web-prototype', 'prototype', 'Prototype');
+    const shaderStudy = makePlugin('example-shader-study', 'prototype', 'Shader Study', [
+      'webgl',
+      'shader',
+    ]);
 
-    expect(homeHeroExamplePluginsForChip('webgl', [webgl, unrelated, worker], 'en')).toEqual([webgl]);
+    expect(homeHeroExamplePluginsForChip('webgl', [webgl, unrelated, worker], 'en')).toEqual([]);
+    expect(homeHeroExamplePluginsForChip('webgl', [shaderStudy, unrelated, worker], 'en'))
+      .toEqual([shaderStudy]);
     expect(findChip('worker')).toBeUndefined();
   });
 
   it('orders curated example presets first for the selected artifact type', () => {
     const ordinaryDeck = makePlugin('example-ordinary-deck', 'deck', 'Ordinary deck');
-    const capsule = makePlugin(
-      'example-html-ppt-zhangzara-capsule',
-      'deck',
-      'Html Ppt Zhangzara Capsule',
-    );
-    const creativeMode = makePlugin(
-      'example-html-ppt-zhangzara-creative-mode',
-      'deck',
-      'Html Ppt Zhangzara Creative Mode',
-    );
+    const pitchDeck = makePlugin('example-html-ppt-pitch-deck', 'deck', 'Pitch deck');
+    const boardDeck = makePlugin('example-fhcoc-board-deck', 'deck', 'Chamber Board Deck');
     renderHero({
       activeChipId: 'deck',
-      pluginOptions: [ordinaryDeck, capsule, creativeMode],
+      pluginOptions: [ordinaryDeck, pitchDeck, boardDeck],
     });
 
+    // Chamber decks lead (curatedPriority + the ALWAYS_PINNED chamber list),
+    // then the curated upstream pick, then anything uncurated.
     const presets = screen.getAllByTestId('home-hero-plugin-preset');
     expect(presets.map((preset) => preset.getAttribute('data-plugin-id'))).toEqual([
-      'example-html-ppt-zhangzara-creative-mode',
-      'example-html-ppt-zhangzara-capsule',
+      'example-fhcoc-board-deck',
+      'example-html-ppt-pitch-deck',
       'example-ordinary-deck',
     ]);
   });
 
   it('keeps curated presets even when they rely on fallback prompt text', () => {
-    const otakuDance = makePlugin(
-      'image-template-infographic-otaku-dance-choreography-breakdown-gokurakujodo-16-panels',
+    const chamberPoster = makePlugin(
+      'example-fhcoc-event-poster',
       'image',
-      'Infographic - Otaku Dance Choreography Breakdown (Gokuraku Jodo, 16 Panels)',
+      'Chamber Event Poster',
       ['image-template'],
       { query: null },
     );
@@ -384,13 +390,11 @@ describe('HomeHero intent rail', () => {
     );
     renderHero({
       activeChipId: 'image',
-      pluginOptions: [ordinaryImage, otakuDance],
+      pluginOptions: [ordinaryImage, chamberPoster],
     });
 
     const presets = screen.getAllByTestId('home-hero-plugin-preset');
-    expect(presets[0]?.getAttribute('data-plugin-id')).toBe(
-      'image-template-infographic-otaku-dance-choreography-breakdown-gokurakujodo-16-panels',
-    );
+    expect(presets[0]?.getAttribute('data-plugin-id')).toBe('example-fhcoc-event-poster');
   });
 
   it('keeps Hatch Pet at the end of the image example presets', () => {
