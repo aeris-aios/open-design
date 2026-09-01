@@ -101,6 +101,22 @@ export const GALLERY_HIDDEN_PLUGIN_IDS: ReadonlySet<string> = new Set<string>([
   'example-ve-terminal-mono',
 ]);
 
+/**
+ * Whether a plugin is withheld from the Examples rail and the Community grid.
+ *
+ * This is an ALLOW-list, not a block-list. A block-list was tried first and let
+ * dozens of upstream templates through - SaaS landings, pitch-deck writing
+ * prompts, invoices, resumes, motion frames - simply because nobody had
+ * enumerated them, and it would leak again every time upstream adds a package.
+ * These two surfaces are the first thing a staffer sees and are meant to read
+ * as "the work this office makes", so only first-party chamber templates
+ * appear. GALLERY_HIDDEN_PLUGIN_IDS above is kept as the record of ids that
+ * must never return even if this policy is loosened.
+ *
+ * Everything else stays installed and reachable from Plugins / Templates, so
+ * nothing that binds a plugin by id (scenario-defaults, powered previews,
+ * orbit) breaks.
+ */
 export function isGalleryHidden(id: string): boolean {
-  return GALLERY_HIDDEN_PLUGIN_IDS.has(id);
+  return !isChamberPlugin(id);
 }

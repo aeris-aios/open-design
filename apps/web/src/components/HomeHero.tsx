@@ -85,7 +85,7 @@ import { PreviewSurface } from './plugins-home/cards/PreviewSurface';
 import { pluginCategoryLabel } from './plugins-home/categoryLabel';
 import { readHomeGuideStage, writeHomeGuideStage } from './home-hero/firstRunGuide';
 import { curatedPluginPriorityForChip } from './plugins-home/curatedPriority';
-import { GALLERY_HIDDEN_PLUGIN_IDS } from './plugins-home/chamberCuration';
+import { GALLERY_HIDDEN_PLUGIN_IDS, isGalleryHidden } from './plugins-home/chamberCuration';
 import { comparePluginGalleryOrder } from './plugins-home/pluginPopularity';
 import { sortByVisualAppeal } from './plugins-home/visualScore';
 import { applyFacetSelection } from './plugins-home/facets';
@@ -3898,7 +3898,10 @@ export function homeHeroExamplePluginsForChip(
   // section's "Slides" count.
   const showcaseLimit = chipId === 'deck' ? Number.POSITIVE_INFINITY : 18;
   const presets = plugins
-    .filter((plugin) => !EXAMPLE_PRESET_HIDDEN_PLUGIN_IDS.has(plugin.id))
+    // isGalleryHidden is an allow-list (chamberCuration.ts): only first-party
+    // chamber templates reach this rail, so an upstream package added later
+    // cannot leak into it.
+    .filter((plugin) => !EXAMPLE_PRESET_HIDDEN_PLUGIN_IDS.has(plugin.id) && !isGalleryHidden(plugin.id))
     .filter((plugin) => (
       pluginMatchesExampleChip(plugin, chipId) ||
       curatedPluginPriorityForChip(plugin, chipId) !== null
