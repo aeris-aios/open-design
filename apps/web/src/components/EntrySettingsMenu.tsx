@@ -11,8 +11,6 @@ import {
   type SocialShareResponse,
 } from '@open-design/contracts';
 import {
-  LOCALE_LABEL,
-  LOCALES,
   useI18n,
   useT,
   type Locale,
@@ -77,14 +75,12 @@ export function EntrySettingsMenu({
   const pageName = trackingPageName ?? 'home';
   const analytics = useAnalytics();
   const t = useT();
-  const { locale, setLocale } = useI18n();
+  const { locale } = useI18n();
   const discordPresence = useDiscordPresence();
   const [open, setOpen] = useState(false);
-  const [langOpen, setLangOpen] = useState(false);
   const [openDesignShare, setOpenDesignShare] = useState<SocialShareResponse | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
-  const langListRef = useRef<HTMLDivElement | null>(null);
   const discordOnlineLabel = discordPresence
     ? t('entry.discordOnlineLabel', {
         count: formatDiscordPresenceCount(discordPresence.onlineCount),
@@ -107,20 +103,6 @@ export function EntrySettingsMenu({
     () => buildSocialSharePayload(openDesignShareRequest),
     [openDesignShareRequest],
   );
-
-  useEffect(() => {
-    if (!open) setLangOpen(false);
-  }, [open]);
-
-  // Keep the collapsed language list out of the a11y tree and tab order so the
-  // popover stays a single, consistent menu model even though the options stay
-  // mounted for the expand/collapse animation.
-  useEffect(() => {
-    const el = langListRef.current;
-    if (!el) return;
-    if (langOpen) el.removeAttribute('inert');
-    else el.setAttribute('inert', '');
-  }, [langOpen, open]);
 
   useEffect(() => {
     if (!open) return;
@@ -195,84 +177,7 @@ export function EntrySettingsMenu({
           aria-label={t('entry.openSettingsTitle')}
           data-testid="entry-settings-menu"
         >
-          <section className="entry-settings-menu__section">
-            <div className="entry-settings-menu__section-title">
-              <Icon name="languages" size={14} />
-              <span>{t('settings.language')}</span>
-            </div>
-            <div className="entry-settings-menu__select">
-              <button
-                type="button"
-                role="menuitem"
-                className="entry-settings-menu__select-trigger"
-                aria-haspopup="menu"
-                aria-expanded={langOpen}
-                onClick={() => setLangOpen((value) => !value)}
-              >
-                <span className="entry-settings-menu__select-value">
-                  {LOCALE_LABEL[locale]}
-                </span>
-                <Icon
-                  name="chevron-down"
-                  size={14}
-                  className="entry-settings-menu__select-caret"
-                />
-              </button>
-              <div
-                ref={langListRef}
-                className={`entry-settings-menu__select-list${
-                  langOpen ? ' is-open' : ''
-                }`}
-              >
-                <div className="entry-settings-menu__select-list-inner">
-                  <div
-                    className="entry-settings-menu__select-panel"
-                    role="menu"
-                    aria-label={t('settings.language')}
-                  >
-                    {LOCALES.map((code) => {
-                      const active = locale === code;
-                      return (
-                        <button
-                          key={code}
-                          type="button"
-                          role="menuitemradio"
-                          aria-checked={active}
-                          className={`entry-settings-menu__option${
-                            active ? ' is-active' : ''
-                          }`}
-                          onClick={() => {
-                            trackSettingsPopoverClick(analytics.track, {
-                              page_name: pageName,
-                              area: 'settings_popover',
-                              element: 'language_select',
-                              // kebab-case locales (zh-CN) → snake_case (zh_cn).
-                              value: code.toLowerCase().replace(/-/g, '_'),
-                            });
-                            setLocale(code as Locale);
-                            setLangOpen(false);
-                            setOpen(false);
-                          }}
-                        >
-                          <span className="entry-settings-menu__option-label">
-                            {LOCALE_LABEL[code]}
-                          </span>
-                          {active ? (
-                            <Icon
-                              name="check"
-                              size={14}
-                              className="entry-settings-menu__option-check"
-                            />
-                          ) : null}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </section>
-
+          {/* CF deployment ships English only, so the language picker is omitted. */}
           <section className="entry-settings-menu__section">
             <div className="entry-settings-menu__section-title">
               <Icon name="external-link" size={14} />

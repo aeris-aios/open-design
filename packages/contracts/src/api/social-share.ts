@@ -159,11 +159,14 @@ export function buildSocialSharePayload(input: SocialShareRequest): SocialShareR
   const kind = input.kind === 'project-html' ? 'project-html' : 'open-design-repo';
   const url = normalizeSocialShareUrl(input.url)
     ?? (kind === 'open-design-repo' ? OPEN_DESIGN_GITHUB_REPO_URL : '');
-  const fallbackTitle = kind === 'project-html' ? 'OpenDesign project' : 'OpenDesign';
+  // CF deployment: staff share their own work, so the default blurb names the
+  // studio rather than the upstream project. The repo link stays for the
+  // explicit 'open-design-repo' share kind.
+  const fallbackTitle = kind === 'project-html' ? 'Design Studio project' : 'Design Studio';
   const title = cleanText(input.title, fallbackTitle);
   const fallbackText = kind === 'project-html'
-    ? `Built with OpenDesign: ${title}. OpenDesign repo: ${OPEN_DESIGN_GITHUB_REPO_URL}`
-    : 'OpenDesign is an open-source workspace for creating, editing, deploying, and handing off design artifacts.';
+    ? `Made with Design Studio: ${title}`
+    : 'Design Studio is where the Fountain Hills Chamber of Commerce designs and publishes its work.';
   const text = cleanText(input.text, fallbackText);
   const copyText = cleanText(input.copyText, `${text}\n${url}`);
   const platforms = PLATFORM_DESCRIPTORS.map((descriptor) => ({
