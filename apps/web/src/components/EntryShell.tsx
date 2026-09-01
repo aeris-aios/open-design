@@ -1588,7 +1588,11 @@ export function EntryShell({
     );
   }
 
-  const homeExecutionSwitcher = (
+  // CF self-hosted: the engine and model are pinned server-side, so this control
+  // has nothing staff should act on - its chip labels the model and its popover
+  // is a model list. The composer keeps its own mode picker and admins change
+  // the model in Settings, so it is not mounted here.
+  const homeExecutionSwitcher = CLOUD_DISABLED ? undefined : (
     <InlineModelSwitcher
       compact
       config={config}

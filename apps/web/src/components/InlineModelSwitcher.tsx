@@ -1224,23 +1224,16 @@ export function InlineModelSwitcher({
                 </span>
               )}
             </span>
-            {/* CF self-hosted: the model is pinned server-side, so staff never
-                see engine internals. Upstream shows a divider, status dot and
-                model name here; the chip itself still opens the picker.
-                Divider sits right after the agent logo; the status dot then
+            {/* Divider sits right after the agent logo; the status dot then
                 leads the model name so the dot reads as part of the model
                 label rather than trailing the logo. */}
-            {CLOUD_DISABLED ? null : (
-              <>
-                <span className="inline-switcher__chip-divider" aria-hidden="true" />
-                <span
-                  className="inline-switcher__chip-conn"
-                  data-connected={chipConnected ? 'true' : 'false'}
-                  aria-hidden="true"
-                />
-                <span className="inline-switcher__chip-model-name">{chipModel}</span>
-              </>
-            )}
+            <span className="inline-switcher__chip-divider" aria-hidden="true" />
+            <span
+              className="inline-switcher__chip-conn"
+              data-connected={chipConnected ? 'true' : 'false'}
+              aria-hidden="true"
+            />
+            <span className="inline-switcher__chip-model-name">{chipModel}</span>
             {chipUnlimitedBadge ? (
               <span
                 className={

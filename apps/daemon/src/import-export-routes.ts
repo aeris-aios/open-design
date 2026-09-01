@@ -1403,6 +1403,31 @@ export function registerProjectExportRoutes(app: Express, ctx: RegisterProjectEx
         title: typeof title === 'string' ? title : undefined,
       });
       const result = await desktopPdfExporter(input);
+      // The desktop shell writes the PDF to a path on the user's own machine, so
+      // handing back that path is enough there. A server-side renderer writes
+      // inside the container, where the path means nothing to the browser - so
+      // stream the bytes as a download and drop the temp file. `desktopSlideRenderer`
+      // is the same desktop-presence signal the image route branches on above.
+      if (result.ok && result.path && typeof desktopSlideRenderer !== 'function') {
+        try {
+          const buffer = await fs.promises.readFile(result.path);
+          const titleBase =
+            typeof title === 'string' && title.trim().length > 0
+              ? title.trim()
+              : path.basename(fileName, path.extname(fileName)) || 'artifact';
+          const filename = `${sanitizeArchiveFilename(titleBase) || 'artifact'}.pdf`;
+          const asciiFallback =
+            filename.replace(/[^\x20-\x7e]/g, '_').replace(/"/g, '_') || 'artifact.pdf';
+          res.setHeader('Content-Type', 'application/pdf');
+          res.setHeader(
+            'Content-Disposition',
+            `attachment; filename="${asciiFallback}"; filename*=UTF-8''${encodeURIComponent(filename)}`,
+          );
+          return res.send(buffer);
+        } finally {
+          await fs.promises.rm(result.path, { force: true }).catch(() => {});
+        }
+      }
       res.json(result);
     } catch (err: any) {
       const status = err && err.code === 'ENOENT' ? 404 : 400;
