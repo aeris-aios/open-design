@@ -30,14 +30,14 @@ import { getCommonCopy, localeFromPath, localizedHref, localePath, stripLocaleFr
 // with the catalogue. `pickSolutionPlugins` validates the ids at build time.
 // Deliberately overlaps only partially with the /solutions/slides/ set.
 const FEATURED_DECK_IDS = [
-  'example-deck-guizang-editorial',
+  'example-html-ppt',
   'example-deck-swiss-international',
   'example-html-ppt-pitch-deck',
   'example-html-ppt-product-launch',
   'example-html-ppt-tech-sharing',
-  'example-html-ppt-xhs-white-editorial',
-  'example-html-ppt-zhangzara-bold-poster',
-  'example-html-ppt-zhangzara-editorial-tri-tone',
+  'example-html-ppt-obsidian-claude-gradient',
+  'example-html-ppt-weekly-report',
+  'example-html-ppt-course-module',
 ];
 const deckPlugins = getBundledPlugins().filter(
   (p) => categorizePlugin(bundledRecordOf(p)) === 'deck',

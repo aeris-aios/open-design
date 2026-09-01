@@ -16,7 +16,6 @@ import TemplateCard from '../../../_components/template-card.astro';
 import { getInfoPageCopy } from '../../../info-page-i18n';
 import { getSolutionPageCopy } from '../../../solution-pages-i18n';
 import { getBundledPlugins } from '../../../_lib/bundled-plugins';
-import { bundledRecordOf, categorizePlugin } from '../../../_lib/plugin-facets';
 import { pickSolutionPlugins } from '../../../_lib/solution-featured';
 import { imageAsset, imageAssetSrcset } from '../../../image-assets';
 import { localeFromPath, localizedHref, localePath, stripLocaleFromPath } from '../../../i18n';
@@ -35,23 +34,21 @@ const description = page.description;
 const heroImg = imageAsset('solutions/image/hero.png', { width: 1280, quality: 82 });
 const heroSrcset = imageAssetSrcset('solutions/image/hero.png', [768, 1280]);
 
-// Real Image-category generation plugins, hand-picked for variety
-// (infographic, illustration, UI, game, social, product, portrait). Pulled
-// from the same catalogue the /plugins/ page uses; each carries a real poster.
+// Hand-picked visual-output plugins (poster, hero, editorial, social) that
+// carry a real poster preview. The pool is the full bundled catalogue rather
+// than the `image` facet alone: only one bundled plugin declares `od.mode:
+// image`, while the poster/social/editorial makers below are the templates
+// that actually produce image artifacts. Same pattern as the role pages
+// (/solutions/designer/, /solutions/marketing/).
 const FEATURED_IMAGE_IDS = [
-  'image-template-3d-stone-staircase-evolution-infographic',
-  'image-template-illustrated-city-food-map',
-  'image-template-e-commerce-live-stream-ui-mockup',
-  'image-template-game-screenshot-three-kingdoms-guanyu-slaying-yanliang',
-  'image-template-social-media-post-showa-day-retro-culture-magazine-cover',
-  'image-template-vr-headset-exploded-view-poster',
-  'image-template-anime-martial-arts-battle-illustration',
-  'image-template-profile-avatar-cinematic-south-asian-male-portrait-with-vultures',
-  'image-template-momotaro-explainer-slide-in-hybrid-style',
+  'example-image-poster',
+  'example-poster-hero',
+  'example-magazine-poster',
+  'example-social-carousel',
+  'example-card-twitter',
+  'example-article-magazine',
 ];
-const imagePlugins = getBundledPlugins().filter(
-  (p) => categorizePlugin(bundledRecordOf(p)) === 'image',
-);
+const imagePlugins = getBundledPlugins();
 const featuredImages = pickSolutionPlugins(imagePlugins, FEATURED_IMAGE_IDS, 'image');
 
 const pagePath = localePath(locale, stripLocaleFromPath(Astro.url.pathname).pathname);

@@ -309,7 +309,7 @@ describe('project design system route gates', () => {
   });
 
   it('returns 404 when downloading a non-user design system archive', async () => {
-    const resp = await fetch(`${baseUrl}/api/design-systems/airbnb/archive`);
+    const resp = await fetch(`${baseUrl}/api/design-systems/minimal/archive`);
     expect(resp.status).toBe(404);
   });
 

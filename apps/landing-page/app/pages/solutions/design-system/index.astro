@@ -34,10 +34,10 @@ const heroImg = imageAsset('solutions/design-system/hero.png', { width: 1280, qu
 const heroSrcset = imageAssetSrcset('solutions/design-system/hero.png', [768, 1280]);
 
 // Real design-system records (palette + name + category) for the swatch grid.
-// Pick a handful of recognizable systems, in this order, from the catalog.
+// Pick a handful of distinctive systems, in this order, from the catalog.
 const FEATURED_SYSTEM_SLUGS = [
-  'apple', 'linear-app', 'notion', 'figma', 'openai', 'github',
-  'airbnb', 'vercel', 'stripe',
+  'fountain-hills-chamber', 'minimal', 'editorial', 'brutalism', 'neobrutalism',
+  'glassmorphism', 'luxury', 'retro', 'mono',
 ];
 const allSystems = await getSystemRecords(locale);
 const systemsBySlug = new Map(allSystems.map((s) => [s.slug, s]));

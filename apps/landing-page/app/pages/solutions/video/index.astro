@@ -35,20 +35,19 @@ const description = page.description;
 const heroImg = imageAsset('solutions/video/hero.png', { width: 1280, quality: 82 });
 const heroSrcset = imageAssetSrcset('solutions/video/hero.png', [768, 1280]);
 
-// Real Video-category plugins, hand-screened for the best cinematic covers
-// and clean (minimal-watermark) thumbnails, across varied genres (sci-fi,
-// 3D animation, anime, automotive, aerial, game, fashion). Each plays its
-// Cloudflare Stream clip on hover via <TemplateCard>.
+// Real Video-category plugins across varied motion genres (short-form social,
+// cinematic backdrops, kinetic titles, data motion, brand outros, UI motion).
+// Each plays its clip on hover via <TemplateCard>.
 const FEATURED_VIDEO_IDS = [
-  'video-template-crimson-horizon-sci-fi-cinematic-sequence',
-  'video-template-3d-animated-boy-building-lego',
-  'video-template-live-action-anime-adaptation-water-vs-thunder-breathing-duel',
-  'video-template-cinematic-street-racing-sequence-for-seedance-2',
-  'video-template-ancient-indian-kingdom-fpv-video',
-  'video-template-cyberpunk-game-trailer-script',
-  'video-template-luxury-supercar-cinematic-narrative',
-  'video-template-cinematic-dragon-interaction-flight',
-  'video-template-cinematic-vampire-alley-fight-sequence',
+  'example-video-shortform',
+  'example-frame-liquid-bg-hero',
+  'example-frame-light-leak-cinema',
+  'example-frame-glitch-title',
+  'example-frame-data-chart-nyt',
+  'example-frame-logo-outro',
+  'example-frame-macos-notification',
+  'example-frame-flowchart-sticky',
+  'example-vfx-text-cursor',
 ];
 const videoPlugins = getBundledPlugins().filter(
   (p) => categorizePlugin(bundledRecordOf(p)) === 'video',

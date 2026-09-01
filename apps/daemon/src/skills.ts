@@ -26,8 +26,9 @@ type SqliteDb = Database.Database;
 // here for at least one stable release after a rename so on-disk projects
 // keep composing with the intended skill prompt.
 export const SKILL_ID_ALIASES = Object.freeze({
-  "editorial-collage": "open-design-landing",
-  "editorial-collage-deck": "open-design-landing-deck",
+  // `editorial-collage` / `editorial-collage-deck` forwarded to
+  // `open-design-landing` / `open-design-landing-deck`; both targets were
+  // pruned from this fork's bundled catalog, so the aliases went with them.
   "taste-skill": "design-taste-frontend",
 });
 

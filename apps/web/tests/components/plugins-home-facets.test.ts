@@ -62,7 +62,7 @@ describe('extractCategories', () => {
     expect(
       extractCategories(
         fixture({
-          id: 'image-template-notion-team-dashboard-live-artifact',
+          id: 'example-social-media-dashboard',
           tags: ['live-artifact'],
           od: { mode: 'image' },
         }),
@@ -71,7 +71,7 @@ describe('extractCategories', () => {
     expect(
       extractCategories(
         fixture({
-          id: 'example-social-media-matrix-tracker-template',
+          id: 'example-github-dashboard',
           tags: ['live-artifacts'],
           od: { mode: 'template' },
         }),

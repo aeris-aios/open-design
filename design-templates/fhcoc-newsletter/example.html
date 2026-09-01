@@ -1,0 +1,438 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Chamber newsletter — example</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg: #ffffff;
+        --surface: #faf7f4;
+        --surface-warm: #fdeadd;
+        --fg: #0f172a;
+        --fg-2: #334155;
+        --muted: #64748b;
+        --meta: #054d87;
+        --meta-deep: #032f54;
+        --border: #dbe4ee;
+        --border-soft: #e3eef7;
+        --accent: #ed7d36;
+        --accent-hover: #d96a26;
+        --font: Poppins, ui-sans-serif, system-ui, -apple-system, sans-serif;
+        --radius-sm: 10px;
+        --radius-md: 12px;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; padding: 0; }
+      body {
+        background: #eee7e0;
+        color: #334155;
+        font-family: var(--font);
+        padding: 28px 16px 48px;
+        min-height: 100dvh;
+      }
+
+      .preheader {
+        width: 100%;
+        max-width: 640px;
+        margin: 0 auto 12px;
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        font-size: 11px;
+        color: #7c766f;
+      }
+      .preheader a { color: #7c766f; }
+
+      .email {
+        width: 100%;
+        max-width: 640px;
+        margin: 0 auto;
+        background: #ffffff;
+        border-radius: 14px;
+        overflow: hidden;
+        box-shadow: 0 14px 40px rgba(5, 77, 135, 0.13);
+      }
+
+      /* ── masthead ─────────────────────────────────────────────── */
+      .masthead {
+        background: linear-gradient(135deg, #054d87 0%, #032f54 100%);
+        color: #ffffff;
+        padding: 24px 32px 22px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+      }
+      .mark { display: flex; align-items: center; gap: 12px; }
+      .mark svg { display: block; }
+      .wordmark b {
+        display: block;
+        font-size: 17px;
+        font-weight: 600;
+        letter-spacing: -0.015em;
+        line-height: 1.2;
+      }
+      .wordmark span {
+        display: block;
+        font-size: 10.5px;
+        color: rgba(255, 255, 255, 0.68);
+        margin-top: 3px;
+      }
+      .issue {
+        text-align: right;
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: rgba(255, 255, 255, 0.7);
+        line-height: 1.7;
+        white-space: nowrap;
+      }
+      .issue b { display: block; color: #ed7d36; }
+
+      .block { padding: 26px 32px 0; }
+      .rule-label {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.2em;
+        text-transform: uppercase;
+        color: #64748b;
+        margin: 0 0 14px;
+      }
+      .rule-label::before {
+        content: '';
+        width: 26px;
+        height: 3px;
+        border-radius: 999px;
+        background: #ed7d36;
+        flex: none;
+      }
+      .rule-label::after {
+        content: '';
+        flex: 1;
+        height: 1px;
+        background: #dbe4ee;
+      }
+
+      /* ── director's note ──────────────────────────────────────── */
+      .byline { display: flex; align-items: center; gap: 12px; }
+      .avatar {
+        width: 46px;
+        height: 46px;
+        border-radius: 50%;
+        display: grid;
+        place-items: center;
+        color: #fff;
+        font-size: 16px;
+        font-weight: 600;
+        background: linear-gradient(145deg, #ed7d36, #054d87);
+        flex: none;
+      }
+      .byline .who b { display: block; font-size: 14.5px; font-weight: 600; color: #0f172a; }
+      .byline .who span { display: block; font-size: 12px; color: #64748b; margin-top: 2px; }
+      .note p { margin: 12px 0 0; font-size: 14.2px; line-height: 1.65; color: #334155; }
+      .note .sign { margin-top: 12px; font-size: 14.2px; font-weight: 600; color: #054d87; }
+
+      /* ── events ───────────────────────────────────────────────── */
+      .event {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 11px 0;
+        border-bottom: 1px solid #eef2f6;
+      }
+      .event:last-child { border-bottom: 0; }
+      .datechip {
+        flex: none;
+        width: 52px;
+        border-radius: 10px;
+        background: #fdeadd;
+        text-align: center;
+        padding: 7px 0 8px;
+      }
+      .datechip .mon {
+        display: block;
+        font-size: 9.5px;
+        font-weight: 600;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: #d96a26;
+      }
+      .datechip .day {
+        display: block;
+        font-size: 21px;
+        font-weight: 600;
+        line-height: 1.05;
+        letter-spacing: -0.03em;
+        color: #054d87;
+      }
+      .event .meat { flex: 1; min-width: 0; }
+      .event .meat b { display: block; font-size: 14.4px; font-weight: 600; color: #0f172a; }
+      .event .meat span { display: block; font-size: 12.4px; color: #64748b; margin-top: 2px; }
+      .event .go {
+        flex: none;
+        font-size: 12.4px;
+        font-weight: 600;
+        color: #d96a26;
+        white-space: nowrap;
+      }
+
+      /* ── spotlight ────────────────────────────────────────────── */
+      .spotlight {
+        background: #faf7f4;
+        border: 1px solid #f0e6dc;
+        border-radius: 12px;
+        padding: 18px 20px 20px;
+      }
+      .spotlight .cat {
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: #d96a26;
+      }
+      .spotlight h3 {
+        margin: 6px 0 0;
+        font-size: 19px;
+        font-weight: 600;
+        letter-spacing: -0.02em;
+        color: #054d87;
+      }
+      .spotlight p { margin: 8px 0 0; font-size: 13.4px; line-height: 1.6; color: #334155; }
+      .spotlight blockquote {
+        margin: 12px 0 0;
+        padding-left: 14px;
+        border-left: 3px solid #ed7d36;
+        font-size: 14px;
+        font-weight: 500;
+        line-height: 1.55;
+        color: #0f172a;
+      }
+      .spotlight blockquote cite {
+        display: block;
+        margin-top: 6px;
+        font-size: 11.5px;
+        font-style: normal;
+        font-weight: 500;
+        color: #64748b;
+      }
+
+      /* ── new members ──────────────────────────────────────────── */
+      .plates { display: flex; flex-wrap: wrap; gap: 8px; }
+      .plate {
+        border: 1px solid #e3eef7;
+        border-radius: 10px;
+        background: #ffffff;
+        padding: 9px 14px;
+        font-size: 12.6px;
+        font-weight: 500;
+        color: #054d87;
+        text-align: center;
+      }
+      .plate small { display: block; font-size: 10.5px; font-weight: 400; color: #64748b; margin-top: 2px; }
+
+      /* ── numbers ──────────────────────────────────────────────── */
+      .numbers {
+        margin: 26px 0 0;
+        background: linear-gradient(135deg, #054d87 0%, #032f54 100%);
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+      }
+      .num { padding: 20px 16px; text-align: center; color: #fff; }
+      .num + .num { border-left: 1px solid rgba(255, 255, 255, 0.15); }
+      .num b {
+        display: block;
+        font-size: 28px;
+        font-weight: 600;
+        letter-spacing: -0.03em;
+        line-height: 1;
+        color: #ed7d36;
+      }
+      .num span {
+        display: block;
+        margin-top: 7px;
+        font-size: 10.5px;
+        font-weight: 600;
+        letter-spacing: 0.13em;
+        text-transform: uppercase;
+        color: rgba(255, 255, 255, 0.72);
+      }
+
+      /* ── footer ───────────────────────────────────────────────── */
+      .foot {
+        margin-top: 26px;
+        padding: 20px 32px 26px;
+        border-top: 1px solid #dbe4ee;
+        background: #faf7f4;
+        text-align: center;
+        font-size: 11.5px;
+        line-height: 1.7;
+        color: #64748b;
+      }
+      .foot b { display: block; font-size: 12.5px; color: #054d87; font-weight: 600; }
+      .foot a { color: #d96a26; text-decoration: none; font-weight: 500; }
+      .foot .links { margin-top: 8px; }
+
+      @media (max-width: 560px) {
+        .masthead { flex-direction: column; align-items: flex-start; }
+        .issue { text-align: left; }
+        .block, .foot { padding-left: 20px; padding-right: 20px; }
+        .numbers { grid-template-columns: 1fr; }
+        .num + .num { border-left: 0; border-top: 1px solid rgba(255, 255, 255, 0.15); }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="preheader">
+      <span>Fountain Hills Chamber &middot; October 2026</span>
+      <a href="#">View in browser</a>
+    </div>
+
+    <article class="email">
+      <header class="masthead" data-od-id="masthead">
+        <div class="mark">
+          <svg width="38" height="38" viewBox="0 0 34 34" aria-hidden="true">
+            <circle cx="17" cy="17" r="16" fill="rgba(255,255,255,0.10)" />
+            <circle cx="17" cy="17" r="16" fill="none" stroke="rgba(255,255,255,0.45)" stroke-width="1" />
+            <rect x="15.7" y="6.5" width="2.6" height="15" rx="1.3" fill="#ed7d36" />
+            <path d="M11 21 C11 14.5, 13.5 11.5, 15.6 10" fill="none" stroke="#ed7d36" stroke-width="1.8" stroke-linecap="round" opacity="0.75" />
+            <path d="M23 21 C23 14.5, 20.5 11.5, 18.4 10" fill="none" stroke="#ed7d36" stroke-width="1.8" stroke-linecap="round" opacity="0.75" />
+            <path d="M8.5 23.5 h17 a8.5 8.5 0 0 1 -17 0 Z" fill="rgba(255,255,255,0.85)" />
+          </svg>
+          <span class="wordmark">
+            <b>Fountain Hills Chamber</b>
+            <span>Where Business, Community, and Opportunity Flow</span>
+          </span>
+        </div>
+        <div class="issue">
+          <b>Issue 118</b>
+          October 2026
+        </div>
+      </header>
+
+      <section class="block" data-od-id="note">
+        <p class="rule-label">From the director</p>
+        <div class="note">
+          <div class="byline">
+            <span class="avatar">MG</span>
+            <span class="who">
+              <b>Mary Gonzales</b>
+              <span>President and CEO</span>
+            </span>
+          </div>
+          <p>
+            September gave us the biggest Oktoberfest weekend on record, and it
+            happened because 41 member businesses volunteered a booth, a shift,
+            or a truckload of chairs. Thank you.
+          </p>
+          <p>
+            October is quieter on purpose. We have one mixer, one ribbon cutting,
+            and the first planning session for next year's golf tournament. If
+            you have wanted a seat on a committee, this is the month to ask.
+          </p>
+          <p class="sign">Mary</p>
+        </div>
+      </section>
+
+      <section class="block" data-od-id="events">
+        <p class="rule-label">On the calendar</p>
+        <div class="event">
+          <div class="datechip"><span class="mon">Oct</span><span class="day">08</span></div>
+          <div class="meat">
+            <b>Ribbon cutting: Ironwood Optical</b>
+            <span>8:30 a.m. &middot; 16810 E. Ave. of the Fountains</span>
+          </div>
+          <span class="go">Details &rsaquo;</span>
+        </div>
+        <div class="event">
+          <div class="datechip"><span class="mon">Oct</span><span class="day">16</span></div>
+          <div class="meat">
+            <b>Business After Hours mixer</b>
+            <span>5:30 to 7:30 p.m. &middot; Sunridge Canyon Grill</span>
+          </div>
+          <span class="go">RSVP &rsaquo;</span>
+        </div>
+        <div class="event">
+          <div class="datechip"><span class="mon">Oct</span><span class="day">22</span></div>
+          <div class="meat">
+            <b>Golf tournament planning session</b>
+            <span>9:00 a.m. &middot; Chamber office, open to all members</span>
+          </div>
+          <span class="go">Join in &rsaquo;</span>
+        </div>
+        <div class="event">
+          <div class="datechip"><span class="mon">Nov</span><span class="day">05</span></div>
+          <div class="meat">
+            <b>State of the Town luncheon</b>
+            <span>11:30 a.m. &middot; Copperwynd Resort &middot; Seats limited</span>
+          </div>
+          <span class="go">Buy seats &rsaquo;</span>
+        </div>
+      </section>
+
+      <section class="block" data-od-id="spotlight">
+        <p class="rule-label">Member spotlight</p>
+        <div class="spotlight">
+          <span class="cat">Food and beverage &middot; Member since 2019</span>
+          <h3>Desert Bloom Bakery</h3>
+          <p>
+            Kara Whitlow started with a farmers market table and now supplies bread
+            to four member restaurants. This month she added a morning pickup window
+            for commuters heading down the Beeline.
+          </p>
+          <blockquote>
+            The chamber sent me my first three wholesale accounts. I did not have to
+            cold call anyone.
+            <cite>Kara Whitlow, owner</cite>
+          </blockquote>
+        </div>
+      </section>
+
+      <section class="block" data-od-id="new-members">
+        <p class="rule-label">Welcome, new members</p>
+        <div class="plates">
+          <span class="plate">Ironwood Optical<small>Health &amp; wellness</small></span>
+          <span class="plate">Palisades Print Co.<small>Professional services</small></span>
+          <span class="plate">Fountain Park Pet Care<small>Retail &amp; services</small></span>
+          <span class="plate">Verde Trail Outfitters<small>Recreation</small></span>
+        </div>
+      </section>
+
+      <section class="numbers" data-od-id="numbers">
+        <div class="num"><b>14</b><span>New members</span></div>
+        <div class="num"><b>6</b><span>Events hosted</span></div>
+        <div class="num"><b>3</b><span>Ribbon cuttings</span></div>
+      </section>
+
+      <section class="block" data-od-id="sponsors">
+        <p class="rule-label">Thank you to our 2026 partners</p>
+        <div class="plates">
+          <span class="plate">Desert Vista Bank</span>
+          <span class="plate">Copperwynd Resort</span>
+          <span class="plate">Saguaro Title Agency</span>
+          <span class="plate">Sunridge Canyon Grill</span>
+          <span class="plate">Palisades Print Co.</span>
+        </div>
+      </section>
+
+      <footer class="foot" data-od-id="footer">
+        <b>Fountain Hills Chamber of Commerce</b>
+        16837 E. Palisades Blvd., Fountain Hills, AZ 85268<br />
+        (480) 837-1654 &middot; fhchamber.com
+        <div class="links">
+          <a href="#">Update preferences</a> &middot; <a href="#">Unsubscribe</a>
+        </div>
+      </footer>
+    </article>
+  </body>
+</html>

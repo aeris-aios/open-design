@@ -7,11 +7,11 @@
 import type { InstalledPluginRecord } from '@open-design/contracts';
 
 const CURATED_PROTOTYPE_PLUGIN_IDS = [
-  'example-open-design-landing',
+  'example-saas-landing',
   'example-kanban-board',
   'example-social-carousel',
   'example-blog-post',
-  'example-doc-kami-parchment',
+  'example-pricing-page',
 ] as const;
 
 // Wireframe scenario: lo-fi / sketch explorations across distinct styles —
@@ -39,7 +39,6 @@ const CURATED_MOBILE_PLUGIN_IDS = [
 // invoices, papers, briefs — chosen for visual quality.
 const CURATED_DOCUMENT_PLUGIN_IDS = [
   'example-resume-modern',
-  'example-doc-kami-parchment',
   'example-data-report',
   'example-finance-report',
   'example-invoice',
@@ -54,9 +53,9 @@ const CURATED_DOCUMENT_PLUGIN_IDS = [
 
 export const CURATED_LIVE_ARTIFACT_PLUGIN_IDS = [
   'example-live-dashboard',
-  'image-template-notion-team-dashboard-live-artifact',
-  'example-social-media-matrix-tracker-template',
-  'example-trading-analysis-dashboard-template',
+  'example-flowai-live-dashboard-template',
+  'example-social-media-dashboard',
+  'example-github-dashboard',
   'example-live-artifact',
 ] as const;
 
@@ -73,15 +72,6 @@ const PINNED_SLIDE_PLUGIN_IDS = [
   'example-fs-emerald-editorial',
   'example-fs-editorial-forest',
   'example-fs-notebook-tabs',
-  'example-huashu-slides',
-  'example-huashu-keynote-black',
-  'example-huashu-takram-soft-tech',
-  'example-huashu-luxe-whitespace',
-  'example-huashu-bento-insight',
-  'example-huashu-golden-circle',
-  'example-huashu-pentagram-grid',
-  'example-huashu-sparkline-arc',
-  'example-huashu-annual-letter',
   'example-hps-bauhaus',
   'example-hps-memphis-pop',
   'example-hps-y2k-chrome',
@@ -94,35 +84,34 @@ const PINNED_SLIDE_PLUGIN_IDS = [
 
 const CURATED_DECK_PLUGIN_IDS = [
   ...PINNED_SLIDE_PLUGIN_IDS,
-  'example-html-ppt-zhangzara-creative-mode',
-  'example-html-ppt-zhangzara-scatterbrain',
-  'example-guizang-ppt',
-  'example-html-ppt-zhangzara-cobalt-grid',
-  'example-html-ppt-zhangzara-capsule',
+  'example-html-ppt-pitch-deck',
+  'example-deck-swiss-international',
+  'example-html-ppt-product-launch',
+  'example-html-ppt-weekly-report',
+  'example-simple-deck',
 ] as const;
 
 const CURATED_IMAGE_PLUGIN_IDS = [
-  'image-template-anime-martial-arts-battle-illustration',
-  'image-template-e-commerce-live-stream-ui-mockup',
-  'image-template-infographic-otaku-dance-choreography-breakdown-gokurakujodo-16-panels',
-  'image-template-profile-avatar-anime-girl-to-cinematic-photo',
-  'image-template-social-media-post-showa-day-retro-culture-magazine-cover',
+  'example-image-poster',
+  'example-poster-hero',
+  'example-magazine-poster',
+  'example-social-carousel',
 ] as const;
 
 const CURATED_VIDEO_PLUGIN_IDS = [
-  'video-template-video-seedance-three-kingdoms-lyubu-yuanmen-archery',
-  'video-template-seedance-2-0-15-second-cinematic-japanese-romance-short-film',
-  'video-template-cinematic-east-asian-woman-hand-dance',
-  'video-template-luxury-supercar-cinematic-narrative',
-  'video-template-forbidden-city-cat-satire',
+  'video-template-frame-product-promo',
+  'video-template-frame-bold-poster',
+  'video-template-frame-swiss-grid',
+  'video-template-frame-kinetic-type',
+  'video-template-frame-logo-outro',
 ] as const;
 
 const CURATED_HYPERFRAMES_PLUGIN_IDS = [
-  'video-template-hyperframes-app-showcase-three-phones',
-  'video-template-hyperframes-brand-sizzle-reel',
-  'video-template-hyperframes-social-overlay-stack',
-  'video-template-hyperframes-website-to-video-promo',
-  'video-template-hyperframes-flight-map-route',
+  'example-hyperframes',
+  'example-video-hyperframes',
+  'example-motion-frames',
+  'video-template-frame-data-chart-nyt',
+  'video-template-frame-pentagram-stat',
 ] as const;
 
 export const CURATED_PLUGIN_IDS_BY_CHIP = {

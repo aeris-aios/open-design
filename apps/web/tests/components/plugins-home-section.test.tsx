@@ -116,17 +116,17 @@ const sample: InstalledPluginRecord[] = [
   makePlugin({ id: 'prototype-app', mode: 'prototype', tags: ['mobile-app'] }),
   makePlugin({ id: 'example-live-dashboard', mode: 'prototype', tags: ['live-dashboard'] }),
   makePlugin({
-    id: 'image-template-notion-team-dashboard-live-artifact',
+    id: 'example-social-media-dashboard',
     mode: 'image',
     tags: ['live-artifact'],
   }),
   makePlugin({
-    id: 'example-social-media-matrix-tracker-template',
+    id: 'example-github-dashboard',
     mode: 'template',
     tags: ['live-artifacts'],
   }),
   makePlugin({
-    id: 'example-trading-analysis-dashboard-template',
+    id: 'example-flowai-live-dashboard-template',
     mode: 'template',
     tags: ['live-artifacts'],
   }),
@@ -300,11 +300,11 @@ describe('PluginsHomeSection (category bar)', () => {
 
     // Order is now usage/sink-driven (OPEND-449); assert grouping membership.
     expect(pluginIds().sort()).toEqual([
+      'example-flowai-live-dashboard-template',
+      'example-github-dashboard',
       'example-live-artifact',
       'example-live-dashboard',
-      'example-social-media-matrix-tracker-template',
-      'example-trading-analysis-dashboard-template',
-      'image-template-notion-team-dashboard-live-artifact',
+      'example-social-media-dashboard',
     ]);
     expect(screen.queryByTestId('plugins-home-row-subcategory-live-artifact')).toBeNull();
   });
@@ -389,13 +389,13 @@ describe('PluginsHomeSection (category bar)', () => {
     expect(pluginIds().sort()).toEqual([
       'audio-voice',
       'deck-pitch',
+      'example-flowai-live-dashboard-template',
+      'example-github-dashboard',
       'example-live-artifact',
       'example-live-dashboard',
-      'example-social-media-matrix-tracker-template',
-      'example-trading-analysis-dashboard-template',
+      'example-social-media-dashboard',
       'hyperframes-composition',
       'image-logo',
-      'image-template-notion-team-dashboard-live-artifact',
       'prototype-app',
       'prototype-dashboard',
       'video-cinematic',
@@ -429,13 +429,13 @@ describe('PluginsHomeSection (category bar)', () => {
     expect(pluginIds().sort()).toEqual([
       'audio-voice',
       'deck-pitch',
+      'example-flowai-live-dashboard-template',
+      'example-github-dashboard',
       'example-live-artifact',
       'example-live-dashboard',
-      'example-social-media-matrix-tracker-template',
-      'example-trading-analysis-dashboard-template',
+      'example-social-media-dashboard',
       'hyperframes-composition',
       'image-logo',
-      'image-template-notion-team-dashboard-live-artifact',
       'prototype-app',
       'prototype-dashboard',
       'video-cinematic',

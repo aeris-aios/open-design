@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Fountain Hills Chamber - reference components</title>
+    <meta name="description" content="Reference fixture for design-systems/fountain-hills-chamber: warm fountain orange over civic navy, Poppins throughout, soft shadows and generous whitespace." />
+    <style>
+      :root {
+        --bg: #ffffff;
+        --surface: #faf7f4;
+        --surface-warm: #fdeadd;
+        --fg: #0f172a;
+        --fg-2: #334155;
+        --muted: #64748b;
+        --meta: #054d87;
+        --border: #dbe4ee;
+        --border-soft: #e3eef7;
+        --accent: #ed7d36;
+        --accent-on: #ffffff;
+        --accent-hover: #d96a26;
+        --accent-active: #c25c1f;
+        --success: #16a34a;
+        --warn: #d97706;
+        --danger: #dc2626;
+        --font-display: Poppins, ui-sans-serif, system-ui, sans-serif;
+        --font-body: Poppins, ui-sans-serif, system-ui, sans-serif;
+        --font-mono: ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
+        --text-xs: 12px;
+        --text-sm: 14px;
+        --text-base: 16px;
+        --text-lg: 18px;
+        --text-xl: 24px;
+        --text-2xl: 32px;
+        --text-3xl: 44px;
+        --text-4xl: 60px;
+        --leading-body: 1.55;
+        --leading-tight: 1.15;
+        --tracking-display: -0.02em;
+        --space-1: 4px;
+        --space-2: 8px;
+        --space-3: 12px;
+        --space-4: 16px;
+        --space-5: 20px;
+        --space-6: 24px;
+        --space-8: 32px;
+        --space-12: 48px;
+        --section-y-desktop: 96px;
+        --section-y-tablet: 72px;
+        --section-y-phone: 48px;
+        --radius-sm: 10px;
+        --radius-md: 12px;
+        --radius-lg: 16px;
+        --radius-pill: 9999px;
+        --elev-flat: none;
+        --elev-ring: 0 0 0 1px var(--border);
+        --elev-raised: 0 8px 24px rgba(5, 77, 135, 0.1);
+        --focus-ring: 0 0 0 3px rgba(237, 125, 54, 0.32);
+        --motion-fast: 150ms;
+        --motion-base: 200ms;
+        --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+        --container-max: 1160px;
+        --container-gutter-desktop: 32px;
+        --container-gutter-tablet: 24px;
+        --container-gutter-phone: 16px;
+      }
+
+      *, *::before, *::after { box-sizing: border-box; }
+      html, body { margin: 0; padding: 0; }
+      body { min-height: 100vh; background: var(--bg); color: var(--fg-2); font-family: var(--font-body); font-size: var(--text-base); font-weight: 400; line-height: var(--leading-body); -webkit-font-smoothing: antialiased; }
+
+      .container { max-width: var(--container-max); margin-inline: auto; padding-inline: var(--container-gutter-desktop); }
+      section { padding-block: var(--section-y-desktop); }
+      .stack-3 > * + * { margin-block-start: var(--space-3); }
+      .stack-4 > * + * { margin-block-start: var(--space-4); }
+      .stack-6 > * + * { margin-block-start: var(--space-6); }
+      .row-between { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); }
+      .grid-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-6); }
+      .hero { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(320px, 0.95fr); gap: var(--space-12); align-items: center; }
+
+      h1, h2, h3, p, ul { margin: 0; }
+      h1, h2, h3 { color: var(--fg); font-family: var(--font-display); font-weight: 600; line-height: var(--leading-tight); letter-spacing: var(--tracking-display); }
+      h1 { max-width: 18ch; font-size: var(--text-4xl); }
+      h2 { font-size: var(--text-3xl); }
+      h3 { font-size: var(--text-xl); }
+      .eyebrow { color: var(--meta); font-size: var(--text-xs); font-weight: 500; letter-spacing: 0.14em; text-transform: uppercase; }
+      .lead { max-width: 56ch; color: var(--fg-2); font-size: var(--text-lg); }
+      .body-muted { color: var(--muted); }
+      .body-sm { font-size: var(--text-sm); }
+
+      a { color: var(--meta); font-weight: 500; text-decoration: none; border-bottom: 1px solid var(--border-soft); transition: color var(--motion-fast) var(--ease-standard), border-color var(--motion-fast) var(--ease-standard); }
+      a:hover { color: var(--accent-hover); border-color: var(--accent); }
+      a:focus-visible { outline: none; border-radius: var(--radius-sm); box-shadow: var(--focus-ring); }
+      .link-chevron::after { margin-inline-start: var(--space-2); content: "\203A"; }
+
+      .btn { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2); min-height: 44px; padding-inline: var(--space-6); border: 1px solid transparent; border-radius: var(--radius-md); background: var(--surface); color: var(--fg); font-family: var(--font-body); font-size: var(--text-sm); font-weight: 500; line-height: 1; text-align: center; text-decoration: none; cursor: pointer; transition: background-color var(--motion-base) var(--ease-standard), border-color var(--motion-base) var(--ease-standard), color var(--motion-base) var(--ease-standard), box-shadow var(--motion-base) var(--ease-standard); }
+      .btn:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+      .btn-primary { background: var(--accent); color: var(--accent-on); }
+      .btn-primary:hover { background: var(--accent-hover); }
+      .btn-primary:active { background: var(--accent-active); }
+      .btn-secondary { background: var(--bg); color: var(--meta); border-color: var(--border); box-shadow: var(--elev-ring); }
+      .btn-secondary:hover { border-color: var(--accent); color: var(--accent-hover); }
+      .btn[disabled] { background: var(--surface); color: var(--muted); cursor: not-allowed; box-shadow: var(--elev-flat); }
+
+      .card { padding: var(--space-6); border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--bg); box-shadow: var(--elev-raised); }
+      .card-warm { background: var(--surface-warm); border-color: var(--surface-warm); }
+      .panel { padding: var(--space-6); border: 1px solid var(--border-soft); border-radius: var(--radius-lg); background: var(--surface); }
+      .tile { padding: var(--space-5); border: 1px solid var(--border-soft); border-radius: var(--radius-md); background: var(--bg); }
+
+      .badge { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-1); padding: var(--space-1) var(--space-3); border-radius: var(--radius-pill); background: var(--border-soft); color: var(--meta); font-size: var(--text-xs); font-weight: 500; line-height: 1.4; text-align: center; }
+      .badge-accent { background: var(--surface-warm); color: var(--accent-active); }
+      .badge-success { background: var(--surface); color: var(--success); }
+      .badge-warn { background: var(--surface); color: var(--warn); }
+      .badge-danger { background: var(--surface); color: var(--danger); }
+
+      .icon { display: inline-flex; align-items: center; justify-content: center; width: var(--space-4); height: var(--space-4); color: var(--accent); }
+      .icon svg { width: 100%; height: 100%; }
+
+      kbd { display: inline-flex; align-items: center; justify-content: center; min-width: var(--space-6); padding: var(--space-1) var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); color: var(--fg-2); font-family: var(--font-mono); font-size: var(--text-xs); box-shadow: var(--elev-ring); }
+
+      .field { display: grid; gap: var(--space-2); }
+      label { color: var(--fg); font-size: var(--text-sm); font-weight: 500; }
+      input, textarea, select { width: 100%; min-height: 44px; padding: var(--space-3) var(--space-4); border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: var(--text-base); transition: border-color var(--motion-fast) var(--ease-standard), box-shadow var(--motion-fast) var(--ease-standard); }
+      input:hover, textarea:hover, select:hover { border-color: var(--meta); }
+      input:focus-visible, textarea:focus-visible, select:focus-visible { outline: none; border-color: var(--accent); box-shadow: var(--focus-ring); }
+      .field-hint { color: var(--muted); font-size: var(--text-xs); }
+      .field-error input { border-color: var(--danger); }
+
+      .fountain-bar { width: var(--space-12); height: var(--space-1); border-radius: var(--radius-pill); background: var(--accent); }
+      .detail-list { display: grid; gap: var(--space-2); padding: 0; list-style: none; color: var(--fg-2); font-size: var(--text-sm); }
+      .detail-list strong { color: var(--meta); font-weight: 500; }
+
+      @media (max-width: 1023px) { .container { padding-inline: var(--container-gutter-tablet); } section { padding-block: var(--section-y-tablet); } .hero, .grid-3 { grid-template-columns: 1fr; } }
+      @media (max-width: 639px) { .container { padding-inline: var(--container-gutter-phone); } section { padding-block: var(--section-y-phone); } }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section>
+        <div class="container hero">
+          <div class="stack-6">
+            <p class="eyebrow">Fountain Hills Chamber</p>
+            <div class="fountain-bar"></div>
+            <h1>Where business, community, and opportunity flow</h1>
+            <p class="lead">A civic brand kit for member directories, event pages, and chamber communications. Navy carries the structure, one warm orange carries the action.</p>
+            <div class="row-between">
+              <div class="stack-3">
+                <a class="btn btn-primary" href="#join">Become a member</a>
+                <p class="body-sm body-muted">Membership renews annually.</p>
+              </div>
+              <a class="btn btn-secondary" href="#events">Browse events</a>
+            </div>
+            <p class="body-sm"><a class="link-chevron" href="#directory">Open the member directory</a></p>
+          </div>
+
+          <article class="card stack-4" aria-label="Event summary">
+            <div class="row-between">
+              <div class="stack-3">
+                <p class="eyebrow">Signature event</p>
+                <h3>Fountain Hills Business Mixer</h3>
+              </div>
+              <span class="badge badge-accent">Registration open</span>
+            </div>
+            <ul class="detail-list">
+              <li><strong>Date</strong> Thursday, October 9</li>
+              <li><strong>Time</strong> 5:30 PM to 7:30 PM</li>
+              <li><strong>Venue</strong> Community Center, Fountain Hills</li>
+            </ul>
+            <div class="field">
+              <label for="chamber-email">Work email</label>
+              <input id="chamber-email" name="chamber-email" type="email" value="member@fountainhillschamber.com" />
+              <p class="field-hint">AERIS sends the confirmation and the calendar hold.</p>
+            </div>
+            <div class="row-between">
+              <a class="btn btn-primary" href="#rsvp">Reserve a seat</a>
+              <p class="body-sm body-muted">Press <kbd>Enter</kbd> to submit</p>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section>
+        <div class="container grid-3">
+          <article class="panel stack-3">
+            <span class="icon" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 3l5 5-5 5" /></svg></span>
+            <h2>Directory</h2>
+            <p class="body-muted">Member cards keep one accent, a navy heading, and a soft shadow. Chevrons signal forward motion, never arrow glyphs.</p>
+            <p><span class="badge badge-success">Active</span> <span class="badge badge-warn">Renewing</span> <span class="badge badge-danger">Lapsed</span></p>
+          </article>
+          <article class="tile stack-3">
+            <h2>Events</h2>
+            <p class="body-muted">Flyers and listings lead with a navy headline, an orange accent bar, and a single call to action.</p>
+            <div class="field">
+              <label for="chamber-track">Track</label>
+              <select id="chamber-track" name="chamber-track">
+                <option>Networking</option>
+                <option>Workshops</option>
+              </select>
+            </div>
+          </article>
+          <article class="card card-warm stack-3">
+            <h2>Notices</h2>
+            <p class="body-muted">Warm panels carry short chamber announcements without competing with the primary action.</p>
+            <div class="field">
+              <label for="chamber-note">Message</label>
+              <textarea id="chamber-note" name="chamber-note" rows="3">Board meeting minutes are posted.</textarea>
+            </div>
+            <button class="btn btn-secondary" type="button">Post notice</button>
+          </article>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

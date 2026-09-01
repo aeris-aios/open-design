@@ -112,12 +112,12 @@ const DECKS: SeedFixture[] = [
       'Make a 10-slide investor pitch deck for an AI design tool. Cover problem, solution, market, traction, ask.',
   },
   {
-    skillId: 'kami-deck',
+    skillId: 'simple-deck',
     sourceKind: 'skill',
     kind: 'deck',
-    name: 'Kami deck — quarterly review',
+    name: 'Simple deck — quarterly review',
     pendingPrompt:
-      'Build a print-grade kami deck summarizing Q2 results: revenue, top wins, risks, next quarter.',
+      'Build a print-grade deck summarizing Q2 results: revenue, top wins, risks, next quarter.',
   },
   {
     skillId: 'html-ppt-weekly-report',
@@ -139,7 +139,7 @@ const DECKS: SeedFixture[] = [
 
 const WEBS: SeedFixture[] = [
   {
-    skillId: 'open-design-landing',
+    skillId: 'saas-landing',
     sourceKind: 'skill',
     kind: 'prototype',
     name: 'Editorial landing — Atelier Zero',
@@ -147,12 +147,12 @@ const WEBS: SeedFixture[] = [
       'Single-page editorial landing page for an AI design tool. Magazine collage hero, sticky nav, scroll reveal.',
   },
   {
-    skillId: 'kami-landing',
+    skillId: 'waitlist-page',
     sourceKind: 'skill',
     kind: 'prototype',
-    name: 'Kami landing — white paper',
+    name: 'Waitlist page — white paper',
     pendingPrompt:
-      'Print-grade kami landing — parchment canvas, ink-blue accent. Treat it like a studio one-pager.',
+      'Print-grade waitlist page — parchment canvas, ink-blue accent. Treat it like a studio one-pager.',
   },
   {
     skillId: 'dashboard',

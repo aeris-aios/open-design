@@ -25,7 +25,6 @@ const ALWAYS_PINNED_INDEX = new Map(ALWAYS_PINNED.map((id, i) => [id, i]));
 export const ALWAYS_LAST: readonly string[] = [
   'example-web-prototype',
   'example-simple-deck',
-  'example-trading-analysis-dashboard-template',
 ];
 
 // Everything pushed to the bottom of the gallery: the plain default seeds plus

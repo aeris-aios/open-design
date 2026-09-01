@@ -4,7 +4,7 @@ Each subfolder is a portable design-system package. Selecting one from the
 Design System surface or a supported project-creation workflow composes its
 design context into the agent prompt.
 
-The bundled catalog currently contains **151 packages**. Every bundled package
+The bundled catalog currently contains **61 packages**. Every bundled package
 has the same minimum machine-readable shape:
 
 ```text
@@ -133,12 +133,15 @@ source of truth for provenance. Major upstream sources represented in the
 catalog include:
 
 - [`VoltAgent/awesome-design-md`](https://github.com/VoltAgent/awesome-design-md)
-  (MIT) for upstream-derived product systems.
+  (MIT) for upstream-derived systems.
 - [`bergside/awesome-design-skills`](https://github.com/bergside/awesome-design-skills)
   for normalized design-skill systems.
-- [`tw93/kami`](https://github.com/tw93/kami) (MIT) for the `kami` package.
-- [`Tom-Opencart/tom-modern-html-style-rule`](https://github.com/Tom-Opencart/tom-modern-html-style-rule)
-  (MIT) for the `tom-modern` package.
+- `fountain-hills-chamber` is first-party, compiled from the Fountain Hills
+  Chamber of Commerce brand kit.
 
-Brand-referencing packages are aesthetic inspirations, not official assets of
-the brands they reference.
+This fork ships only style-based packages (minimal, editorial, corporate,
+brutalism, glassmorphism, and the like) plus the first-party chamber system.
+The upstream company-brand packages (Ferrari, Nike, Apple, Tesla, PlayStation,
+Starbucks, Xiaohongshu, WeChat, Binance, and the rest) were removed: they are a
+trademark hazard and off-brand for a chamber of commerce. Reinstate one only by
+importing it yourself and accepting that risk.
