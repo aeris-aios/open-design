@@ -8,6 +8,10 @@
 //   2. The generic `od-media-generation` catch-all router must never appear
 //      as an example preset under any media chip, so the "Media generation
 //      (default scenario)" card neither shows up nor shows up pre-selected.
+//   3. `homeHeroExamplePluginsForChip` renders ONLY first-party chamber
+//      collateral (plugins-home/chamberCuration.ts is an ALLOW-list), while
+//      `pluginMatchesExampleChip` keeps routing every template — chamber or
+//      upstream — to the chip its tags belong to.
 
 import { describe, expect, it } from 'vitest';
 import type { InstalledPluginRecord } from '@open-design/contracts';
@@ -97,13 +101,35 @@ describe('pluginMatchesExampleChip — audio chip', () => {
   });
 });
 
-describe('homeHeroExamplePluginsForChip — audio chip', () => {
+// Mirrors plugins/_official/examples/fhcoc-event-poster (first-party).
+const chamberEventPoster = make({
+  id: 'example-fhcoc-event-poster',
+  title: 'Chamber Event Poster',
+  tags: ['example', 'first-party', 'image', 'image-template', 'chamber'],
+  mode: 'image',
+  surface: 'image',
+  scenario: 'marketing',
+});
+
+describe('homeHeroExamplePluginsForChip — chamber allow-list', () => {
   const installed = [audioJingle, brandSizzleReel, mediaGeneration];
 
-  it('shows the audio jingle but neither the HyperFrames reel nor the media-generation default', () => {
+  it('renders no upstream media template on the audio rail, default scenario included', () => {
+    // The audio jingle still ROUTES to the audio chip (asserted above), but
+    // this fork ships no first-party chamber audio template, so the rail is
+    // empty rather than showing upstream collateral. The HyperFrames reel and
+    // the `od-media-generation` catch-all stay out for their own reasons too.
     const ids = homeHeroExamplePluginsForChip('audio', installed, 'en').map((p) => p.id);
-    expect(ids).toContain('example-audio-jingle');
-    expect(ids).not.toContain('video-template-hyperframes-brand-sizzle-reel');
-    expect(ids).not.toContain('od-media-generation');
+    expect(ids).toEqual([]);
+  });
+
+  it('still surfaces a first-party chamber template on its own chip', () => {
+    // The counterpart guard: the allow-list must filter, not blank the rail.
+    const ids = homeHeroExamplePluginsForChip(
+      'image',
+      [chamberEventPoster, mediaGeneration, brandSizzleReel],
+      'en',
+    ).map((p) => p.id);
+    expect(ids).toEqual(['example-fhcoc-event-poster']);
   });
 });

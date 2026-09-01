@@ -4,6 +4,14 @@
 // facet badges, thumbnails, and composer seeds must all resolve from the one
 // live source — GET /api/plugins — so the page can never drift back to a
 // hand-written demo array that shows 24 templates while the daemon serves ~300.
+//
+// The fixture catalogue below is chamber collateral on purpose. This fork
+// curates the Community grid with an ALLOW-list (see
+// src/components/plugins-home/chamberCuration.ts): only the first-party
+// `example-fhcoc-*` packages may be gridded, so an upstream-shaped fixture
+// renders zero cards and every assertion here would silently become an
+// assertion about an empty page. The allow-list contract itself is pinned by
+// the "CommunityView chamber curation" describe at the bottom.
 
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { StrictMode } from 'react';
@@ -34,7 +42,67 @@ function plugin(fixture: PluginFixture) {
   };
 }
 
-const PITCH_DECK = plugin({
+// `example-fhcoc-board-deck` — leads the chamber pin order (CHAMBER_PLUGIN_IDS),
+// so it is the first Slides card.
+const BOARD_DECK = plugin({
+  id: 'example-fhcoc-board-deck',
+  title: 'Chamber Board Deck',
+  manifest: {
+    description: 'A decision-grade board meeting narrative.',
+    tags: ['deck'],
+    od: {
+      mode: 'deck',
+      category: 'corporate-strategy',
+      preview: { type: 'html', entry: './example.html' },
+      // Shape the daemon actually attaches (plugin-preview-bakes.ts): poster +
+      // clip + the leading in-place span the tile loops while idle.
+      bakedPreview: {
+        poster: 'https://assets.test/board-deck/poster.jpg',
+        video: 'https://assets.test/board-deck/preview.mp4',
+        holdMs: 2500,
+      },
+    },
+  },
+});
+
+const TOWN_DECK = plugin({
+  id: 'example-fhcoc-state-of-the-town-deck',
+  title: 'State of the Town Deck',
+  manifest: {
+    description: 'A State of the Town briefing for members and officials.',
+    tags: ['deck'],
+    od: {
+      mode: 'deck',
+      category: 'government-policy',
+      preview: { type: 'html', entry: './example.html' },
+    },
+  },
+});
+
+const LANDING_PROTOTYPE = plugin({
+  id: 'example-fhcoc-event-landing',
+  title: 'Chamber Event Landing Page',
+  manifest: {
+    description: 'A conversion-focused chamber event landing page.',
+    tags: ['landing'],
+    od: { mode: 'prototype', preview: { type: 'html', entry: './example.html' } },
+  },
+});
+
+const IMAGE_TEMPLATE = plugin({
+  id: 'example-fhcoc-event-poster',
+  title: 'Chamber Event Poster',
+  manifest: {
+    description: 'A typography-led chamber event poster.',
+    tags: ['poster'],
+    od: { mode: 'image', preview: { type: 'image', poster: 'https://assets.test/poster.jpg' } },
+  },
+});
+
+// An upstream package that matches a gallery facet perfectly and is on nobody's
+// hidden list. The allow-list is what keeps it out — see the chamber curation
+// describe at the bottom of this file.
+const UPSTREAM_DECK = plugin({
   id: 'example-fundraising-deck',
   title: 'Seed Round Pitch',
   manifest: {
@@ -44,44 +112,7 @@ const PITCH_DECK = plugin({
       mode: 'deck',
       category: 'fundraising-pitch',
       preview: { type: 'html', entry: './example.html' },
-      // Shape the daemon actually attaches (plugin-preview-bakes.ts): poster +
-      // clip + the leading in-place span the tile loops while idle.
-      bakedPreview: {
-        poster: 'https://assets.test/fundraising/poster.jpg',
-        video: 'https://assets.test/fundraising/preview.mp4',
-        holdMs: 2500,
-      },
     },
-  },
-});
-
-const SALES_DECK = plugin({
-  id: 'example-b2b-deck',
-  title: 'Enterprise Sales Deck',
-  manifest: {
-    description: 'A B2B sales narrative built for procurement.',
-    tags: ['deck'],
-    od: { mode: 'deck', category: 'b2b-sales', preview: { type: 'html', entry: './example.html' } },
-  },
-});
-
-const LANDING_PROTOTYPE = plugin({
-  id: 'example-landing-prototype',
-  title: 'SaaS Landing Page',
-  manifest: {
-    description: 'A conversion-focused SaaS landing page.',
-    tags: ['landing'],
-    od: { mode: 'prototype', preview: { type: 'html', entry: './example.html' } },
-  },
-});
-
-const IMAGE_TEMPLATE = plugin({
-  id: 'image-template-poster',
-  title: 'Typographic Poster',
-  manifest: {
-    description: 'A typography-led key art poster.',
-    tags: ['poster'],
-    od: { mode: 'image', preview: { type: 'image', poster: 'https://assets.test/poster.jpg' } },
   },
 });
 
@@ -99,7 +130,15 @@ const DESIGN_SYSTEM_PLUGIN = plugin({
   manifest: { od: { mode: 'design-system' } },
 });
 
-const CATALOGUE = [PITCH_DECK, SALES_DECK, LANDING_PROTOTYPE, IMAGE_TEMPLATE, HIDDEN_PLUGIN, DESIGN_SYSTEM_PLUGIN];
+const CATALOGUE = [
+  BOARD_DECK,
+  TOWN_DECK,
+  LANDING_PROTOTYPE,
+  IMAGE_TEMPLATE,
+  UPSTREAM_DECK,
+  HIDDEN_PLUGIN,
+  DESIGN_SYSTEM_PLUGIN,
+];
 
 let fetchMock: ReturnType<typeof vi.fn>;
 
@@ -217,7 +256,7 @@ describe('CommunityView catalogue source', () => {
 
   it('falls back to the first available type when the catalogue has no Prototype templates', async () => {
     fetchMock.mockImplementation(async () => new Response(JSON.stringify({
-      plugins: [PITCH_DECK, SALES_DECK],
+      plugins: [BOARD_DECK, TOWN_DECK],
     }), {
       status: 200,
       headers: { 'content-type': 'application/json' },
@@ -235,7 +274,8 @@ describe('CommunityView catalogue source', () => {
     await renderCommunity();
 
     // Neither plugin has a home in the artifact taxonomy, so no tab may render
-    // them — the four eligible plugins are the whole gallery.
+    // them — the four chamber plugins are the whole gallery (the upstream deck
+    // in the catalogue is dropped by the allow-list, asserted separately).
     const total = readFacetCardCounts().reduce((sum, count) => sum + count, 0);
     expect(total).toBe(4);
     expect(screen.queryByText(/Airbnb/)).toBeNull();
@@ -251,7 +291,7 @@ describe('CommunityView catalogue source', () => {
     expect(pills).toEqual(['All', 'Landing / marketing']);
 
     fireEvent.click(readFacets().find((facet) => facet.label === 'Slides')!.tab);
-    fireEvent.click(screen.getByRole('button', { name: 'B2B sales' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Government & policy' }));
     expect(renderedCards()).toHaveLength(1);
   });
 });
@@ -271,7 +311,7 @@ describe('CommunityView previews', () => {
 
     // Card thumbnail: the daemon-baked poster for that plugin.
     const thumb = renderedCards()[0]!.querySelector('img.plugins-home__media-img');
-    expect(thumb?.getAttribute('src')).toBe('https://assets.test/fundraising/poster.jpg');
+    expect(thumb?.getAttribute('src')).toBe('https://assets.test/board-deck/poster.jpg');
 
     // Card body → the FULL plugin details modal (飞书 recvqxDuYM6Uxk): the
     // Use split action + Share chrome, loading the plugin's real preview
@@ -279,11 +319,11 @@ describe('CommunityView previews', () => {
     // to the creation page's template chip.
     fireEvent.click(renderedCards()[0]!);
     await waitFor(() => {
-      expect(screen.queryByTestId('plugin-details-use-example-fundraising-deck')).not.toBeNull();
+      expect(screen.queryByTestId('plugin-details-use-example-fhcoc-board-deck')).not.toBeNull();
     });
     expect(document.querySelector('.template-share-trigger')).not.toBeNull();
     expect(document.querySelector('.community-template-preview')).toBeNull();
-    expect(fetchMock).toHaveBeenCalledWith('/api/plugins/example-fundraising-deck/preview');
+    expect(fetchMock).toHaveBeenCalledWith('/api/plugins/example-fhcoc-board-deck/preview');
   });
 
   it('plays the daemon-baked clip on the card instead of freezing it into a poster', async () => {
@@ -300,9 +340,9 @@ describe('CommunityView previews', () => {
 
     const video = card.querySelector('video.plugins-home__media-video');
     expect(video).not.toBeNull();
-    expect(video!.getAttribute('src')).toBe('https://assets.test/fundraising/preview.mp4');
+    expect(video!.getAttribute('src')).toBe('https://assets.test/board-deck/preview.mp4');
     // The poster stays the first paint, so the tile never flashes empty.
-    expect(video!.getAttribute('poster')).toBe('https://assets.test/fundraising/poster.jpg');
+    expect(video!.getAttribute('poster')).toBe('https://assets.test/board-deck/poster.jpg');
     // A baked clip carries `holdMs`, which is what makes the tile loop its
     // in-place span while idle rather than waiting for hover.
     expect(video!.getAttribute('loop')).not.toBeNull();
@@ -321,7 +361,7 @@ describe('CommunityView previews', () => {
   });
 
   it('keeps the typographic paper thumb for records with no poster at all', async () => {
-    // The B2B deck ships an html preview and no bake, so there is no media spec
+    // The town deck ships an html preview and no bake, so there is no media spec
     // to mount — that card must still fall back to the stylized paper tile.
     await renderCommunity();
     fireEvent.click(readFacets().find((facet) => facet.label === 'Slides')!.tab);
@@ -372,8 +412,8 @@ describe('CommunityView remix', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Use' }));
 
     expect(onUsePlugin).toHaveBeenCalledWith(IMAGE_TEMPLATE, 'use-with-query', {
-      templateId: 'image-template-poster',
-      prompt: 'A typography-led key art poster.',
+      templateId: 'example-fhcoc-event-poster',
+      prompt: 'A typography-led chamber event poster.',
       chipId: 'image',
       projectKind: 'image',
     });
@@ -393,8 +433,8 @@ describe('CommunityView remix', () => {
 
     expect(onRemix).toHaveBeenCalledTimes(1);
     expect(onRemix.mock.calls[0]![0]).toEqual({
-      templateId: 'example-landing-prototype',
-      prompt: 'A conversion-focused SaaS landing page.',
+      templateId: 'example-fhcoc-event-landing',
+      prompt: 'A conversion-focused chamber event landing page.',
     });
   });
 
@@ -443,10 +483,10 @@ describe('CommunityView remix', () => {
 
     fireEvent.click(renderedCards()[0]!);
     await waitFor(() => {
-      expect(screen.queryByTestId('plugin-details-use-example-fundraising-deck-menu')).not.toBeNull();
+      expect(screen.queryByTestId('plugin-details-use-example-fhcoc-board-deck-menu')).not.toBeNull();
     });
-    fireEvent.click(screen.getByTestId('plugin-details-use-example-fundraising-deck-menu'));
-    const remixItem = await screen.findByTestId('plugin-details-duplicate-example-fundraising-deck');
+    fireEvent.click(screen.getByTestId('plugin-details-use-example-fhcoc-board-deck-menu'));
+    const remixItem = await screen.findByTestId('plugin-details-duplicate-example-fhcoc-board-deck');
 
     for (let i = 0; i < 5; i += 1) {
       remixItem.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
@@ -455,8 +495,8 @@ describe('CommunityView remix', () => {
     await waitFor(() => expect(onRemix).toHaveBeenCalled());
     expect(onRemix).toHaveBeenCalledTimes(1);
     expect(onRemix.mock.calls[0]![0]).toEqual({
-      templateId: 'example-fundraising-deck',
-      prompt: 'A decision-grade seed round narrative.',
+      templateId: 'example-fhcoc-board-deck',
+      prompt: 'A decision-grade board meeting narrative.',
     });
   });
 
@@ -479,8 +519,8 @@ describe('CommunityView use handoff', () => {
     fireEvent.click(screen.getAllByRole('button', { name: 'Use' })[0]!);
 
     expect(onUsePrompt).toHaveBeenCalledWith({
-      templateId: 'example-landing-prototype',
-      prompt: 'A conversion-focused SaaS landing page.',
+      templateId: 'example-fhcoc-event-landing',
+      prompt: 'A conversion-focused chamber event landing page.',
       chipId: 'prototype',
       projectKind: 'prototype',
     });
@@ -493,14 +533,14 @@ describe('CommunityView use handoff', () => {
     fireEvent.click(prototypeTab);
     fireEvent.click(renderedCards()[0]!);
 
-    fireEvent.click(await screen.findByTestId('plugin-details-use-example-landing-prototype'));
+    fireEvent.click(await screen.findByTestId('plugin-details-use-example-fhcoc-event-landing'));
 
     expect(onUsePlugin).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 'example-landing-prototype' }),
+      expect.objectContaining({ id: 'example-fhcoc-event-landing' }),
       'use',
       {
-        templateId: 'example-landing-prototype',
-        prompt: 'A conversion-focused SaaS landing page.',
+        templateId: 'example-fhcoc-event-landing',
+        prompt: 'A conversion-focused chamber event landing page.',
         chipId: 'prototype',
         projectKind: 'prototype',
       },
@@ -540,5 +580,39 @@ describe('CommunityView facet counts', () => {
     const renderedTotal = readFacetCardCounts().reduce((sum, count) => sum + count, 0);
 
     expect(renderedTotal).toBe(4);
+  });
+});
+
+describe('CommunityView chamber curation', () => {
+  it('grids no upstream template, however well it fits a facet', async () => {
+    // `example-fundraising-deck` is a perfectly ordinary deck: right mode,
+    // right tags, a known commercial category, and on no hidden list. It is
+    // still absent, because `isGalleryHidden` is an allow-list keyed on
+    // CHAMBER_PLUGIN_IDS — which is what makes this surface safe against
+    // upstream adding packages nobody here has enumerated.
+    await renderCommunity();
+
+    fireEvent.click(readFacets().find((facet) => facet.label === 'Slides')!.tab);
+    expect(renderedCards()).toHaveLength(2);
+    expect(screen.queryByText(/Seed Round Pitch/)).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Fundraising / pitch' })).toBeNull();
+  });
+
+  it('shows an empty gallery rather than falling back to upstream collateral', async () => {
+    // The degenerate case the allow-list must survive: a catalogue with no
+    // chamber packages at all grids nothing — it does not decide that an empty
+    // gallery is a bug and show everything.
+    fetchMock.mockImplementation(async () => new Response(JSON.stringify({
+      plugins: [UPSTREAM_DECK],
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    render(<CommunityView />);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/plugins', undefined));
+
+    expect(readFacets()).toHaveLength(0);
+    expect(renderedCards()).toHaveLength(0);
   });
 });

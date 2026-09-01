@@ -17,7 +17,11 @@ vi.mock('../../src/components/home-hero/PlaceholderCarousel', () => ({
   PlaceholderCarousel: () => null,
 }));
 
-import { HomeHero, homeHeroExamplePluginsForChip } from '../../src/components/HomeHero';
+import {
+  HomeHero,
+  homeHeroExamplePluginsForChip,
+  pluginMatchesExampleChip,
+} from '../../src/components/HomeHero';
 import {
   HOME_HERO_CHIPS,
   findChip,
@@ -296,8 +300,12 @@ describe('HomeHero intent rail', () => {
   });
 
   it('shows matching plugin presets in the example prompt area for the selected tab', () => {
-    const deckPlugin = makePlugin('example-deck-a', 'deck', 'Investor deck');
-    const imagePlugin = makePlugin('example-image-a', 'image', 'Product image');
+    // The rail is chamber-only (plugins-home/chamberCuration.ts is an
+    // ALLOW-list), so the fixtures are real `example-fhcoc-*` ids. What is
+    // under test is the chip match: the deck tab shows the chamber deck and
+    // not the chamber image template.
+    const deckPlugin = makePlugin('example-fhcoc-board-deck', 'deck', 'Chamber board deck');
+    const imagePlugin = makePlugin('example-fhcoc-event-poster', 'image', 'Chamber event poster');
     const { onPickExamplePlugin, onOpenPluginDetails } = renderHero({
       activeChipId: 'deck',
       pluginOptions: [deckPlugin, imagePlugin],
@@ -307,7 +315,7 @@ describe('HomeHero intent rail', () => {
     expect(presets).toHaveLength(1);
     // The preset card is now a thumbnail + name only; the prompt blurb was
     // dropped from the card face but is still passed through on click below.
-    expect(presets[0]?.textContent).toContain('Investor deck');
+    expect(presets[0]?.textContent).toContain('Chamber board deck');
 
     // The whole card is the single click-to-use affordance (2026-07 removed
     // the hover-revealed Use/Remix overlay and the card-click-opens-details
@@ -317,18 +325,20 @@ describe('HomeHero intent rail', () => {
     expect(onPickExamplePlugin).toHaveBeenCalledWith(
       deckPlugin,
       'deck',
-      'Create with a focused brief using Investor deck',
+      'Create with a focused brief using Chamber board deck',
     );
     expect(onOpenPluginDetails).not.toHaveBeenCalled();
   });
 
-  it('maps powered WebGL presets to the WebGL chip without exposing a Worker chip', () => {
-    // Shader-tag matching still routes ONLY the WebGL seed to the WebGL chip:
-    // the Worker visualizer shares `powered-preview` but must never leak in.
-    // Both are gallery-hidden in this fork (plugins-home/chamberCuration.ts) —
-    // they are chip/powered-preview bindings, not chamber collateral — so the
-    // rail resolves to nothing rather than to a shader toy, and the Worker
-    // plugin still gets no chip of its own.
+  it('keeps every upstream WebGL/shader preset out of the rail and exposes no Worker chip', () => {
+    // The rail is chamber-only. `isGalleryHidden` in
+    // plugins-home/chamberCuration.ts is an ALLOW-list, so a shader toy cannot
+    // reach the WebGL chip even when its tags match perfectly — and, crucially,
+    // neither can a shader package upstream adds tomorrow that nobody has
+    // enumerated. The tag routing itself is unchanged (asserted below through
+    // `pluginMatchesExampleChip`): it is the rail that refuses to render them.
+    // The Worker visualizer shares `powered-preview` with the WebGL seed and
+    // still gets no chip of its own.
     const webgl = makePlugin('example-webgl-experience', 'prototype', 'WebGL Experience', [
       'webgl',
       'webgl2',
@@ -349,9 +359,17 @@ describe('HomeHero intent rail', () => {
       'shader',
     ]);
 
+    // Tag routing is intact: the shader study matches the WebGL chip, the
+    // Worker visualizer never did.
+    expect(pluginMatchesExampleChip(shaderStudy, 'webgl')).toBe(true);
+    expect(pluginMatchesExampleChip(worker, 'webgl')).toBe(false);
+
+    // …and yet none of them render, because none is chamber collateral. The
+    // enumerated seed (`example-webgl-experience`) and the never-enumerated
+    // one (`example-shader-study`) are both excluded by the allow-list.
     expect(homeHeroExamplePluginsForChip('webgl', [webgl, unrelated, worker], 'en')).toEqual([]);
     expect(homeHeroExamplePluginsForChip('webgl', [shaderStudy, unrelated, worker], 'en'))
-      .toEqual([shaderStudy]);
+      .toEqual([]);
     expect(findChip('worker')).toBeUndefined();
   });
 
@@ -359,18 +377,25 @@ describe('HomeHero intent rail', () => {
     const ordinaryDeck = makePlugin('example-ordinary-deck', 'deck', 'Ordinary deck');
     const pitchDeck = makePlugin('example-html-ppt-pitch-deck', 'deck', 'Pitch deck');
     const boardDeck = makePlugin('example-fhcoc-board-deck', 'deck', 'Chamber Board Deck');
+    const townDeck = makePlugin(
+      'example-fhcoc-state-of-the-town-deck',
+      'deck',
+      'State of the Town Deck',
+    );
     renderHero({
       activeChipId: 'deck',
-      pluginOptions: [ordinaryDeck, pitchDeck, boardDeck],
+      // Deliberately shuffled: neither the chamber pin order nor the upstream
+      // exclusion may depend on input order.
+      pluginOptions: [ordinaryDeck, townDeck, pitchDeck, boardDeck],
     });
 
-    // Chamber decks lead (curatedPriority + the ALWAYS_PINNED chamber list),
-    // then the curated upstream pick, then anything uncurated.
+    // Chamber decks lead in CHAMBER_PLUGIN_IDS order (curatedPriority + the
+    // ALWAYS_PINNED chamber list) — and they are the ONLY thing here: the
+    // curated upstream pick and the uncurated deck are both allow-listed out.
     const presets = screen.getAllByTestId('home-hero-plugin-preset');
     expect(presets.map((preset) => preset.getAttribute('data-plugin-id'))).toEqual([
       'example-fhcoc-board-deck',
-      'example-html-ppt-pitch-deck',
-      'example-ordinary-deck',
+      'example-fhcoc-state-of-the-town-deck',
     ]);
   });
 
@@ -397,25 +422,31 @@ describe('HomeHero intent rail', () => {
     expect(presets[0]?.getAttribute('data-plugin-id')).toBe('example-fhcoc-event-poster');
   });
 
-  it('keeps Hatch Pet at the end of the image example presets', () => {
+  it('keeps upstream image templates — Hatch Pet included — out of the image rail', () => {
+    // Hatch Pet used to be sorted to the END of the image rail. Under the
+    // chamber allow-list it does not reach the rail at all, and neither do the
+    // two generic upstream image templates beside it: the rail is exactly the
+    // chamber image collateral, in CHAMBER_PLUGIN_IDS order.
     const hatchPet = makePlugin('example-hatch-pet', 'image', 'Hatch Pet');
     const imagePoster = makePlugin('image-template-poster', 'image', 'Image Poster');
     const stoneInfographic = makePlugin('image-template-stone', 'image', 'Stone Infographic');
+    const chamberPoster = makePlugin('example-fhcoc-event-poster', 'image', 'Chamber Event Poster');
+    const chamberSocial = makePlugin('example-fhcoc-social-post', 'image', 'Chamber Social Post');
     renderHero({
       activeChipId: 'image',
-      pluginOptions: [hatchPet, imagePoster, stoneInfographic],
+      pluginOptions: [hatchPet, imagePoster, chamberPoster, stoneInfographic, chamberSocial],
     });
 
     const presets = screen.getAllByTestId('home-hero-plugin-preset');
-    expect(presets.map((preset) => preset.textContent)).toEqual([
-      expect.stringContaining('Image Poster'),
-      expect.stringContaining('Stone Infographic'),
-      expect.stringContaining('Hatch Pet'),
+    expect(presets.map((preset) => preset.getAttribute('data-plugin-id'))).toEqual([
+      'example-fhcoc-social-post',
+      'example-fhcoc-event-poster',
     ]);
   });
 
-  it('moves live artifact presets out of Image and into Live artifact examples', () => {
+  it('routes live artifact presets away from Image, and keeps upstream ones off both rails', () => {
     const imagePoster = makePlugin('image-template-poster', 'image', 'Image Poster');
+    const chamberPoster = makePlugin('example-fhcoc-event-poster', 'image', 'Chamber Event Poster');
     const liveDashboard = makePlugin(
       'example-live-dashboard',
       'prototype',
@@ -446,14 +477,24 @@ describe('HomeHero intent rail', () => {
       'Live Artifact',
       ['live-artifact'],
     );
+
+    // Routing is unchanged: a `live-artifact` tag disqualifies a template from
+    // the Image chip and qualifies it for Live artifact.
+    expect(pluginMatchesExampleChip(notionDashboard, 'image')).toBe(false);
+    expect(pluginMatchesExampleChip(notionDashboard, 'live-artifact')).toBe(true);
+    expect(pluginMatchesExampleChip(chamberPoster, 'image')).toBe(true);
+
     renderHero({
       activeChipId: 'image',
-      pluginOptions: [imagePoster, liveDashboard, notionDashboard],
+      pluginOptions: [imagePoster, chamberPoster, liveDashboard, notionDashboard],
     });
 
+    // Image shows the chamber poster only — the live-artifact templates are
+    // routed out, the generic upstream poster is allow-listed out.
     let presets = screen.getAllByTestId('home-hero-plugin-preset');
-    expect(presets).toHaveLength(1);
-    expect(presets[0]?.textContent).toContain('Image Poster');
+    expect(presets.map((preset) => preset.getAttribute('data-plugin-id'))).toEqual([
+      'example-fhcoc-event-poster',
+    ]);
 
     cleanup();
     renderHero({
@@ -468,16 +509,11 @@ describe('HomeHero intent rail', () => {
       ],
     });
 
-    presets = screen.getAllByTestId('home-hero-plugin-preset');
-    // Order within a facet is now usage/sink-driven (OPEND-449); this test is
-    // about which presets route into Live Artifact, so assert membership only.
-    expect(presets.map((preset) => preset.getAttribute('data-plugin-id')).sort()).toEqual([
-      'example-live-artifact',
-      'example-live-dashboard',
-      'example-social-media-matrix-tracker-template',
-      'example-trading-analysis-dashboard-template',
-      'image-template-notion-team-dashboard-live-artifact',
-    ]);
+    // …and the Live artifact rail stays empty rather than filling with the
+    // upstream dashboards it used to route there: this fork ships no chamber
+    // live-artifact template, and only chamber collateral may appear here.
+    presets = screen.queryAllByTestId('home-hero-plugin-preset');
+    expect(presets).toEqual([]);
   });
 
   it('disables every template while a plugin apply is in flight', () => {
