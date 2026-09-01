@@ -9116,12 +9116,26 @@ function HtmlViewer({
   // carryover — reintroduces the replica-of-remote-state problem this shape
   // exists to avoid.
   const [slideRendererAvailable, setSlideRendererAvailable] = useState<boolean | null>(null);
+  // Image export is a SEPARATE capability from the deck slide renderer: a
+  // server deployment with a headless-Chromium artifact exporter serves
+  // POST /export/image while reporting `slideRenderer: false`. Tracked on its
+  // own so the image path is not gated on the PPTX/PDF renderer — and, before
+  // that, is not gated on the desktop host being present at all.
+  const [imageRendererAvailable, setImageRendererAvailable] = useState<boolean | null>(null);
+  // `captureExportImageSnapshot` is a long-lived useCallback consumed by many
+  // handlers; reading the flag through a ref keeps its identity (and therefore
+  // every downstream memo) stable while still seeing the latest probe answer.
+  const imageRendererAvailableRef = useRef<boolean | null>(null);
+  imageRendererAvailableRef.current = imageRendererAvailable;
   useEffect(() => {
     const exportSurfaceVisible =
-      (deployMenuOpen && unifiedActionTab === 'export') || pptxExportModalOpen;
+      (deployMenuOpen && unifiedActionTab === 'export')
+      || pptxExportModalOpen
+      || imageExportModalOpen;
     if (!exportSurfaceVisible) return;
     let cancelled = false;
     setSlideRendererAvailable(null);
+    setImageRendererAvailable(null);
     void (async () => {
       // A probe that FAILS (daemon starting up, transient network) is retried
       // briefly, because leaving the whole opening at unknown would fail open
@@ -9137,6 +9151,10 @@ function HtmlViewer({
         if (info) {
           const next = info.capabilities?.slideRenderer;
           setSlideRendererAvailable(typeof next === 'boolean' ? next : null);
+          // A daemon that predates `imageExport` leaves it undefined → unknown
+          // → fail open (attempt the render; its 501 is the authority).
+          const nextImage = info.capabilities?.imageExport;
+          setImageRendererAvailable(typeof nextImage === 'boolean' ? nextImage : null);
           return;
         }
         const delay = retryDelaysMs[attempt];
@@ -9147,7 +9165,7 @@ function HtmlViewer({
     return () => {
       cancelled = true;
     };
-  }, [deployMenuOpen, unifiedActionTab, pptxExportModalOpen]);
+  }, [deployMenuOpen, unifiedActionTab, pptxExportModalOpen, imageExportModalOpen]);
   const [pptxExportMode, setPptxExportMode] = useState<'editable' | 'screenshot'>('editable');
   const imageExportSnapshotDataUrlRef = useRef<string | null>(null);
   // Threads the share-popover click → artifact_export_result(image) pair, the
@@ -15155,16 +15173,31 @@ function HtmlViewer({
     // in the browser screenshot flow (DesignBrowserPanel).
     await waitForAnimationFrame();
     await waitForAnimationFrame();
-    // Prefer the daemon's off-screen render (desktop only): isolated from the
-    // preview pane and, rendering the artifact alone in a hidden window, it can
-    // never capture OpenDesign's own UI. Page exports use the selected preview
+    // Prefer the daemon's off-screen render: isolated from the preview pane
+    // and, rendering the artifact alone in a hidden window, it can never
+    // capture OpenDesign's own UI. Page exports use the selected preview
     // preset; desktop pages and decks retain the renderer defaults. `wholeDeck`
     // (Export as image) stitches every slide
     // top-to-bottom into one long image — matching the slide count the viewer
     // reports; otherwise (Copy screenshot, Mark/Draw capture) it grabs the
     // CURRENT slide, mirroring what's on screen. An ordinary page is its
     // full-page capture either way.
-    if (isOpenDesignHostAvailable() && projectId && file.name) {
+    //
+    // This used to require `isOpenDesignHostAvailable()` — the ELECTRON host
+    // bridge — because the off-screen renderer only ever lived in the desktop
+    // shell. It does not any more: a server deployment renders the same export
+    // through headless Chromium behind POST /export/image. Gating the request
+    // on the desktop host meant a browser-only deployment never issued it at
+    // all (zero network requests on Save) and fell straight into the
+    // host-compositor / in-iframe-bridge fallbacks, which are themselves
+    // desktop-only or blocked cross-origin — so "Export as image" no-opped
+    // even though the route worked. The daemon now advertises `imageExport`
+    // and only a resolved `false` (this daemon really has no renderer) skips
+    // the request; unknown fails open and lets the route's 501 be the
+    // authority, exactly as `exportProjectImageDataUrl` already handles.
+    const offscreenRendererUsable =
+      isOpenDesignHostAvailable() || imageRendererAvailableRef.current !== false;
+    if (offscreenRendererUsable && projectId && file.name) {
       // Deck-vs-page uses the same signal as PDF export — broader than the viewer's nav
       // signal — so runtime-managed decks (`<deck-stage>` / `data-screen-label`,
       // no literal `.slide`) export as a deck instead of a single page-mode shot

@@ -10,14 +10,27 @@
 export interface AppRuntimeCapabilities {
   /**
    * Whether the daemon can render deck slides off-screen — the capability
-   * behind PPTX / screenshot-PDF / image export. Only the desktop sidecar
-   * injects that renderer, so a headless or container deployment reports
-   * `false` and those export routes answer 501.
+   * behind PPTX and screenshot-PDF export. Only the desktop sidecar injects
+   * that renderer, so a headless or container deployment reports `false` and
+   * those export routes answer 501.
    *
    * Deliberately NOT derivable from `packaged`: a packaged binary run as a
    * plain daemon still has no renderer.
+   *
+   * NOTE: this is no longer the gate for IMAGE export — see `imageExport`.
    */
   slideRenderer: boolean;
+  /**
+   * Whether POST /api/projects/:id/export/image can actually render. True when
+   * the desktop slide renderer is present OR when the daemon has a headless
+   * artifact exporter (a Chromium binary on a server deployment) — a strictly
+   * wider set than `slideRenderer`.
+   *
+   * Optional so an older daemon's payload stays valid; an absent field means
+   * "unknown", which callers must fail OPEN on (attempt the export and let the
+   * route's own 501 be the authority) rather than read as `false`.
+   */
+  imageExport?: boolean;
 }
 
 export interface AppVersionInfo {

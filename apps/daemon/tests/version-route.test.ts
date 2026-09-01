@@ -39,7 +39,10 @@ describe('/api/version', () => {
         packaged: expect.any(Boolean),
         platform: expect.any(String),
         arch: expect.any(String),
-        capabilities: { slideRenderer: expect.any(Boolean) },
+        capabilities: {
+          slideRenderer: expect.any(Boolean),
+          imageExport: expect.any(Boolean),
+        },
       },
     });
   });
@@ -79,6 +82,36 @@ describe('/api/version', () => {
     } finally {
       await new Promise<void>((resolve) => started.server.close(() => resolve()));
     }
+  });
+
+  it('advertises image export from the headless artifact exporter, without a slide renderer', async () => {
+    // POST /export/image falls back to `desktopArtifactExporter` (headless
+    // Chromium on a server deployment) when there is no slide renderer, so
+    // `imageExport` is a strictly wider capability than `slideRenderer`.
+    // Collapsing the two is what made the web client skip a working route.
+    const started = await startServer({
+      port: 0,
+      returnServer: true,
+      desktopArtifactExporter: async () => ({ ok: true, path: '/tmp/none.png', mime: 'image/png' }),
+    }) as { url: string; server: http.Server };
+    try {
+      const res = await fetch(`${started.url}/api/version`);
+      const json = await res.json() as {
+        version?: { capabilities?: { slideRenderer?: boolean; imageExport?: boolean } };
+      };
+
+      expect(json.version?.capabilities?.slideRenderer).toBe(false);
+      expect(json.version?.capabilities?.imageExport).toBe(true);
+    } finally {
+      await new Promise<void>((resolve) => started.server.close(() => resolve()));
+    }
+  });
+
+  it('reports no image export when neither renderer is wired', async () => {
+    const res = await fetch(`${baseUrl}/api/version`);
+    const json = await res.json() as { version?: { capabilities?: { imageExport?: boolean } } };
+
+    expect(json.version?.capabilities?.imageExport).toBe(false);
   });
 
   it('keeps health version aligned with version endpoint', async () => {

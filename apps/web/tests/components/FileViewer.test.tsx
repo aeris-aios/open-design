@@ -7364,7 +7364,7 @@ describe('FileViewer SVG artifacts', () => {
       },
     });
   const DECK_HTML = '<html><body><section data-screen-label="One">One</section></body></html>';
-  const versionResponse = (capabilities?: { slideRenderer: boolean }) =>
+  const versionResponse = (capabilities?: { slideRenderer: boolean; imageExport?: boolean }) =>
     new Response(
       JSON.stringify({
         version: {
@@ -7388,6 +7388,62 @@ describe('FileViewer SVG artifacts', () => {
       ),
     );
   };
+
+  it('renders Export as image through the daemon when there is no desktop host', async () => {
+    // Regression (silent no-op): the off-screen render request used to be
+    // gated on `isOpenDesignHostAvailable()` — the ELECTRON bridge — so a
+    // browser-only deployment fired ZERO network requests on Save and the
+    // export died in the desktop-only compositor / cross-origin bridge
+    // fallbacks, even though POST /export/image rendered fine through the
+    // daemon's headless Chromium. No host is installed here on purpose; the
+    // daemon reports `slideRenderer: false` (no Electron sidecar) alongside
+    // `imageExport: true` (headless renderer present), which is exactly the
+    // deployment shape that used to break.
+    const file = baseFile({
+      name: 'social.html',
+      path: 'social.html',
+      mime: 'text/html',
+      kind: 'html',
+    });
+    const fetchMock = vi.fn(async (input: unknown) => {
+      const url = String(
+        typeof input === 'string' || input instanceof URL
+          ? input
+          : ((input as { url?: unknown })?.url ?? ''),
+      );
+      if (url.includes('/api/version')) {
+        return versionResponse({ slideRenderer: false, imageExport: true });
+      }
+      if (url.includes('/export/image')) {
+        return new Response(new Blob([new Uint8Array([1, 2, 3])], { type: 'image/png' }), {
+          status: 200,
+          headers: { 'content-type': 'image/png' },
+        });
+      }
+      return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(
+      <FileViewer
+        projectId="project-1"
+        projectKind="prototype"
+        file={file}
+        liveHtml='<html><body><div style="width:1080px;height:1080px">Square</div></body></html>'
+      />,
+    );
+
+    await openUnifiedExportTab();
+    fireEvent.click(await screen.findByRole('menuitem', { name: /Export as image/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^save$/i }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/projects/project-1/export/image',
+        expect.objectContaining({ method: 'POST' }),
+      );
+    });
+  });
 
   it('hides the PPTX entry once the daemon answers that it has no renderer', async () => {
     stubVersionFetch(() => versionResponse({ slideRenderer: false }));

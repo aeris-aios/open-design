@@ -1639,8 +1639,13 @@ function isAppVersionInfo(value: unknown): value is AppVersionInfo {
   const candidate = value as Partial<AppVersionInfo>;
   // `capabilities` is optional so an older daemon's response stays valid; a
   // present-but-wrong shape is rejected rather than half-trusted.
-  const caps = candidate.capabilities as { slideRenderer?: unknown } | undefined;
+  const caps = candidate.capabilities as
+    | { slideRenderer?: unknown; imageExport?: unknown }
+    | undefined;
   if (caps !== undefined && (!caps || typeof caps.slideRenderer !== 'boolean')) return false;
+  // `imageExport` is itself optional (a daemon predating it omits the field),
+  // but a present-and-wrong value is rejected rather than half-trusted.
+  if (caps?.imageExport !== undefined && typeof caps.imageExport !== 'boolean') return false;
   return (
     typeof candidate.version === 'string' &&
     typeof candidate.channel === 'string' &&

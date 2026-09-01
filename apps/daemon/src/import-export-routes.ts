@@ -562,6 +562,21 @@ type ScreenshotExportRequest = {
   readonly body: ScreenshotExportBody | null | undefined;
 };
 
+/**
+ * POST /export/image accepts the picture encoder under either key. The route's
+ * export kind is already "image", so a body `format` can only be naming the
+ * encoder; the generic POST /export route keeps `format` for the kind and is
+ * unaffected. An explicit `imageFormat` always wins.
+ */
+export function normalizeImageExportBody(
+  body: (ScreenshotExportBody & { readonly format?: unknown }) | null | undefined,
+): ScreenshotExportBody | null | undefined {
+  if (!body || typeof body !== 'object') return body;
+  if (body.imageFormat != null || typeof body.format !== 'string') return body;
+  const { format, ...rest } = body;
+  return { ...rest, imageFormat: format };
+}
+
 export interface RegisterProjectExportRoutesDeps extends RouteDeps<'db' | 'http' | 'paths' | 'node' | 'ids' | 'projectStore' | 'exports' | 'projectFiles' | 'validation' | 'auth' | 'projectPreviewScopes'> {
   authorizeProjectRequest: AuthorizeProjectRequest;
   authorizeProjectToolRequest: AuthorizeProjectToolRequest;
@@ -1434,7 +1449,16 @@ export function registerProjectExportRoutes(app: Express, ctx: RegisterProjectEx
       toolEndpoint: PROJECT_EXPORT_TOOL_ENDPOINT,
     });
     if (!authority) return;
-    await handleScreenshotExport(res, 'image', req.params.id, { authority, body: req.body });
+    // On the generic POST /export route `format` names the EXPORT KIND
+    // (html/pdf/image/pptx) and the picture encoder rides on `imageFormat`.
+    // This route's kind is already fixed to "image", so `format` here can only
+    // mean the encoder — and callers (the CLI's --format, hand-rolled API
+    // clients) send it that way. It used to be dropped on the floor, which is
+    // why `{format:"jpeg"}` still came back `image/png`.
+    await handleScreenshotExport(res, 'image', req.params.id, {
+      authority,
+      body: normalizeImageExportBody(req.body),
+    });
   });
 
   // A true one-file HTML export: every required same-project dependency is

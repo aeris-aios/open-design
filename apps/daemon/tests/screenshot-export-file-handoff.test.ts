@@ -131,6 +131,94 @@ describe('screenshot export desktop renderer file handoff', () => {
     expect(bytes.subarray(0, 2).toString('hex')).toBe('ffd8');
   });
 
+  it('reads a body `format` as the image encoder on the image route', async () => {
+    // Regression: `/export/image` only ever read `imageFormat`, so a caller
+    // sending `{fileName, format: 'jpeg'}` — the shape the CLI's --format and
+    // hand-rolled API clients use — silently got image/png back. The route's
+    // export KIND is already fixed to "image", so a body `format` here can
+    // only be naming the encoder.
+    const res = await fetch(`${baseUrl}/api/projects/${projectId}/export/image`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fileName: 'index.html', format: 'jpeg' }),
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toContain('image/jpeg');
+    const bytes = Buffer.from(await res.arrayBuffer());
+    expect(bytes.subarray(0, 2).toString('hex')).toBe('ffd8');
+  });
+
+  it('threads the requested image format to the headless artifact exporter', async () => {
+    // The headless (no-Electron) path is what a server deployment uses. It
+    // must receive `imageFormat` so the renderer names its output `.jpg` and
+    // Chromium encodes JPEG — otherwise every export comes back PNG.
+    const seenHeadlessInputs: DesktopExportArtifactInput[] = [];
+    const headlessExporter = async (
+      input: DesktopExportArtifactInput,
+    ): Promise<DesktopExportArtifactResult> => {
+      seenHeadlessInputs.push(input);
+      const dir = path.join(os.tmpdir(), `od-headless-format-${Date.now()}`);
+      await mkdir(dir, { recursive: true });
+      const file = path.join(dir, 'artifact.jpg');
+      await writeFile(file, JPEG);
+      return { ok: true, path: file, mime: 'image/jpeg', bytes: JPEG.length };
+    };
+    const srv = (await startServer({
+      port: 0,
+      returnServer: true,
+      desktopSlideRenderer: null,
+      desktopArtifactExporter: headlessExporter,
+    })) as { url: string; server: http.Server };
+    try {
+      const res = await fetch(`${srv.url}/api/projects/${projectId}/export/image`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fileName: 'page.html', format: 'jpeg' }),
+      });
+      expect(res.status).toBe(200);
+      expect(res.headers.get('content-type')).toContain('image/jpeg');
+      expect(seenHeadlessInputs.at(-1)).toMatchObject({ format: 'image', imageFormat: 'jpeg' });
+    } finally {
+      await new Promise<void>((resolve) => srv.server.close(() => resolve()));
+    }
+  });
+
+  it('leaves image sizing to the renderer when the caller pins no viewport', async () => {
+    // The headless renderer auto-sizes an image export to the artifact's own
+    // canvas (a 1080x1080 square used to be cropped by a fixed 1440x900
+    // viewport). That only works if the route forwards NO width/height when
+    // the caller did not pick a preview preset.
+    const seenHeadlessInputs: DesktopExportArtifactInput[] = [];
+    const headlessExporter = async (
+      input: DesktopExportArtifactInput,
+    ): Promise<DesktopExportArtifactResult> => {
+      seenHeadlessInputs.push(input);
+      const dir = path.join(os.tmpdir(), `od-headless-autosize-${Date.now()}`);
+      await mkdir(dir, { recursive: true });
+      const file = path.join(dir, 'artifact.png');
+      await writeFile(file, PNG);
+      return { ok: true, path: file, mime: 'image/png', bytes: PNG.length };
+    };
+    const srv = (await startServer({
+      port: 0,
+      returnServer: true,
+      desktopSlideRenderer: null,
+      desktopArtifactExporter: headlessExporter,
+    })) as { url: string; server: http.Server };
+    try {
+      const res = await fetch(`${srv.url}/api/projects/${projectId}/export/image`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fileName: 'page.html', deck: false }),
+      });
+      expect(res.status).toBe(200);
+      expect(seenHeadlessInputs.at(-1)).not.toHaveProperty('width');
+      expect(seenHeadlessInputs.at(-1)).not.toHaveProperty('height');
+    } finally {
+      await new Promise<void>((resolve) => srv.server.close(() => resolve()));
+    }
+  });
+
   it('rejects multi-image JPEG image exports instead of truncating to the first chunk', async () => {
     const chunkingRenderer = async (input: DesktopRenderSlidesInput): Promise<DesktopRenderSlidesResult> => {
       if (!input.outputDir) return { ok: false, error: 'expected an outputDir handoff' };

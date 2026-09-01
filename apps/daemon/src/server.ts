@@ -7798,7 +7798,21 @@ export async function startServer({
     res.json({
       version: {
         ...version,
-        capabilities: { slideRenderer: typeof desktopSlideRenderer === 'function' },
+        capabilities: {
+          slideRenderer: typeof desktopSlideRenderer === 'function',
+          // Image export is NOT the same capability as the slide renderer any
+          // more: a deployment with no Electron sidecar can still serve
+          // POST /export/image through the headless-Chromium artifact exporter
+          // (see the `desktopArtifactExporter` branch in
+          // import-export-routes' handleScreenshotExport). The web client used
+          // to gate its whole image-export request on the desktop HOST being
+          // present and so never called the working route; this is the flag it
+          // honors instead. Computed from the very bindings that branch
+          // checks, so the advertisement cannot drift from the 501.
+          imageExport:
+            typeof desktopSlideRenderer === 'function'
+            || typeof desktopArtifactExporter === 'function',
+        },
       },
     });
   });
