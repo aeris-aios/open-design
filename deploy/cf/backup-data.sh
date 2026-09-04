@@ -6,8 +6,12 @@
 # DigitalOcean's droplet backups cover losing the whole box; this covers the
 # far more likely case of needing yesterday's copy of one project back.
 #
-# Installed as a root cron entry by deploy/cf/install-backup-cron.sh:
-#   15 3 * * *  /opt/open-design/deploy/cf/backup-data.sh
+# Installed as a root cron entry:
+#   15 12 * * *  /opt/open-design/deploy/cf/backup-data.sh
+#
+# 12:15 UTC (05:15 Arizona) deliberately sits outside DigitalOcean's own daily
+# backup window for this droplet (00:00-04:00 UTC): the two shouldn't contend
+# for I/O, and spacing them apart means a bad state isn't captured by both.
 set -euo pipefail
 
 VOLUME="open-design_open_design_data"
