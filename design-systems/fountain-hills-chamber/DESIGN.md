@@ -16,6 +16,31 @@ the brand's central metaphor, "Where Business, Community, and Opportunity Flow."
 - Labels are literal: "Become a member", "Reserve a seat", "Open the directory".
   Avoid clever headings that hide what the control does.
 
+## Facts (read before anything else)
+
+This work is published to a real town: real dates, real venues, real prices,
+real phone numbers. A fabricated detail here is not a placeholder, it is the
+chamber telling its members something untrue, and the design's polish is what
+makes it convincing.
+
+- **Never invent a real-world fact.** Dates, times, venues, street addresses,
+  prices, dues, phone numbers, email addresses, URLs, RSVP links, sponsor names,
+  attendance figures, member counts and quotes come from the brief or they do
+  not appear. "Plausible and specific" is the wrong instinct for every one of
+  them. This rule outranks any template instruction that says otherwise.
+- **Omit rather than guess.** A flyer with no price line is fine; a flyer with an
+  invented price is a correction the chamber has to publish. Design the layout so
+  a missing block closes up cleanly instead of leaving a hole.
+- **Say what you left out.** After the artwork, list every fact the brief did not
+  supply, as a short plain list: "Not included, because the brief did not say:
+  ticket price, RSVP link." The reader must be able to tell your content from
+  theirs without re-reading the brief.
+- **Never alter a supplied fact to fit the layout.** If the event name is too long
+  for the headline, change the type size, not the name.
+- The one safe invention is *generic supporting prose* that asserts nothing
+  checkable: "an evening of introductions and short updates" is fine, "over 200
+  members attended last year" is not.
+
 ## Color
 
 - **Accent orange `#ed7d36`** for calls to action, highlights, one accent per

@@ -44,11 +44,14 @@ Everything above the fold answers what, when, where, and how much.
    radius comes from it. For the Fountain Hills Chamber system that means
    navy `--meta` for structure, orange `--accent` for the single primary
    action, Poppins throughout.
-2. **Pull the facts out of the brief** and refuse to leave any as a
-   placeholder: event name, dates, gate times, venue name and street
+2. **Pull the facts out of the brief**: event name, dates, gate times, venue name and street
    address, parking, admission prices by tier, and the registration
-   destination. If the brief omits one, generate a specific, plausible
-   value rather than "TBD".
+   destination. Use only what the brief
+   supplies. If it omits one, leave that block out and let the layout
+   close up, then name the omission plainly after the artwork. Never
+   substitute a plausible-looking value: this is published to the town,
+   and an invented venue, price or phone number is a correction the
+   chamber has to issue. See the Facts section of DESIGN.md.
 3. **Lay out**, top to bottom:
    - **Header** — chamber mark on the left, four section links, one solid
      orange button on the right. A slim navy utility bar above it can

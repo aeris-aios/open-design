@@ -51,11 +51,14 @@ so contrast and hierarchy matter more than decoration.
    radius comes from it. Do not invent tokens. For the Fountain Hills
    Chamber system that means navy `--meta` for structure, orange
    `--accent` used once as the focal move, Poppins throughout.
-2. **Pull the facts out of the brief** and refuse to leave any of them
-   as a placeholder: event name, date, start and end time, venue name,
+2. **Pull the facts out of the brief**: event name, date, start and end time, venue name,
    street address, price (member vs. guest, or "free"), RSVP or ticket
-   destination, and the host or presenting sponsor. If the brief omits
-   one, generate a plausible, specific value rather than "TBD".
+   destination, and the host or presenting sponsor. Use only what the brief
+   supplies. If it omits one, leave that block out and let the layout
+   close up, then name the omission plainly after the artwork. Never
+   substitute a plausible-looking value: this is published to the town,
+   and an invented venue, price or phone number is a correction the
+   chamber has to issue. See the Facts section of DESIGN.md.
 3. **Lay out**, top to bottom, on a portrait page (`aspect-ratio: 8.5 / 11`
    or `210 / 297`):
    - **Masthead** — a solid navy band. Chamber wordmark on the left, a

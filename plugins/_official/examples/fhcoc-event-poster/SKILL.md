@@ -43,10 +43,15 @@ is subordinate to the title and the date.
    composition: navy ground (`--meta` deepened toward `#032f54`), white
    type, orange `--accent` used once as the accent bar and once on the
    call to action. Poppins throughout.
-2. **Pull the facts** and refuse to leave any as a placeholder: event
+2. **Pull the facts** from the brief: event
    name, date, start and end time, venue name, street address, price by
    audience, the registration destination, and the presenting partners.
-   If the brief omits one, generate a specific, plausible value.
+   Use only what the brief
+   supplies. If it omits one, leave that block out and let the layout
+   close up, then name the omission plainly after the artwork. Never
+   substitute a plausible-looking value: this is published to the town,
+   and an invented venue, price or phone number is a correction the
+   chamber has to issue. See the Facts section of DESIGN.md.
 3. **Compose** a portrait sheet (`aspect-ratio: 2 / 3`), top to bottom:
    - Chamber mark in white at the top.
    - A short uppercase eyebrow naming the series and the audience.
