@@ -142,8 +142,8 @@ describe('ChatComposer infinite re-render regression (#2097)', () => {
     await flushMounts();
 
     await typeAndSettle('send this once');
-    pressEnter();
-    pressEnter();
+    pressEnter({ meta: true });
+    pressEnter({ meta: true });
 
     expect(onSend).toHaveBeenCalledTimes(1);
 
@@ -151,7 +151,7 @@ describe('ChatComposer infinite re-render regression (#2097)', () => {
     await waitFor(() => expect(composerText().trim()).toBe(''));
 
     await typeAndSettle('send a later turn');
-    pressEnter();
+    pressEnter({ meta: true });
     await waitFor(() => expect(onSend).toHaveBeenCalledTimes(2));
   });
 

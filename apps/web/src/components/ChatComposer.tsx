@@ -38,6 +38,7 @@ import type {
 import { sessionModeToTracking } from '@open-design/contracts/analytics';
 import { deriveUploadCohort } from '../analytics/upload-tracking';
 import { notifyCompletionFeedbackGesture } from '../utils/notifications';
+import { useEnterKeyMode, sendShortcutLabel } from '../utils/enterKeyMode';
 import { projectRawUrl, uploadProjectFiles, openFolderDialog, fetchRecentLinkedDirs, pushRecentLinkedDir, dirExists, applyLibraryAsset, fetchLibraryAssetElementHtml } from "../providers/registry";
 import {
   duplicatePluginAsProject,
@@ -501,6 +502,15 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
         : null;
     const activeFileDisplayName = activeFileContext ? lastPathSegment(activeFileContext) : null;
     const [draft, setDraft] = useState(() => initialDraft ?? loadComposerDraft(draftStorageKey) ?? "");
+    const enterKeyMode = useEnterKeyMode();
+    const sendShortcut = sendShortcutLabel();
+    // When Enter no longer sends, the shortcut has to be visible somewhere the
+    // writer will actually look: the Send tooltip, and a hint under the box
+    // once there is something worth sending.
+    const sendLabel =
+      enterKeyMode === 'newline'
+        ? t('chat.sendWithShortcut', { shortcut: sendShortcut })
+        : t('chat.send');
     const [placeholderScenario, setPlaceholderScenario] = useState<PlaceholderScenario | null>(null);
     const composerRootRef = useRef<HTMLDivElement | null>(null);
     const pendingSessionModeRef = useRef<ChatSessionMode | null>(null);
@@ -3397,8 +3407,8 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
                 }}
                 disabled={sendDisabled || !hasComposerPayload}
                 aria-label={t('chat.send')}
-                title={t('chat.send')}
-                data-tooltip={t('chat.send')}
+                title={sendLabel}
+                data-tooltip={sendLabel}
               >
                 <Icon name="arrow-up" size={18} />
               </button>
@@ -3410,6 +3420,9 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
             alignment (2026-07-21) over keeping this as the only mid-project
             re-bind entry. Home still picks a working directory for NEW projects. */}
         {uploadError ? <span className="composer-hint">{uploadError}</span> : null}
+        {!uploadError && enterKeyMode === 'newline' && composerFocused && draft.trim().length > 0 ? (
+          <span className="composer-hint">{t('chat.enterHint', { shortcut: sendShortcut })}</span>
+        ) : null}
         {detailsRecord ? (
           <PluginDetailsModal
             record={detailsRecord}

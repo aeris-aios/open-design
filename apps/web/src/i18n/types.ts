@@ -3450,6 +3450,8 @@ export interface Dict {
   'chat.queuedMore': string;
   'chat.queuedFollowUpFallback': string;
   'chat.send': string;
+  'chat.sendWithShortcut': string;
+  'chat.enterHint': string;
   'chat.stop': string;
   'chat.removeAria': string;
   'chat.example1Title': string;

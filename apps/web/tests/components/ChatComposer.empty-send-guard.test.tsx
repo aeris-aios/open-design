@@ -46,7 +46,9 @@ describe('ChatComposer empty-send guard (recvqaj7eKpxH6)', () => {
       />,
     );
     await flushMounts();
-    pressEnter();
+    // Cmd+Enter is the send chord (a bare Enter breaks the line — see
+    // utils/enterKeyMode.ts), so the guard has to be probed through it.
+    pressEnter({ meta: true });
     expect(onSend).not.toHaveBeenCalled();
   });
 
@@ -83,8 +85,8 @@ describe('ChatComposer empty-send guard (recvqaj7eKpxH6)', () => {
     fireEvent.click(btn);
     expect(onSend).not.toHaveBeenCalled();
 
-    // Enter must not bypass it either.
-    pressEnter();
+    // The send chord must not bypass it either.
+    pressEnter({ meta: true });
     expect(onSend).not.toHaveBeenCalled();
   });
 
@@ -116,7 +118,7 @@ describe('ChatComposer empty-send guard (recvqaj7eKpxH6)', () => {
     await flushMounts();
 
     await typeAndSettle('Ship the onboarding tweak');
-    pressEnter();
+    pressEnter({ meta: true });
 
     expect(onSend).toHaveBeenCalledTimes(1);
     expect(onSend).toHaveBeenCalledWith('Ship the onboarding tweak', [], [], undefined);

@@ -89,16 +89,17 @@ async function settle(): Promise<void> {
   });
 }
 
-// Dispatch a plain Enter through the editor's command pipeline (jsdom does not
-// route a synthetic fireEvent.keyDown into Lexical's keydown→command hop), so
-// we hit the real KeyboardPlugin Enter branch the same way pressEnter does in
-// tests/helpers/lexical-composer.ts.
-function pressEnterInHomeHero(): void {
+// Dispatch Enter through the editor's command pipeline (jsdom does not route a
+// synthetic fireEvent.keyDown into Lexical's keydown→command hop), so we hit
+// the real KeyboardPlugin Enter branch the same way pressEnter does in
+// tests/helpers/lexical-composer.ts. Pass `{ meta: true }` for the send chord;
+// a bare Enter breaks the line unless a picker is open (utils/enterKeyMode.ts).
+function pressEnterInHomeHero(opts: { meta?: boolean } = {}): void {
   const editor = getHomeHeroEditor();
   const event = {
     key: 'Enter',
     shiftKey: false,
-    metaKey: false,
+    metaKey: Boolean(opts.meta),
     ctrlKey: false,
     altKey: false,
     preventDefault() {},
@@ -587,7 +588,7 @@ describe('HomeHero plugin picker', () => {
     expect(onPickMcp).toHaveBeenCalledWith(mcp, '@Linear ');
   });
 
-  it('submits on a plain Enter through the editor once content is present', async () => {
+  it('submits on the send chord through the editor once content is present', async () => {
     // IME compositionStart/End + Enter handling moved inside the Lexical editor;
     // jsdom cannot drive a real IME composition or route fireEvent.keyDown into
     // Lexical's command pipeline, so the previous IME-suppression assertions are
@@ -628,7 +629,7 @@ describe('HomeHero plugin picker', () => {
 
     await settle();
 
-    pressEnterInHomeHero();
+    pressEnterInHomeHero({ meta: true });
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
     expect(onFeedbackActivation).toHaveBeenCalledWith({ desktopPermission: null });
     disposeFeedbackActivation();

@@ -742,6 +742,15 @@
 .home-hero__prompt-surface--with-inputs {
   padding: 0;
 }
+/* Keyboard hint under the hero prompt. Mirrors .composer-hint (chat.css) so the
+   same sentence reads identically on Home and inside a project. Appears only
+   while the writer is in the box with text, so it teaches the send chord at the
+   moment it is needed and stays out of the way otherwise. */
+.home-hero__enter-hint {
+  font-size: 12px;
+  color: var(--text-faint);
+  padding: 0 2px;
+}
 /* The homepage prompt now embeds the SAME Lexical editor as the project
    composer (composer-editable / composer-inline-mention live in chat.css),
    so mention chips render and vertically align identically across both

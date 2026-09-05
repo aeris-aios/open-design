@@ -47,6 +47,7 @@ import {
   buildInlineMentionParts,
   type InlineMentionEntity,
 } from '../../utils/inlineMentions';
+import { useEnterKeyMode } from '../../utils/enterKeyMode';
 
 // A serializable caret box the host portal positions against. Sampled from the
 // live DOM selection at trigger-detection time (same tick as detection) so it
@@ -374,6 +375,9 @@ function KeyboardPlugin({
   onPopoverKeyRef.current = onPopoverKey;
   const inputDisabledRef = useRef(inputDisabled);
   inputDisabledRef.current = inputDisabled;
+  const enterKeyMode = useEnterKeyMode();
+  const enterKeyModeRef = useRef(enterKeyMode);
+  enterKeyModeRef.current = enterKeyMode;
   useEffect(() => {
     return mergeRegister(
       editor.registerCommand(
@@ -405,9 +409,19 @@ function KeyboardPlugin({
             onEnterSendRef.current();
             return true;
           }
+          // The @-mention and slash pickers own Enter while they are open:
+          // there it means "choose the highlighted item", never "send".
           if (popoverOpenRef.current) {
             e?.preventDefault();
             return onPopoverKeyRef.current('Enter');
+          }
+          // Default mode: a bare Enter breaks the line and sending is the
+          // deliberate gesture (Cmd/Ctrl+Enter, handled above, or the Send
+          // button). See enterKeyMode.ts for why this diverges from upstream.
+          if (enterKeyModeRef.current === 'newline') {
+            editor.dispatchCommand(INSERT_LINE_BREAK_COMMAND, false);
+            e?.preventDefault();
+            return true;
           }
           e?.preventDefault();
           onEnterSendRef.current();

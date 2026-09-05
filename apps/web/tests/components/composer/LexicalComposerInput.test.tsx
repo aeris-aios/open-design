@@ -2,7 +2,7 @@
 
 import type { ComponentProps } from 'react';
 import { act, cleanup, render, waitFor } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   $getRoot,
   $getSelection,
@@ -57,6 +57,23 @@ function setup(overrides: Partial<Props> = {}) {
   const utils = render(<LexicalComposerInput ref={ref} {...props} />);
   return { ref, onChange, onTrigger, onEnterSend, onPopoverKey, ...utils };
 }
+
+// This suite's jsdom environment ships without `window.localStorage` (the same
+// shape as a browser in a locked-down privacy mode), so the Enter-mode
+// preference needs a stub to be readable at all. `enterKeyMode` treats a
+// missing/throwing store as "use the default", which the tests below rely on.
+const storage = new Map<string, string>();
+beforeEach(() => {
+  storage.clear();
+  Object.defineProperty(window, 'localStorage', {
+    configurable: true,
+    value: {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => void storage.set(key, value),
+      removeItem: (key: string) => void storage.delete(key),
+    },
+  });
+});
 
 afterEach(() => {
   cleanup();
@@ -401,30 +418,97 @@ describe('LexicalComposerInput', () => {
     // Intentionally skipped — see TODO above.
   });
 
-  it('calls onEnterSend on a plain Enter outside composition', async () => {
-    const { onEnterSend, getByTestId } = setup({ draft: 'hi' });
-    const editable = getByTestId('chat-composer-input') as HTMLElement & {
-      __lexicalEditor?: import('lexical').LexicalEditor;
-    };
-    // jsdom does not route a synthetic keyDown through Lexical's root
-    // keydown → command pipeline, so we dispatch KEY_ENTER_COMMAND directly.
-    // This still exercises the real KeyboardPlugin handler (its isComposing /
-    // shiftKey / metaKey / popoverOpen / onEnterSend branch logic) — only the
-    // DOM-event-to-command hop is replaced.
-    const editor = editable.__lexicalEditor;
-    expect(editor).toBeTruthy();
-    const enterEvent = {
+  // jsdom does not route a synthetic keyDown through Lexical's root keydown →
+  // command pipeline, so these dispatch KEY_ENTER_COMMAND directly. That still
+  // exercises the real KeyboardPlugin handler (its isComposing / shiftKey /
+  // metaKey / popoverOpen / enter-mode branch logic) — only the
+  // DOM-event-to-command hop is replaced.
+  function enterEvent(overrides: Partial<KeyboardEvent> = {}) {
+    return {
       key: 'Enter',
       shiftKey: false,
       metaKey: false,
       ctrlKey: false,
       altKey: false,
-      preventDefault() {},
-    } as unknown as KeyboardEvent;
+      preventDefault: vi.fn(),
+      ...overrides,
+    } as unknown as KeyboardEvent & { preventDefault: ReturnType<typeof vi.fn> };
+  }
+
+  function editorFor(getByTestId: (id: string) => HTMLElement) {
+    const editable = getByTestId('chat-composer-input') as HTMLElement & {
+      __lexicalEditor?: import('lexical').LexicalEditor;
+    };
+    expect(editable.__lexicalEditor).toBeTruthy();
+    return editable.__lexicalEditor;
+  }
+
+  // Chamber staff write multi-line event briefs in this box. A bare Enter used
+  // to send, so the keystroke that started line two fired a half-written brief
+  // at AERIS and cleared the composer. See utils/enterKeyMode.ts.
+  it('does not send on a plain Enter — it breaks the line instead', async () => {
+    const { ref, onEnterSend, getByTestId } = setup({ draft: 'Oktoberfest flyer' });
+    const editor = editorFor(getByTestId);
+    const event = enterEvent();
+
     act(() => {
-      editor?.dispatchCommand(KEY_ENTER_COMMAND, enterEvent);
+      ref.current?.focus();
     });
+    act(() => {
+      editor?.dispatchCommand(KEY_ENTER_COMMAND, event);
+    });
+
+    expect(onEnterSend).not.toHaveBeenCalled();
+    expect(event.preventDefault).toHaveBeenCalled();
+    await waitFor(() => expect(ref.current?.getText()).toBe('Oktoberfest flyer\n'));
+  });
+
+  it('sends on Cmd+Enter', async () => {
+    const { onEnterSend, getByTestId } = setup({ draft: 'hi' });
+    const editor = editorFor(getByTestId);
+
+    act(() => {
+      editor?.dispatchCommand(KEY_ENTER_COMMAND, enterEvent({ metaKey: true }));
+    });
+
     await waitFor(() => expect(onEnterSend).toHaveBeenCalledTimes(1));
+  });
+
+  it('sends on Ctrl+Enter', async () => {
+    const { onEnterSend, getByTestId } = setup({ draft: 'hi' });
+    const editor = editorFor(getByTestId);
+
+    act(() => {
+      editor?.dispatchCommand(KEY_ENTER_COMMAND, enterEvent({ ctrlKey: true }));
+    });
+
+    await waitFor(() => expect(onEnterSend).toHaveBeenCalledTimes(1));
+  });
+
+  it('restores upstream Enter-sends behavior when the preference opts in', async () => {
+    window.localStorage.setItem('od.composer.enterKey', 'send');
+    const { onEnterSend, getByTestId } = setup({ draft: 'hi' });
+    const editor = editorFor(getByTestId);
+
+    act(() => {
+      editor?.dispatchCommand(KEY_ENTER_COMMAND, enterEvent());
+    });
+
+    await waitFor(() => expect(onEnterSend).toHaveBeenCalledTimes(1));
+  });
+
+  // The @-mention and slash pickers own Enter while open, in either mode.
+  it('lets an open popover keep Enter as "choose the highlighted item"', async () => {
+    const onPopoverKey = vi.fn(() => true);
+    const { onEnterSend, getByTestId } = setup({ draft: '@dec', popoverOpen: true, onPopoverKey });
+    const editor = editorFor(getByTestId);
+
+    act(() => {
+      editor?.dispatchCommand(KEY_ENTER_COMMAND, enterEvent());
+    });
+
+    await waitFor(() => expect(onPopoverKey).toHaveBeenCalledWith('Enter'));
+    expect(onEnterSend).not.toHaveBeenCalled();
   });
 
   it('does not send when the browser repeats a held Enter key', async () => {

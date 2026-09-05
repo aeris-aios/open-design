@@ -90,6 +90,7 @@ import { comparePluginGalleryOrder } from './plugins-home/pluginPopularity';
 import { sortByVisualAppeal } from './plugins-home/visualScore';
 import { applyFacetSelection } from './plugins-home/facets';
 import { notifyCompletionFeedbackGesture } from '../utils/notifications';
+import { useEnterKeyMode, sendShortcutLabel } from '../utils/enterKeyMode';
 import { inferPluginPreview } from './plugins-home/preview';
 import { pluginSubfacetLabel } from './plugins-home/subfacetLabel';
 import { useDeckPreviewScale } from '../lib/use-deck-preview-scale';
@@ -475,6 +476,12 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
   // its API. `carouselActive` deliberately stays true — Send must still submit
   // the current scenario from an empty composer.
   const [promptFocused, setPromptFocused] = useState(false);
+  const enterKeyMode = useEnterKeyMode();
+  const sendShortcut = sendShortcutLabel();
+  // The first brief a staffer ever writes is typed here, so the shortcut has to
+  // be discoverable from this screen, not only inside a project.
+  const runLabel =
+    enterKeyMode === 'newline' ? `${t('homeHero.run')} (${sendShortcut})` : t('homeHero.run');
   useEffect(() => {
     const node = promptEditorRef.current;
     if (!node) return;
@@ -1682,6 +1689,11 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
               onScenarioChange={setCarouselScenario}
             />
           </div>
+          {enterKeyMode === 'newline' && promptFocused && prompt.trim().length > 0 ? (
+            <span className="home-hero__enter-hint">
+              {t('chat.enterHint', { shortcut: sendShortcut })}
+            </span>
+          ) : null}
         </div>
         <CaretFloatingLayer caret={caretRect} open={pickerOpen}>
           <div
@@ -2066,8 +2078,8 @@ export const HomeHero = forwardRef<HomeHeroHandle, Props>(function HomeHero(
               onClick={handleSend}
               onAnimationEnd={() => setSendAttention(false)}
               disabled={!sendEnabled}
-              title={submitting ? t('chat.comments.sending') : sendEnabled ? t('homeHero.run') : t('homeHero.typeSomethingToRun')}
-              data-tooltip={submitting ? t('chat.comments.sending') : sendEnabled ? t('homeHero.run') : t('homeHero.typeSomethingToRun')}
+              title={submitting ? t('chat.comments.sending') : sendEnabled ? runLabel : t('homeHero.typeSomethingToRun')}
+              data-tooltip={submitting ? t('chat.comments.sending') : sendEnabled ? runLabel : t('homeHero.typeSomethingToRun')}
               aria-label={submitting ? t('chat.comments.sending') : t('homeHero.run')}
               aria-busy={submitting}
             >

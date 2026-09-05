@@ -2638,6 +2638,8 @@ export const en: Dict = {
   'chat.queuedMore': 'more queued',
   'chat.queuedFollowUpFallback': 'Queued follow-up',
   'chat.send': 'Send',
+  'chat.sendWithShortcut': 'Send ({shortcut})',
+  'chat.enterHint': 'Enter starts a new line. {shortcut} sends.',
   'chat.stop': 'Stop',
   'chat.removeAria': 'Remove {name}',
   'chat.example1Title': 'Roadshow pitch deck',

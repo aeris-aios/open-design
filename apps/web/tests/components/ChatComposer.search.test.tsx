@@ -692,7 +692,7 @@ describe('ChatComposer /search command', () => {
     );
 
     await typeAndSettle('hello world');
-    pressEnter();
+    pressEnter({ meta: true });
 
     await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
     expect(onSend).toHaveBeenCalledWith('hello world', [], [], undefined);
